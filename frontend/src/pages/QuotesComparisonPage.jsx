@@ -1,14 +1,22 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { motion } from 'framer-motion';
+import { calculatePremium, formatZMW } from '../utils/premiumEngine';
+
+const RequestId = `SHIELD-${Math.floor(10000 + Math.random() * 90000)}`;
 
 export default function QuotesComparisonPage() {
   const navigate = useNavigate();
-  const { selectedInsurers, setSelectedQuote } = useStore();
+  const {
+    selectedInsurers, setSelectedQuote, setPremiumBreakdown,
+    vehicleValue, ncdCode, ncdCodeValidated, coverageDurationId,
+    policyDates,
+  } = useStore();
 
-  const handleSelectQuote = (quote) => {
-    setSelectedQuote(quote);
+  const handleSelectQuote = (quote, breakdown) => {
+    setSelectedQuote({ ...quote, price: breakdown.finalPremium });
+    setPremiumBreakdown(breakdown);
     navigate('/payment');
   };
 
@@ -16,120 +24,180 @@ export default function QuotesComparisonPage() {
   const readyInsurers = selectedInsurers.slice(0, readyCount);
   const pendingInsurers = selectedInsurers.slice(readyCount);
 
-  const quotes = React.useMemo(() => {
-    return readyInsurers.map(insurer => ({
-      ...insurer,
-      price: Math.floor(Math.random() * 3000) + 1500,
-    })).sort((a, b) => a.price - b.price);
-  }, [selectedInsurers.length]);
+  // Calculate real premiums using NCD code
+  const quotes = useMemo(() => {
+    return readyInsurers.map(insurer => {
+      const breakdown = calculatePremium({
+        vehicleValueZMW: vehicleValue,
+        insurer,
+        ncdCode: ncdCodeValidated ? ncdCode : null,
+        ncdPercentage: ncdCodeValidated?.percentage || 0,
+        ncdIssuingInsurer: ncdCodeValidated?.insurer || null,
+        coverageDurationId: coverageDurationId || '4q',
+      });
+      return { ...insurer, breakdown };
+    }).sort((a, b) => a.breakdown.finalPremium - b.breakdown.finalPremium);
+  }, [selectedInsurers.length, vehicleValue, ncdCode, ncdCodeValidated, coverageDurationId]);
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full">
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full pb-16">
+
       {/* Summary Banner */}
-      <section className="max-w-5xl mx-auto mb-8">
+      <section className="max-w-5xl mx-auto mb-8 px-4">
         <div className="bg-primary text-white p-6 rounded-xl shadow-md relative overflow-hidden">
           <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-[28px] md:text-[32px] font-bold mb-2">Quote Comparison</h1>
-              <p className="text-[14px] opacity-90">Auto Insurance Coverage</p>
+              <h1 className="text-[28px] md:text-[32px] font-bold mb-1">Quote Comparison</h1>
+              <p className="text-[14px] opacity-90">Vehicle Value: <strong>{vehicleValue > 0 ? formatZMW(vehicleValue) : 'Not set'}</strong></p>
+              {policyDates && (
+                <p className="text-[12px] opacity-80">Coverage: {policyDates.formattedStart} → {policyDates.formattedEnd} ({policyDates.daysTotal} days)</p>
+              )}
             </div>
-            <div className="flex items-center justify-between w-full md:w-auto gap-4 bg-white/10 backdrop-blur-md p-4 rounded-lg border border-white/20 mt-2 md:mt-0">
-              <div className="text-left md:text-right">
-                <p className="text-[12px] font-bold tracking-[0.05em] uppercase text-white/70">Request ID</p>
-                <p className="text-[16px] font-semibold tracking-wider">#SHIELD-{Math.floor(10000 + Math.random() * 90000)}</p>
+            <div className="flex flex-col sm:flex-row items-center gap-4 bg-white/10 backdrop-blur-md p-4 rounded-lg border border-white/20">
+              <div>
+                <p className="text-[11px] font-bold tracking-[0.05em] uppercase text-white/70">Request ID</p>
+                <p className="text-[15px] font-semibold tracking-wider">#{RequestId}</p>
               </div>
-              <div className="w-px h-8 bg-white/20"></div>
-              <div className="text-right">
-                <p className="text-[12px] font-bold tracking-[0.05em] uppercase text-white/70">Expires In</p>
-                <p className="text-[16px] font-semibold text-white">48 Hours</p>
+              <div className="w-px h-8 bg-white/20 hidden sm:block" />
+              <div>
+                <p className="text-[11px] font-bold tracking-[0.05em] uppercase text-white/70">Quotes Expire</p>
+                <p className="text-[15px] font-semibold">48 Hours</p>
+              </div>
+              <div className="w-px h-8 bg-white/20 hidden sm:block" />
+              <div>
+                <p className="text-[11px] font-bold tracking-[0.05em] uppercase text-white/70">Ready</p>
+                <p className="text-[15px] font-semibold">{readyInsurers.length} of {selectedInsurers.length}</p>
               </div>
             </div>
           </div>
-          <div className="absolute -right-12 -top-12 w-48 h-48 bg-white/5 rounded-full blur-3xl"></div>
-        </div>
-      </section>
-
-      {/* Filters & Toggles */}
-      <section className="max-w-5xl mx-auto mb-6 flex items-center justify-between">
-        <div className="flex gap-2">
-          <span className="px-4 py-2 bg-white border border-outline-variant rounded-full text-[12px] font-bold tracking-[0.05em] text-primary cursor-pointer hover:bg-surface-container transition-colors">Best Value</span>
-          <span className="px-4 py-2 bg-white border border-outline-variant rounded-full text-[12px] font-bold tracking-[0.05em] text-secondary cursor-pointer hover:bg-surface-container transition-colors">Lowest Price</span>
-        </div>
-        <div className="hidden md:flex items-center gap-2 bg-surface-container-low p-1 rounded-full border border-outline-variant">
-          <button className="px-4 py-1 bg-white shadow-sm rounded-full text-[14px] font-semibold text-primary">List View</button>
-          <button className="px-4 py-1 text-secondary text-[14px] font-semibold hover:text-primary">Grid View</button>
+          <div className="absolute -right-12 -top-12 w-48 h-48 bg-white/5 rounded-full blur-3xl" />
         </div>
       </section>
 
       {/* Quote Cards */}
-      <section className="max-w-5xl mx-auto space-y-6">
-        {quotes.map((quote, idx) => (
-          <div key={quote.id} className={`bg-white border ${idx === 0 ? 'border-l-4 border-l-tertiary-container shadow-lg' : 'border-gray-100 shadow-sm'} rounded-xl overflow-hidden flex flex-col lg:flex-row transition-all hover:translate-y-[-2px] hover:shadow-xl`}>
-            <div className="p-6 flex-1 border-b lg:border-b-0 lg:border-r border-gray-100">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-gray-50 border border-gray-100 rounded-lg flex items-center justify-center p-2">
-                    <span className="material-symbols-outlined text-4xl text-gray-300">business</span>
-                  </div>
-                  <div>
-                    <h3 className="text-[20px] font-semibold text-primary">{quote.name}</h3>
-                    <div className="flex items-center gap-1 text-on-tertiary-container text-[#94a0ff]">
-                      <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                      <span className="text-[12px] font-bold tracking-[0.05em]">4.9 · {quote.coverage} Coverage</span>
+      <section className="max-w-5xl mx-auto space-y-5 px-4">
+        {quotes.map((quote, idx) => {
+          const bd = quote.breakdown;
+          const isRecommended = idx === 0;
+
+          return (
+            <motion.div
+              key={quote.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.08 }}
+              className={`bg-white border rounded-xl overflow-hidden flex flex-col lg:flex-row transition-all hover:-translate-y-1 hover:shadow-xl ${isRecommended ? 'border-l-4 border-l-[#C5A059] shadow-lg' : 'border-gray-100 shadow-sm'}`}
+            >
+              {/* Left: Details */}
+              <div className="p-6 flex-1 border-b lg:border-b-0 lg:border-r border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-surface-container-low border border-gray-100 rounded-xl flex items-center justify-center">
+                      <span className="material-symbols-outlined text-primary text-3xl">{quote.icon || 'business'}</span>
+                    </div>
+                    <div>
+                      <h3 className="text-[19px] font-bold text-primary">{quote.name}</h3>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="material-symbols-outlined text-amber-500 text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
+                        <span className="text-[12px] font-bold text-secondary">4.8 · {quote.coverage}</span>
+                      </div>
                     </div>
                   </div>
+                  {isRecommended && (
+                    <span className="bg-[#C5A059] text-white px-3 py-1 rounded-full text-[11px] font-bold tracking-wider">BEST DEAL</span>
+                  )}
                 </div>
-                {idx === 0 && (
-                  <span className="bg-tertiary-fixed text-[#000c61] px-3 py-1 rounded-full text-[12px] font-bold tracking-[0.05em]">RECOMMENDED</span>
-                )}
+
+                {/* Benefits */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
+                  {(quote.benefits || []).map((b, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className={`material-symbols-outlined text-[16px] mt-0.5 ${isRecommended ? 'text-primary' : 'text-secondary'}`} style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                      <span className="text-[13px] text-on-surface-variant">{b}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Badges */}
+                <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-50">
+                  <span className="text-[10px] font-bold bg-surface-container px-2 py-1 rounded-full text-secondary">Rate: {quote.ratePercentage}%</span>
+                  {/* Only show NCD badge on the insurer that issued the code */}
+                  {bd.isNcdIssuer && bd.ncdDiscount > 0 && (
+                    <span className="text-[10px] font-bold bg-green-50 text-green-800 px-2 py-1 rounded-full border border-green-200">✓ NCD {bd.appliedNcdPercentage}% Applied</span>
+                  )}
+                  <span className="text-[10px] font-bold bg-surface-container px-2 py-1 rounded-full text-secondary">Inspection: {quote.inspectionRules}</span>
+                </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {(quote.benefits || ['Third Party Property Damage', 'Medical Expenses', 'Theft & Fire']).map((b, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <span className={`material-symbols-outlined ${idx === 0 ? 'text-[#00137f]' : 'text-secondary'}`}>check_circle</span>
-                    <span className="text-[14px] text-on-surface-variant">{b}</span>
+
+              {/* Right: Pricing */}
+              <div className={`${isRecommended ? 'bg-primary/5' : 'bg-white'} lg:w-72 p-6 flex flex-col justify-center items-center text-center`}>
+                {/* Premium Breakdown */}
+                <div className="w-full space-y-2 mb-5 text-[13px]">
+                  <div className="flex justify-between text-on-surface-variant">
+                    <span>Base Premium</span>
+                    <span className="font-semibold">{formatZMW(bd.basePremium)}</span>
                   </div>
-                ))}
+                  {bd.ncdDiscount > 0 && (
+                    <div className="flex justify-between text-green-700">
+                      <span>NCD ({bd.appliedNcdPercentage}%)</span>
+                      <span className="font-semibold">- {formatZMW(bd.ncdDiscount)}</span>
+                    </div>
+                  )}
+                  {bd.isPiaBoosted && (
+                    <div className="flex items-center gap-1 text-amber-700 text-[11px]">
+                      <span className="material-symbols-outlined text-[13px]">info</span>
+                      <span>PIA minimum applied</span>
+                    </div>
+                  )}
+                  <div className="border-t border-gray-200 pt-2" />
+                </div>
+
+                <p className="text-[11px] font-bold tracking-[0.05em] text-secondary mb-1 uppercase">{bd.coverageDuration}</p>
+                <div className="mb-5">
+                  <span className={`text-[36px] font-extrabold ${isRecommended ? 'text-primary' : 'text-on-surface'}`}>
+                    ZMW {Math.round(bd.finalPremium).toLocaleString()}
+                  </span>
+                </div>
+
+                {bd.piaMet ? (
+                  <div className="text-[10px] font-bold text-green-700 bg-green-50 px-3 py-1 rounded-full mb-4 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[12px]">verified</span> PIA Compliant
+                  </div>
+                ) : (
+                  <div className="text-[10px] font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full mb-4">⚠️ Below PIA Minimum</div>
+                )}
+
+                <button
+                  onClick={() => handleSelectQuote(quote, bd)}
+                  className={`w-full py-4 rounded-xl font-bold transition-all active:scale-[0.98] ${isRecommended ? 'bg-primary text-white hover:bg-primary-container shadow-lg shadow-primary/25' : 'border-2 border-primary text-primary hover:bg-red-50'}`}
+                >
+                  Select This Quote
+                </button>
+                <p className="mt-3 text-[12px] font-semibold text-on-surface-variant cursor-pointer hover:text-primary hover:underline">View Full Policy Terms</p>
               </div>
-            </div>
-            <div className={`${idx === 0 ? 'bg-surface-container-low' : 'bg-white'} lg:w-72 p-6 flex flex-col justify-center items-center text-center`}>
-              <p className="text-[12px] font-bold tracking-[0.05em] text-secondary mb-1">ANNUAL PREMIUM</p>
-              <div className="mb-6">
-                <span className={`text-4xl font-extrabold ${idx === 0 ? 'text-primary' : 'text-on-surface'}`}>K {quote.price.toLocaleString()}</span>
-                <span className="text-[14px] text-secondary">/year</span>
-              </div>
-              <button 
-                onClick={() => handleSelectQuote(quote)} 
-                className={`w-full py-4 rounded-lg font-semibold transition-all active:scale-[0.98] ${idx === 0 ? 'bg-primary text-white hover:bg-primary-container shadow-md shadow-primary/20' : 'border-2 border-primary text-primary hover:bg-red-50'}`}
-              >
-                Select This Quote
-              </button>
-              <p className="mt-4 text-[12px] font-bold tracking-[0.05em] text-on-surface-variant cursor-pointer hover:underline">View Policy Details</p>
-            </div>
-          </div>
-        ))}
+            </motion.div>
+          );
+        })}
       </section>
 
-      {/* Pending Quotes Section */}
+      {/* Pending Insurers */}
       {pendingInsurers.length > 0 && (
-        <section className="max-w-5xl mx-auto mt-8">
-          <div className="bg-orange-50 border border-orange-100 p-6 rounded-xl">
+        <section className="max-w-5xl mx-auto mt-8 px-4">
+          <div className="bg-orange-50 border border-orange-100 p-5 rounded-xl">
             <div className="flex items-start gap-3 mb-4">
               <span className="material-symbols-outlined text-orange-500 animate-pulse">hourglass_empty</span>
               <div>
-                <h3 className="text-[16px] font-semibold text-orange-900">Preparing Quotes ({pendingInsurers.length})</h3>
-                <p className="text-[14px] text-orange-800/80">The following companies are still calculating your custom premium. You can wait for their response or proceed with the ready quotes above.</p>
+                <h3 className="text-[15px] font-semibold text-orange-900">Awaiting {pendingInsurers.length} More Quote{pendingInsurers.length > 1 ? 's' : ''}</h3>
+                <p className="text-[13px] text-orange-800/80">These insurers are still calculating. Proceed with the quotes above, or wait.</p>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {pendingInsurers.map((insurer) => (
-                <div key={insurer.id} className="bg-white/60 backdrop-blur-sm border border-orange-200/50 p-4 rounded-lg flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white rounded flex items-center justify-center text-orange-300">
-                    <span className="material-symbols-outlined">{insurer.icon || 'business'}</span>
-                  </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {pendingInsurers.map(ins => (
+                <div key={ins.id} className="bg-white/70 border border-orange-200/50 p-3 rounded-lg flex items-center gap-2">
+                  <span className="material-symbols-outlined text-orange-300 text-xl">{ins.icon || 'business'}</span>
                   <div>
-                    <p className="text-[14px] font-semibold text-orange-900">{insurer.name}</p>
-                    <p className="text-[12px] text-orange-700/70">Awaiting response...</p>
+                    <p className="text-[13px] font-semibold text-orange-900">{ins.name}</p>
+                    <p className="text-[11px] text-orange-700/70">Awaiting...</p>
                   </div>
                 </div>
               ))}
@@ -139,17 +207,17 @@ export default function QuotesComparisonPage() {
       )}
 
       {/* Help Section */}
-      <section className="max-w-5xl mx-auto mt-12 mb-12">
-        <div className="bg-surface-container border border-outline-variant p-8 rounded-2xl flex flex-col md:flex-row items-center gap-8">
-          <div className="w-20 h-20 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+      <section className="max-w-5xl mx-auto mt-12 mb-12 px-4">
+        <div className="bg-surface-container border border-outline-variant p-8 rounded-2xl flex flex-col md:flex-row items-center gap-6">
+          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
             <span className="material-symbols-outlined text-white text-3xl">headset_mic</span>
           </div>
           <div className="flex-1 text-center md:text-left">
-            <h2 className="text-[24px] font-semibold text-primary mb-2">Need help choosing?</h2>
-            <p className="text-[16px] text-on-surface-variant">Our private insurance advisors are available for a 1-on-1 consultation to compare these benefits in detail.</p>
+            <h2 className="text-[22px] font-bold text-primary mb-1">Need help choosing?</h2>
+            <p className="text-[15px] text-on-surface-variant">Our insurance advisors can explain each policy in detail. Book a free call.</p>
           </div>
-          <button className="px-8 py-3 bg-[#3d2d2a] text-white rounded-lg font-semibold hover:bg-primary transition-colors whitespace-nowrap shadow-lg">
-            Schedule a Call
+          <button onClick={() => navigate('/support')} className="px-8 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-primary-container transition-colors shadow-lg whitespace-nowrap">
+            Contact Support
           </button>
         </div>
       </section>

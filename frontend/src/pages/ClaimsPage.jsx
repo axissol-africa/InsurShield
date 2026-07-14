@@ -1,0 +1,1001 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useStore } from '../store/useStore';
+import { motion, AnimatePresence } from 'framer-motion';
+import { formatZMW } from '../utils/premiumEngine';
+import { INSURER_RATES } from '../utils/insurerRates';
+
+const CLAIM_TYPES = [
+  'Accident / Collision', 'Theft', 'Fire Damage', 'Natural Disaster',
+  'Third Party Liability', 'Windscreen Damage', 'Medical Expenses', 'Towing & Recovery',
+];
+
+const CLAIM_STATUSES = {
+  Submitted:    'bg-blue-100 text-blue-800',
+  'Under Review': 'bg-amber-100 text-amber-800',
+  'Additional Information Required': 'bg-orange-100 text-orange-800',
+  Approved:     'bg-green-100 text-green-800',
+  Rejected:     'bg-red-100 text-red-800',
+  Settled:      'bg-emerald-100 text-emerald-800',
+};
+
+const NCD_TIERS = [
+  { years: 1, percentage: 10 }, { years: 2, percentage: 20 },
+  { years: 3, percentage: 30 }, { years: 4, percentage: 40 },
+];
+
+const NCD_APPLICATION_STATUSES = [
+  { id: 'Submitted', color: 'bg-blue-100 text-blue-800' },
+  { id: 'Under Review', color: 'bg-amber-100 text-amber-800' },
+  { id: 'Verification Required', color: 'bg-orange-100 text-orange-800' },
+  { id: 'Approved', color: 'bg-green-100 text-green-800' },
+  { id: 'Rejected', color: 'bg-red-100 text-red-800' },
+];
+
+// Mock seeded data for tracking demo
+const SEED_CLAIMS = [
+  {
+    id: 'CLM-882031', referenceNumber: 'CLM-882031', phone: '0970123456',
+    insurer: 'Prestige Assurance', type: 'Accident / Collision',
+    incidentDate: '2025-06-10', location: 'Great East Road, near Arcades',
+    description: 'Rear-ended at traffic lights. Third party vehicle fled the scene.',
+    estimatedLoss: '45000', policeReport: true, policeReportNumber: 'ZP/2025/4421',
+    status: 'Under Review',
+    submittedAt: new Date(Date.now() - 4 * 86400000).toISOString(),
+    deadlineDate: new Date(Date.now() + 10 * 86400000).toISOString(),
+    timeline: [
+      { status: 'Submitted', note: 'Claim received and logged.', date: new Date(Date.now() - 4 * 86400000).toISOString() },
+      { status: 'Under Review', note: 'Assigned to claims assessor. Site inspection scheduled.', date: new Date(Date.now() - 2 * 86400000).toISOString() },
+    ],
+    messages: [
+      { id: 1, senderType: 'insurer', message: 'Your claim has been received and assigned to our assessment team. An assessor will contact you within 2 business days to schedule a vehicle inspection.', sentAt: new Date(Date.now() - 2 * 86400000).toISOString() },
+    ],
+  },
+];
+
+const SEED_NCD = [
+  {
+    id: 'NCDA-991200', applicationNumber: 'NCDA-991200', phone: '0970123456',
+    insurer: 'Prestige Assurance', policyNumber: 'PA-2023-0045',
+    yearsClaimFree: 2, status: 'Approved', approvedCode: 'NCD-D3E4F',
+    submittedAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+  },
+];
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+function SuccessBanner({ refNumber, phone, onDone, type = 'claim' }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => { navigator.clipboard?.writeText(refNumber); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  return (
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="max-w-lg mx-auto px-4 py-12 text-center">
+      <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-5">
+        <span className="material-symbols-outlined text-green-500 text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+      </div>
+      <h2 className="text-[26px] font-extrabold text-primary mb-2">
+        {type === 'claim' ? 'Claim Submitted!' : 'NCD Application Submitted!'}
+      </h2>
+      <p className="text-[14px] text-on-surface-variant mb-6">
+        Your {type === 'claim' ? 'claim' : 'NCD application'} has been sent to the insurer. Save your reference number below — you will need it to track your {type === 'claim' ? 'claim' : 'application'}.
+      </p>
+
+      {/* Reference Number Card */}
+      <div className="bg-primary text-white rounded-2xl p-6 mb-5 relative overflow-hidden shadow-lg shadow-primary/20">
+        <div className="absolute inset-0 opacity-10 text-[5rem] font-black flex items-center justify-center select-none">REF</div>
+        <p className="text-[12px] font-bold uppercase tracking-widest text-white/70 mb-2">Your Reference Number</p>
+        <p className="text-[32px] font-extrabold tracking-widest font-mono">{refNumber}</p>
+        <button onClick={copy} className="mt-3 flex items-center gap-2 mx-auto bg-white/20 hover:bg-white/30 text-white font-bold px-5 py-2 rounded-xl transition-colors text-[13px]">
+          <span className="material-symbols-outlined text-[16px]">{copied ? 'check' : 'content_copy'}</span>
+          {copied ? 'Copied!' : 'Copy Reference'}
+        </button>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 text-left">
+        <div className="flex items-start gap-2">
+          <span className="material-symbols-outlined text-amber-600 text-[18px] mt-0.5">warning</span>
+          <div>
+            <p className="font-bold text-amber-900 text-[13px]">Important — Save This Number</p>
+            <p className="text-[12px] text-amber-800 mt-1">
+              Since you don't have an account, this reference number is the <strong>only way</strong> to track your {type === 'claim' ? 'claim' : 'application'}.
+              You will also need the phone number <strong>{phone}</strong> you provided.
+              An SMS confirmation has been sent to that number.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <button onClick={onDone} className="py-3 bg-surface-container-low text-primary font-semibold rounded-xl border border-outline-variant hover:bg-gray-100 transition-colors">
+          Back to Claims
+        </button>
+        <button onClick={onDone} className="py-3 bg-primary text-white font-semibold rounded-xl hover:bg-primary-container transition-colors">
+          Track This {type === 'claim' ? 'Claim' : 'Application'}
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+function TrackingLookup({ type = 'claim', onFound }) {
+  const [refInput, setRefInput] = useState('');
+  const [phoneInput, setPhoneInput] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { claims, ncdApplications } = useStore();
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+      const allClaims = [...claims, ...SEED_CLAIMS];
+      const allNcd = [...ncdApplications, ...SEED_NCD];
+      const pool = type === 'claim' ? allClaims : allNcd;
+      const refKey = type === 'claim' ? 'referenceNumber' : 'applicationNumber';
+      const record = pool.find(r =>
+        (r[refKey] || r.id) === refInput.trim().toUpperCase() &&
+        (r.phone || '').replace(/\s/g, '') === phoneInput.replace(/\s/g, '')
+      );
+      if (record) {
+        onFound(record);
+      } else {
+        setError('No record found. Please check your reference number and phone number.');
+      }
+    }, 1000);
+  };
+
+  return (
+    <div className="max-w-md mx-auto">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
+            <span className="material-symbols-outlined text-primary text-2xl">manage_search</span>
+          </div>
+          <div>
+            <h3 className="font-bold text-[17px] text-primary">Track Your {type === 'claim' ? 'Claim' : 'NCD Application'}</h3>
+            <p className="text-[12px] text-on-surface-variant">Enter your reference number and phone</p>
+          </div>
+        </div>
+        <form onSubmit={handleSearch} className="space-y-4">
+          <div>
+            <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">
+              Reference Number
+            </label>
+            <input
+              required
+              value={refInput}
+              onChange={e => setRefInput(e.target.value.toUpperCase())}
+              placeholder={type === 'claim' ? 'e.g. CLM-882031' : 'e.g. NCDA-991200'}
+              className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 font-mono text-[15px] uppercase tracking-widest focus:ring-2 focus:ring-primary outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">
+              Mobile Number Used When Submitting
+            </label>
+            <input
+              required
+              type="tel"
+              value={phoneInput}
+              onChange={e => setPhoneInput(e.target.value)}
+              placeholder="e.g. 0970123456"
+              className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
+            />
+          </div>
+          {error && (
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 p-3 rounded-lg">
+              <span className="material-symbols-outlined text-red-600 text-[16px]">error</span>
+              <p className="text-[13px] text-red-800">{error}</p>
+            </div>
+          )}
+          <button type="submit" disabled={loading} className="w-full bg-primary text-white font-bold py-3.5 rounded-xl hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+            {loading ? <><span className="material-symbols-outlined animate-spin text-[18px]">sync</span> Searching...</> : <><span className="material-symbols-outlined text-[18px]">search</span> Find My {type === 'claim' ? 'Claim' : 'Application'}</>}
+          </button>
+        </form>
+        <div className="mt-4 bg-blue-50 border border-blue-100 p-3 rounded-xl">
+          <p className="text-[12px] text-blue-800">
+            <strong>Tip:</strong> Your reference number was shown on screen when you submitted, and sent via SMS to your phone. For demo: use ref <strong>{type === 'claim' ? 'CLM-882031' : 'NCDA-991200'}</strong> and phone <strong>0970123456</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function ClaimsPage() {
+  const navigate = useNavigate();
+  const { claims, addClaim, addClaimMessage, vehicleDetails, ncdApplications, addNcdApplication } = useStore();
+
+  // Main tab
+  const [mainTab, setMainTab] = useState('claims');
+  // Sub-view per tab: 'list' | 'new' | 'track' | 'detail' | 'success'
+  const [claimView, setClaimView] = useState('list');
+  const [ncdView, setNcdView] = useState('list');
+
+  const [selectedClaim, setSelectedClaim] = useState(null);
+  const [selectedNcdApp, setSelectedNcdApp] = useState(null);
+  const [newMessage, setNewMessage] = useState('');
+  const [submittedRef, setSubmittedRef] = useState(null);
+  const [submittedPhone, setSubmittedPhone] = useState('');
+
+  // Claim form state
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
+  const [docFiles, setDocFiles] = useState([]);
+  const [claimForm, setClaimForm] = useState({
+    insurer: '', type: '', incidentDate: '', location: '',
+    description: '', policeReport: false, policeReportNumber: '',
+    estimatedLoss: '', phone: '', fullName: '', lateReason: '',
+  });
+
+  // NCD form state
+  const [ncdSubmitting, setNcdSubmitting] = useState(false);
+  const [ncdForm, setNcdForm] = useState({
+    insurer: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false,
+  });
+
+  const setClaimField = (k, v) => setClaimForm(prev => ({ ...prev, [k]: v }));
+  const setNcdField = (k, v) => setNcdForm(prev => ({ ...prev, [k]: v }));
+
+  // 14-day window helpers
+  const getDaysSinceIncident = (dateStr) => {
+    if (!dateStr) return null;
+    const incident = new Date(dateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    incident.setHours(0, 0, 0, 0);
+    return Math.floor((today - incident) / 86400000);
+  };
+  const daysSinceIncident = getDaysSinceIncident(claimForm.incidentDate);
+  const isLate = daysSinceIncident !== null && daysSinceIncident > 14;
+  const isSubmitBlocked = isLate && !claimForm.lateReason.trim();
+
+  const allClaims = [...claims, ...SEED_CLAIMS];
+  const allNcdApps = [...ncdApplications, ...SEED_NCD];
+
+  // ─── Handlers ───────────────────────────────────────────────
+  const handleSubmitClaim = (e) => {
+    e.preventDefault();
+    setClaimSubmitting(true);
+    setTimeout(() => {
+      const refNumber = `CLM-${Math.floor(100000 + Math.random() * 900000)}`;
+      addClaim({
+        ...claimForm, referenceNumber: refNumber, status: 'Submitted',
+        vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your Vehicle',
+        plate: vehicleDetails?.plateNumber || 'N/A',
+        claimNumber: refNumber,
+        timeline: [{ status: 'Submitted', note: 'Claim submitted. Forwarded to insurer.', date: new Date().toISOString() }],
+        messages: [],
+        deadlineDate: new Date(Date.now() + 14 * 86400000).toISOString(),
+      });
+      setSubmittedRef(refNumber);
+      setSubmittedPhone(claimForm.phone);
+      setClaimSubmitting(false);
+      setClaimForm({ insurer: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: '', fullName: '', lateReason: '' });
+      setDocFiles([]);
+      setClaimView('success');
+    }, 1400);
+  };
+
+  const handleSubmitNcd = (e) => {
+    e.preventDefault();
+    if (!ncdForm.declaration) { alert('Please acknowledge the declaration before submitting.'); return; }
+    setNcdSubmitting(true);
+    setTimeout(() => {
+      const refNumber = `NCDA-${Math.floor(100000 + Math.random() * 900000)}`;
+      addNcdApplication({ ...ncdForm, applicationNumber: refNumber, yearsClaimFree: parseInt(ncdForm.yearsClaimFree) });
+      setSubmittedRef(refNumber);
+      setSubmittedPhone(ncdForm.phone);
+      setNcdSubmitting(false);
+      setNcdForm({ insurer: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false });
+      setNcdView('success');
+    }, 1400);
+  };
+
+  const handleSendClaimMessage = (claimId) => {
+    if (!newMessage.trim()) return;
+    addClaimMessage(claimId, { senderType: 'customer', message: newMessage.trim() });
+    setNewMessage('');
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // VIEWS: Claims
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── Success ──
+  if (mainTab === 'claims' && claimView === 'success') {
+    return <SuccessBanner refNumber={submittedRef} phone={submittedPhone} type="claim"
+      onDone={() => { setClaimView('track'); }} />;
+  }
+
+  // ── New Claim Form ──
+  if (mainTab === 'claims' && claimView === 'new') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto px-4 py-10 pb-24">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setClaimView('list')} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <div>
+            <h1 className="text-[24px] font-bold text-primary">Submit a Claim</h1>
+            <p className="text-[13px] text-on-surface-variant">You will receive a reference number to track your claim — no account needed.</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmitClaim} className="space-y-5">
+
+          {/* 14-Day Rule Banner */}
+          <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-5 flex items-start gap-4">
+            <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center flex-shrink-0">
+              <span className="material-symbols-outlined text-red-600 text-2xl">timer</span>
+            </div>
+            <div>
+              <p className="font-extrabold text-red-900 text-[15px]">14-Day Claim Submission Rule</p>
+              <p className="text-[13px] text-red-800 mt-1 leading-relaxed">
+                Claims must be submitted <strong>within 14 days of the incident</strong>. Claims received after this window will
+                not be processed unless a valid written reason for the delay is provided.
+                Late claims are subject to insurer discretion and may be declined.
+              </p>
+            </div>
+          </div>
+          {/* Contact */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+            <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
+              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">1</span>
+              Your Contact Details
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Full Name *</label>
+                <input required value={claimForm.fullName} onChange={e => setClaimField('fullName', e.target.value)} placeholder="e.g. Mwiza Banda" className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Mobile Number *</label>
+                <input required type="tel" value={claimForm.phone} onChange={e => setClaimField('phone', e.target.value)} placeholder="e.g. 0970 123 456" className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+                <p className="text-[11px] text-on-surface-variant mt-1">⚠️ Must match the number on your policy. Used to verify your claim status later.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Insurer + Claim Type */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+            <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
+              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">2</span>
+              Claim Details
+            </h3>
+
+            {/* Insurance Company Dropdown */}
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Insurance Company (Where Claim is Made) *</label>
+              <div className="relative">
+                <select required value={claimForm.insurer} onChange={e => setClaimField('insurer', e.target.value)}
+                  className="w-full appearance-none bg-surface-container-low border-2 border-outline-variant rounded-xl p-3.5 text-[15px] focus:ring-2 focus:ring-primary focus:border-primary outline-none">
+                  <option value="">Select the insurance company...</option>
+                  {INSURER_RATES.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+                </select>
+                <span className="material-symbols-outlined absolute right-3 top-3.5 text-gray-400 pointer-events-none">expand_more</span>
+              </div>
+              <p className="text-[11px] text-on-surface-variant mt-1">Select the insurer with whom your vehicle policy is held.</p>
+            </div>
+
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Claim Type *</label>
+              <div className="relative">
+                <select required value={claimForm.type} onChange={e => setClaimField('type', e.target.value)}
+                  className="w-full appearance-none bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none">
+                  <option value="">Select claim type...</option>
+                  {CLAIM_TYPES.map(t => <option key={t}>{t}</option>)}
+                </select>
+                <span className="material-symbols-outlined absolute right-3 top-3.5 text-gray-400 pointer-events-none">expand_more</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Date of Incident *</label>
+                <input required type="date" value={claimForm.incidentDate} max={new Date().toISOString().split('T')[0]}
+                  onChange={e => setClaimField('incidentDate', e.target.value)}
+                  className={`w-full border rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none ${
+                    isLate
+                      ? 'bg-red-50 border-red-400 text-red-900 focus:ring-red-400'
+                      : daysSinceIncident !== null
+                        ? 'bg-green-50 border-green-400 focus:ring-green-400'
+                        : 'bg-surface-container-low border-outline-variant'
+                  }`} />
+                {/* Live day counter */}
+                {daysSinceIncident !== null && (
+                  <div className={`mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-bold ${
+                    isLate ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                  }`}>
+                    <span className="material-symbols-outlined text-[15px]">{isLate ? 'warning' : 'check_circle'}</span>
+                    {isLate
+                      ? `${daysSinceIncident} days since incident — outside 14-day window`
+                      : `${daysSinceIncident} day${daysSinceIncident !== 1 ? 's' : ''} since incident — within 14-day window ✓`
+                    }
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Estimated Loss (ZMW)</label>
+                <input type="number" min="0" value={claimForm.estimatedLoss} onChange={e => setClaimField('estimatedLoss', e.target.value)} placeholder="e.g. 15000"
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Incident Location *</label>
+              <input required value={claimForm.location} onChange={e => setClaimField('location', e.target.value)} placeholder="e.g. Great East Road, near Arcades, Lusaka"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+            </div>
+
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Describe What Happened *</label>
+              <textarea required rows={4} value={claimForm.description} onChange={e => setClaimField('description', e.target.value)}
+                placeholder="Provide a clear and detailed description of the incident..."
+                className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none resize-none" />
+            </div>
+          </div>
+
+          {/* Police Report */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-3">
+            <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
+              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">3</span>
+              Police Report
+            </h3>
+            <div className="flex items-center gap-3 p-3 bg-surface-container-low rounded-xl border border-outline-variant cursor-pointer"
+              onClick={() => setClaimField('policeReport', !claimForm.policeReport)}>
+              <input type="checkbox" checked={claimForm.policeReport} readOnly className="w-5 h-5 rounded text-primary focus:ring-primary" />
+              <div>
+                <p className="font-semibold text-[14px]">Police Report Filed</p>
+                <p className="text-[12px] text-on-surface-variant">Strongly recommended — speeds up claim processing significantly</p>
+              </div>
+            </div>
+            {claimForm.policeReport && (
+              <input value={claimForm.policeReportNumber} onChange={e => setClaimField('policeReportNumber', e.target.value)}
+                placeholder="Police Case / Report Number e.g. ZP/2025/4421"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+            )}
+          </div>
+
+          {/* Documents */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+            <h3 className="font-bold text-[15px] border-b pb-2 mb-4 flex items-center gap-2">
+              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">4</span>
+              Supporting Documents
+            </h3>
+            <div className="border-2 border-dashed border-outline-variant rounded-xl p-6 text-center hover:border-primary/50 transition-colors">
+              <label className="cursor-pointer flex flex-col items-center gap-2">
+                <div className="bg-primary/10 w-12 h-12 rounded-full flex items-center justify-center text-primary">
+                  <span className="material-symbols-outlined">upload_file</span>
+                </div>
+                <p className="font-semibold text-[14px]">Upload Photos & Documents</p>
+                <p className="text-[12px] text-on-surface-variant">Damage photos, police report scan, repair quotations, witnesses</p>
+                <input type="file" multiple accept="image/*,.pdf" className="hidden" onChange={e => setDocFiles(Array.from(e.target.files))} />
+              </label>
+              {docFiles.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2 justify-center">
+                  {docFiles.map((f, i) => <span key={i} className="text-[11px] bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{f.name}</span>)}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Late Submission Reason — only appears when incident > 14 days ago */}
+          {isLate && (
+            <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-5 space-y-3">
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-red-600 text-[22px] mt-0.5">report</span>
+                <div>
+                  <p className="font-extrabold text-red-900 text-[15px]">Late Submission — Reason Required</p>
+                  <p className="text-[13px] text-red-800 mt-1">
+                    Your incident was <strong>{daysSinceIncident} days ago</strong>, which is outside the standard 14-day window.
+                    You must provide a valid reason for the late submission. The insurer will review this reason
+                    and may still decline the claim at their discretion.
+                  </p>
+                </div>
+              </div>
+              <div>
+                <label className="text-[12px] font-bold uppercase tracking-wider text-red-800 mb-1.5 block">
+                  Reason for Late Submission *
+                </label>
+                <textarea
+                  required={isLate}
+                  rows={4}
+                  value={claimForm.lateReason}
+                  onChange={e => setClaimField('lateReason', e.target.value)}
+                  placeholder="e.g. I was hospitalised following the accident and only discharged on [date]. I attach a medical report as evidence..."
+                  className="w-full bg-white border-2 border-red-300 rounded-xl p-3 text-[14px] focus:ring-2 focus:ring-red-400 outline-none resize-none"
+                />
+                <p className="text-[11px] text-red-700 mt-1 font-semibold">
+                  Supporting evidence (medical report, police notification delay, etc.) should be uploaded in the Documents section.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Claim Note */}
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-start gap-2">
+            <span className="material-symbols-outlined text-amber-700 text-[18px] mt-0.5">info</span>
+            <p className="text-[13px] text-amber-900">
+              <strong>Note:</strong> Once submitted, your claim is forwarded directly to <strong>{claimForm.insurer || 'the selected insurer'}</strong>. Filing a claim may affect future No Claim Discount eligibility. Insurers typically respond within 5–7 business days.
+            </p>
+          </div>
+
+          <button type="submit" disabled={claimSubmitting || isSubmitBlocked}
+            className="w-full bg-primary text-white font-bold text-[16px] py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+            {claimSubmitting
+              ? <><span className="material-symbols-outlined animate-spin">sync</span> Submitting Claim...</>
+              : isSubmitBlocked
+                ? <><span className="material-symbols-outlined">lock</span> Provide Late Reason to Submit</>
+                : <><span className="material-symbols-outlined">send</span> Submit Claim to {claimForm.insurer || 'Insurer'}</>
+            }
+          </button>
+        </form>
+      </motion.div>
+    );
+  }
+
+  // ── Claim Detail (after tracking lookup) ──
+  if (mainTab === 'claims' && claimView === 'detail' && selectedClaim) {
+    const claim = allClaims.find(c => c.id === selectedClaim.id) || selectedClaim;
+    const daysLeft = Math.max(0, Math.ceil((new Date(claim.deadlineDate) - new Date()) / 86400000));
+    const statusColor = CLAIM_STATUSES[claim.status] || 'bg-gray-100 text-gray-700';
+
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setClaimView('track')} className="p-2 hover:bg-gray-100 rounded-full">
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <div className="flex-1">
+            <h1 className="text-[22px] font-bold text-primary font-mono">{claim.referenceNumber || claim.id}</h1>
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <span className={`text-[11px] font-bold px-3 py-0.5 rounded-full ${statusColor}`}>{claim.status}</span>
+              {claim.insurer && <span className="text-[12px] text-secondary">· {claim.insurer}</span>}
+              <span className="text-[12px] text-secondary">· {claim.type}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-3">
+            <h3 className="font-bold text-[13px] uppercase tracking-wider text-on-surface-variant border-b pb-2">Claim Details</h3>
+            {claim.insurer && <InfoRow label="Insurance Company" value={claim.insurer} highlight />}
+            <InfoRow label="Claim Type" value={claim.type} />
+            <InfoRow label="Incident Date" value={claim.incidentDate} />
+            <InfoRow label="Location" value={claim.location} />
+            {claim.estimatedLoss && <InfoRow label="Estimated Loss" value={formatZMW(parseFloat(claim.estimatedLoss))} highlight />}
+            <div>
+              <p className="text-[11px] uppercase text-secondary font-bold mb-1">Resolution Deadline</p>
+              <span className={`inline-flex items-center gap-1 text-[12px] font-bold px-3 py-1 rounded-full ${daysLeft < 3 ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>
+                <span className="material-symbols-outlined text-[14px]">schedule</span> {daysLeft} days remaining
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <h3 className="font-bold text-[13px] uppercase tracking-wider text-on-surface-variant border-b pb-2 mb-4">Progress Timeline</h3>
+            <div className="relative">
+              <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-gray-100" />
+              <div className="space-y-4">
+                {(claim.timeline || []).map((step, i) => (
+                  <div key={i} className="relative flex items-start gap-4 pl-2">
+                    <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center z-10 flex-shrink-0">
+                      <span className="material-symbols-outlined text-white text-[12px]">check</span>
+                    </div>
+                    <div>
+                      <p className="font-bold text-[13px] text-primary">{step.status}</p>
+                      <p className="text-[12px] text-on-surface-variant">{step.note}</p>
+                      <p className="text-[10px] text-secondary mt-0.5">{new Date(step.date).toLocaleString()}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <h3 className="font-bold text-[13px] uppercase tracking-wider text-on-surface-variant border-b pb-2 mb-4">
+            Messages from {claim.insurer || 'Insurer'}
+          </h3>
+          <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
+            {(claim.messages || []).length === 0 && (
+              <p className="text-[13px] text-on-surface-variant text-center py-4">No messages yet. The insurer will contact you here.</p>
+            )}
+            {(claim.messages || []).map(msg => (
+              <div key={msg.id} className={`flex ${msg.senderType === 'customer' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-sm p-3 rounded-2xl text-[13px] ${msg.senderType === 'customer' ? 'bg-primary text-white rounded-br-sm' : 'bg-surface-container-low text-on-surface rounded-bl-sm'}`}>
+                  {msg.senderType !== 'customer' && <p className="text-[10px] font-bold text-primary mb-1 opacity-70">{claim.insurer?.toUpperCase() || 'INSURER'}</p>}
+                  <p>{msg.message}</p>
+                  <p className={`text-[10px] mt-1 ${msg.senderType === 'customer' ? 'text-white/60' : 'text-secondary'}`}>{new Date(msg.sentAt).toLocaleTimeString()}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input value={newMessage} onChange={e => setNewMessage(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSendClaimMessage(claim.id)}
+              placeholder={`Message to ${claim.insurer || 'insurer'}...`}
+              className="flex-1 bg-surface-container-low border border-outline-variant rounded-xl px-4 py-2.5 text-[14px] focus:ring-2 focus:ring-primary outline-none" />
+            <button onClick={() => handleSendClaimMessage(claim.id)} className="bg-primary text-white px-4 py-2.5 rounded-xl hover:bg-primary-container transition-colors">
+              <span className="material-symbols-outlined text-[20px]">send</span>
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // ── Claim Track ──
+  if (mainTab === 'claims' && claimView === 'track') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setClaimView('list')} className="p-2 hover:bg-gray-100 rounded-full">
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <h1 className="text-[24px] font-bold text-primary">Track Your Claim</h1>
+        </div>
+        <TrackingLookup type="claim" onFound={record => { setSelectedClaim(record); setClaimView('detail'); }} />
+      </motion.div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // VIEWS: NCD Applications
+  // ════════════════════════════════════════════════════════════════
+
+  if (mainTab === 'ncd' && ncdView === 'success') {
+    return <SuccessBanner refNumber={submittedRef} phone={submittedPhone} type="ncd"
+      onDone={() => { setNcdView('track'); }} />;
+  }
+
+  if (mainTab === 'ncd' && ncdView === 'new') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto px-4 py-10 pb-24">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setNcdView('list')} className="p-2 hover:bg-gray-100 rounded-full">
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <div>
+            <h1 className="text-[24px] font-bold text-primary">Apply for No Claim Discount</h1>
+            <p className="text-[13px] text-on-surface-variant">You'll receive a reference number to track this application.</p>
+          </div>
+        </div>
+
+        {/* How it works */}
+        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5 mb-6">
+          <h4 className="font-bold text-blue-900 text-[14px] mb-3 flex items-center gap-2">
+            <span className="material-symbols-outlined text-blue-700 text-[18px]">info</span>
+            How NCD Works
+          </h4>
+          <div className="space-y-2">
+            {[
+              'Select the insurer you\'ve been with for at least 1 year with no claims.',
+              'Enter your policy number and how many years you\'ve been claim-free.',
+              'Submit — the insurer verifies your claim history (3–5 business days).',
+              'If approved, you receive a unique NCD code to use on your next quotation.',
+              'The discount is applied only on quotes from that specific insurer.',
+            ].map((step, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <span className="w-5 h-5 bg-primary text-white text-[11px] font-bold rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                <p className="text-[13px] text-blue-900">{step}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmitNcd} className="space-y-5">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+            <h3 className="font-bold text-[15px] border-b pb-2">Contact & Application Details</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Full Name *</label>
+                <input required value={ncdForm.fullName} onChange={e => setNcdField('fullName', e.target.value)} placeholder="e.g. Mwiza Banda"
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Mobile Number *</label>
+                <input required type="tel" value={ncdForm.phone} onChange={e => setNcdField('phone', e.target.value)} placeholder="e.g. 0970 123 456"
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+                <p className="text-[11px] text-on-surface-variant mt-1">Used to verify and track this application.</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Insurance Company *</label>
+              <div className="relative">
+                <select required value={ncdForm.insurer} onChange={e => setNcdField('insurer', e.target.value)}
+                  className="w-full appearance-none bg-surface-container-low border border-outline-variant rounded-xl p-3.5 text-[15px] focus:ring-2 focus:ring-primary outline-none">
+                  <option value="">Select insurer you have been using...</option>
+                  {INSURER_RATES.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+                </select>
+                <span className="material-symbols-outlined absolute right-3 top-3.5 text-gray-400 pointer-events-none">expand_more</span>
+              </div>
+              <p className="text-[11px] text-on-surface-variant mt-1">You must have been continuously insured with this company for a minimum of 1 year.</p>
+            </div>
+
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Existing Policy Number *</label>
+              <input required value={ncdForm.policyNumber} onChange={e => setNcdField('policyNumber', e.target.value.toUpperCase())} placeholder="e.g. PA-2023-0045"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 font-mono text-[15px] uppercase focus:ring-2 focus:ring-primary outline-none" />
+            </div>
+
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-2 block">Years Continuously Insured Without a Claim *</label>
+              <div className="grid grid-cols-4 gap-2">
+                {NCD_TIERS.map(tier => (
+                  <div key={tier.years} onClick={() => setNcdField('yearsClaimFree', String(tier.years))}
+                    className={`p-3 rounded-xl border-2 cursor-pointer text-center transition-all ${ncdForm.yearsClaimFree === String(tier.years) ? 'bg-primary border-primary text-white' : 'border-gray-200 bg-white hover:border-primary/40'}`}>
+                    <p className="text-[20px] font-extrabold">{tier.years}</p>
+                    <p className="text-[10px] font-bold uppercase">yr{tier.years > 1 ? 's' : ''}</p>
+                    <p className={`text-[12px] font-extrabold mt-1 ${ncdForm.yearsClaimFree === String(tier.years) ? 'text-white' : 'text-primary'}`}>{tier.percentage}%</p>
+                  </div>
+                ))}
+              </div>
+              {ncdForm.yearsClaimFree && (
+                <div className="mt-3 bg-green-50 border border-green-200 p-3 rounded-xl flex items-center gap-2">
+                  <span className="material-symbols-outlined text-green-600 text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <p className="text-[13px] text-green-900">
+                    <strong>{NCD_TIERS.find(t => t.years === parseInt(ncdForm.yearsClaimFree))?.percentage}% discount</strong> may apply — subject to insurer verification.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Declaration */}
+          <div className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${ncdForm.declaration ? 'bg-green-50 border-green-400' : 'bg-white border-gray-200 hover:border-primary/40'}`}
+            onClick={() => setNcdField('declaration', !ncdForm.declaration)}>
+            <div className={`w-6 h-6 rounded-md border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${ncdForm.declaration ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>
+              {ncdForm.declaration && <span className="material-symbols-outlined text-white text-[14px]">check</span>}
+            </div>
+            <p className="text-[13px] leading-relaxed text-on-surface">
+              <strong>I declare</strong> that I have been continuously insured with the selected company for the stated period and have not made any insurance claims during that time. I understand that false information may result in rejection and legal action.
+            </p>
+          </div>
+
+          <button type="submit" disabled={ncdSubmitting || !ncdForm.yearsClaimFree || !ncdForm.declaration}
+            className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
+            {ncdSubmitting
+              ? <><span className="material-symbols-outlined animate-spin">sync</span> Submitting...</>
+              : <><span className="material-symbols-outlined">send</span> Submit NCD Application</>
+            }
+          </button>
+        </form>
+      </motion.div>
+    );
+  }
+
+  if (mainTab === 'ncd' && ncdView === 'track') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setNcdView('list')} className="p-2 hover:bg-gray-100 rounded-full">
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <h1 className="text-[24px] font-bold text-primary">Track NCD Application</h1>
+        </div>
+        <TrackingLookup type="ncd" onFound={record => { setSelectedNcdApp(record); setNcdView('detail'); }} />
+      </motion.div>
+    );
+  }
+
+  if (mainTab === 'ncd' && ncdView === 'detail' && selectedNcdApp) {
+    const app = allNcdApps.find(a => a.id === selectedNcdApp.id) || selectedNcdApp;
+    const statusInfo = NCD_APPLICATION_STATUSES.find(s => s.id === app.status);
+    const currentStatusIdx = NCD_APPLICATION_STATUSES.findIndex(s => s.id === app.status);
+    const tier = NCD_TIERS.find(t => t.years === app.yearsClaimFree);
+
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => setNcdView('track')} className="p-2 hover:bg-gray-100 rounded-full">
+            <span className="material-symbols-outlined">arrow_back</span>
+          </button>
+          <div className="flex-1">
+            <h1 className="text-[22px] font-bold text-primary font-mono">{app.applicationNumber}</h1>
+            <span className={`text-[11px] font-bold px-3 py-0.5 rounded-full ${statusInfo?.color || 'bg-gray-100 text-gray-700'}`}>{app.status}</span>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-5 space-y-3">
+          <InfoRow label="Insurance Company" value={app.insurer} highlight />
+          <InfoRow label="Policy Number" value={app.policyNumber} />
+          <InfoRow label="Years Claim-Free" value={`${app.yearsClaimFree} year${app.yearsClaimFree > 1 ? 's' : ''}`} />
+          <InfoRow label="Potential Discount" value={`${tier?.percentage || app.yearsClaimFree * 10}%`} highlight />
+          <InfoRow label="Submitted" value={new Date(app.submittedAt).toLocaleDateString()} />
+        </div>
+
+        {/* Progress */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-5">
+          <h3 className="font-bold text-[13px] uppercase text-on-surface-variant border-b pb-2 mb-4">Application Progress</h3>
+          <div className="relative">
+            <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-gray-100" />
+            <div className="space-y-4">
+              {NCD_APPLICATION_STATUSES.filter(s => s.id !== 'Rejected').map((status, idx) => {
+                const isDone = idx <= currentStatusIdx;
+                const isCurrent = idx === currentStatusIdx;
+                return (
+                  <div key={status.id} className="relative flex items-center gap-4 pl-2">
+                    <div className={`w-6 h-6 rounded-full z-10 flex-shrink-0 flex items-center justify-center ${isDone ? 'bg-primary' : 'border-2 border-gray-200 bg-white'}`}>
+                      {isDone && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                    </div>
+                    <div className={`text-[13px] ${isCurrent ? 'font-bold text-primary' : isDone ? 'text-on-surface' : 'text-on-surface-variant opacity-40'}`}>
+                      {status.label}
+                      {isCurrent && <span className="ml-2 text-[10px] bg-primary text-white px-2 py-0.5 rounded-full">CURRENT</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Approved Code */}
+        {app.status === 'Approved' && app.approvedCode && (
+          <div className="bg-green-50 border-2 border-green-400 rounded-2xl p-5 text-center">
+            <span className="material-symbols-outlined text-green-600 text-4xl mb-2" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+            <h3 className="font-extrabold text-green-900 text-[18px] mb-1">NCD Approved!</h3>
+            <p className="text-[13px] text-green-800 mb-3">Use this code when requesting a quotation from <strong>{app.insurer}</strong>.</p>
+            <div className="bg-white border border-green-300 rounded-xl p-4 mb-3">
+              <p className="text-[12px] text-green-700 font-bold uppercase mb-1">Your NCD Code</p>
+              <p className="text-[32px] font-extrabold text-primary font-mono tracking-widest">{app.approvedCode}</p>
+              <p className="text-[11px] text-amber-700 font-bold mt-1">⚠️ Valid for {app.insurer} only · Single use</p>
+            </div>
+            <div className="flex gap-3 justify-center">
+              <button onClick={() => navigator.clipboard?.writeText(app.approvedCode)} className="flex items-center gap-2 px-5 py-2.5 border-2 border-primary text-primary font-bold rounded-xl hover:bg-primary/5">
+                <span className="material-symbols-outlined text-[18px]">content_copy</span> Copy Code
+              </button>
+              <button onClick={() => navigate('/select-insurers')} className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white font-bold rounded-xl hover:bg-primary-container">
+                <span className="material-symbols-outlined text-[18px]">request_quote</span> Get a Quote
+              </button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MAIN LIST VIEW
+  // ════════════════════════════════════════════════════════════════
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-8">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-[28px] font-bold text-primary">Claims & NCD</h1>
+        <p className="text-[14px] text-on-surface-variant">Submit or track a claim · Apply for No Claim Discount</p>
+      </div>
+
+      {/* No Account Banner */}
+      <div className="bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/20 rounded-2xl p-5 mb-6 flex items-start gap-4">
+        <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center flex-shrink-0">
+          <span className="material-symbols-outlined text-primary text-2xl">badge</span>
+        </div>
+        <div>
+          <p className="font-bold text-primary text-[15px]">No Account? No Problem.</p>
+          <p className="text-[13px] text-on-surface-variant mt-1">
+            InsurShield works without an account. When you submit a claim or NCD application, you'll receive a <strong>unique reference number</strong> via SMS and on screen. Keep it safe — it's your only way to track progress.
+          </p>
+        </div>
+      </div>
+
+      {/* Main Tabs */}
+      <div className="flex gap-2 mb-6 bg-surface-container-low p-1 rounded-xl border border-outline-variant">
+        {[
+          { id: 'claims', label: 'Claims', icon: 'report_problem' },
+          { id: 'ncd', label: 'NCD Applications', icon: 'discount' },
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setMainTab(tab.id)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-[14px] font-semibold transition-all ${mainTab === tab.id ? 'bg-white shadow text-primary border border-gray-100' : 'text-secondary hover:text-primary'}`}>
+            <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Claims Tab ── */}
+      {mainTab === 'claims' && (
+        <>
+          {/* Action Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+            <button onClick={() => setClaimView('new')}
+              className="bg-primary text-white rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 transition-all group">
+              <span className="material-symbols-outlined text-3xl mb-3 block opacity-80">add_circle</span>
+              <p className="font-extrabold text-[18px] mb-1">Submit a New Claim</p>
+              <p className="text-[13px] text-white/80">Report an incident to your insurer. You'll get a reference number instantly.</p>
+              <div className="mt-4 flex items-center gap-1 font-bold text-[13px]">
+                Start Claim <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              </div>
+            </button>
+
+            <button onClick={() => setClaimView('track')}
+              className="bg-white border-2 border-primary/20 text-primary rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 hover:border-primary/40 transition-all group">
+              <span className="material-symbols-outlined text-3xl mb-3 block text-secondary">manage_search</span>
+              <p className="font-extrabold text-[18px] mb-1 text-primary">Track Existing Claim</p>
+              <p className="text-[13px] text-on-surface-variant">Enter your reference number and phone to check status and messages.</p>
+              <div className="mt-4 flex items-center gap-1 font-bold text-[13px] text-primary">
+                Track Claim <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              </div>
+            </button>
+          </div>
+
+          {/* What to Expect */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <h3 className="font-bold text-[15px] text-primary mb-4">How the Claims Process Works</h3>
+            <div className="space-y-4">
+              {[
+                { icon: 'description', step: '1', title: 'Submit Your Claim', desc: 'Fill in the claim form selecting the insurer and describing the incident. Attach photos and police report if available.' },
+                { icon: 'sms', step: '2', title: 'Save Your Reference Number', desc: 'You\'ll receive a unique reference number on screen and via SMS. This is essential to track your claim — there is no login.' },
+                { icon: 'rate_review', step: '3', title: 'Insurer Review', desc: 'Your selected insurer reviews the claim, may schedule a vehicle inspection, and will communicate via the claims tracking page.' },
+                { icon: 'payments', step: '4', title: 'Settlement', desc: 'Once approved, the insurer will contact you directly to arrange settlement payment or vehicle repairs.' },
+              ].map(item => (
+                <div key={item.step} className="flex items-start gap-4">
+                  <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <span className="material-symbols-outlined text-primary text-[20px]">{item.icon}</span>
+                  </div>
+                  <div>
+                    <p className="font-bold text-[14px] text-primary">{item.title}</p>
+                    <p className="text-[13px] text-on-surface-variant mt-0.5">{item.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── NCD Tab ── */}
+      {mainTab === 'ncd' && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            <button onClick={() => setNcdView('new')}
+              className="bg-primary text-white rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 transition-all group">
+              <span className="material-symbols-outlined text-3xl mb-3 block opacity-80">discount</span>
+              <p className="font-extrabold text-[18px] mb-1">Apply for NCD</p>
+              <p className="text-[13px] text-white/80">Have 1+ year with no claims? Apply for up to 40% discount.</p>
+              <div className="mt-4 flex items-center gap-1 font-bold text-[13px]">
+                Apply Now <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              </div>
+            </button>
+            <button onClick={() => setNcdView('track')}
+              className="bg-white border-2 border-primary/20 text-primary rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 hover:border-primary/40 transition-all group">
+              <span className="material-symbols-outlined text-3xl mb-3 block text-secondary">manage_search</span>
+              <p className="font-extrabold text-[18px] mb-1 text-primary">Track Application</p>
+              <p className="text-[13px] text-on-surface-variant">Check status of an existing NCD application using your reference number.</p>
+              <div className="mt-4 flex items-center gap-1 font-bold text-[13px] text-primary">
+                Track <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              </div>
+            </button>
+          </div>
+
+          {/* NCD Scale Reference */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <h3 className="font-bold text-[15px] text-primary mb-4">NCD Discount Scale</h3>
+            <div className="grid grid-cols-4 gap-3 mb-3">
+              {NCD_TIERS.map(tier => (
+                <div key={tier.years} className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center">
+                  <p className="text-[24px] font-extrabold text-primary">{tier.percentage}%</p>
+                  <p className="text-[11px] font-bold uppercase text-secondary">{tier.years} Yr{tier.years > 1 ? 's' : ''}</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-[12px] text-on-surface-variant text-center">Maximum discount: 40% after 4 consecutive claim-free years. Subject to insurer approval.</p>
+          </div>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+function InfoRow({ label, value, highlight }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase text-secondary font-bold">{label}</p>
+      <p className={`text-[14px] font-semibold ${highlight ? 'text-primary' : 'text-on-surface'}`}>{value}</p>
+    </div>
+  );
+}

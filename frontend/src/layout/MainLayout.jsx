@@ -1,13 +1,11 @@
 import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import ChatWidget from '../components/ChatWidget';
-import { useStore } from '../store/useStore';
 
 const NAV_LINKS = [
   { to: '/', label: 'Home', icon: 'home' },
   { to: '/renewal', label: 'Policies', icon: 'shield' },
   { to: '/claims', label: 'Claims', icon: 'report_problem' },
-  { to: '/support', label: 'Support', icon: 'headset_mic' },
+  { to: '/support', label: 'Contact', icon: 'contacts' },
 ];
 
 // Routes that get full-width dashboard treatment
@@ -15,7 +13,6 @@ const PORTAL_ROUTES = ['/admin', '/insurer', '/admin-login'];
 
 export default function MainLayout() {
   const location = useLocation();
-  const { unreadCount } = useStore();
 
   const isActive = (to) => location.pathname === to;
   const isPortal = PORTAL_ROUTES.some(r => location.pathname === r || location.pathname.startsWith(r + '/'));
@@ -43,9 +40,6 @@ export default function MainLayout() {
           </Link>
         </nav>
         <div className="flex items-center gap-4">
-          <Link to="/support" className="relative">
-            <span className="material-symbols-outlined text-primary cursor-pointer active:opacity-70">notifications</span>
-          </Link>
           <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center border border-outline-variant overflow-hidden">
             <span className="material-symbols-outlined text-gray-500 text-sm">person</span>
           </div>
@@ -72,7 +66,7 @@ export default function MainLayout() {
           { to: '/', label: 'Home', icon: 'home' },
           { to: '/renewal', label: 'Policies', icon: 'shield' },
           { to: '/claims', label: 'Claims', icon: 'report_problem' },
-          { to: '/support', label: 'Support', icon: 'headset_mic', badge: unreadCount > 0 },
+          { to: '/support', label: 'Contact', icon: 'contacts' },
         ].map(link => (
           <Link
             key={link.to}
@@ -83,17 +77,11 @@ export default function MainLayout() {
               {link.icon}
             </span>
             <span className="text-[10px] font-bold uppercase tracking-widest mt-0.5">{link.label}</span>
-            {link.badge && (
-              <span className="absolute -top-1 right-0 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-[9px] font-bold">{unreadCount}</span>
-              </span>
-            )}
           </Link>
         ))}
       </nav>
 
-      {/* Global Chat Widget */}
-      <ChatWidget />
+
     </div>
   );
 }

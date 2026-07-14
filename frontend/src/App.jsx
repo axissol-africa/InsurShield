@@ -18,6 +18,10 @@ import AdminDashboard from './pages/AdminDashboard';
 import InsurerDashboard from './pages/InsurerDashboard';
 import RenewalPage from './pages/RenewalPage';
 import TrackApplicationPage from './pages/TrackApplicationPage';
+import ClaimsPage from './pages/ClaimsPage';
+import QuoteRulesPage from './pages/QuoteRulesPage';
+import SupportPage from './pages/SupportPage';
+import InspectionWorkflowPage from './pages/InspectionWorkflowPage';
 
 function App() {
   return (
@@ -41,6 +45,12 @@ function App() {
           <Route path="admin" element={<AdminDashboard />} />
           <Route path="insurer" element={<InsurerDashboard />} />
           <Route path="renewal" element={<RenewalPage />} />
+          {/* Quote Rules Gate */}
+          <Route path="quote-rules" element={<QuoteRulesPage />} />
+          {/* New Routes — Sprint 2 & 3 */}
+          <Route path="claims" element={<ClaimsPage />} />
+          <Route path="support" element={<SupportPage />} />
+          <Route path="inspections" element={<InspectionWorkflowPage />} />
         </Route>
       </Routes>
     </Router>

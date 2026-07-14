@@ -11,7 +11,7 @@ export default function VehicleUsagePage() {
 
   const handleSelect = (usage) => {
     setVehicleUsage(usage);
-    navigate('/select-insurers');
+    navigate('/quote-rules');
   };
 
   return (
