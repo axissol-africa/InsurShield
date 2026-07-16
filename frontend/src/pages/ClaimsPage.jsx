@@ -320,13 +320,17 @@ export default function ClaimsPage() {
   // ── New Claim Form ──
   if (mainTab === 'claims' && claimView === 'new') {
 
-    // Simulated plate lookup — in real app calls backend
-    const MOCK_PLATE_DB = {
-      'BAA 1234': { insurer: 'Prestige Assurance', coverage: 'Comprehensive', make: 'Toyota Hilux', year: '2020' },
-      'BAB 5678': { insurer: 'Madison General Insurance', coverage: 'Third Party', make: 'BMW X5', year: '2022' },
-      'BCD 9012': { insurer: 'ZSIC General Insurance', coverage: 'Comprehensive', make: 'Nissan Navara', year: '2019' },
-      'BAC 3344': { insurer: 'Hollard Insurance Zambia', coverage: 'Third Party', make: 'Toyota Corolla', year: '2021' },
-    };
+    // Prototype plate lookup — always returns a realistic result for any plate
+    const INSURERS_LIST = [
+      { name: 'Prestige Assurance', coverage: 'Comprehensive' },
+      { name: 'Madison General Insurance', coverage: 'Third Party' },
+      { name: 'ZSIC General Insurance', coverage: 'Comprehensive' },
+      { name: 'Hollard Insurance Zambia', coverage: 'Third Party' },
+      { name: 'Professional Insurance Corp.', coverage: 'Comprehensive' },
+      { name: 'NICO Insurance', coverage: 'Third Party' },
+    ];
+    const MAKES = ['Toyota Hilux', 'Toyota Corolla', 'Nissan Navara', 'Ford Ranger', 'BMW X5', 'Isuzu D-Max', 'Mazda CX-5', 'Honda CR-V'];
+    const YEARS = ['2018', '2019', '2020', '2021', '2022', '2023'];
 
     const handlePlateLookup = () => {
       const plate = claimForm.plateNumber.trim().toUpperCase();
@@ -336,13 +340,14 @@ export default function ClaimsPage() {
       setCoverageMismatch(null);
       setTimeout(() => {
         setPlateScanning(false);
-        const found = MOCK_PLATE_DB[plate];
-        if (found) {
-          setPlateLookupResult({ ...found, plate });
-          setClaimField('insurer', found.insurer);
-        } else {
-          setPlateLookupResult({ plate, notFound: true });
-        }
+        // Generate a deterministic-looking result from the plate string
+        const hash = plate.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+        const insurer = INSURERS_LIST[hash % INSURERS_LIST.length];
+        const make = MAKES[hash % MAKES.length];
+        const year = YEARS[(hash + 3) % YEARS.length];
+        const result = { insurer: insurer.name, coverage: insurer.coverage, make, year, plate };
+        setPlateLookupResult(result);
+        setClaimField('insurer', insurer.name);
       }, 1200);
     };
 
@@ -462,16 +467,7 @@ export default function ClaimsPage() {
                   </div>
                 </motion.div>
               )}
-              {plateLookupResult?.notFound && (
-                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
-                  className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-                  <span className="material-symbols-outlined text-amber-600 text-[20px] mt-0.5">search_off</span>
-                  <div>
-                    <p className="font-bold text-[13px] text-amber-900">Plate not found in system</p>
-                    <p className="text-[12px] text-amber-800 mt-0.5">Please verify the plate number or select your insurer manually below.</p>
-                  </div>
-                </motion.div>
-              )}
+
             </div>
 
             {/* Coverage Type */}
@@ -852,7 +848,11 @@ export default function ClaimsPage() {
                 <div className={`max-w-sm p-3 rounded-2xl text-[13px] ${msg.senderType === 'customer' ? 'bg-primary text-white rounded-br-sm' : 'bg-surface-container-low text-on-surface rounded-bl-sm'}`}>
                   {msg.senderType !== 'customer' && <p className="text-[10px] font-bold text-primary mb-1 opacity-70">{claim.insurer?.toUpperCase() || 'INSURER'}</p>}
                   <p>{msg.message}</p>
-                  <p className={`text-[10px] mt-1 ${msg.senderType === 'customer' ? 'text-white/60' : 'text-secondary'}`}>{new Date(msg.sentAt).toLocaleTimeString()}</p>
+                  <p className={`text-[10px] mt-1 ${msg.senderType === 'customer' ? 'text-white/60' : 'text-secondary'}`}>
+                    {new Date(msg.sentAt).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' })}
+                    {' · '}
+                    {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
                 </div>
               </div>
             ))}
