@@ -8,6 +8,7 @@ import { INSURER_RATES } from '../utils/insurerRates';
 const CLAIM_TYPES = [
   'Accident / Collision', 'Theft', 'Fire Damage', 'Natural Disaster',
   'Third Party Liability', 'Windscreen Damage', 'Medical Expenses', 'Towing & Recovery',
+  'Other',
 ];
 
 const CLAIM_STATUSES = {
@@ -221,11 +222,15 @@ export default function ClaimsPage() {
 
   // Claim form state
   const [claimSubmitting, setClaimSubmitting] = useState(false);
-  const [docFiles, setDocFiles] = useState([]);
+  const [docItems, setDocItems] = useState([]); // dynamic supporting docs
+  const [plateScanning, setPlateScanning] = useState(false);
+  const [plateLookupResult, setPlateLookupResult] = useState(null); // { insurer, coverage, plate } | null
+  const [coverageMismatch, setCoverageMismatch] = useState(null); // error string | null
   const [claimForm, setClaimForm] = useState({
     insurer: '', type: '', incidentDate: '', location: '',
     description: '', policeReport: false, policeReportNumber: '',
     estimatedLoss: '', phone: '', fullName: '', lateReason: '',
+    plateNumber: '', coverageType: '',
   });
 
   // NCD form state
@@ -256,23 +261,27 @@ export default function ClaimsPage() {
   // ─── Handlers ───────────────────────────────────────────────
   const handleSubmitClaim = (e) => {
     e.preventDefault();
+    if (coverageMismatch) return; // block if mismatch
     setClaimSubmitting(true);
     setTimeout(() => {
       const refNumber = `CLM-${Math.floor(100000 + Math.random() * 900000)}`;
       addClaim({
         ...claimForm, referenceNumber: refNumber, status: 'Submitted',
         vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your Vehicle',
-        plate: vehicleDetails?.plateNumber || 'N/A',
+        plate: claimForm.plateNumber || vehicleDetails?.plateNumber || 'N/A',
         claimNumber: refNumber,
         timeline: [{ status: 'Submitted', note: 'Claim submitted. Forwarded to insurer.', date: new Date().toISOString() }],
         messages: [],
         deadlineDate: new Date(Date.now() + 14 * 86400000).toISOString(),
+        supportingDocs: docItems.map(d => ({ name: d.name, fileName: d.file?.name || null })),
       });
       setSubmittedRef(refNumber);
       setSubmittedPhone(claimForm.phone);
       setClaimSubmitting(false);
-      setClaimForm({ insurer: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: '', fullName: '', lateReason: '' });
-      setDocFiles([]);
+      setClaimForm({ insurer: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: '', fullName: '', lateReason: '', plateNumber: '', coverageType: '' });
+      setDocItems([]);
+      setPlateLookupResult(null);
+      setCoverageMismatch(null);
       setClaimView('success');
     }, 1400);
   };
@@ -310,6 +319,55 @@ export default function ClaimsPage() {
 
   // ── New Claim Form ──
   if (mainTab === 'claims' && claimView === 'new') {
+
+    // Simulated plate lookup — in real app calls backend
+    const MOCK_PLATE_DB = {
+      'BAA 1234': { insurer: 'Prestige Assurance', coverage: 'Comprehensive', make: 'Toyota Hilux', year: '2020' },
+      'BAB 5678': { insurer: 'Madison General Insurance', coverage: 'Third Party', make: 'BMW X5', year: '2022' },
+      'BCD 9012': { insurer: 'ZSIC General Insurance', coverage: 'Comprehensive', make: 'Nissan Navara', year: '2019' },
+      'BAC 3344': { insurer: 'Hollard Insurance Zambia', coverage: 'Third Party', make: 'Toyota Corolla', year: '2021' },
+    };
+
+    const handlePlateLookup = () => {
+      const plate = claimForm.plateNumber.trim().toUpperCase();
+      if (!plate) return;
+      setPlateScanning(true);
+      setPlateLookupResult(null);
+      setCoverageMismatch(null);
+      setTimeout(() => {
+        setPlateScanning(false);
+        const found = MOCK_PLATE_DB[plate];
+        if (found) {
+          setPlateLookupResult({ ...found, plate });
+          setClaimField('insurer', found.insurer);
+        } else {
+          setPlateLookupResult({ plate, notFound: true });
+        }
+      }, 1200);
+    };
+
+    const handleCoverageChange = (val) => {
+      setClaimField('coverageType', val);
+      if (plateLookupResult && !plateLookupResult.notFound && val) {
+        if (val !== plateLookupResult.coverage) {
+          setCoverageMismatch(
+            `This vehicle (${plateLookupResult.plate}) is insured under ${
+              plateLookupResult.coverage
+            } with ${plateLookupResult.insurer}. A claim cannot be submitted under ${val} coverage.`
+          );
+        } else {
+          setCoverageMismatch(null);
+        }
+      } else {
+        setCoverageMismatch(null);
+      }
+    };
+
+    const addDocItem = () => setDocItems(prev => [...prev, { id: Date.now(), name: '', file: null }]);
+    const removeDocItem = (id) => setDocItems(prev => prev.filter(d => d.id !== id));
+    const updateDocName = (id, name) => setDocItems(prev => prev.map(d => d.id === id ? { ...d, name } : d));
+    const updateDocFile = (id, file) => setDocItems(prev => prev.map(d => d.id === id ? { ...d, file } : d));
+
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto px-4 py-10 pb-24">
         <div className="flex items-center gap-3 mb-6">
@@ -334,11 +392,11 @@ export default function ClaimsPage() {
               <p className="text-[13px] text-red-800 mt-1 leading-relaxed">
                 Claims must be submitted <strong>within 14 days of the incident</strong>. Claims received after this window will
                 not be processed unless a valid written reason for the delay is provided.
-                Late claims are subject to insurer discretion and may be declined.
               </p>
             </div>
           </div>
-          {/* Contact */}
+
+          {/* ─── SECTION 1: Contact ─── */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
             <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
               <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">1</span>
@@ -347,26 +405,120 @@ export default function ClaimsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 sm:col-span-1">
                 <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Full Name *</label>
-                <input required value={claimForm.fullName} onChange={e => setClaimField('fullName', e.target.value)} placeholder="e.g. Mwiza Banda" className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+                <input required value={claimForm.fullName} onChange={e => setClaimField('fullName', e.target.value)}
+                  placeholder="e.g. Mwiza Banda"
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
               </div>
               <div className="col-span-2 sm:col-span-1">
                 <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Mobile Number *</label>
-                <input required type="tel" value={claimForm.phone} onChange={e => setClaimField('phone', e.target.value)} placeholder="e.g. 0970 123 456" className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
+                <input required type="tel" value={claimForm.phone} onChange={e => setClaimField('phone', e.target.value)}
+                  placeholder="e.g. 0970 123 456"
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
                 <p className="text-[11px] text-on-surface-variant mt-1">⚠️ Must match the number on your policy. Used to verify your claim status later.</p>
               </div>
             </div>
           </div>
 
-          {/* Insurer + Claim Type */}
+          {/* ─── SECTION 2: Vehicle Verification ─── */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
             <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
               <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">2</span>
-              Claim Details
+              Vehicle & Policy Verification
             </h3>
 
-            {/* Insurance Company Dropdown */}
+            {/* Plate Number */}
             <div>
-              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Insurance Company (Where Claim is Made) *</label>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Vehicle Registration / Plate Number *</label>
+              <div className="flex gap-2">
+                <input
+                  required
+                  value={claimForm.plateNumber}
+                  onChange={e => { setClaimField('plateNumber', e.target.value.toUpperCase()); setPlateLookupResult(null); setCoverageMismatch(null); }}
+                  placeholder="e.g. BAA 1234"
+                  className="flex-1 bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] font-mono uppercase tracking-widest focus:ring-2 focus:ring-primary outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handlePlateLookup}
+                  disabled={!claimForm.plateNumber.trim() || plateScanning}
+                  className="flex items-center gap-2 bg-primary text-white font-bold px-4 py-3 rounded-xl hover:bg-primary-container transition-all disabled:opacity-50 text-[13px] flex-shrink-0"
+                >
+                  {plateScanning
+                    ? <><span className="material-symbols-outlined animate-spin text-[18px]">sync</span> Scanning...</>
+                    : <><span className="material-symbols-outlined text-[18px]">document_scanner</span> Verify</>}
+                </button>
+              </div>
+
+              {/* Plate Lookup Result */}
+              {plateLookupResult && !plateLookupResult.notFound && (
+                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+                  className="mt-3 bg-primary/5 border border-primary/20 rounded-xl p-4 flex items-start gap-3">
+                  <span className="material-symbols-outlined text-primary text-[20px] mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+                  <div>
+                    <p className="font-bold text-[13px] text-primary">Policy Found — {plateLookupResult.plate}</p>
+                    <p className="text-[12px] text-on-surface-variant mt-0.5">
+                      {plateLookupResult.year} {plateLookupResult.make} · Insurer: <strong>{plateLookupResult.insurer}</strong> · Coverage: <strong>{plateLookupResult.coverage}</strong>
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+              {plateLookupResult?.notFound && (
+                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }}
+                  className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-600 text-[20px] mt-0.5">search_off</span>
+                  <div>
+                    <p className="font-bold text-[13px] text-amber-900">Plate not found in system</p>
+                    <p className="text-[12px] text-amber-800 mt-0.5">Please verify the plate number or select your insurer manually below.</p>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+
+            {/* Coverage Type */}
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Coverage Type *</label>
+              <div className="relative">
+                <select
+                  required
+                  value={claimForm.coverageType}
+                  onChange={e => handleCoverageChange(e.target.value)}
+                  className={`w-full appearance-none rounded-xl p-3 text-[15px] focus:ring-2 outline-none border-2 ${
+                    coverageMismatch
+                      ? 'bg-red-50 border-red-400 text-red-900 focus:ring-red-400'
+                      : claimForm.coverageType && !coverageMismatch
+                        ? 'bg-primary/5 border-primary/40 focus:ring-primary'
+                        : 'bg-surface-container-low border-outline-variant focus:ring-primary'
+                  }`}
+                >
+                  <option value="">Select coverage type...</option>
+                  <option value="Comprehensive">Comprehensive</option>
+                  <option value="Third Party">Third Party</option>
+                </select>
+                <span className="material-symbols-outlined absolute right-3 top-3.5 text-gray-400 pointer-events-none">expand_more</span>
+              </div>
+              {/* Coverage mismatch error */}
+              {coverageMismatch && (
+                <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
+                  className="mt-3 bg-red-50 border-2 border-red-400 rounded-xl p-4 flex items-start gap-3">
+                  <span className="material-symbols-outlined text-red-600 text-[22px] mt-0.5">block</span>
+                  <div>
+                    <p className="font-extrabold text-red-900 text-[14px]">Coverage Mismatch — Cannot Proceed</p>
+                    <p className="text-[12px] text-red-800 mt-1 leading-relaxed">{coverageMismatch}</p>
+                    <p className="text-[11px] text-red-700 mt-2 font-semibold">Please select the correct coverage type that matches your policy, or contact your insurer.</p>
+                  </div>
+                </motion.div>
+              )}
+              {claimForm.coverageType && !coverageMismatch && plateLookupResult && !plateLookupResult.notFound && (
+                <p className="text-[11px] text-primary font-semibold mt-1.5 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                  Coverage type matches your registered policy
+                </p>
+              )}
+            </div>
+
+            {/* Insurance Company — auto-filled or manual */}
+            <div>
+              <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Insurance Company *</label>
               <div className="relative">
                 <select required value={claimForm.insurer} onChange={e => setClaimField('insurer', e.target.value)}
                   className="w-full appearance-none bg-surface-container-low border-2 border-outline-variant rounded-xl p-3.5 text-[15px] focus:ring-2 focus:ring-primary focus:border-primary outline-none">
@@ -375,19 +527,55 @@ export default function ClaimsPage() {
                 </select>
                 <span className="material-symbols-outlined absolute right-3 top-3.5 text-gray-400 pointer-events-none">expand_more</span>
               </div>
-              <p className="text-[11px] text-on-surface-variant mt-1">Select the insurer with whom your vehicle policy is held.</p>
+              {plateLookupResult && !plateLookupResult.notFound && (
+                <p className="text-[11px] text-primary font-semibold mt-1 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">auto_fix_high</span>
+                  Auto-filled from plate lookup
+                </p>
+              )}
             </div>
+          </div>
 
+          {/* ─── SECTION 3: Claim Details ─── */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+            <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
+              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">3</span>
+              Claim Details
+            </h3>
+
+            {/* Claim Type */}
             <div>
               <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Claim Type *</label>
-              <div className="relative">
-                <select required value={claimForm.type} onChange={e => setClaimField('type', e.target.value)}
-                  className="w-full appearance-none bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none">
+              <div className="relative mb-2">
+                <select
+                  required
+                  value={CLAIM_TYPES.includes(claimForm.type) ? claimForm.type : claimForm.type ? 'Other' : ''}
+                  onChange={e => {
+                    if (e.target.value === 'Other') { setClaimField('type', 'Other'); }
+                    else { setClaimField('type', e.target.value); }
+                  }}
+                  className="w-full appearance-none bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
+                >
                   <option value="">Select claim type...</option>
-                  {CLAIM_TYPES.map(t => <option key={t}>{t}</option>)}
+                  {CLAIM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <span className="material-symbols-outlined absolute right-3 top-3.5 text-gray-400 pointer-events-none">expand_more</span>
               </div>
+              {(claimForm.type === 'Other' || (claimForm.type && !CLAIM_TYPES.slice(0, -1).includes(claimForm.type))) && (
+                <div className="mt-2">
+                  <input
+                    required
+                    value={claimForm.type === 'Other' ? '' : claimForm.type}
+                    onChange={e => setClaimField('type', e.target.value || 'Other')}
+                    placeholder="Please describe the type of claim..."
+                    className="w-full bg-surface-container-low border-2 border-primary/40 rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
+                    autoFocus
+                  />
+                  <p className="text-[11px] text-secondary mt-1 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px]">edit</span> Type your claim description above
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -396,13 +584,10 @@ export default function ClaimsPage() {
                 <input required type="date" value={claimForm.incidentDate} max={new Date().toISOString().split('T')[0]}
                   onChange={e => setClaimField('incidentDate', e.target.value)}
                   className={`w-full border rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none ${
-                    isLate
-                      ? 'bg-red-50 border-red-400 text-red-900 focus:ring-red-400'
-                      : daysSinceIncident !== null
-                        ? 'bg-green-50 border-green-400 focus:ring-green-400'
-                        : 'bg-surface-container-low border-outline-variant'
+                    isLate ? 'bg-red-50 border-red-400 text-red-900 focus:ring-red-400'
+                      : daysSinceIncident !== null ? 'bg-green-50 border-green-400 focus:ring-green-400'
+                      : 'bg-surface-container-low border-outline-variant'
                   }`} />
-                {/* Live day counter */}
                 {daysSinceIncident !== null && (
                   <div className={`mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-bold ${
                     isLate ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
@@ -410,21 +595,22 @@ export default function ClaimsPage() {
                     <span className="material-symbols-outlined text-[15px]">{isLate ? 'warning' : 'check_circle'}</span>
                     {isLate
                       ? `${daysSinceIncident} days since incident — outside 14-day window`
-                      : `${daysSinceIncident} day${daysSinceIncident !== 1 ? 's' : ''} since incident — within 14-day window ✓`
-                    }
+                      : `${daysSinceIncident} day${daysSinceIncident !== 1 ? 's' : ''} since incident — within 14-day window ✓`}
                   </div>
                 )}
               </div>
               <div>
                 <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Estimated Loss (ZMW)</label>
-                <input type="number" min="0" value={claimForm.estimatedLoss} onChange={e => setClaimField('estimatedLoss', e.target.value)} placeholder="e.g. 15000"
+                <input type="number" min="0" value={claimForm.estimatedLoss} onChange={e => setClaimField('estimatedLoss', e.target.value)}
+                  placeholder="e.g. 15000"
                   className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
               </div>
             </div>
 
             <div>
               <label className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5 block">Incident Location *</label>
-              <input required value={claimForm.location} onChange={e => setClaimField('location', e.target.value)} placeholder="e.g. Great East Road, near Arcades, Lusaka"
+              <input required value={claimForm.location} onChange={e => setClaimField('location', e.target.value)}
+                placeholder="e.g. Great East Road, near Arcades, Lusaka"
                 className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
             </div>
 
@@ -436,10 +622,10 @@ export default function ClaimsPage() {
             </div>
           </div>
 
-          {/* Police Report */}
+          {/* ─── SECTION 4: Police Report ─── */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-3">
             <h3 className="font-bold text-[15px] border-b pb-2 flex items-center gap-2">
-              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">3</span>
+              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">4</span>
               Police Report
             </h3>
             <div className="flex items-center gap-3 p-3 bg-surface-container-low rounded-xl border border-outline-variant cursor-pointer"
@@ -457,30 +643,95 @@ export default function ClaimsPage() {
             )}
           </div>
 
-          {/* Documents */}
+          {/* ─── SECTION 5: Supporting Documents (Dynamic) ─── */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-            <h3 className="font-bold text-[15px] border-b pb-2 mb-4 flex items-center gap-2">
-              <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">4</span>
-              Supporting Documents
-            </h3>
-            <div className="border-2 border-dashed border-outline-variant rounded-xl p-6 text-center hover:border-primary/50 transition-colors">
-              <label className="cursor-pointer flex flex-col items-center gap-2">
-                <div className="bg-primary/10 w-12 h-12 rounded-full flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined">upload_file</span>
-                </div>
-                <p className="font-semibold text-[14px]">Upload Photos & Documents</p>
-                <p className="text-[12px] text-on-surface-variant">Damage photos, police report scan, repair quotations, witnesses</p>
-                <input type="file" multiple accept="image/*,.pdf" className="hidden" onChange={e => setDocFiles(Array.from(e.target.files))} />
-              </label>
-              {docFiles.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2 justify-center">
-                  {docFiles.map((f, i) => <span key={i} className="text-[11px] bg-primary/10 text-primary px-2 py-1 rounded-full font-semibold">{f.name}</span>)}
-                </div>
-              )}
+            <div className="flex items-center justify-between border-b pb-3 mb-4">
+              <h3 className="font-bold text-[15px] flex items-center gap-2">
+                <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-bold">5</span>
+                Supporting Documents
+              </h3>
+              <button type="button" onClick={addDocItem}
+                className="flex items-center gap-2 bg-primary/10 text-primary font-bold px-4 py-2 rounded-xl hover:bg-primary/20 transition-colors text-[13px] active:scale-95">
+                <span className="material-symbols-outlined text-[18px]">add_circle</span>
+                Add Document
+              </button>
             </div>
+
+            {docItems.length === 0 ? (
+              <div className="border-2 border-dashed border-outline-variant rounded-xl p-8 text-center">
+                <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <span className="material-symbols-outlined text-primary text-[24px]">attach_file</span>
+                </div>
+                <p className="font-semibold text-[14px] text-on-surface">No documents added yet</p>
+                <p className="text-[12px] text-on-surface-variant mt-1">Click <strong>Add Document</strong> above to attach photos, a police report, repair quotation, or any other supporting file.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {docItems.map((doc, idx) => (
+                  <motion.div
+                    key={doc.id}
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="border border-outline-variant rounded-xl p-4 bg-surface-container-low/50"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-[11px] font-bold text-secondary uppercase tracking-wider">Document {idx + 1}</p>
+                      <button type="button" onClick={() => removeDocItem(doc.id)}
+                        className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-red-50 text-secondary hover:text-red-600 transition-colors">
+                        <span className="material-symbols-outlined text-[18px]">close</span>
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {/* Document Name */}
+                      <input
+                        required
+                        value={doc.name}
+                        onChange={e => updateDocName(doc.id, e.target.value)}
+                        placeholder="Document name (e.g. Driver's Licence, Accident Photos, Police Report...)"
+                        className="w-full bg-white border border-outline-variant rounded-lg p-2.5 text-[14px] focus:ring-2 focus:ring-primary outline-none"
+                      />
+                      {/* File Upload */}
+                      <label className={`flex items-center gap-3 p-3 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                        doc.file ? 'border-primary/40 bg-primary/5' : 'border-outline-variant hover:border-primary/30 hover:bg-gray-50'
+                      }`}>
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                          doc.file ? 'bg-primary text-white' : 'bg-primary/10 text-primary'
+                        }`}>
+                          <span className="material-symbols-outlined text-[18px]">{doc.file ? 'check' : 'upload'}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {doc.file
+                            ? <p className="text-[13px] font-semibold text-primary truncate">{doc.file.name}</p>
+                            : <p className="text-[13px] text-secondary">Upload photo or PDF</p>}
+                          <p className="text-[10px] text-secondary mt-0.5">JPG, PNG, PDF supported</p>
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          className="hidden"
+                          onChange={e => e.target.files[0] && updateDocFile(doc.id, e.target.files[0])}
+                        />
+                        {doc.file && (
+                          <button type="button" onClick={e => { e.preventDefault(); updateDocFile(doc.id, null); }}
+                            className="text-secondary hover:text-red-500 transition-colors flex-shrink-0">
+                            <span className="material-symbols-outlined text-[16px]">close</span>
+                          </button>
+                        )}
+                      </label>
+                    </div>
+                  </motion.div>
+                ))}
+
+                <button type="button" onClick={addDocItem}
+                  className="w-full py-3 border-2 border-dashed border-primary/30 text-primary font-semibold rounded-xl hover:border-primary/50 hover:bg-primary/5 transition-all text-[13px] flex items-center justify-center gap-2">
+                  <span className="material-symbols-outlined text-[18px]">add</span>
+                  Add Another Document
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Late Submission Reason — only appears when incident > 14 days ago */}
+          {/* Late Submission Reason */}
           {isLate && (
             <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-5 space-y-3">
               <div className="flex items-start gap-3">
@@ -488,47 +739,39 @@ export default function ClaimsPage() {
                 <div>
                   <p className="font-extrabold text-red-900 text-[15px]">Late Submission — Reason Required</p>
                   <p className="text-[13px] text-red-800 mt-1">
-                    Your incident was <strong>{daysSinceIncident} days ago</strong>, which is outside the standard 14-day window.
-                    You must provide a valid reason for the late submission. The insurer will review this reason
-                    and may still decline the claim at their discretion.
+                    Your incident was <strong>{daysSinceIncident} days ago</strong>, outside the standard 14-day window.
+                    You must provide a valid reason. The insurer may still decline at their discretion.
                   </p>
                 </div>
               </div>
               <div>
-                <label className="text-[12px] font-bold uppercase tracking-wider text-red-800 mb-1.5 block">
-                  Reason for Late Submission *
-                </label>
-                <textarea
-                  required={isLate}
-                  rows={4}
-                  value={claimForm.lateReason}
+                <label className="text-[12px] font-bold uppercase tracking-wider text-red-800 mb-1.5 block">Reason for Late Submission *</label>
+                <textarea required={isLate} rows={4} value={claimForm.lateReason}
                   onChange={e => setClaimField('lateReason', e.target.value)}
-                  placeholder="e.g. I was hospitalised following the accident and only discharged on [date]. I attach a medical report as evidence..."
-                  className="w-full bg-white border-2 border-red-300 rounded-xl p-3 text-[14px] focus:ring-2 focus:ring-red-400 outline-none resize-none"
-                />
-                <p className="text-[11px] text-red-700 mt-1 font-semibold">
-                  Supporting evidence (medical report, police notification delay, etc.) should be uploaded in the Documents section.
-                </p>
+                  placeholder="e.g. I was hospitalised following the accident and only discharged on [date]..."
+                  className="w-full bg-white border-2 border-red-300 rounded-xl p-3 text-[14px] focus:ring-2 focus:ring-red-400 outline-none resize-none" />
               </div>
             </div>
           )}
 
-          {/* Claim Note */}
+          {/* Info Note */}
           <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl flex items-start gap-2">
             <span className="material-symbols-outlined text-amber-700 text-[18px] mt-0.5">info</span>
             <p className="text-[13px] text-amber-900">
-              <strong>Note:</strong> Once submitted, your claim is forwarded directly to <strong>{claimForm.insurer || 'the selected insurer'}</strong>. Filing a claim may affect future No Claim Discount eligibility. Insurers typically respond within 5–7 business days.
+              <strong>Note:</strong> Once submitted, your claim is forwarded directly to <strong>{claimForm.insurer || 'the selected insurer'}</strong>. Filing a claim may affect future No Claim Discount eligibility.
             </p>
           </div>
 
-          <button type="submit" disabled={claimSubmitting || isSubmitBlocked}
+          {/* Submit */}
+          <button type="submit" disabled={claimSubmitting || isSubmitBlocked || !!coverageMismatch}
             className="w-full bg-primary text-white font-bold text-[16px] py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
             {claimSubmitting
               ? <><span className="material-symbols-outlined animate-spin">sync</span> Submitting Claim...</>
-              : isSubmitBlocked
-                ? <><span className="material-symbols-outlined">lock</span> Provide Late Reason to Submit</>
-                : <><span className="material-symbols-outlined">send</span> Submit Claim to {claimForm.insurer || 'Insurer'}</>
-            }
+              : coverageMismatch
+                ? <><span className="material-symbols-outlined">block</span> Fix Coverage Mismatch to Submit</>
+                : isSubmitBlocked
+                  ? <><span className="material-symbols-outlined">lock</span> Provide Late Reason to Submit</>
+                  : <><span className="material-symbols-outlined">send</span> Submit Claim to {claimForm.insurer || 'Insurer'}</>}
           </button>
         </form>
       </motion.div>
