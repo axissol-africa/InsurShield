@@ -1,198 +1,88 @@
-import React from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { motion } from 'framer-motion';
-import { calculatePremium, formatZMW } from '../utils/premiumEngine';
-import { INSURER_RATES } from '../utils/insurerRates';
+import { calculatePolicyDates, calculatePremium, formatZMW } from '../utils/premiumEngine';
+import { COVERAGE_DURATION_OPTIONS } from '../utils/insurerRates';
+import JourneyProgress from '../components/JourneyProgress';
+
+const INSPECTION_PHOTOS = [
+  { key: 'insp_front', label: 'Front view', icon: 'directions_car' },
+  { key: 'insp_back', label: 'Rear view', icon: 'directions_car' },
+  { key: 'insp_left', label: 'Left side', icon: 'directions_car' },
+  { key: 'insp_right', label: 'Right side', icon: 'directions_car' },
+  { key: 'insp_mileage', label: 'Dashboard / mileage', icon: 'speed' },
+];
 
 export default function InsuranceCompaniesSelectionPage() {
   const navigate = useNavigate();
-  const { selectedInsurers, toggleInsurer, vehicleValue, ncdCode, ncdCodeValidated, coverageDurationId } = useStore();
+  const { insurersList, vehicleValue, vehicleUsage, vehicleDetails, documents, customer, addQuoteRequest, setDocument, setMockInsurers, setQuoteRulesAgreed, setQuoteStatus, coverageDurationId, setCoverageDuration, policyStartDate, setPolicyStartDate, setPolicyDates } = useStore();
+  const [fullName, setFullName] = useState(customer?.fullName || '');
+  const [phone, setPhone] = useState(customer?.phone || '');
+  const [email, setEmail] = useState(customer?.email || '');
+  const [consent, setConsent] = useState(false);
+  const [error, setError] = useState('');
+  const activeInsurers = insurersList.filter(insurer => insurer.status !== 'Inactive');
+  const inspectionComplete = INSPECTION_PHOTOS.every(photo => documents[photo.key]);
+  const policyDates = useMemo(() => calculatePolicyDates(policyStartDate, coverageDurationId), [policyStartDate, coverageDurationId]);
 
-  const handleContinue = () => {
-    if (selectedInsurers.length > 0) navigate('/quote-form');
-  };
-
-  const isSelected = (insurerId) => selectedInsurers.some(i => i.id === insurerId);
-
-  const getBreakdown = (insurer) => {
-    if (!vehicleValue || vehicleValue <= 0) return null;
-    return calculatePremium({
-      vehicleValueZMW: vehicleValue,
-      insurer,
-      ncdCode: ncdCodeValidated ? ncdCode : null,
-      ncdPercentage: ncdCodeValidated?.percentage || 0,
-      ncdIssuingInsurer: ncdCodeValidated?.insurer || null,
-      coverageDurationId: coverageDurationId || '4q',
+  const handleRequestQuotes = (event) => {
+    event.preventDefault();
+    if (!documents.whiteBook || !inspectionComplete || !consent) {
+      setError(!documents.whiteBook ? 'Please add your White Book before requesting quotes.' : !inspectionComplete ? 'Please add all five vehicle inspection photos before requesting quotes.' : 'Please accept the declaration to send your request.');
+      return;
+    }
+    setQuoteRulesAgreed(true);
+    setPolicyDates(policyDates);
+    setMockInsurers(activeInsurers);
+    setQuoteStatus('ready');
+    addQuoteRequest({
+      customer: { fullName, phone, email }, insurers: activeInsurers.map(insurer => insurer.name),
+      vehicle: vehicleDetails ? `${vehicleDetails.year || ''} ${vehicleDetails.make || ''} ${vehicleDetails.model || ''}`.trim() : 'Vehicle details pending',
+      vehicleDetails, vehicleValue, vehicleUsage, coverageDurationId, policyDates,
     });
+    navigate('/quotes-comparison', { state: { fullName, phone, email } });
   };
 
-  return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="pb-48 w-full max-w-4xl mx-auto px-4 pt-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-[24px] font-bold text-primary mb-2">Compare & Select Insurers</h1>
-        <div className="flex items-start gap-3 bg-surface-container-low p-4 rounded-xl border border-surface-variant">
-          <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
-          <p className="text-[14px] text-on-surface-variant">
-            Select up to 5 insurers. Premiums shown are based on your vehicle value of{' '}
-            <strong>{vehicleValue > 0 ? formatZMW(vehicleValue) : 'N/A'}</strong>{' '}
-            at the PIA minimum rate of 4% plus each insurer's applicable loadings.
-            {ncdCodeValidated && (
-              <span className="text-green-700 font-semibold"> NCD code applied ({ncdCodeValidated.percentage}% discount).</span>
-            )}
-          </p>
-        </div>
-        {!vehicleValue && (
-          <div className="mt-3 bg-amber-50 border border-amber-200 p-3 rounded-xl flex items-center gap-2">
-            <span className="material-symbols-outlined text-amber-600 text-[18px]">warning</span>
-            <p className="text-[13px] text-amber-900">Vehicle value not set. <button onClick={() => navigate('/vehicle-identification')} className="underline font-bold">Go back to set it</button> for accurate premiums.</p>
-          </div>
-        )}
+  return <><JourneyProgress current={4} /><motion.main initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mx-auto w-full max-w-6xl px-5 py-10 pb-24 sm:px-8">
+    <div className="mb-7 text-center">
+      <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary"><span className="material-symbols-outlined">request_quote</span></span>
+      <h1 className="mt-3 text-[34px] font-extrabold tracking-[-.04em] text-on-surface">Get quotes from all insurers</h1>
+      <p className="mx-auto mt-2 max-w-2xl text-[14px] text-on-surface-variant">We will send one complete request to every insurer on InsurShield so you can compare their offers immediately.</p>
+    </div>
+    <div className="mb-8 rounded-xl border border-amber-300 bg-amber-50 p-4"><p className="text-[14px] text-amber-900"><span className="material-symbols-outlined mr-2 align-middle text-[18px]">info</span>Premium estimates use your declared vehicle value of <strong className="text-primary">{formatZMW(vehicleValue)}</strong>, the selected use of the vehicle, and each insurer's own rate.</p></div>
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {activeInsurers.map(insurer => {
+        const quote = calculatePremium({ vehicleValueZMW: vehicleValue, insurer, vehicleUsage, coverageDurationId });
+        return <div key={insurer.id} className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-start gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><span className="material-symbols-outlined">{insurer.icon || 'business'}</span></div><div><h2 className="font-bold text-primary">{insurer.name}</h2><p className="text-[12px] text-secondary">{insurer.coverage}</p></div></div>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-secondary">Estimated {quote.coverageDuration.toLowerCase()} premium</p><p className="mt-1 text-[23px] font-extrabold text-on-surface">{formatZMW(quote.finalPremium)}</p><p className="mt-1 text-[11px] text-secondary">Insurer rate {insurer.ratePercentage}% · tailored for {vehicleUsage || 'private'} use</p>
+        </div>;
+      })}
+    </div>
+    <form onSubmit={handleRequestQuotes} className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-8">
+      <h2 className="text-[22px] font-extrabold">Send one request to {activeInsurers.length} insurers</h2><p className="mt-1 text-[14px] text-on-surface-variant">These details let insurers identify your request and contact you about a selected policy.</p>
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <label><span className="mb-1.5 block text-[12px] font-bold uppercase tracking-wide text-secondary">Policy start date</span><input required type="date" min={new Date().toISOString().split('T')[0]} value={policyStartDate} onChange={e => setPolicyStartDate(e.target.value)} className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary" /></label>
+        <label><span className="mb-1.5 block text-[12px] font-bold uppercase tracking-wide text-secondary">Cover period</span><select value={coverageDurationId} onChange={e => setCoverageDuration(e.target.value)} className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary">{COVERAGE_DURATION_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
+        <label className="md:col-span-2"><span className="mb-1.5 block text-[12px] font-bold uppercase tracking-wide text-secondary">Full name</span><input required value={fullName} onChange={e => setFullName(e.target.value)} placeholder="e.g. Mwiza Banda" className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary" /></label>
+        <label><span className="mb-1.5 block text-[12px] font-bold uppercase tracking-wide text-secondary">Mobile number</span><input required type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g. 0970 123 456" className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary" /></label>
+        <label><span className="mb-1.5 block text-[12px] font-bold uppercase tracking-wide text-secondary">Email (optional)</span><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="e.g. name@email.com" className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary" /></label>
       </div>
-
-      {/* Insurer Cards */}
-      <div className="space-y-4">
-        {INSURER_RATES.map((insurer) => {
-          const selected = isSelected(insurer.id);
-          const disabled = !selected && selectedInsurers.length >= 5;
-          const breakdown = getBreakdown(insurer);
-
-          return (
-            <div
-              key={insurer.id}
-              className={`bg-white rounded-xl shadow-sm transition-all duration-200 ${insurer.isBestValue ? 'border-2 border-[#C5A059]' : selected ? 'border-2 border-primary' : 'border border-gray-100'} ${disabled ? 'opacity-50 pointer-events-none' : 'hover:shadow-md'} relative overflow-hidden`}
-            >
-              {insurer.isBestValue && (
-                <div className="absolute top-0 right-0 bg-[#C5A059] text-white text-[10px] font-bold px-3 py-1 rounded-bl-lg">BEST VALUE</div>
-              )}
-              <div className="p-5">
-                {/* Header Row */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 ${selected ? 'bg-primary/10' : 'bg-surface-container'} rounded-lg flex items-center justify-center`}>
-                      <span className="material-symbols-outlined text-primary text-2xl">{insurer.icon}</span>
-                    </div>
-                    <div>
-                      <h3 className="text-[18px] font-bold text-primary">{insurer.name}</h3>
-                      <p className="text-[13px] text-secondary">{insurer.coverage}</p>
-                    </div>
-                  </div>
-
-                  {/* Premium Display */}
-                  <div className="text-right flex-shrink-0">
-                    {breakdown ? (
-                      <>
-                        <div className="text-[11px] font-bold tracking-[0.05em] text-secondary uppercase mb-0.5">
-                          {INSURER_RATES.find(i => i.id === insurer.id) ? 'Your Premium' : 'Estimated'}
-                        </div>
-                        <div className={`text-[26px] font-extrabold ${selected ? 'text-primary' : 'text-on-surface'}`}>
-                          ZMW {Math.round(breakdown.finalPremium).toLocaleString()}
-                        </div>
-                        {breakdown.appliedNcdPercentage > 0 && (
-                          <div className="text-[11px] text-green-600 font-bold flex items-center justify-end gap-1">
-                            <span className="material-symbols-outlined text-[12px]">discount</span>
-                            {breakdown.appliedNcdPercentage}% NCD applied
-                          </div>
-                        )}
-                        {breakdown.isPiaBoosted && (
-                          <div className="text-[10px] text-amber-700 font-semibold">PIA 4% minimum applied</div>
-                        )}
-                        <div className="text-[11px] text-secondary">Rate: {insurer.ratePercentage}% of vehicle value</div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="text-[11px] font-bold text-secondary uppercase mb-0.5">Annual Rate</div>
-                        <div className="text-[22px] font-extrabold text-primary">{insurer.ratePercentage}%</div>
-                        <div className="text-[11px] text-secondary">of vehicle value</div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Badges */}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold border ${insurer.inspectionRules === 'REQUIRED' ? 'bg-amber-50 text-amber-900 border-amber-200' : insurer.inspectionRules === 'NOT REQUIRED' ? 'bg-green-50 text-green-900 border-green-200' : 'bg-blue-50 text-blue-900 border-blue-200'}`}>
-                    <span className="material-symbols-outlined text-[14px]">{insurer.inspectionRules === 'REQUIRED' ? 'photo_camera' : 'fact_check'}</span>
-                    Inspection: {insurer.inspectionRules}
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-slate-100 text-slate-700 px-3 py-1 rounded-full text-[11px] font-bold">
-                    <span className="material-symbols-outlined text-[14px]">schedule</span>
-                    {insurer.timing}
-                  </div>
-                  {/* NCD badge: only show on the insurer that issued the code */}
-                  {ncdCodeValidated && insurer.name === ncdCodeValidated.insurer && breakdown?.isNcdIssuer && (
-                    <div className="flex items-center gap-1.5 bg-green-50 text-green-800 border border-green-300 px-3 py-1 rounded-full text-[11px] font-bold">
-                      <span className="material-symbols-outlined text-[14px]">discount</span>
-                      NCD {breakdown.appliedNcdPercentage}% Applied (Your Issuer)
-                    </div>
-                  )}
-                </div>
-
-                {/* Benefits */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 mb-4">
-                  {insurer.benefits.slice(0, 4).map((b, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-green-600 text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                      <span className="text-[12px] text-on-surface-variant">{b}</span>
-                    </div>
-                  ))}
-                  {insurer.benefits.length > 4 && <p className="text-[12px] text-primary font-semibold">+{insurer.benefits.length - 4} more benefits</p>}
-                </div>
-
-                {/* Select toggle */}
-                <div className="flex justify-end border-t border-slate-100 pt-3">
-                  <label className="flex items-center gap-3 cursor-pointer group">
-                    <span className={`text-[15px] font-semibold ${selected ? 'text-primary' : 'text-slate-500'} group-hover:text-primary transition-colors`}>
-                      {selected ? 'Selected ✓' : 'Select Insurer'}
-                    </span>
-                    <input type="checkbox" checked={selected} onChange={() => !disabled && toggleInsurer(insurer)} className="w-6 h-6 rounded border-outline text-primary focus:ring-primary cursor-pointer" />
-                  </label>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Sticky Bottom Bar */}
-      <section className="fixed md:bottom-0 bottom-16 left-0 right-0 bg-white shadow-[0_-8px_16px_-4px_rgba(0,0,0,0.12)] border-t border-slate-100 z-40">
-        <div className="max-w-4xl mx-auto p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] font-bold tracking-[0.05em] text-primary">SELECTED</span>
-              <span className="bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{selectedInsurers.length} / 5</span>
-            </div>
-            {selectedInsurers.length > 0 && vehicleValue > 0 && (
-              <div className="text-[12px] text-secondary">
-                Lowest: <strong className="text-primary">
-                  {formatZMW(Math.min(...selectedInsurers.map(i => { const b = getBreakdown(i); return b ? b.finalPremium : Infinity; })))}
-                </strong>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-2 mb-3">
-            {selectedInsurers.map(insurer => {
-              const b = getBreakdown(insurer);
-              return (
-                <div key={insurer.id} className="flex-shrink-0 flex items-center gap-2 bg-red-50 border border-primary/20 p-2 rounded-lg pr-4">
-                  <div className="w-8 h-8 bg-white rounded flex items-center justify-center text-primary">
-                    <span className="material-symbols-outlined text-lg">{insurer.icon || 'shield'}</span>
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-bold text-primary leading-none">{insurer.name.split(' ')[0]}</div>
-                    {b && <div className="text-[10px] text-primary/70">ZMW {Math.round(b.finalPremium).toLocaleString()}</div>}
-                  </div>
-                </div>
-              );
-            })}
-            {selectedInsurers.length === 0 && <div className="text-[12px] text-gray-400 py-2">No insurers selected yet.</div>}
-          </div>
-          <button onClick={handleContinue} disabled={selectedInsurers.length === 0} className="w-full bg-primary text-white text-[16px] font-semibold py-4 rounded-xl shadow-lg active:scale-[0.98] transition-transform disabled:opacity-50 disabled:pointer-events-none">
-            Proceed to Request Quote ({selectedInsurers.length} selected)
-          </button>
+      {policyDates && <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 rounded-xl bg-primary/5 px-4 py-3 text-[12px] text-primary"><span><strong>Starts:</strong> {policyDates.formattedStart}</span><span><strong>Ends:</strong> {policyDates.formattedEnd}</span><span><strong>Cover:</strong> {policyDates.daysTotal} days</span></div>}
+      <label className="mt-5 flex cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-outline-variant bg-surface-container-low p-4 hover:border-primary/40"><span className={`material-symbols-outlined text-2xl ${documents.whiteBook ? 'text-green-600' : 'text-primary'}`}>{documents.whiteBook ? 'check_circle' : 'upload_file'}</span><span className="flex-1"><span className="block text-[14px] font-bold text-primary">White Book</span><span className="text-[12px] text-secondary">{documents.whiteBook ? 'Added successfully' : 'Required to verify vehicle ownership'}</span></span><span className="rounded-lg bg-white px-3 py-2 text-[12px] font-bold text-primary shadow-sm">{documents.whiteBook ? 'Replace' : 'Upload'}</span><input className="hidden" type="file" accept="image/*,.pdf" onChange={e => e.target.files?.[0] && setDocument('whiteBook', URL.createObjectURL(e.target.files[0]))} /></label>
+      <section className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
+        <div className="mb-4 flex items-start gap-3"><span className="material-symbols-outlined text-indigo-700">photo_camera</span><div><h3 className="text-[14px] font-bold text-indigo-950">Vehicle inspection photos</h3><p className="text-[12px] text-indigo-900/80">Clear photos help insurers verify the vehicle and return complete quotes immediately.</p></div></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {INSPECTION_PHOTOS.map(photo => <label key={photo.key} className={`flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-3 text-center transition-colors ${documents[photo.key] ? 'border-green-400 bg-green-50 text-green-800' : 'border-indigo-200 bg-white text-indigo-900 hover:border-primary/50'}`}>
+            {documents[photo.key] ? <><span className="material-symbols-outlined text-2xl">check_circle</span><span className="mt-1 text-[11px] font-bold">Added</span></> : <><span className="material-symbols-outlined text-2xl">{photo.icon}</span><span className="mt-1 text-[11px] font-bold">{photo.label}</span><span className="mt-0.5 text-[10px] text-secondary">Tap to upload</span></>}
+            <input className="hidden" type="file" accept="image/*" capture="environment" onChange={e => e.target.files?.[0] && setDocument(photo.key, URL.createObjectURL(e.target.files[0]))} />
+          </label>)}
         </div>
       </section>
-    </motion.div>
-  );
+      <label className={`mt-5 flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${consent ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white hover:border-primary/40'}`}><input className="mt-0.5 h-5 w-5 accent-red-600" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /><span className="text-[13px] leading-relaxed text-on-surface"><strong>I confirm</strong> the vehicle and contact information is accurate, I am authorised to request insurance for this vehicle, and I consent to InsurShield sharing this information with its listed insurers solely to generate quotations.</span></label>
+      {error && <p className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700">{error}</p>}
+      <button type="submit" className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-4 text-[16px] font-bold text-white shadow-sm hover:bg-primary-container"><span className="material-symbols-outlined">send</span>Submit quote request</button>
+    </form>
+  </motion.main></>;
 }

@@ -22,6 +22,7 @@ export default function QuoteRequestFormPage() {
   const [ncdInput, setNcdInput] = useState(ncdCode || '');
   const [ncdValidating, setNcdValidating] = useState(false);
   const [ncdError, setNcdError] = useState('');
+  const [formError, setFormError] = useState('');
   const [currency, setCurrency] = useState('ZMW');
 
   const safeInsurers = selectedInsurers || [];
@@ -99,10 +100,11 @@ export default function QuoteRequestFormPage() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!documents.whiteBook || !documents.driversLicense) {
-      alert("Please upload the White Book and Driver's License.");
+    if (!documents.whiteBook) {
+      setFormError('Please upload your White Book before requesting quotes.');
       return;
     }
+    setFormError('');
     if (bestBreakdown) setPremiumBreakdown(bestBreakdown);
     setQuoteStatus('pending');
     navigate('/waiting');
@@ -307,9 +309,9 @@ export default function QuoteRequestFormPage() {
             {/* ── STEP 4: Documents ── */}
             <div>
               <SectionTitle number={4} label="Required Documents" />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <p className="text-[13px] text-on-surface-variant mb-4">A White Book is required for registration. A driver's licence is only needed if you later submit a claim.</p>
+              <div className="max-w-sm">
                 <UploadBox title="White Book" type="whiteBook" />
-                <UploadBox title="Driver's License" type="driversLicense" />
               </div>
             </div>
 
@@ -349,6 +351,7 @@ export default function QuoteRequestFormPage() {
 
             {/* Submit */}
             <div className="pt-2">
+              {formError && <p className="mb-3 rounded-lg bg-red-50 px-4 py-3 text-center text-[13px] font-medium text-red-700">{formError}</p>}
               <button type="submit" className="w-full bg-primary text-white font-semibold text-[16px] py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2">
                 <span>Submit Quote Request</span>
                 <span className="material-symbols-outlined">send</span>

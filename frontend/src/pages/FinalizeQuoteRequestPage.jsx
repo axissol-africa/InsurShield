@@ -24,7 +24,7 @@ export default function FinalizeQuoteRequestPage() {
   };
 
   const handleSubmit = () => {
-    if (!documents.whiteBook || !documents.driversLicense || !contactPhone) return;
+    if (!documents.whiteBook || !contactPhone) return;
     setQuoteStatus('pending');
     navigate('/waiting');
   };
@@ -78,7 +78,6 @@ export default function FinalizeQuoteRequestPage() {
           </div>
           <div className="p-6 space-y-4">
             <UploadBox title="White Book" type="whiteBook" />
-            <UploadBox title="Driver's License" type="driversLicense" />
           </div>
         </div>
 
@@ -160,7 +159,7 @@ export default function FinalizeQuoteRequestPage() {
           </button>
           <button 
             onClick={handleSubmit} 
-            disabled={!documents.whiteBook || !documents.driversLicense || !contactPhone}
+            disabled={!documents.whiteBook || !contactPhone}
             className="flex-[2] py-4 bg-primary text-white font-semibold rounded-xl hover:bg-primary-container disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
           >
             Submit Request

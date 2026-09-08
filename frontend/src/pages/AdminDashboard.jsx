@@ -24,6 +24,7 @@ export default function AdminDashboard() {
   const [editingRate, setEditingRate] = useState(null);
   const [editRateValue, setEditRateValue] = useState('');
   const [piaMinEdit, setPiaMinEdit] = useState(String(piaConfig?.minimumPremiumZMW || 1200));
+  const [piaSaved, setPiaSaved] = useState(false);
 
   const totalRevenue = MOCK_POLICIES.reduce((sum, p) => sum + p.premium, 0);
   const openClaims = claims.filter(c => !['Settled', 'Rejected'].includes(c.status)).length;
@@ -67,7 +68,7 @@ export default function AdminDashboard() {
 
   const handleSavePIA = () => {
     setPiaConfig({ minimumPremiumZMW: parseFloat(piaMinEdit) || 1200 });
-    alert('PIA minimum premium updated successfully.');
+    setPiaSaved(true);
   };
 
   // ─── Shared back-button header ─────────────────────────────
@@ -131,7 +132,7 @@ export default function AdminDashboard() {
   if (activeView === 'recover_link') {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <SubPageHeader title="Recover Tracking Link" onBack={() => setActiveView('dashboard')} />
+        <SubPageHeader title="Find Customer Account" onBack={() => setActiveView('dashboard')} />
         <div className="max-w-xl bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
           <form onSubmit={handleSearchLink} className="space-y-4">
             <div>
@@ -254,6 +255,7 @@ export default function AdminDashboard() {
           <button onClick={handleSavePIA} className="w-full bg-primary text-white font-bold py-4 rounded-xl hover:bg-primary-container transition-all">
             Save PIA Configuration
           </button>
+          {piaSaved && <p className="text-center text-[12px] font-semibold text-green-700">PIA configuration updated successfully.</p>}
         </div>
       </motion.div>
     );
@@ -365,7 +367,7 @@ export default function AdminDashboard() {
               { label: 'Manage Insurers', sub: `${insurersList.length} active partners`, icon: 'manage_accounts', view: 'manage_insurers', accent: false },
               { label: 'Onboard New Insurer', sub: 'Add provider & configure rates', icon: 'domain_add', view: 'add_insurer', accent: false },
               { label: 'PIA Rate Configuration', sub: `Min: ${formatZMW(piaConfig?.minimumPremiumZMW || 1200)}`, icon: 'gavel', view: 'pia_config', accent: false },
-              { label: 'Recover Tracking Link', sub: 'Assist clients with lost links', icon: 'support_agent', view: 'recover_link', accent: false },
+              { label: 'Find Customer Account', sub: 'Assist customers with account access', icon: 'support_agent', view: 'recover_link', accent: false },
             ].map(action => (
               <button key={action.view} onClick={() => setActiveView(action.view)}
                 className={`w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all text-left ${

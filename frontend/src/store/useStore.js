@@ -2,19 +2,57 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { INSURER_RATES, PIA_CONFIG } from '../utils/insurerRates';
 
+// Prototype-only identities. A production implementation must authenticate
+// against a secure service and never keep passwords in browser storage.
+export const DEMO_CUSTOMER_ACCOUNT = {
+  id: 'CUS-DEMO-001', fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm',
+  phone: '0970123456', password: 'Customer123!', consentTimestamp: '2026-09-01T09:00:00.000Z',
+};
+
 export const useStore = create(
   persist(
     (set, get) => ({
       // ─── User ───────────────────────────────────────────────
       userPhone: '',
+      customer: null,
+      isAuthenticated: false,
+      registeredAccounts: [DEMO_CUSTOMER_ACCOUNT],
+      seedDemoAccount: () => set((state) => state.registeredAccounts.some(account => account.email === DEMO_CUSTOMER_ACCOUNT.email)
+        ? state
+        : { registeredAccounts: [DEMO_CUSTOMER_ACCOUNT, ...state.registeredAccounts] }),
       setUserPhone: (phone) => set({ userPhone: phone }),
+      registerCustomerAccount: (account) => set((state) => ({
+        registeredAccounts: [...state.registeredAccounts, account],
+        customer: { fullName: account.fullName, email: account.email, phone: account.phone },
+        userPhone: account.phone,
+        isAuthenticated: true,
+      })),
+      authenticateCustomer: (identifier, password) => {
+        // Always include the seeded account so a previous browser session with
+        // locally saved prototype accounts cannot lock the evaluator out.
+        const accounts = [DEMO_CUSTOMER_ACCOUNT, ...get().registeredAccounts.filter(account => account.email !== DEMO_CUSTOMER_ACCOUNT.email)];
+        const account = accounts.find(candidate =>
+          (candidate.email.toLowerCase() === identifier.toLowerCase() || candidate.phone === identifier) && candidate.password === password
+        );
+        if (!account) return false;
+        set({ customer: { fullName: account.fullName, email: account.email, phone: account.phone }, userPhone: account.phone, isAuthenticated: true, consentAccepted: true, consentTimestamp: account.consentTimestamp || new Date().toISOString() });
+        return true;
+      },
+      resetCustomerPassword: (identifier, password) => set((state) => ({
+        registeredAccounts: state.registeredAccounts.map(account =>
+          account.email.toLowerCase() === identifier.toLowerCase() || account.phone === identifier ? { ...account, password } : account
+        ),
+      })),
+      signOut: () => set({ customer: null, userPhone: '', isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null }),
 
       // ─── POPIA Consent ───────────────────────────────────────
       consentAccepted: false,
       consentTimestamp: null,
-      setConsent: (accepted) => set({
+      consentRecord: null,
+      setConsent: (accepted, record = null) => set({
         consentAccepted: accepted,
-        consentTimestamp: accepted ? new Date().toISOString() : null,
+        consentTimestamp: accepted ? (record?.acceptedAt || new Date().toISOString()) : null,
+        consentRecord: accepted ? record : null,
       }),
 
       // ─── Quote Rules Agreement ───────────────────────────────
@@ -114,9 +152,26 @@ export const useStore = create(
       premiumBreakdown: null,
       setPremiumBreakdown: (breakdown) => set({ premiumBreakdown: breakdown }),
 
+      // ─── Cross-portal prototype records ──────────────────────
+      quoteRequests: [],
+      addQuoteRequest: (request) => set((state) => ({
+        quoteRequests: [{
+          ...request, id: `QR-${Date.now()}`, status: 'Submitted', submittedAt: new Date().toISOString(),
+        }, ...state.quoteRequests],
+      })),
+      addInsurerQuote: (requestId, insurer, quote) => set((state) => ({
+        quoteRequests: state.quoteRequests.map(request => request.id === requestId
+          ? { ...request, status: 'Quoted', insurerQuotes: { ...(request.insurerQuotes || {}), [insurer]: { ...quote, sentAt: new Date().toISOString() } } }
+          : request),
+      })),
+      policies: [],
+      addPolicy: (policy) => set((state) => state.policies.some(item => item.policyNumber === policy.policyNumber)
+        ? state
+        : { policies: [{ ...policy, issuedAt: new Date().toISOString(), status: 'Active' }, ...state.policies] }),
+
       // ─── Documents ───────────────────────────────────────────
       documents: {
-        whiteBook: null, driversLicense: null,
+        whiteBook: null,
         insp_front: null, insp_back: null, insp_left: null, insp_right: null, insp_mileage: null,
       },
       setDocument: (type, url) => set((state) => ({
@@ -223,7 +278,6 @@ export const useStore = create(
 
       // ─── Reset ───────────────────────────────────────────────
       resetStore: () => set({
-        userPhone: '',
         vehicleDetails: null,
         vehicleValue: 0,
         vehicleUsage: '',
@@ -239,7 +293,7 @@ export const useStore = create(
         coverageDurationId: '4q',
         quoteRulesAgreed: false,
         documents: {
-          whiteBook: null, driversLicense: null,
+          whiteBook: null,
           insp_front: null, insp_back: null, insp_left: null, insp_right: null, insp_mileage: null,
         },
       }),
@@ -248,6 +302,11 @@ export const useStore = create(
       name: 'insurshield-storage',
       partialize: (state) => ({
         userPhone: state.userPhone,
+        customer: state.customer,
+        isAuthenticated: state.isAuthenticated,
+        registeredAccounts: state.registeredAccounts,
+        quoteRequests: state.quoteRequests,
+        policies: state.policies,
         vehicleDetails: state.vehicleDetails,
         vehicleValue: state.vehicleValue,
         vehicleUsage: state.vehicleUsage,
@@ -264,6 +323,7 @@ export const useStore = create(
         policyStartDate: state.policyStartDate,
         consentAccepted: state.consentAccepted,
         consentTimestamp: state.consentTimestamp,
+        consentRecord: state.consentRecord,
         quoteRulesAgreed: state.quoteRulesAgreed,
         quoteRulesTimestamp: state.quoteRulesTimestamp,
         piaConfig: state.piaConfig,

@@ -22,7 +22,7 @@ const MOCK_INSPECTIONS = [
     location: 'InsurShield Inspection Centre, Lusaka Central',
     insurer: 'Global Guard Insurance',
     createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    notes: 'Physical inspection required before quotation. Bring your White Book and Driver\'s License.',
+    notes: 'Physical inspection required before quotation. Bring your White Book.',
     photos: {},
   },
 ];

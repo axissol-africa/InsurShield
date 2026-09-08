@@ -1,9 +1,10 @@
-import React from 'react';
+import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
+import { useStore } from '../store/useStore';
 
 const NAV_LINKS = [
   { to: '/', label: 'Home', icon: 'home' },
-  { to: '/renewal', label: 'Policies', icon: 'shield' },
+  { to: '/account', label: 'My account', icon: 'shield' },
   { to: '/claims', label: 'Claims', icon: 'report_problem' },
   { to: '/support', label: 'Contact', icon: 'contacts' },
 ];
@@ -13,6 +14,8 @@ const PORTAL_ROUTES = ['/admin', '/insurer', '/admin-login'];
 
 export default function MainLayout() {
   const location = useLocation();
+  const { isAuthenticated, customer, signOut } = useStore();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const isActive = (to) => location.pathname === to;
   const isPortal = PORTAL_ROUTES.some(r => location.pathname === r || location.pathname.startsWith(r + '/'));
@@ -20,33 +23,35 @@ export default function MainLayout() {
   return (
     <div className="min-h-screen flex flex-col bg-background text-on-background selection:bg-primary/20">
       {/* Top Nav */}
-      <header className="bg-white border-b border-gray-100 shadow-sm fixed top-0 h-16 w-full z-50 flex items-center justify-between px-6">
-        <div className="flex items-center gap-4">
-          <span className="material-symbols-outlined text-primary cursor-pointer active:opacity-70">menu</span>
-          <Link to="/" className="text-2xl font-bold tracking-tighter text-primary">InsurShield</Link>
+      <header className="fixed top-0 z-50 flex h-20 w-full items-center border-b border-slate-200 bg-white px-5 lg:px-[5.5vw]">
+        <div className="flex min-w-0 items-center gap-4">
+          <button onClick={() => setMenuOpen(value => !value)} aria-label="Open navigation" className="-ml-2 inline-flex h-10 w-10 items-center justify-center text-primary md:hidden">
+            <span className="material-symbols-outlined text-[28px]">menu</span>
+          </button>
+          <Link to="/" className="font-serif text-[30px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</Link>
         </div>
-        <nav className="hidden md:flex items-center gap-1">
+        <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 md:flex">
           {NAV_LINKS.map(link => (
             <Link
               key={link.to}
               to={link.to}
-              className={`font-sans text-sm font-medium px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors ${isActive(link.to) ? 'text-primary font-semibold bg-primary/5' : 'text-gray-600 hover:bg-gray-50 hover:text-primary'}`}
+              className={`font-sans text-[15px] font-medium px-3 py-2 transition-colors ${isActive(link.to) ? 'text-primary font-bold' : 'text-gray-600 hover:text-primary'}`}
             >
               {link.label}
             </Link>
           ))}
-          <Link to="/admin-login" className={`ml-2 font-sans text-sm font-medium px-3 py-2 rounded-lg transition-colors ${isPortal ? 'text-primary font-semibold bg-primary/5' : 'text-gray-600 hover:bg-gray-50 hover:text-primary'}`}>
+          <Link to="/admin-login" className={`ml-2 font-sans text-[15px] font-medium px-3 py-2 transition-colors ${isPortal ? 'text-primary font-bold' : 'text-gray-600 hover:text-primary'}`}>
             Staff Portal
           </Link>
         </nav>
-        <div className="flex items-center gap-4">
-          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center border border-outline-variant overflow-hidden">
-            <span className="material-symbols-outlined text-gray-500 text-sm">person</span>
-          </div>
+        <div className="ml-auto flex items-center gap-3">
+          {isAuthenticated ? <><Link to="/account" className="hidden text-[15px] font-bold text-on-surface sm:block">{customer?.fullName?.split(' ')[0]}</Link><span className="hidden h-5 w-px bg-slate-200 sm:block" /><button onClick={signOut} className="hidden text-[14px] font-medium text-secondary hover:text-primary sm:block">Sign out</button><Link to="/account" className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary"><span className="material-symbols-outlined text-lg">person</span></Link></> : <Link to="/create-account?next=%2Fselect-insurers" className="rounded-lg bg-primary px-4 py-2 text-[13px] font-bold text-white hover:bg-primary-container">Log in</Link>}
         </div>
       </header>
 
-      <main className="pt-16 pb-24 flex-1">
+      {menuOpen && <div className="fixed inset-x-0 top-20 z-40 border-b border-slate-200 bg-white p-4 shadow-lg md:hidden"><nav className="grid gap-1">{[...NAV_LINKS, { to: '/admin-login', label: 'Staff Portal' }].map(link => <Link key={link.to} onClick={() => setMenuOpen(false)} to={link.to} className={`rounded-lg px-4 py-3 text-[15px] font-semibold ${isActive(link.to) ? 'bg-primary/10 text-primary' : 'text-secondary'}`}>{link.label}</Link>)}</nav></div>}
+
+      <main className="flex-1 pt-20">
         {isPortal ? (
           /* Portal pages: full-width background, centred content container */
           <div className="min-h-[calc(100vh-64px)] bg-gray-50/80">
@@ -59,28 +64,6 @@ export default function MainLayout() {
           <Outlet />
         )}
       </main>
-
-      {/* Bottom Nav — Mobile */}
-      <nav className="md:hidden fixed bottom-0 w-full z-50 flex justify-around items-center px-4 py-3 pb-safe bg-white/90 backdrop-blur-md border-t border-gray-100 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] rounded-t-2xl">
-        {[
-          { to: '/', label: 'Home', icon: 'home' },
-          { to: '/renewal', label: 'Policies', icon: 'shield' },
-          { to: '/claims', label: 'Claims', icon: 'report_problem' },
-          { to: '/support', label: 'Contact', icon: 'contacts' },
-        ].map(link => (
-          <Link
-            key={link.to}
-            to={link.to}
-            className={`relative flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform ${isActive(link.to) ? 'text-primary' : 'text-gray-500 hover:text-primary'}`}
-          >
-            <span className="material-symbols-outlined" style={isActive(link.to) ? { fontVariationSettings: "'FILL' 1" } : {}}>
-              {link.icon}
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-widest mt-0.5">{link.label}</span>
-          </Link>
-        ))}
-      </nav>
-
 
     </div>
   );

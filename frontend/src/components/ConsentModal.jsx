@@ -1,185 +1,42 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useMemo, useState } from 'react';
+import { motion } from 'framer-motion';
 import { useStore } from '../store/useStore';
 
-const PRIVACY_TEXT = `
-InsurShield Privacy Policy — Last Updated: January 2025
+const NOTICE_VERSION = '2026.09.07';
 
-1. DATA CONTROLLER
-InsurShield Aggregator Ltd. ("InsurShield", "we", "us") is registered in Zambia and regulated by the Pensions and Insurance Authority (PIA).
+const DOCUMENTS = {
+  privacy: { title: 'Privacy notice', summary: 'How we collect, use, protect and share your personal and vehicle information.', content: 'We collect the identity, contact, vehicle and insurance details needed to create quotations, issue a policy, support claims, prevent fraud and meet legal obligations. We share only the information needed with insurers participating in your quote request, vehicle-verification partners, payment providers and regulators where required. We do not sell your data. You may request access, correction or deletion where permitted by law by contacting privacy@insurshield.zm.' },
+  terms: { title: 'Platform terms', summary: 'The rules for using InsurShield to compare and purchase insurance.', content: 'InsurShield helps you compare offers from participating insurers; it is not the insurer that underwrites the policy. Quotes are estimates until the insurer confirms them. You must provide accurate information and keep it up to date. The selected insurer remains responsible for underwriting, policy issue and claim decisions.' },
+  declaration: { title: 'Quote request declaration', summary: 'Your confirmation before your information is sent to insurers.', content: 'You confirm that the information and documents supplied are accurate, that you are authorised to request cover for the vehicle, and that InsurShield may share the request with participating insurers solely to obtain and compare quotes. Incorrect or misleading information may affect a quote, policy or claim.' },
+};
 
-2. DATA WE COLLECT
-We collect: full name, NRC number, phone number, email address, vehicle details (registration, chassis number, engine number, make, model, year, value), insurance history, claim history, payment information, and device/browser data for fraud prevention.
+export default function ConsentModal({ onAccept, onDecline }) {
+  const { setConsent, consentRecord } = useStore();
+  const [accepted, setAccepted] = useState({ privacy: false, terms: false, declaration: false });
+  const [marketing, setMarketing] = useState(false);
+  const [expanded, setExpanded] = useState('privacy');
+  const [showValidation, setShowValidation] = useState(false);
+  const requiredComplete = Object.values(accepted).every(Boolean);
+  const hasVersionChange = Boolean(consentRecord?.noticeVersion && consentRecord.noticeVersion !== NOTICE_VERSION);
+  const remaining = useMemo(() => Object.values(accepted).filter(value => !value).length, [accepted]);
 
-3. PURPOSE OF PROCESSING
-• Generating insurance quotations
-• Policy issuance and management
-• Claims processing
-• Regulatory compliance (PIA, PICZ, RTSA)
-• Customer support
-• Marketing communications (with your consent)
-
-4. DATA SHARING
-We share your data with: selected insurance companies (for quote generation), RTSA (vehicle verification), PIA (regulatory reporting), payment processors, and fraud prevention services. We do not sell your personal data.
-
-5. DATA RETENTION
-We retain personal data for 7 years following policy expiry, or as required by PIA regulations.
-
-6. YOUR RIGHTS (POPIA)
-Under the Protection of Personal Information Act (POPIA), you have the right to: access your data, correct inaccurate data, delete your data (subject to regulatory requirements), object to processing, and lodge a complaint with the Information Regulator.
-
-7. DATA SECURITY
-All data is encrypted in transit (TLS 1.3) and at rest. We use bank-grade security protocols and conduct annual security audits.
-
-8. CONTACT
-Data Protection Officer: privacy@insurshield.zm | +260 978 000 001
-`;
-
-const TERMS_TEXT = `
-InsurShield Terms & Conditions — Last Updated: January 2025
-
-1. ACCEPTANCE
-By using InsurShield, you agree to these Terms. If you do not agree, do not use our platform.
-
-2. SERVICE DESCRIPTION
-InsurShield is an insurance aggregation platform that facilitates connections between insurance seekers and licensed insurance companies in Zambia. We are not an insurance company.
-
-3. YOUR OBLIGATIONS
-• Provide accurate and truthful information
-• Notify us of any changes to vehicle or personal details
-• Not use our platform for fraudulent purposes
-• Pay premiums on time once a policy is accepted
-
-4. QUOTATION PROCESS
-Quotations are indicative and subject to insurer acceptance. InsurShield does not guarantee acceptance by any insurer.
-
-5. PREMIUM CALCULATIONS
-Premiums are calculated based on vehicle value, insurer rates, and regulatory minimums set by the Pensions and Insurance Authority (PIA). The PIA minimum premium applies at all times.
-
-6. CLAIMS
-Claims are processed by the relevant insurer. InsurShield facilitates communication but does not make claims decisions.
-
-7. LIMITATION OF LIABILITY
-InsurShield's liability is limited to the platform service fee paid. We are not liable for insurer decisions, claim outcomes, or force majeure events.
-
-8. GOVERNING LAW
-These Terms are governed by the laws of the Republic of Zambia.
-`;
-
-export default function ConsentModal({ onAccept, onDecline, trigger = 'registration' }) {
-  const { consentAccepted, setConsent } = useStore();
-  const [activeTab, setActiveTab] = useState('privacy'); // 'privacy' | 'terms'
-  const [privacyScrolled, setPrivacyScrolled] = useState(false);
-  const [termsScrolled, setTermsScrolled] = useState(false);
-  const [bothAccepted, setBothAccepted] = useState(false);
-  const [checked, setChecked] = useState({ privacy: false, terms: false });
-
-  const handleScroll = (e, type) => {
-    const el = e.target;
-    const isAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 20;
-    if (isAtBottom) {
-      if (type === 'privacy') setPrivacyScrolled(true);
-      if (type === 'terms') setTermsScrolled(true);
-    }
+  const continueFlow = () => {
+    if (!requiredComplete) return setShowValidation(true);
+    setConsent(true, { noticeVersion: NOTICE_VERSION, acceptedAt: new Date().toISOString(), requiredItems: accepted, marketing });
+    onAccept?.();
   };
 
-  const handleAccept = () => {
-    setConsent(true);
-    if (onAccept) onAccept();
-  };
-
-  const triggerLabels = {
-    registration: 'Before accessing InsurShield, you must review and accept our policies.',
-    quotation: 'Before requesting insurance quotes, please review and accept our data usage policies.',
-    payment: 'Before completing your payment, please confirm your consent to our terms.',
-  };
-
-  return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-      >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95 }}
-          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
-        >
-          {/* Header */}
-          <div className="bg-primary p-5 text-white flex-shrink-0">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="material-symbols-outlined text-2xl">security</span>
-              <h2 className="text-[20px] font-bold">Privacy & Terms</h2>
-            </div>
-            <p className="text-[13px] text-white/80">{triggerLabels[trigger] || triggerLabels.registration}</p>
-            <div className="flex items-center gap-2 mt-2 bg-white/10 rounded-lg px-3 py-1.5">
-              <span className="material-symbols-outlined text-[14px]">gavel</span>
-              <span className="text-[11px] font-semibold">POPIA Compliant · PIA Regulated</span>
-            </div>
-          </div>
-
-          {/* Tab Navigation */}
-          <div className="flex border-b border-gray-100 flex-shrink-0">
-            {[
-              { id: 'privacy', label: 'Privacy Policy', scrolled: privacyScrolled },
-              { id: 'terms', label: 'Terms & Conditions', scrolled: termsScrolled },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 py-3 text-[13px] font-bold transition-colors flex items-center justify-center gap-2 ${activeTab === tab.id ? 'text-primary border-b-2 border-primary' : 'text-secondary hover:text-primary'}`}
-              >
-                {tab.scrolled && <span className="material-symbols-outlined text-green-600 text-[14px]">check_circle</span>}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Content */}
-          <div
-            className="flex-1 overflow-y-auto p-5 text-[13px] text-on-surface leading-relaxed whitespace-pre-line"
-            onScroll={e => handleScroll(e, activeTab)}
-          >
-            {activeTab === 'privacy' ? PRIVACY_TEXT : TERMS_TEXT}
-            {!((activeTab === 'privacy' ? privacyScrolled : termsScrolled)) && (
-              <div className="sticky bottom-0 left-0 right-0 bg-gradient-to-t from-white to-transparent h-12 flex items-end justify-center pb-1">
-                <p className="text-[11px] text-secondary animate-bounce">↓ Scroll to read</p>
-              </div>
-            )}
-          </div>
-
-          {/* Consent Checkboxes */}
-          <div className="p-4 border-t border-gray-100 space-y-3 flex-shrink-0 bg-surface-container-low">
-            {[
-              { id: 'privacy', label: 'I have read and agree to the Privacy Policy and consent to the processing of my personal data as described.' },
-              { id: 'terms', label: 'I have read and agree to the Terms & Conditions of InsurShield.' },
-            ].map(item => (
-              <div key={item.id} className={`flex items-start gap-3 p-3 rounded-xl cursor-pointer transition-colors ${checked[item.id] ? 'bg-green-50 border border-green-200' : 'bg-white border border-gray-200 hover:border-primary/30'}`} onClick={() => setChecked(prev => ({ ...prev, [item.id]: !prev[item.id] }))}>
-                <input type="checkbox" checked={checked[item.id]} onChange={() => {}} className="w-5 h-5 mt-0.5 rounded text-primary focus:ring-primary flex-shrink-0 cursor-pointer" />
-                <span className="text-[12px] text-on-surface">{item.label}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Action Buttons */}
-          <div className="p-4 flex gap-3 flex-shrink-0 bg-white border-t border-gray-100">
-            <button onClick={onDecline} className="flex-1 py-3 border-2 border-gray-200 text-on-surface-variant font-semibold rounded-xl hover:bg-gray-50 transition-colors text-[14px]">
-              Decline
-            </button>
-            <button
-              onClick={handleAccept}
-              disabled={!checked.privacy || !checked.terms}
-              className="flex-[2] py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary-container transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed text-[14px] flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[18px]">verified</span>
-              Accept & Continue
-            </button>
-          </div>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
-  );
+  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[100] flex items-end bg-slate-950/50 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-5">
+    <motion.section initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+      <header className="bg-primary px-6 py-6 text-white sm:px-8"><p className="text-xs font-bold uppercase tracking-[0.18em] text-white/70">Before you continue</p><h1 className="mt-1 text-2xl font-bold">Your privacy choices</h1><p className="mt-2 max-w-xl text-sm leading-6 text-white/85">Review three short notices, then confirm the essentials in one place. Full documents remain available whenever you need them.</p></header>
+      <div className="space-y-4 p-5 sm:p-8">
+        {hasVersionChange && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><div className="flex gap-2"><span className="material-symbols-outlined text-amber-700">new_releases</span><div><p className="font-bold">Our notices have changed</p><p className="mt-1 leading-5">Please review and accept version {NOTICE_VERSION} before continuing. Your earlier consent remains recorded.</p></div></div></div>}
+        <div className="flex items-center justify-between rounded-xl bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant"><span><strong className="text-primary">{3 - remaining} of 3</strong> required items confirmed</span><span className="text-xs">Notice version {NOTICE_VERSION}</span></div>
+        <div className="space-y-3">{Object.entries(DOCUMENTS).map(([key, document]) => <article key={key} className={`rounded-2xl border p-4 transition-colors ${accepted[key] ? 'border-green-300 bg-green-50/60' : 'border-gray-200 bg-white'}`}><div className="flex gap-3"><input aria-label={`Accept ${document.title}`} type="checkbox" checked={accepted[key]} onChange={event => setAccepted(current => ({ ...current, [key]: event.target.checked }))} className="mt-1 h-5 w-5 shrink-0 accent-primary" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-bold text-primary">{document.title}</h2><p className="mt-1 text-sm leading-5 text-on-surface-variant">{document.summary}</p></div><button type="button" onClick={() => setExpanded(expanded === key ? null : key)} className="shrink-0 text-sm font-bold text-primary underline underline-offset-4">{expanded === key ? 'Hide details' : 'Read full notice'}</button></div>{expanded === key && <div className="mt-4 rounded-xl bg-white p-4 text-sm leading-6 text-on-surface-variant shadow-sm">{document.content}</div>}</div></div></article>)}</div>
+        <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200 bg-surface-container-low p-4"><input type="checkbox" checked={marketing} onChange={event => setMarketing(event.target.checked)} className="mt-1 h-5 w-5 accent-primary" /><span><span className="block text-sm font-bold text-primary">Keep me informed (optional)</span><span className="mt-1 block text-sm leading-5 text-on-surface-variant">Send product updates and helpful insurance reminders. You can opt out at any time.</span></span></label>
+        {showValidation && !requiredComplete && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">Please accept the {remaining} remaining required item{remaining === 1 ? '' : 's'} to continue.</p>}
+      </div>
+      <footer className="sticky bottom-0 flex gap-3 border-t border-gray-100 bg-white p-5 sm:px-8"><button type="button" onClick={onDecline} className="min-h-12 rounded-xl border border-gray-300 px-5 text-sm font-bold text-on-surface-variant">Not now</button><button type="button" onClick={continueFlow} className="min-h-12 flex-1 rounded-xl bg-primary px-5 text-sm font-bold text-white shadow-lg shadow-primary/20 hover:bg-primary-container">Accept required items & continue</button></footer>
+    </motion.section>
+  </motion.div>;
 }

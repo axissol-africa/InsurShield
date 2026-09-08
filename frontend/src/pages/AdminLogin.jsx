@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 
@@ -67,7 +67,7 @@ export default function AdminLogin() {
   const selectedRole = ROLES.find(r => r.id === role);
 
   return (
-    <div className="flex justify-center items-center py-4">
+    <div className="flex min-h-[calc(100vh-80px)] justify-center items-center bg-slate-50 px-5 py-14">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-lg">
         {/* Header */}
         <div className="text-center mb-8">
@@ -76,12 +76,12 @@ export default function AdminLogin() {
               {selectedRole?.icon || 'admin_panel_settings'}
             </span>
           </div>
-          <h1 className="text-[28px] font-bold text-primary">InsurShield Portal</h1>
-          <p className="text-[14px] text-secondary mt-1">Sign in with your role to continue</p>
+          <h1 className="text-[38px] font-extrabold tracking-[-.04em] text-primary">InsurShield Portal</h1>
+          <p className="text-[17px] text-secondary mt-2">Sign in with your role to continue</p>
         </div>
 
         {/* Role Selector */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-4">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-4">
           <p className="text-[11px] font-bold uppercase tracking-wider text-secondary mb-3">Select Your Role</p>
           <div className="grid grid-cols-2 gap-3">
             {ROLES.map(r => (
@@ -89,7 +89,7 @@ export default function AdminLogin() {
                 key={r.id}
                 type="button"
                 onClick={() => handleRoleSelect(r.id)}
-                className={`p-3 rounded-xl border-2 text-center transition-all ${
+                className={`min-h-28 p-3 rounded-xl border-2 text-center transition-all ${
                   role === r.id ? r.activeColor : `${r.color} hover:shadow-sm`
                 }`}
               >
@@ -105,7 +105,7 @@ export default function AdminLogin() {
         </div>
 
         {/* Login Form */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           {/* Demo hint */}
           <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-5 flex items-start gap-2">
             <span className="material-symbols-outlined text-blue-600 text-[16px] mt-0.5">info</span>

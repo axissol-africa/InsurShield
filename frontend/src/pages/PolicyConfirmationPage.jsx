@@ -6,29 +6,38 @@ import { formatZMW } from '../utils/premiumEngine';
 
 export default function PolicyConfirmationPage() {
   const navigate = useNavigate();
-  const { userPhone, vehicleDetails, vehicleValue, premiumBreakdown, policyDates, selectedQuote, resetStore, markNcdCodeUsed, ncdCodeValidated } = useStore();
+  const { userPhone, customer, vehicleDetails, vehicleValue, premiumBreakdown, policyDates, selectedQuote, resetStore, addPolicy, markNcdCodeUsed, ncdCodeValidated } = useStore();
 
   const [isGenerating, setIsGenerating] = React.useState(true);
-  const policyNumber = React.useMemo(() => `POL-${Math.floor(100000 + Math.random() * 900000)}`, []);
+  const policyNumber = `POL-${(userPhone || '0000000000').slice(-6)}`;
+  const roadTaxReceipt = `RT-${(userPhone || '0000000000').slice(-6)}`;
 
   React.useEffect(() => {
     const timer = setTimeout(() => {
       setIsGenerating(false);
+      addPolicy({
+        policyNumber,
+        insurer: selectedQuote?.name || 'Selected insurer',
+        premium: premiumBreakdown?.finalPremium || selectedQuote?.price || 0,
+        vehicle: vehicleDetails ? `${vehicleDetails.year || ''} ${vehicleDetails.make || ''} ${vehicleDetails.model || ''}`.trim() : 'Vehicle',
+        vehicleDetails, vehicleValue, coverage: selectedQuote?.coverage || 'Comprehensive', customerEmail: customer?.email, customerPhone: userPhone,
+        policyDates,
+      });
       // Mark NCD code as used — single use, cannot be applied again
       if (ncdCodeValidated) markNcdCodeUsed();
     }, 4000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [addPolicy, customer?.email, markNcdCodeUsed, ncdCodeValidated, policyDates, policyNumber, premiumBreakdown?.finalPremium, selectedQuote?.coverage, selectedQuote?.name, selectedQuote?.price, userPhone, vehicleDetails, vehicleValue]);
 
   const handleFinish = () => {
     resetStore();
-    navigate('/');
+    navigate('/account');
   };
 
   const today = new Date().toLocaleDateString('en-ZM', { day: '2-digit', month: 'long', year: 'numeric' });
 
   return (
-    <div className="flex flex-col items-center py-12 px-4">
+    <div className="flex min-h-[calc(100vh-80px)] flex-col items-center bg-slate-50 px-5 py-12">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-lg space-y-5">
 
         {isGenerating ? (
@@ -61,12 +70,12 @@ export default function PolicyConfirmationPage() {
               >
                 <span className="material-symbols-outlined text-green-500 text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
               </motion.div>
-              <h2 className="text-[28px] font-bold text-primary">You're Covered!</h2>
-              <p className="text-[14px] text-on-surface-variant">Your policy is now active. A copy has been sent to your email.</p>
+              <h2 className="text-[42px] font-extrabold tracking-[-.045em] text-primary">You're Covered!</h2>
+              <p className="text-[17px] text-secondary">Your policy is now active. A copy has been sent to your email.</p>
             </div>
 
             {/* Policy Certificate */}
-            <div className="bg-white rounded-2xl shadow-sm border-t-4 border-t-primary border-x border-b border-gray-100 relative overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-sm border-t-4 border-t-primary border-x border-b border-slate-200 relative overflow-hidden">
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[6rem] font-black text-gray-50/40 -rotate-12 pointer-events-none select-none z-0">INSURSHIELD</div>
 
               <div className="p-5 relative z-10 border-b border-gray-100 bg-surface-container-low flex items-center justify-between">
@@ -186,7 +195,7 @@ export default function PolicyConfirmationPage() {
                 <div className="p-5 border-b border-gray-100 bg-green-50 flex items-center justify-between">
                   <div>
                     <h3 className="text-[17px] font-bold text-green-900">RTSA Road Tax Disc</h3>
-                    <div className="text-[12px] font-bold text-green-700 mt-0.5">RECEIPT NO: RT-{Math.floor(100000 + Math.random() * 900000)}</div>
+                    <div className="text-[12px] font-bold text-green-700 mt-0.5">RECEIPT NO: {roadTaxReceipt}</div>
                   </div>
                   <span className="material-symbols-outlined text-green-600 text-3xl">directions_car</span>
                 </div>
@@ -232,7 +241,7 @@ export default function PolicyConfirmationPage() {
                 onClick={handleFinish}
                 className="py-3 bg-primary text-white font-semibold rounded-xl hover:bg-primary-container transition-all active:scale-95 flex items-center justify-center gap-2"
               >
-                <span className="material-symbols-outlined text-[18px]">home</span> Home
+                <span className="material-symbols-outlined text-[18px]">account_circle</span> My account
               </button>
             </div>
           </>

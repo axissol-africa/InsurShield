@@ -1,31 +1,36 @@
 /**
  * InsurShield — Premium Calculation Engine
  * ----------------------------------------
- * PIA MINIMUM RULE: 4% of vehicle value per year (regulatory)
- * Formula: Annual Premium = max(Vehicle Value × Insurer Rate%, Vehicle Value × 4%)
- * NCD codes are pre-approved and looked up — not self-declared
+ * Formula: Annual Premium = Vehicle Value × Insurer Rate × Vehicle Usage Factor.
+ * NCD support remains available in the engine for a future release, but is not
+ * part of the customer quote request flow yet.
  */
 
 import { COVERAGE_DURATION_OPTIONS } from './insurerRates';
 
-/** PIA rate (always 4% of vehicle value) */
-const PIA_RATE = 0.04;
+const USAGE_FACTORS = {
+  Individual: 1,
+  'Individual (Motorcycles)': 1.05,
+  'Commercial (Motorcycles)': 1.18,
+  'Commercial (Cars for Hire)': 1.2,
+  'Commercial (Small Public Buses)': 1.25,
+  'Commercial (Trucks, Horses & Trailers)': 1.22,
+  'Commercial (Taxis & Yangos)': 1.28,
+};
 
 /**
- * Calculate annual base premium enforcing PIA 4% minimum.
+ * Calculate the annual base premium from the insurer rate and vehicle use.
  * @param {number} vehicleValueZMW
  * @param {number} ratePercentage  - Insurer rate %
- * @returns {{ premium, piaMinimum, isPiaBoosted }}
+ * @returns {{ premium, usageFactor }}
  */
-export function calculateBasePremium(vehicleValueZMW, ratePercentage) {
-  if (!vehicleValueZMW || vehicleValueZMW <= 0) return { premium: 0, piaMinimum: 0, isPiaBoosted: false };
+export function calculateBasePremium(vehicleValueZMW, ratePercentage, vehicleUsage = 'Individual') {
+  if (!vehicleValueZMW || vehicleValueZMW <= 0) return { premium: 0, usageFactor: 1 };
 
-  const piaMinimum = vehicleValueZMW * PIA_RATE;          // 4% of vehicle value
-  const calculated = vehicleValueZMW * (ratePercentage / 100);
-  const premium = Math.max(calculated, piaMinimum);
-  const isPiaBoosted = calculated < piaMinimum;
+  const usageFactor = USAGE_FACTORS[vehicleUsage] || 1;
+  const premium = vehicleValueZMW * (ratePercentage / 100) * usageFactor;
 
-  return { premium, piaMinimum, isPiaBoosted };
+  return { premium, usageFactor };
 }
 
 /**
@@ -58,10 +63,11 @@ export function proratePremium(annualPremium, durationId) {
  * @param {{ vehicleValueZMW, insurer, ncdCode, ncdPercentage, ncdIssuingInsurer, coverageDurationId }}
  * @returns {object} Full breakdown
  */
-export function calculatePremium({ vehicleValueZMW, insurer, ncdCode, ncdPercentage, ncdIssuingInsurer, coverageDurationId }) {
-  const { premium: annualBase, piaMinimum, isPiaBoosted } = calculateBasePremium(
+export function calculatePremium({ vehicleValueZMW, insurer, ncdCode, ncdPercentage, ncdIssuingInsurer, coverageDurationId, vehicleUsage }) {
+  const { premium: annualBase, usageFactor } = calculateBasePremium(
     vehicleValueZMW,
-    insurer.ratePercentage
+    insurer.ratePercentage,
+    vehicleUsage
   );
 
   // NCD only applied if:
@@ -85,8 +91,7 @@ export function calculatePremium({ vehicleValueZMW, insurer, ncdCode, ncdPercent
     insurerName: insurer.name,
     vehicleValueZMW,
     ratePercentage: insurer.ratePercentage,
-    piaMinimumAnnual: piaMinimum,
-    isPiaBoosted,
+    usageFactor,
     annualBasePremium: annualBase,
     annualNcdDiscount: annualNcd,
     annualFinalPremium: annualFinal,

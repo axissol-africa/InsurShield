@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../utils/cn';
@@ -38,46 +38,46 @@ export default function PaymentPage() {
   }
 
   return (
-    <div className="flex flex-col items-center py-12 px-6">
+    <div className="flex min-h-[calc(100vh-80px)] flex-col items-center bg-slate-50/70 py-14 px-5 sm:px-6">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md space-y-6">
         <div className="text-center space-y-2 mb-8">
           <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
             <span className="material-symbols-outlined text-primary text-3xl">lock</span>
           </div>
-          <h2 className="text-[24px] font-bold text-primary">Secure Payment</h2>
-          <p className="text-[14px] text-on-surface-variant">Complete your transaction to finalize the policy.</p>
+          <h2 className="text-[36px] font-extrabold tracking-[-.04em] text-on-surface">Secure Payment</h2>
+          <p className="text-[16px] text-secondary">Complete your transaction to finalize the policy.</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="bg-surface-container-low p-6 border-b border-gray-100">
             <h3 className="text-[14px] font-bold uppercase tracking-wider text-on-surface-variant mb-4">Payment Summary</h3>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[15px]">
                 <span className="text-on-surface">Insurance Premium</span>
-                <span className="font-semibold text-primary">ZMW {premiumAmount.toLocaleString()}</span>
+                <span className="font-semibold text-on-surface">ZMW {premiumAmount.toLocaleString()}</span>
               </div>
               {vehicleDetails?.includeRoadTax && (
                 <div className="flex justify-between items-center text-[15px]">
                   <span className="text-on-surface">RTSA Road Tax Renewal</span>
-                  <span className="font-semibold text-primary">ZMW {roadTaxAmount.toLocaleString()}</span>
+                  <span className="font-semibold text-on-surface">ZMW {roadTaxAmount.toLocaleString()}</span>
                 </div>
               )}
               <div className="pt-3 mt-3 border-t border-gray-200 flex justify-between items-center text-[18px]">
-                <span className="font-bold text-primary">Total Amount</span>
+                <span className="font-bold text-on-surface">Total Amount</span>
                 <span className="font-extrabold text-primary">ZMW {totalAmount.toLocaleString()}</span>
               </div>
             </div>
           </div>
           <div className="p-6 md:p-8">
-          <div className="flex gap-2 p-1 bg-surface-container-low border border-outline-variant rounded-xl mb-6">
+          <div className="flex gap-3 mb-6">
             <button 
-              className={cn("flex-1 py-3 text-[14px] font-semibold rounded-lg flex items-center justify-center gap-2 transition-all", method === 'momo' ? 'bg-white shadow border border-gray-100 text-primary' : 'text-on-surface-variant hover:text-primary')}
+              className={cn("flex-1 min-h-12 py-3 text-[14px] font-semibold rounded-xl border-2 flex items-center justify-center gap-2 transition-all", method === 'momo' ? 'border-primary bg-white text-primary' : 'border-slate-200 text-on-surface-variant hover:text-primary')}
               onClick={() => setMethod('momo')}
             >
               <span className="material-symbols-outlined text-[18px]">smartphone</span> Mobile Money
             </button>
             <button 
-              className={cn("flex-1 py-3 text-[14px] font-semibold rounded-lg flex items-center justify-center gap-2 transition-all", method === 'card' ? 'bg-white shadow border border-gray-100 text-primary' : 'text-on-surface-variant hover:text-primary')}
+              className={cn("flex-1 min-h-12 py-3 text-[14px] font-semibold rounded-xl border-2 flex items-center justify-center gap-2 transition-all", method === 'card' ? 'border-primary bg-white text-primary' : 'border-slate-200 text-on-surface-variant hover:text-primary')}
               onClick={() => setMethod('card')}
             >
               <span className="material-symbols-outlined text-[18px]">credit_card</span> Card

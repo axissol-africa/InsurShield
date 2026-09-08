@@ -1,69 +1,18 @@
-import React from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
-import { Card, CardContent } from '../components/ui/Card';
-import { motion } from 'framer-motion';
+import JourneyProgress from '../components/JourneyProgress';
+
+const OPTIONS = [
+  { id: 'Comprehensive', title: 'Comprehensive', tags: [['Recommended', 'bg-red-50 text-primary'], ['Full Coverage', 'bg-emerald-50 text-green-700']], copy: 'Highest level of protection. Covers damage to your own vehicle, theft, fire, and third-party liabilities in accidents. Best for complete peace of mind.' },
+  { id: 'ThirdParty', title: 'Third Party Only (TPO)', tags: [['Basic', 'bg-slate-100 text-secondary'], ['Legal Minimum', 'bg-amber-50 text-amber-800']], copy: 'Minimum legal requirement in Zambia. Covers damage and bodily injuries you cause to others, but does not pay for damage to your own vehicle.' },
+];
 
 export default function InsuranceTypePage() {
   const navigate = useNavigate();
   const { setInsuranceType } = useStore();
+  const [selected, setSelected] = useState('Comprehensive');
+  const continueJourney = () => { setInsuranceType(selected); navigate('/vehicle-identification'); };
 
-  const handleSelect = (type) => {
-    setInsuranceType(type);
-    navigate('/vehicle-identification');
-  };
-
-  return (
-    <div className="flex flex-col items-center py-12 px-6">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-2xl">
-        <div className="text-center mb-8">
-          <h2 className="text-[24px] font-bold text-primary mb-2">Select Coverage Type</h2>
-          <p className="text-[16px] text-gray-500">
-            Choose the level of protection that suits your needs.
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          <Card 
-            className="cursor-pointer border-2 border-transparent hover:border-primary hover:shadow-md transition-all group"
-            onClick={() => handleSelect('Comprehensive')}
-          >
-            <CardContent className="p-6 flex items-start gap-4">
-              <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0 group-hover:bg-primary transition-colors">
-                <span className="material-symbols-outlined text-primary group-hover:text-white text-2xl">verified_user</span>
-              </div>
-              <div>
-                <h3 className="text-[20px] font-semibold text-primary mb-1">Comprehensive</h3>
-                <p className="text-[14px] text-on-surface-variant mb-3">Highest level of protection. Covers your vehicle and third-party liabilities against accidents, fire, and theft.</p>
-                <div className="flex gap-2">
-                  <span className="bg-primary-fixed text-primary text-xs font-bold px-2 py-1 rounded">Recommended</span>
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">Full Coverage</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card 
-            className="cursor-pointer border-2 border-transparent hover:border-primary hover:shadow-md transition-all group"
-            onClick={() => handleSelect('ThirdParty')}
-          >
-            <CardContent className="p-6 flex items-start gap-4">
-              <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0 group-hover:bg-primary transition-colors">
-                <span className="material-symbols-outlined text-gray-500 group-hover:text-white text-2xl">shield</span>
-              </div>
-              <div>
-                <h3 className="text-[20px] font-semibold text-on-surface mb-1">Third Party Only (TPO)</h3>
-                <p className="text-[14px] text-on-surface-variant mb-3">Minimum legal requirement. Covers damages and injuries you cause to others, but not your own vehicle.</p>
-                <div className="flex gap-2">
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">Basic</span>
-                  <span className="bg-gray-100 text-gray-600 text-xs font-bold px-2 py-1 rounded">Legal Minimum</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-        </div>
-      </motion.div>
-    </div>
-  );
+  return <><JourneyProgress current={1} /><main className="mx-auto w-full max-w-[1420px] px-6 py-16 pb-24 sm:px-10 lg:py-24"><div className="mx-auto max-w-3xl text-center"><h1 className="text-[36px] font-extrabold tracking-[-.04em] sm:text-[48px]">Select Coverage Type</h1><p className="mt-3 text-[18px] text-secondary">Choose the level of protection that suits your budget and security needs.</p></div><div className="mx-auto mt-12 grid max-w-[1160px] gap-5 md:grid-cols-2">{OPTIONS.map(option => { const active = selected === option.id; return <button key={option.id} onClick={() => setSelected(option.id)} className={`relative min-h-[275px] rounded-2xl border-2 bg-white p-8 text-left transition-colors ${active ? 'border-primary' : 'border-slate-200 hover:border-primary/50'}`}><span className={`absolute left-8 top-8 flex h-8 w-8 items-center justify-center rounded-full border-[3px] ${active ? 'border-primary' : 'border-slate-200'}`}>{active && <span className="h-3.5 w-3.5 rounded-full bg-primary" />}</span><div className="ml-12 flex flex-wrap justify-end gap-2">{option.tags.map(([tag, style]) => <span key={tag} className={`rounded-md px-3 py-1 text-[12px] font-bold ${style}`}>{tag}</span>)}</div><h2 className="mt-7 text-[27px] font-extrabold tracking-[-.03em]">{option.title}</h2><p className="mt-4 max-w-lg text-[17px] leading-6 text-secondary">{option.copy}</p></button>; })}</div><div className="mx-auto mt-10 flex max-w-[1160px] justify-end"><button onClick={continueJourney} className="inline-flex min-h-14 items-center gap-3 rounded-lg bg-primary px-10 text-[17px] font-bold text-white hover:bg-primary-container">Continue <span className="material-symbols-outlined">arrow_forward</span></button></div></main></>;
 }

@@ -22,8 +22,6 @@ export const NCD_TIERS = [
 ];
 
 export const COVERAGE_DURATION_OPTIONS = [
-  { id: '1m',  label: '1 Month',                months: 1,   days: 30  },
-  { id: '2m',  label: '2 Months',               months: 2,   days: 61  },
   { id: '1q',  label: '1 Quarter (3 Months)',   months: 3,   days: 91  },
   { id: '2q',  label: '2 Quarters (6 Months)',  months: 6,   days: 182 },
   { id: '3q',  label: '3 Quarters (9 Months)',  months: 9,   days: 273 },

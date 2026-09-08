@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatZMW } from '../utils/premiumEngine';
@@ -309,15 +309,12 @@ function ClaimDetail({ claim, onBack, allClaims, onUpdate }) {
 
 // ─── Main InsurerDashboard ────────────────────────────────────────────────────
 export default function InsurerDashboard() {
-  const { claims, ncdApplications, updateNcdApplicationStatus } = useStore();
+  const { claims, ncdApplications, quoteRequests, updateNcdApplicationStatus, addInsurerQuote } = useStore();
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedClaim, setSelectedClaim] = useState(null);
-  const [selectedNcd, setSelectedNcd] = useState(null);
   const [quotePremium, setQuotePremium] = useState('');
   const [quoteNotes, setQuoteNotes] = useState('');
   const [selectedRequest, setSelectedRequest] = useState(null);
-  const [ncdCodeInput, setNcdCodeInput] = useState('');
-  const [ncdActionNote, setNcdActionNote] = useState('');
   const [ncdActioning, setNcdActioning] = useState(null);
 
   // Merge store + seed (deduplicated)
@@ -335,15 +332,28 @@ export default function InsurerDashboard() {
   const urgentClaims = allClaims.filter(c => c.status === 'Submitted');
   const pendingNcd = allNcd.filter(n => n.status === 'Submitted' || n.status === 'Under Review');
 
-  const requests = [
+  const seedRequests = [
     { id: 'QR-9901', vehicle: '2024 Toyota Hilux', time: '2 mins ago', priority: 'High Priority', value: 'ZMW 520,000', client: 'Platinum', usage: 'Private', coverage: 'Comprehensive' },
     { id: 'QR-9895', vehicle: '2022 BMW X5', time: '15 mins ago', priority: 'Standard', value: 'ZMW 685,000', client: 'Private', usage: 'Commercial', coverage: 'Third Party, Fire & Theft' },
     { id: 'QR-9890', vehicle: '2019 Toyota Hilux', time: '1 hour ago', priority: 'Standard', value: 'ZMW 250,000', client: 'Corporate', usage: 'Commercial', coverage: 'Comprehensive' },
+  ];
+  const requests = [
+    ...quoteRequests.filter(request => request.insurers?.includes(MY_INSURER)).map(request => ({
+      ...request,
+      vehicle: request.vehicle || 'Vehicle pending',
+      value: formatZMW(request.vehicleValue || 0), usage: request.vehicleUsage || 'Private',
+      coverage: request.coverageDurationId || 'Comprehensive', client: request.customer?.fullName || 'Customer',
+      time: timeAgo(request.submittedAt), priority: 'New request',
+    })),
+    ...seedRequests,
   ];
 
   const handleSubmitQuote = (e) => {
     e.preventDefault();
     setTimeout(() => {
+      if (selectedRequest.id.startsWith('QR-')) {
+        addInsurerQuote(selectedRequest.id, MY_INSURER, { premium: Number(quotePremium), notes: quoteNotes });
+      }
       setSelectedRequest(null);
       setQuotePremium('');
       setQuoteNotes('');
@@ -355,10 +365,7 @@ export default function InsurerDashboard() {
     setTimeout(() => {
       const code = action === 'Approved' ? `NCD-${Math.random().toString(36).substring(2, 7).toUpperCase()}` : null;
       updateNcdApplicationStatus(ncdId, action, code);
-      setNcdCodeInput('');
-      setNcdActionNote('');
       setNcdActioning(null);
-      setSelectedNcd(null);
     }, 700);
   };
 
@@ -432,7 +439,7 @@ export default function InsurerDashboard() {
       {/* Tab Bar */}
       <div className="flex border-b border-gray-200 mb-6">
         {TABS.map(tab => (
-          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSelectedClaim(null); setSelectedNcd(null); }}
+          <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSelectedClaim(null); }}
             className={`flex items-center gap-2 px-5 py-3 text-[14px] font-semibold border-b-2 transition-colors relative ${
               activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-secondary hover:text-primary'
             }`}>

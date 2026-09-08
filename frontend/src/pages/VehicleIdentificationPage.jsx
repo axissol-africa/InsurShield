@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/Card';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatZMW } from '../utils/premiumEngine';
+import JourneyProgress from '../components/JourneyProgress';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_OPTIONS = Array.from({ length: 40 }, (_, i) => CURRENT_YEAR - i);
@@ -12,7 +13,7 @@ const YEAR_OPTIONS = Array.from({ length: 40 }, (_, i) => CURRENT_YEAR - i);
 // ─── Vehicle Value Warning Component ──────────────────────────────────────────
 function VehicleValueWarning() {
   return (
-    <div className="bg-gradient-to-br from-red-600 to-red-700 text-white rounded-2xl p-5 shadow-lg">
+    <div className="bg-primary text-white rounded-2xl p-5 shadow-sm">
       <div className="flex items-start gap-3 mb-3">
         <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
           <span className="material-symbols-outlined text-white text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>error</span>
@@ -148,27 +149,26 @@ export default function VehicleIdentificationPage() {
   const setManualField = (field, val) => setManual(prev => ({ ...prev, [field]: val }));
   const handleValueChange = (e) => setVehicleValueInput(e.target.value.replace(/[^0-9.]/g, ''));
   const vehicleValueZMW = parseFloat(vehicleValueInput) || 0;
-  const piaMinimum = vehicleValueZMW * 0.04;
 
   return (
-    <div className="flex justify-center items-start py-12 px-4 w-full min-h-[calc(100vh-64px)]">
+    <><JourneyProgress current={2} /><div className="flex justify-center items-start bg-slate-50/70 py-12 px-4 w-full min-h-[calc(100vh-64px)]">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-xl mx-auto">
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
             <span className="material-symbols-outlined text-primary text-3xl">directions_car</span>
           </div>
-          <h1 className="text-[28px] font-bold text-primary">Vehicle Identification</h1>
-          <p className="text-[14px] text-on-surface-variant mt-1">Search RTSA database or enter details manually.</p>
+          <h1 className="text-[34px] font-extrabold tracking-[-.04em] text-on-surface">Vehicle Identification</h1>
+          <p className="text-[17px] text-secondary mt-2">Retrieve your vehicle details securely from the RTSA database.</p>
         </div>
 
         {/* Mode Tabs (only on search/manual) */}
         {mode !== 'confirm' && (
-          <div className="flex bg-surface-container-low border border-outline-variant rounded-xl p-1 mb-6">
+          <div className="flex border-b border-slate-200 mb-6">
             {['search', 'manual'].map(m => (
               <button
                 key={m}
                 onClick={() => { setMode(m); setError(''); }}
-                className={`flex-1 py-2.5 text-[13px] font-semibold rounded-lg transition-all flex items-center justify-center gap-2 ${mode === m ? 'bg-white shadow text-primary border border-gray-100' : 'text-on-surface-variant hover:text-primary'}`}
+                className={`flex-1 border-b-4 py-3 text-[14px] font-bold transition-all flex items-center justify-center gap-2 ${mode === m ? 'border-primary text-primary' : 'border-transparent text-secondary hover:text-primary'}`}
               >
                 <span className="material-symbols-outlined text-[16px]">{m === 'search' ? 'search' : 'edit'}</span>
                 {m === 'search' ? 'RTSA Lookup' : 'Manual Entry'}
@@ -182,14 +182,14 @@ export default function VehicleIdentificationPage() {
           {/* ── RTSA Lookup ── */}
           {mode === 'search' && (
             <motion.div key="search" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <Card className="shadow-lg border-t-4 border-t-primary">
+              <Card className="border border-slate-200 shadow-sm">
                 <CardContent className="p-6">
                   <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6">
                     <div className="flex items-start gap-3">
                       <span className="material-symbols-outlined text-amber-600 mt-0.5 text-[20px]">info</span>
                       <div>
                         <h4 className="text-[14px] font-bold text-amber-900">What to Have Ready</h4>
-                        <p className="text-[12px] text-amber-800 mt-1">Have your <strong>White Book</strong> and <strong>Driver's License</strong> ready for upload. You'll also need the <strong>current market value</strong> of your vehicle.</p>
+                        <p className="text-[12px] text-amber-800 mt-1">Have your <strong>White Book</strong> ready for upload. You'll also need the <strong>current market value</strong> of your vehicle.</p>
                       </div>
                     </div>
                   </div>
@@ -202,7 +202,7 @@ export default function VehicleIdentificationPage() {
                         value={plateNumber}
                         onChange={(e) => setPlateNumber(e.target.value.toUpperCase())}
                         required
-                        className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-center text-2xl tracking-widest font-bold uppercase focus:ring-2 focus:ring-primary outline-none"
+                        className="w-full bg-white border border-slate-200 rounded-xl p-4 text-center text-2xl tracking-widest font-bold uppercase focus:ring-2 focus:ring-primary outline-none"
                       />
                     </div>
                     {error && <p className="text-red-500 text-sm text-center">{error}</p>}
@@ -219,7 +219,7 @@ export default function VehicleIdentificationPage() {
           {mode === 'confirm' && retrievedVehicle && (
             <motion.div key="confirm" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <div className="space-y-5">
-                <Card className="shadow-lg border-t-4 border-t-green-500">
+                <Card className="border-2 border-green-700 shadow-sm">
                   <CardHeader className="pb-2">
                     <div className="flex items-center gap-2">
                       <span className="material-symbols-outlined text-green-600" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
@@ -270,7 +270,7 @@ export default function VehicleIdentificationPage() {
                 <VehicleValueWarning />
 
                 {/* Value Input */}
-                <Card className="shadow-lg border-2 border-primary">
+                <Card className="border border-slate-200 shadow-sm">
                   <CardContent className="p-6 space-y-4">
                     <div>
                       <label className="text-[13px] font-extrabold tracking-[0.05em] text-primary uppercase mb-2 block flex items-center gap-2">
@@ -290,14 +290,10 @@ export default function VehicleIdentificationPage() {
                         />
                       </div>
                       {vehicleValueZMW > 0 && (
-                        <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="mt-2">
                           <div className="bg-primary/5 border border-primary/20 rounded-lg p-2 text-center">
                             <p className="text-[10px] font-bold uppercase text-primary mb-0.5">Entered Value</p>
                             <p className="text-[14px] font-extrabold text-primary">{formatZMW(vehicleValueZMW)}</p>
-                          </div>
-                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-center">
-                            <p className="text-[10px] font-bold uppercase text-amber-800 mb-0.5">PIA Min Premium (4%)</p>
-                            <p className="text-[14px] font-extrabold text-amber-900">{formatZMW(piaMinimum)}/yr</p>
                           </div>
                         </div>
                       )}
@@ -392,14 +388,10 @@ export default function VehicleIdentificationPage() {
                         <input type="number" min="1" required placeholder="e.g. 200000" value={vehicleValueInput} onChange={handleValueChange} className="w-full bg-surface-container-low border-2 border-primary/30 rounded-xl pl-16 pr-4 py-4 text-[18px] font-bold focus:ring-2 focus:ring-primary outline-none" />
                       </div>
                       {vehicleValueZMW > 0 && (
-                        <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="mt-2">
                           <div className="bg-primary/5 border border-primary/20 rounded-lg p-2 text-center">
                             <p className="text-[10px] font-bold uppercase text-primary mb-0.5">Entered Value</p>
                             <p className="text-[14px] font-extrabold text-primary">{formatZMW(vehicleValueZMW)}</p>
-                          </div>
-                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-center">
-                            <p className="text-[10px] font-bold uppercase text-amber-800 mb-0.5">PIA Min Premium (4%)</p>
-                            <p className="text-[14px] font-extrabold text-amber-900">{formatZMW(piaMinimum)}/yr</p>
                           </div>
                         </div>
                       )}
@@ -424,6 +416,6 @@ export default function VehicleIdentificationPage() {
           )}
         </AnimatePresence>
       </motion.div>
-    </div>
+    </div></>
   );
 }

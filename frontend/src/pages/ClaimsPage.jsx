@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { formatZMW } from '../utils/premiumEngine';
 import { INSURER_RATES } from '../utils/insurerRates';
 
@@ -31,6 +31,14 @@ const NCD_APPLICATION_STATUSES = [
   { id: 'Verification Required', color: 'bg-orange-100 text-orange-800' },
   { id: 'Approved', color: 'bg-green-100 text-green-800' },
   { id: 'Rejected', color: 'bg-red-100 text-red-800' },
+];
+
+const CLAIM_DOCUMENT_GUIDANCE = [
+  'Completed claim form',
+  'Copy of the driver\'s licence',
+  'Police report or case reference (for accidents, theft, or malicious damage)',
+  'Vehicle registration / White Book',
+  'Accident photos and repair quotation, where available',
 ];
 
 // Mock seeded data for tracking demo
@@ -76,7 +84,7 @@ function SuccessBanner({ refNumber, phone, onDone, type = 'claim' }) {
         {type === 'claim' ? 'Claim Submitted!' : 'NCD Application Submitted!'}
       </h2>
       <p className="text-[14px] text-on-surface-variant mb-6">
-        Your {type === 'claim' ? 'claim' : 'NCD application'} has been sent to the insurer. Save your reference number below — you will need it to track your {type === 'claim' ? 'claim' : 'application'}.
+        {type === 'claim' ? 'Your claim notification has been recorded. Save the claim number below and call the insurer directly so they can begin processing it.' : 'Your NCD application has been sent to the insurer. Save your reference number below.'}
       </p>
 
       {/* Reference Number Card */}
@@ -96,9 +104,7 @@ function SuccessBanner({ refNumber, phone, onDone, type = 'claim' }) {
           <div>
             <p className="font-bold text-amber-900 text-[13px]">Important — Save This Number</p>
             <p className="text-[12px] text-amber-800 mt-1">
-              Since you don't have an account, this reference number is the <strong>only way</strong> to track your {type === 'claim' ? 'claim' : 'application'}.
-              You will also need the phone number <strong>{phone}</strong> you provided.
-              An SMS confirmation has been sent to that number.
+            {type === 'claim' ? <>Call the insurer you selected and quote this <strong>claim number</strong>. They will guide the remaining assessment and settlement process. Keep the phone number <strong>{phone}</strong> available for verification.</> : <>You will need the phone number <strong>{phone}</strong> you provided to track this application.</>}
             </p>
           </div>
         </div>
@@ -109,7 +115,7 @@ function SuccessBanner({ refNumber, phone, onDone, type = 'claim' }) {
           Back to Claims
         </button>
         <button onClick={onDone} className="py-3 bg-primary text-white font-semibold rounded-xl hover:bg-primary-container transition-colors">
-          Track This {type === 'claim' ? 'Claim' : 'Application'}
+          {type === 'claim' ? 'I have saved my claim number' : 'Track Application'}
         </button>
       </div>
     </motion.div>
@@ -206,7 +212,7 @@ function TrackingLookup({ type = 'claim', onFound }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ClaimsPage() {
   const navigate = useNavigate();
-  const { claims, addClaim, addClaimMessage, vehicleDetails, ncdApplications, addNcdApplication } = useStore();
+  const { claims, addClaim, addClaimMessage, vehicleDetails, ncdApplications, addNcdApplication, customer } = useStore();
 
   // Main tab
   const [mainTab, setMainTab] = useState('claims');
@@ -229,12 +235,13 @@ export default function ClaimsPage() {
   const [claimForm, setClaimForm] = useState({
     insurer: '', type: '', incidentDate: '', location: '',
     description: '', policeReport: false, policeReportNumber: '',
-    estimatedLoss: '', phone: '', fullName: '', lateReason: '',
+    estimatedLoss: '', phone: customer?.phone || '', fullName: customer?.fullName || '', lateReason: '',
     plateNumber: '', coverageType: '',
   });
 
   // NCD form state
   const [ncdSubmitting, setNcdSubmitting] = useState(false);
+  const [ncdDeclarationError, setNcdDeclarationError] = useState('');
   const [ncdForm, setNcdForm] = useState({
     insurer: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false,
   });
@@ -278,7 +285,7 @@ export default function ClaimsPage() {
       setSubmittedRef(refNumber);
       setSubmittedPhone(claimForm.phone);
       setClaimSubmitting(false);
-      setClaimForm({ insurer: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: '', fullName: '', lateReason: '', plateNumber: '', coverageType: '' });
+      setClaimForm({ insurer: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: customer?.phone || '', fullName: customer?.fullName || '', lateReason: '', plateNumber: '', coverageType: '' });
       setDocItems([]);
       setPlateLookupResult(null);
       setCoverageMismatch(null);
@@ -288,7 +295,8 @@ export default function ClaimsPage() {
 
   const handleSubmitNcd = (e) => {
     e.preventDefault();
-    if (!ncdForm.declaration) { alert('Please acknowledge the declaration before submitting.'); return; }
+    if (!ncdForm.declaration) { setNcdDeclarationError('Please acknowledge the declaration before submitting.'); return; }
+    setNcdDeclarationError('');
     setNcdSubmitting(true);
     setTimeout(() => {
       const refNumber = `NCDA-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -653,6 +661,14 @@ export default function ClaimsPage() {
               </button>
             </div>
 
+            <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
+              <p className="text-[13px] font-bold text-blue-900">Documents usually required for an insurance claim</p>
+              <ul className="mt-2 space-y-1 text-[12px] leading-relaxed text-blue-800">
+                {CLAIM_DOCUMENT_GUIDANCE.map(item => <li key={item} className="flex gap-2"><span aria-hidden="true">•</span><span>{item}</span></li>)}
+              </ul>
+              <p className="mt-2 text-[11px] text-blue-700">Requirements may vary by insurer and claim type. Add any available supporting documents below.</p>
+            </div>
+
             {docItems.length === 0 ? (
               <div className="border-2 border-dashed border-outline-variant rounded-xl p-8 text-center">
                 <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -991,7 +1007,7 @@ export default function ClaimsPage() {
 
           {/* Declaration */}
           <div className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${ncdForm.declaration ? 'bg-green-50 border-green-400' : 'bg-white border-gray-200 hover:border-primary/40'}`}
-            onClick={() => setNcdField('declaration', !ncdForm.declaration)}>
+            onClick={() => { setNcdField('declaration', !ncdForm.declaration); setNcdDeclarationError(''); }}>
             <div className={`w-6 h-6 rounded-md border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${ncdForm.declaration ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>
               {ncdForm.declaration && <span className="material-symbols-outlined text-white text-[14px]">check</span>}
             </div>
@@ -999,6 +1015,8 @@ export default function ClaimsPage() {
               <strong>I declare</strong> that I have been continuously insured with the selected company for the stated period and have not made any insurance claims during that time. I understand that false information may result in rejection and legal action.
             </p>
           </div>
+
+          {ncdDeclarationError && <p className="text-[12px] font-medium text-red-700">{ncdDeclarationError}</p>}
 
           <button type="submit" disabled={ncdSubmitting || !ncdForm.yearsClaimFree || !ncdForm.declaration}
             className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-50">
@@ -1106,34 +1124,34 @@ export default function ClaimsPage() {
   // MAIN LIST VIEW
   // ════════════════════════════════════════════════════════════════
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl mx-auto px-4 py-8">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-[1500px] mx-auto px-5 py-10 pb-24 sm:px-8 lg:py-12">
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-[28px] font-bold text-primary">Claims & NCD</h1>
-        <p className="text-[14px] text-on-surface-variant">Submit or track a claim · Apply for No Claim Discount</p>
+        <h1 className="text-[40px] font-extrabold tracking-[-.045em] text-primary">Claims & NCD</h1>
+        <p className="mt-2 text-[18px] text-on-surface-variant">Manage claim notifications and No Claim Discount applications from your account.</p>
       </div>
 
-      {/* No Account Banner */}
-      <div className="bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/20 rounded-2xl p-5 mb-6 flex items-start gap-4">
+      {/* Account banner */}
+      <div className="bg-red-50 border border-red-200 rounded-2xl p-5 mb-7 flex items-start gap-4">
         <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center flex-shrink-0">
           <span className="material-symbols-outlined text-primary text-2xl">badge</span>
         </div>
         <div>
-          <p className="font-bold text-primary text-[15px]">No Account? No Problem.</p>
+          <p className="font-bold text-primary text-[15px]">Your account keeps everything together.</p>
           <p className="text-[13px] text-on-surface-variant mt-1">
-            InsurShield works without an account. When you submit a claim or NCD application, you'll receive a <strong>unique reference number</strong> via SMS and on screen. Keep it safe — it's your only way to track progress.
+            Signed in as <strong>{customer?.fullName || customer?.phone}</strong>. Your claim notifications and NCD applications are connected to this account, so you can return to them without a tracking link.
           </p>
         </div>
       </div>
 
       {/* Main Tabs */}
-      <div className="flex gap-2 mb-6 bg-surface-container-low p-1 rounded-xl border border-outline-variant">
+      <div className="flex gap-2 mb-7 bg-white p-1 rounded-xl border border-slate-200">
         {[
           { id: 'claims', label: 'Claims', icon: 'report_problem' },
-          { id: 'ncd', label: 'NCD Applications', icon: 'discount' },
+          { id: 'ncd', label: 'NCD applications', icon: 'discount' },
         ].map(tab => (
           <button key={tab.id} onClick={() => setMainTab(tab.id)}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-[14px] font-semibold transition-all ${mainTab === tab.id ? 'bg-white shadow text-primary border border-gray-100' : 'text-secondary hover:text-primary'}`}>
+            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-[15px] font-semibold transition-all ${mainTab === tab.id ? 'bg-white shadow text-primary border border-gray-100' : 'text-secondary hover:text-primary'}`}>
             <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
             {tab.label}
           </button>
@@ -1144,37 +1162,27 @@ export default function ClaimsPage() {
       {mainTab === 'claims' && (
         <>
           {/* Action Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+          <div className="grid grid-cols-1 mb-8">
             <button onClick={() => setClaimView('new')}
-              className="bg-primary text-white rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 transition-all group">
+              className="bg-primary text-white rounded-2xl p-8 text-left hover:shadow-sm transition-colors group">
               <span className="material-symbols-outlined text-3xl mb-3 block opacity-80">add_circle</span>
-              <p className="font-extrabold text-[18px] mb-1">Submit a New Claim</p>
-              <p className="text-[13px] text-white/80">Report an incident to your insurer. You'll get a reference number instantly.</p>
+              <p className="font-extrabold text-[18px] mb-1">Start a Claim</p>
+              <p className="text-[13px] text-white/80">Complete the first notification step and receive a claim number to quote when you call your insurer.</p>
               <div className="mt-4 flex items-center gap-1 font-bold text-[13px]">
                 Start Claim <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
               </div>
             </button>
 
-            <button onClick={() => setClaimView('track')}
-              className="bg-white border-2 border-primary/20 text-primary rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 hover:border-primary/40 transition-all group">
-              <span className="material-symbols-outlined text-3xl mb-3 block text-secondary">manage_search</span>
-              <p className="font-extrabold text-[18px] mb-1 text-primary">Track Existing Claim</p>
-              <p className="text-[13px] text-on-surface-variant">Enter your reference number and phone to check status and messages.</p>
-              <div className="mt-4 flex items-center gap-1 font-bold text-[13px] text-primary">
-                Track Claim <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
-              </div>
-            </button>
           </div>
 
           {/* What to Expect */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h3 className="font-bold text-[15px] text-primary mb-4">How the Claims Process Works</h3>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h3 className="font-extrabold text-[22px] mb-5">How the Claims Process Works</h3>
             <div className="space-y-4">
               {[
                 { icon: 'description', step: '1', title: 'Submit Your Claim', desc: 'Fill in the claim form selecting the insurer and describing the incident. Attach photos and police report if available.' },
-                { icon: 'sms', step: '2', title: 'Save Your Reference Number', desc: 'You\'ll receive a unique reference number on screen and via SMS. This is essential to track your claim — there is no login.' },
-                { icon: 'rate_review', step: '3', title: 'Insurer Review', desc: 'Your selected insurer reviews the claim, may schedule a vehicle inspection, and will communicate via the claims tracking page.' },
-                { icon: 'payments', step: '4', title: 'Settlement', desc: 'Once approved, the insurer will contact you directly to arrange settlement payment or vehicle repairs.' },
+                { icon: 'sms', step: '2', title: 'Save Your Claim Number', desc: 'You will receive a claim number immediately after submitting this form.' },
+                { icon: 'phone_in_talk', step: '3', title: 'Call Your Insurer', desc: 'Call the insurer directly and quote your claim number so their claims team can open and process the case.' },
               ].map(item => (
                 <div key={item.step} className="flex items-start gap-4">
                   <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -1194,7 +1202,7 @@ export default function ClaimsPage() {
       {/* ── NCD Tab ── */}
       {mainTab === 'ncd' && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-1 mb-6">
             <button onClick={() => setNcdView('new')}
               className="bg-primary text-white rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 transition-all group">
               <span className="material-symbols-outlined text-3xl mb-3 block opacity-80">discount</span>
@@ -1202,15 +1210,6 @@ export default function ClaimsPage() {
               <p className="text-[13px] text-white/80">Have 1+ year with no claims? Apply for up to 40% discount.</p>
               <div className="mt-4 flex items-center gap-1 font-bold text-[13px]">
                 Apply Now <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
-              </div>
-            </button>
-            <button onClick={() => setNcdView('track')}
-              className="bg-white border-2 border-primary/20 text-primary rounded-2xl p-6 text-left hover:shadow-lg hover:-translate-y-0.5 hover:border-primary/40 transition-all group">
-              <span className="material-symbols-outlined text-3xl mb-3 block text-secondary">manage_search</span>
-              <p className="font-extrabold text-[18px] mb-1 text-primary">Track Application</p>
-              <p className="text-[13px] text-on-surface-variant">Check status of an existing NCD application using your reference number.</p>
-              <div className="mt-4 flex items-center gap-1 font-bold text-[13px] text-primary">
-                Track <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
               </div>
             </button>
           </div>
