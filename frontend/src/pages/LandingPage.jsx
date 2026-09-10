@@ -9,7 +9,10 @@ const BENEFITS = [
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { isAuthenticated } = useStore();
+  const { isAuthenticated, insurersList } = useStore();
+  const activeInsurers = (insurersList || []).filter(insurer => insurer.status !== 'Inactive');
+  const partnerLogos = activeInsurers.filter(insurer => insurer.logoUrl);
+  const displayedPartners = partnerLogos.length ? partnerLogos : activeInsurers;
 
   return <>
     <section className="mx-auto grid max-w-[1500px] grid-cols-1 gap-12 px-7 py-14 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:px-12 lg:py-24">
@@ -47,8 +50,11 @@ export default function LandingPage() {
       </div>
     </section>
 
-    <section className="border-t border-slate-200 bg-white px-7 py-14 lg:px-12">
-      <div className="mx-auto flex max-w-[1500px] flex-col gap-8 rounded-2xl border border-slate-200 bg-slate-50 p-7 lg:flex-row lg:items-center lg:justify-between lg:p-10"><div><p className="text-[13px] font-extrabold uppercase tracking-[.12em] text-primary">Built around the customer</p><h2 className="mt-3 max-w-3xl text-[30px] font-extrabold tracking-[-.035em] sm:text-[40px]">Clear choices, secure information, and one place to return to.</h2><p className="mt-3 max-w-3xl text-[16px] leading-6 text-secondary">InsurShield helps customers compare motor cover without losing track of quotes, policies, renewals, or the first step of a claim.</p></div><button onClick={() => navigate('/insurance-type')} className="min-h-13 shrink-0 rounded-lg bg-primary px-7 py-3 text-[16px] font-bold text-white hover:bg-primary-container">Get insurance</button></div>
+    <section className="border-t border-slate-200 bg-slate-50 px-7 py-14 lg:px-12">
+      <div className="mx-auto max-w-[1500px]">
+        <div className="text-center"><p className="text-[13px] font-extrabold uppercase tracking-[.12em] text-primary">Our insurer network</p><h2 className="mt-3 text-[28px] font-extrabold tracking-[-.035em] sm:text-[36px]">Partnering with trusted insurers</h2>{!partnerLogos.length && <p className="mt-3 text-[13px] text-secondary">Prototype preview — approved insurer logos will replace these placeholders at launch.</p>}</div>
+        {displayedPartners.length ? <div className="mx-auto mt-8 max-w-6xl overflow-hidden"><div className="partner-marquee flex w-max gap-5 pr-5">{[...displayedPartners, ...displayedPartners].map((insurer, index) => <div key={`${insurer.id}-${index}`} className="flex h-24 w-48 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white p-5">{insurer.logoUrl ? <img src={insurer.logoUrl} alt={`${insurer.name} logo`} className="max-h-14 max-w-[150px] object-contain" /> : <div className="flex items-center gap-2.5"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white"><span className="material-symbols-outlined text-[21px]">shield</span></span><span className="max-w-[100px] text-left text-[13px] font-extrabold leading-4 text-on-surface">{insurer.name}</span></div>}</div>)}</div></div> : null}
+      </div>
     </section>
 
     <footer className="bg-slate-950 px-7 py-12 text-slate-300 lg:px-12">

@@ -21,7 +21,7 @@ function VehicleValueWarning() {
         <div>
           <h4 className="font-extrabold text-[15px] uppercase tracking-wide">⚠️ Critical: Accurate Vehicle Valuation Required</h4>
           <p className="text-white/90 text-[13px] mt-1 leading-relaxed">
-            The value you enter directly determines your insurance premium and claim payouts. Read both warnings below carefully before entering a value.
+            Enter the vehicle’s current fair market value. It affects your premium and the maximum amount payable for a claim.
           </p>
         </div>
       </div>
@@ -31,31 +31,19 @@ function VehicleValueWarning() {
             <span className="material-symbols-outlined text-yellow-300 text-[18px]">trending_down</span>
             <span className="font-bold text-[12px] uppercase tracking-wider">Under-Valuing</span>
           </div>
-          <p className="text-[12px] text-white/85 leading-relaxed">
-            If you <strong>under-value</strong> your vehicle to reduce your premium, the insurer will only pay out the declared value in the event of a total loss or major accident. You will absorb the difference out of pocket.
-          </p>
-          <div className="mt-2 bg-black/20 rounded-lg p-2 text-[11px] font-mono">
-            Example: Car worth ZMW 200,000 but declared at ZMW 100,000 → Maximum payout = ZMW 100,000
-          </div>
+          <p className="text-[12px] text-white/85 leading-relaxed">A lower declared value may reduce your premium, but any payout is limited to that declared value. You pay the difference yourself.</p>
         </div>
         <div className="bg-white/10 border border-white/20 rounded-xl p-3">
           <div className="flex items-center gap-2 mb-1.5">
             <span className="material-symbols-outlined text-orange-300 text-[18px]">trending_up</span>
             <span className="font-bold text-[12px] uppercase tracking-wider">Over-Valuing</span>
           </div>
-          <p className="text-[12px] text-white/85 leading-relaxed">
-            If you <strong>over-value</strong> your vehicle to receive higher claim payouts, this constitutes <strong>insurance fraud</strong> under Zambian law. The insurer will only pay the actual market value regardless of the declared value.
-          </p>
-          <div className="mt-2 bg-black/20 rounded-lg p-2 text-[11px] font-mono">
-            Penalty: Policy voided + criminal prosecution under the Penal Code Act (Chapter 87)
-          </div>
+          <p className="text-[12px] text-white/85 leading-relaxed">Declaring more than the market value does not increase a payout and may be treated as insurance fraud.</p>
         </div>
       </div>
       <div className="mt-3 flex items-center gap-2 bg-white/15 rounded-xl px-3 py-2">
         <span className="material-symbols-outlined text-yellow-300 text-[16px]">lightbulb</span>
-        <p className="text-[12px] text-white/90">
-          <strong>Tip:</strong> Use the current retail price from AutoTrader.co.zm, GumTree Zambia, or get a professional valuation from ZABS/an approved valuer.
-        </p>
+        <p className="text-[12px] text-white/90"><strong>Tip:</strong> Use recent market listings or a professional valuation.</p>
       </div>
     </div>
   );

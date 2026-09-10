@@ -18,7 +18,7 @@ export default function AdminDashboard() {
   const { insurersList, addInsurer, updateInsurerRate, claims, piaConfig, setPiaConfig } = useStore();
   const [activeView, setActiveView] = useState('dashboard');
 
-  const [newInsurer, setNewInsurer] = useState({ name: '', coverage: '', ratePercentage: '', minimumPremiumZMW: '' });
+  const [newInsurer, setNewInsurer] = useState({ name: '', coverage: '', ratePercentage: '', minimumPremiumZMW: '', logoUrl: '' });
   const [searchPlate, setSearchPlate] = useState('');
   const [searchResult, setSearchResult] = useState(null);
   const [editingRate, setEditingRate] = useState(null);
@@ -48,12 +48,13 @@ export default function AdminDashboard() {
         name: newInsurer.name, coverage: newInsurer.coverage,
         ratePercentage: parseFloat(newInsurer.ratePercentage),
         minimumPremiumZMW: parseFloat(newInsurer.minimumPremiumZMW) || 1200,
+        logoUrl: newInsurer.logoUrl.trim(),
         ncdAllowed: true, maxNcdPercentage: 50,
         inspectionRules: 'NOT REQUIRED', timing: 'AFTER PAYMENT', method: 'SELF-CAPTURE',
         icon: 'business', isBestValue: false, benefits: ['Third Party Property Damage'],
         status: 'Active',
       });
-      setNewInsurer({ name: '', coverage: '', ratePercentage: '', minimumPremiumZMW: '' });
+      setNewInsurer({ name: '', coverage: '', ratePercentage: '', minimumPremiumZMW: '', logoUrl: '' });
       setActiveView('manage_insurers');
     }
   };
@@ -102,6 +103,13 @@ export default function AdminDashboard() {
                 <input value={newInsurer.coverage} onChange={e => setNewInsurer(p => ({ ...p, coverage: e.target.value }))}
                   className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
                   placeholder="e.g. Comprehensive Gold Plan" />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Company Logo URL</label>
+                <input type="url" value={newInsurer.logoUrl} onChange={e => setNewInsurer(p => ({ ...p, logoUrl: e.target.value }))}
+                  className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
+                  placeholder="https://example.com/company-logo.png" />
+                <p className="text-[11px] text-secondary mt-1">Optional. The logo will appear in the moving partner strip on the home page.</p>
               </div>
               <div>
                 <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Premium Rate (%) *</label>

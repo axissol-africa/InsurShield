@@ -71,3 +71,17 @@
 
   button, input, select, textarea { font: inherit; }
 }
+
+@keyframes partner-marquee {
+  to { transform: translateX(-50%); }
+}
+
+.partner-marquee {
+  animation: partner-marquee 24s linear infinite;
+}
+
+.partner-marquee:hover { animation-play-state: paused; }
+
+@media (prefers-reduced-motion: reduce) {
+  .partner-marquee { animation: none; }
+}
