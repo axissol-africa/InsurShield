@@ -1,340 +1,342 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { INSURER_RATES, PIA_CONFIG } from '../utils/insurerRates';
+import { useShallow } from 'zustand/react/shallow';
+import { INSURER_RATES, PIA_CONFIG, reconcileInsurers } from '../utils/insurerRates';
+import { INSPECTION_KEYS } from '../utils/inspection';
 
-// Prototype-only identities. A production implementation must authenticate
-// against a secure service and never keep passwords in browser storage.
+/**
+ * InsurShield — Application Store
+ * -------------------------------
+ * Single persisted Zustand store for the prototype.
+ *
+ * Business model
+ *  - Guests may explore every public page, including vehicle and cover steps.
+ *  - A customer account is required to submit a quote request, manage claims or renew.
+ *  - Every quote request is sent to ALL active insurers on the platform so each
+ *    partner has an equal chance to win the customer. Insurers reply with their
+ *    own final quotes; until then the customer sees an indicative estimate.
+ *
+ * Prototype-only identities live here. A production implementation must
+ * authenticate against a secure service and never keep passwords, OTPs or
+ * consent audit records in browser storage.
+ */
+
 export const DEMO_CUSTOMER_ACCOUNT = {
-  id: 'CUS-DEMO-001', fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm',
-  phone: '0970123456', password: 'Customer123!', consentTimestamp: '2026-09-01T09:00:00.000Z',
+  id: 'CUS-DEMO-001',
+  fullName: 'Mwiza Banda',
+  email: 'mwiza.banda@insurshield.zm',
+  phone: '0970123456',
+  password: 'Customer123!',
+  consentTimestamp: '2026-09-01T09:00:00.000Z',
+};
+
+const EMPTY_DOCUMENTS = { whiteBook: null, ...Object.fromEntries(INSPECTION_KEYS.map((key) => [key, null])) };
+
+const TODAY = () => new Date().toISOString().split('T')[0];
+
+const LEGACY_KEYS = ['selectedInsurers', 'quoteStatus', 'quoteRulesAgreed', 'quoteRulesTimestamp', 'supportTickets', 'chatMessages', 'userPhone'];
+
+const toCustomerProfile = (account) => ({ fullName: account.fullName, email: account.email, phone: account.phone });
+
+const matchesIdentifier = (account, identifier) =>
+  account.email.toLowerCase() === identifier.toLowerCase() || account.phone === identifier;
+
+const withTimestamp = (record, key = 'updatedAt') => ({ ...record, [key]: new Date().toISOString() });
+
+const updateById = (items, id, updater) => items.map((item) => (item.id === id ? updater(item) : item));
+
+/** State cleared when a quote journey ends (policy issued) or a new one starts. */
+const JOURNEY_DEFAULTS = {
+  vehicleDetails: null,
+  vehicleValue: 0,
+  vehicleUsage: '',
+  insuranceType: '',
+  coverageDurationId: '4q',
+  policyStartDate: TODAY(),
+  matchRtsaAnniversary: false,
+  rtsaRegistrationDate: '',
+  policyDates: null,
+  activeQuoteRequestId: null,
+  selectedQuote: null,
+  premiumBreakdown: null,
+  ncdCode: '',
+  ncdCodeValidated: null,
+  ncdCodeUsed: false,
+  documents: { ...EMPTY_DOCUMENTS },
 };
 
 export const useStore = create(
   persist(
     (set, get) => ({
-      // ─── User ───────────────────────────────────────────────
-      userPhone: '',
+      // ─── Customer account ────────────────────────────────────
       customer: null,
       isAuthenticated: false,
       registeredAccounts: [DEMO_CUSTOMER_ACCOUNT],
-      seedDemoAccount: () => set((state) => state.registeredAccounts.some(account => account.email === DEMO_CUSTOMER_ACCOUNT.email)
-        ? state
-        : { registeredAccounts: [DEMO_CUSTOMER_ACCOUNT, ...state.registeredAccounts] }),
-      setUserPhone: (phone) => set({ userPhone: phone }),
-      registerCustomerAccount: (account) => set((state) => ({
-        registeredAccounts: [...state.registeredAccounts, account],
-        customer: { fullName: account.fullName, email: account.email, phone: account.phone },
-        userPhone: account.phone,
-        isAuthenticated: true,
-      })),
+
+      seedDemoAccount: () =>
+        set((state) =>
+          state.registeredAccounts.some((account) => account.email === DEMO_CUSTOMER_ACCOUNT.email)
+            ? state
+            : { registeredAccounts: [DEMO_CUSTOMER_ACCOUNT, ...state.registeredAccounts] },
+        ),
+
+      registerCustomerAccount: (account) =>
+        set((state) => ({
+          registeredAccounts: [...state.registeredAccounts, account],
+          customer: toCustomerProfile(account),
+          isAuthenticated: true,
+          consentAccepted: true,
+          consentTimestamp: account.consentTimestamp,
+        })),
+
       authenticateCustomer: (identifier, password) => {
-        // Always include the seeded account so a previous browser session with
-        // locally saved prototype accounts cannot lock the evaluator out.
-        const accounts = [DEMO_CUSTOMER_ACCOUNT, ...get().registeredAccounts.filter(account => account.email !== DEMO_CUSTOMER_ACCOUNT.email)];
-        const account = accounts.find(candidate =>
-          (candidate.email.toLowerCase() === identifier.toLowerCase() || candidate.phone === identifier) && candidate.password === password
-        );
+        // The seeded account is always included so a stale browser session can
+        // never lock an evaluator out of the prototype.
+        const accounts = [
+          DEMO_CUSTOMER_ACCOUNT,
+          ...get().registeredAccounts.filter((account) => account.email !== DEMO_CUSTOMER_ACCOUNT.email),
+        ];
+        const account = accounts.find((candidate) => matchesIdentifier(candidate, identifier) && candidate.password === password);
         if (!account) return false;
-        set({ customer: { fullName: account.fullName, email: account.email, phone: account.phone }, userPhone: account.phone, isAuthenticated: true, consentAccepted: true, consentTimestamp: account.consentTimestamp || new Date().toISOString() });
+        set({
+          customer: toCustomerProfile(account),
+          isAuthenticated: true,
+          consentAccepted: true,
+          consentTimestamp: account.consentTimestamp || new Date().toISOString(),
+        });
         return true;
       },
-      resetCustomerPassword: (identifier, password) => set((state) => ({
-        registeredAccounts: state.registeredAccounts.map(account =>
-          account.email.toLowerCase() === identifier.toLowerCase() || account.phone === identifier ? { ...account, password } : account
-        ),
-      })),
-      signOut: () => set({ customer: null, userPhone: '', isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null }),
 
-      // ─── POPIA Consent ───────────────────────────────────────
+      resetCustomerPassword: (identifier, password) =>
+        set((state) => ({
+          registeredAccounts: state.registeredAccounts.map((account) =>
+            matchesIdentifier(account, identifier) ? { ...account, password } : account,
+          ),
+        })),
+
+      signOut: () =>
+        set({ customer: null, isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null }),
+
+      /** Prototype only: remove the signed-in account so its details can be reused in a demo. */
+      deleteCurrentAccount: () =>
+        set((state) => ({
+          registeredAccounts: state.registeredAccounts.filter((account) => account.email !== state.customer?.email || account.email === DEMO_CUSTOMER_ACCOUNT.email),
+          customer: null, isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null,
+        })),
+
+      // ─── Staff / insurer portal session ──────────────────────
+      staffSession: null, // { role: 'admin' | 'support' | 'insurer', name }
+      startStaffSession: (session) => set({ staffSession: session }),
+      endStaffSession: () => set({ staffSession: null }),
+
+      // ─── Data-protection consent ─────────────────────────────
       consentAccepted: false,
       consentTimestamp: null,
       consentRecord: null,
-      setConsent: (accepted, record = null) => set({
-        consentAccepted: accepted,
-        consentTimestamp: accepted ? (record?.acceptedAt || new Date().toISOString()) : null,
-        consentRecord: accepted ? record : null,
-      }),
+      setConsent: (accepted, record = null) =>
+        set({
+          consentAccepted: accepted,
+          consentTimestamp: accepted ? record?.acceptedAt || new Date().toISOString() : null,
+          consentRecord: accepted ? record : null,
+        }),
 
-      // ─── Quote Rules Agreement ───────────────────────────────
-      quoteRulesAgreed: false,
-      quoteRulesTimestamp: null,
-      setQuoteRulesAgreed: (agreed) => set({
-        quoteRulesAgreed: agreed,
-        quoteRulesTimestamp: agreed ? new Date().toISOString() : null,
-      }),
+      // ─── Quote journey ───────────────────────────────────────
+      ...JOURNEY_DEFAULTS,
+      setVehicleDetails: (vehicleDetails) => set({ vehicleDetails }),
+      setVehicleValue: (vehicleValue) => set({ vehicleValue }),
+      setVehicleUsage: (vehicleUsage) => set({ vehicleUsage }),
+      setInsuranceType: (insuranceType) => set({ insuranceType }),
+      setCoverageDuration: (coverageDurationId) => set({ coverageDurationId }),
+      setPolicyStartDate: (policyStartDate) => set({ policyStartDate }),
+      setRtsaAnniversary: (matchRtsaAnniversary, rtsaRegistrationDate) =>
+        set((state) => ({ matchRtsaAnniversary, rtsaRegistrationDate: rtsaRegistrationDate ?? state.rtsaRegistrationDate })),
+      setDocuments: (updates) => set((state) => ({ documents: { ...state.documents, ...updates } })),
+      setDocument: (type, url) => set((state) => ({ documents: { ...state.documents, [type]: url } })),
 
-      // ─── Vehicle Details ─────────────────────────────────────
-      vehicleDetails: null,
-      setVehicleDetails: (details) => set({ vehicleDetails: details }),
+      /**
+       * Submit the customer's request to every active insurer at once.
+       * Returns the new request id.
+       */
+      submitQuoteRequest: ({ customer, policyDates }) => {
+        const state = get();
+        const insurers = state.insurersList.filter((insurer) => insurer.status !== 'Inactive');
+        const id = `QR-${Date.now()}`;
+        const { vehicleDetails } = state;
+        const request = {
+          id,
+          status: 'Submitted',
+          submittedAt: new Date().toISOString(),
+          customer,
+          insurers: insurers.map((insurer) => insurer.name),
+          insurerIds: insurers.map((insurer) => insurer.id),
+          insurerQuotes: {},
+          vehicle: vehicleDetails
+            ? `${vehicleDetails.year || ''} ${vehicleDetails.make || ''} ${vehicleDetails.model || ''}`.trim()
+            : 'Vehicle details pending',
+          vehicleDetails,
+          vehicleValue: state.vehicleValue,
+          vehicleUsage: state.vehicleUsage,
+          insuranceType: state.insuranceType,
+          coverageDurationId: state.coverageDurationId,
+          matchRtsaAnniversary: state.matchRtsaAnniversary,
+          rtsaRegistrationDate: state.rtsaRegistrationDate,
+          policyDates,
+          // Photo blobs stay in `documents`; the request records which shots were captured.
+          inspectionShots: INSPECTION_KEYS.filter((key) => Boolean(state.documents[key])),
+        };
+        set({ quoteRequests: [request, ...state.quoteRequests], activeQuoteRequestId: id, policyDates });
+        return id;
+      },
 
-      vehicleValue: 0,
-      setVehicleValue: (val) => set({ vehicleValue: val }),
+      /** Insurer portal: attach a final quote to a request. */
+      addInsurerQuote: (requestId, insurerName, quote) =>
+        set((state) => ({
+          quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({
+            ...request,
+            status: 'Quoted',
+            insurerQuotes: { ...request.insurerQuotes, [insurerName]: withTimestamp(quote, 'sentAt') },
+          })),
+        })),
 
-      // ─── Vehicle Usage ───────────────────────────────────────
-      vehicleUsage: '',
-      setVehicleUsage: (usage) => set({ vehicleUsage: usage }),
+      /** Reopen an earlier request (from the account page) for comparison. */
+      setActiveQuoteRequest: (activeQuoteRequestId) => set({ activeQuoteRequestId, selectedQuote: null, premiumBreakdown: null }),
 
-      // ─── Insurance Type ──────────────────────────────────────
-      insuranceType: '',
-      setInsuranceType: (type) => set({ insuranceType: type }),
+      selectQuote: (quote, breakdown) => set({ selectedQuote: quote, premiumBreakdown: breakdown }),
 
-      // ─── Policy Duration & Dates ─────────────────────────────
-      coverageDurationId: '4q',
-      policyStartDate: new Date().toISOString().split('T')[0],
-      policyDates: null,
-      setCoverageDuration: (durationId) => set({ coverageDurationId: durationId }),
-      setPolicyStartDate: (date) => set({ policyStartDate: date }),
-      setPolicyDates: (dates) => set({ policyDates: dates }),
-
-      // ─── NCD Code (pre-approved from insurer) ─────────────────
-      ncdCode: '',
-      ncdCodeValidated: null, // { percentage, insurer, yearsClaimFree } or null
-      ncdCodeUsed: false,     // true once applied to a confirmed policy
-      setNcdCode: (code) => set({ ncdCode: code }),
-      setNcdCodeValidated: (result) => set({ ncdCodeValidated: result }),
+      // ─── NCD code (pre-approved by an insurer) ───────────────
+      setNcdCode: (ncdCode) => set({ ncdCode }),
+      setNcdCodeValidated: (ncdCodeValidated) => set({ ncdCodeValidated }),
       clearNcdCode: () => set({ ncdCode: '', ncdCodeValidated: null, ncdCodeUsed: false }),
       markNcdCodeUsed: () => set({ ncdCodeUsed: true }),
 
-      // ─── NCD Applications (submitted to insurers) ─────────────
       ncdApplications: [],
-      addNcdApplication: (app) => set((state) => ({
-        ncdApplications: [
-          {
-            ...app,
-            id: `NCDA-${Date.now()}`,
-            applicationNumber: `NCD-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-            status: 'Submitted',
-            submittedAt: new Date().toISOString(),
-            approvedCode: null,
-          },
-          ...state.ncdApplications,
-        ],
-      })),
-      updateNcdApplicationStatus: (appId, status, approvedCode) => set((state) => ({
-        ncdApplications: state.ncdApplications.map(a =>
-          a.id === appId
-            ? { ...a, status, approvedCode: approvedCode || a.approvedCode, updatedAt: new Date().toISOString() }
-            : a
-        ),
-      })),
+      addNcdApplication: (application) =>
+        set((state) => ({
+          ncdApplications: [
+            {
+              ...application,
+              id: `NCDA-${Date.now()}`,
+              applicationNumber: `NCD-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+              status: 'Submitted',
+              submittedAt: new Date().toISOString(),
+              approvedCode: null,
+            },
+            ...state.ncdApplications,
+          ],
+        })),
+      updateNcdApplicationStatus: (applicationId, status, approvedCode) =>
+        set((state) => ({
+          ncdApplications: updateById(state.ncdApplications, applicationId, (application) =>
+            withTimestamp({ ...application, status, approvedCode: approvedCode || application.approvedCode }),
+          ),
+        })),
 
-      // ─── PIA Configuration ────────────────────────────────────
+      // ─── Platform configuration ──────────────────────────────
       piaConfig: { ...PIA_CONFIG },
-      setPiaConfig: (config) => set({ piaConfig: { ...get().piaConfig, ...config } }),
+      setPiaConfig: (config) => set((state) => ({ piaConfig: { ...state.piaConfig, ...config } })),
 
-      // ─── Insurers List ────────────────────────────────────────
       insurersList: INSURER_RATES,
-      addInsurer: (insurer) => set((state) => ({
-        insurersList: [...state.insurersList, { ...insurer, id: Date.now().toString() }],
-      })),
-      updateInsurerRate: (insurerId, updates) => set((state) => ({
-        insurersList: state.insurersList.map(i => i.id === insurerId ? { ...i, ...updates } : i),
-      })),
+      addInsurer: (insurer) =>
+        set((state) => ({ insurersList: [...state.insurersList, { ...insurer, id: Date.now().toString() }] })),
+      updateInsurerRate: (insurerId, updates) =>
+        set((state) => ({ insurersList: updateById(state.insurersList, insurerId, (insurer) => ({ ...insurer, ...updates })) })),
 
-      // ─── Selected Insurers ────────────────────────────────────
-      selectedInsurers: [],
-      setMockInsurers: (insurers) => set({ selectedInsurers: insurers }),
-      toggleInsurer: (insurer) => set((state) => {
-        const isSelected = state.selectedInsurers.some(i => i.id === insurer.id);
-        if (isSelected) return { selectedInsurers: state.selectedInsurers.filter(i => i.id !== insurer.id) };
-        if (state.selectedInsurers.length < 5) return { selectedInsurers: [...state.selectedInsurers, insurer] };
-        return state;
-      }),
-      clearInsurers: () => set({ selectedInsurers: [] }),
-
-      // ─── Quote Status ─────────────────────────────────────────
-      quoteStatus: 'idle',
-      setQuoteStatus: (status) => set({ quoteStatus: status }),
-
-      selectedQuote: null,
-      setSelectedQuote: (quote) => set({ selectedQuote: quote }),
-
-      premiumBreakdown: null,
-      setPremiumBreakdown: (breakdown) => set({ premiumBreakdown: breakdown }),
-
-      // ─── Cross-portal prototype records ──────────────────────
+      // ─── Records shared across portals ───────────────────────
       quoteRequests: [],
-      addQuoteRequest: (request) => set((state) => ({
-        quoteRequests: [{
-          ...request, id: `QR-${Date.now()}`, status: 'Submitted', submittedAt: new Date().toISOString(),
-        }, ...state.quoteRequests],
-      })),
-      addInsurerQuote: (requestId, insurer, quote) => set((state) => ({
-        quoteRequests: state.quoteRequests.map(request => request.id === requestId
-          ? { ...request, status: 'Quoted', insurerQuotes: { ...(request.insurerQuotes || {}), [insurer]: { ...quote, sentAt: new Date().toISOString() } } }
-          : request),
-      })),
       policies: [],
-      addPolicy: (policy) => set((state) => state.policies.some(item => item.policyNumber === policy.policyNumber)
-        ? state
-        : { policies: [{ ...policy, issuedAt: new Date().toISOString(), status: 'Active' }, ...state.policies] }),
+      addPolicy: (policy) =>
+        set((state) =>
+          state.policies.some((item) => item.policyNumber === policy.policyNumber)
+            ? state
+            : { policies: [{ ...policy, issuedAt: new Date().toISOString(), status: 'Active' }, ...state.policies] },
+        ),
 
-      // ─── Documents ───────────────────────────────────────────
-      documents: {
-        whiteBook: null,
-        insp_front: null, insp_back: null, insp_left: null, insp_right: null, insp_mileage: null,
-      },
-      setDocument: (type, url) => set((state) => ({
-        documents: { ...state.documents, [type]: url },
-      })),
-
-      // ─── Claims ───────────────────────────────────────────────
+      // ─── Claims (first notification only) ───────────────────
+      // InsurShield records the notification and issues a claim number. The
+      // customer then calls the insurer, who handles assessment and settlement
+      // outside the platform; the insurer can mark the notification as received.
       claims: [],
-      addClaim: (claim) => set((state) => ({
-        claims: [{ ...claim, id: `CLM-${Date.now()}`, submittedAt: new Date().toISOString() }, ...state.claims],
-      })),
-      updateClaimStatus: (claimId, status, note) => set((state) => ({
-        claims: state.claims.map(c =>
-          c.id === claimId
-            ? { ...c, status, timeline: [...(c.timeline || []), { status, note, date: new Date().toISOString() }] }
-            : c
-        ),
-      })),
-      addClaimMessage: (claimId, message) => set((state) => ({
-        claims: state.claims.map(c =>
-          c.id === claimId
-            ? { ...c, messages: [...(c.messages || []), { ...message, id: Date.now(), sentAt: new Date().toISOString() }] }
-            : c
-        ),
-      })),
-      updateClaimStatusWithMsg: (claimId, status, note, message) => set((state) => ({
-        claims: state.claims.map(c =>
-          c.id === claimId
-            ? {
-                ...c,
-                status,
-                timeline: [...(c.timeline || []), { status, note, date: new Date().toISOString() }],
-                messages: message
-                  ? [...(c.messages || []), { id: Date.now(), senderType: 'insurer', message, sentAt: new Date().toISOString() }]
-                  : c.messages,
-              }
-            : c
-        ),
-      })),
+      addClaim: (claim) =>
+        set((state) => ({
+          claims: [{ ...claim, id: claim.claimNumber, status: 'Notified', submittedAt: new Date().toISOString() }, ...state.claims],
+        })),
+      markClaimReceived: (claimId) =>
+        set((state) => ({
+          claims: updateById(state.claims, claimId, (claim) => ({ ...claim, status: 'Received by insurer', receivedAt: new Date().toISOString() })),
+        })),
 
-      // ─── Support Tickets ──────────────────────────────────────
-      supportTickets: [],
-      addTicket: (ticket) => set((state) => ({
-        supportTickets: [{ ...ticket, id: `TKT-${Date.now()}`, createdAt: new Date().toISOString(), status: 'Open', messages: [], internalNotes: [], escalations: [], assignedTo: null }, ...state.supportTickets],
-      })),
-      updateTicketStatus: (ticketId, status) => set((state) => ({
-        supportTickets: state.supportTickets.map(t =>
-          t.id === ticketId ? { ...t, status, updatedAt: new Date().toISOString() } : t
-        ),
-      })),
-      addTicketMessage: (ticketId, message) => set((state) => ({
-        supportTickets: state.supportTickets.map(t =>
-          t.id === ticketId
-            ? { ...t, messages: [...(t.messages || []), { ...message, id: Date.now(), sentAt: new Date().toISOString() }] }
-            : t
-        ),
-      })),
-      assignTicket: (ticketId, agentName) => set((state) => ({
-        supportTickets: state.supportTickets.map(t =>
-          t.id === ticketId ? { ...t, assignedTo: agentName, updatedAt: new Date().toISOString() } : t
-        ),
-      })),
-      addTicketInternalNote: (ticketId, note) => set((state) => ({
-        supportTickets: state.supportTickets.map(t =>
-          t.id === ticketId
-            ? { ...t, internalNotes: [...(t.internalNotes || []), { ...note, id: Date.now(), createdAt: new Date().toISOString() }] }
-            : t
-        ),
-      })),
-      addTicketEscalation: (ticketId, escalation) => set((state) => ({
-        supportTickets: state.supportTickets.map(t =>
-          t.id === ticketId
-            ? {
-                ...t,
-                status: 'Waiting for Insurer',
-                escalations: [...(t.escalations || []), { ...escalation, id: Date.now(), createdAt: new Date().toISOString() }],
-                updatedAt: new Date().toISOString(),
-              }
-            : t
-        ),
-      })),
-
-      // ─── Chat ─────────────────────────────────────────────────
-      chatMessages: [],
-      chatOpen: false,
-      unreadCount: 0,
-      addChatMessage: (message) => set((state) => ({
-        chatMessages: [...state.chatMessages, { ...message, id: Date.now(), sentAt: new Date().toISOString() }],
-        unreadCount: message.senderType === 'support' ? state.unreadCount + 1 : state.unreadCount,
-      })),
-      setChatOpen: (open) => set({ chatOpen: open, unreadCount: open ? 0 : get().unreadCount }),
-      clearUnread: () => set({ unreadCount: 0 }),
-
-      // ─── Inspections ──────────────────────────────────────────
+      // ─── Inspections ─────────────────────────────────────────
       inspections: [],
-      addInspection: (inspection) => set((state) => ({
-        inspections: [{ ...inspection, id: `INS-${Date.now()}`, createdAt: new Date().toISOString() }, ...state.inspections],
-      })),
-      updateInspectionStatus: (inspId, status, data) => set((state) => ({
-        inspections: state.inspections.map(i =>
-          i.id === inspId ? { ...i, status, ...data, updatedAt: new Date().toISOString() } : i
-        ),
-      })),
+      addInspection: (inspection) =>
+        set((state) => ({
+          inspections: [{ ...inspection, id: `INS-${Date.now()}`, createdAt: new Date().toISOString() }, ...state.inspections],
+        })),
+      updateInspectionStatus: (inspectionId, status, data) =>
+        set((state) => ({
+          inspections: updateById(state.inspections, inspectionId, (inspection) => withTimestamp({ ...inspection, status, ...data })),
+        })),
 
-      // ─── Reset ───────────────────────────────────────────────
-      resetStore: () => set({
-        vehicleDetails: null,
-        vehicleValue: 0,
-        vehicleUsage: '',
-        insuranceType: '',
-        selectedInsurers: [],
-        quoteStatus: 'idle',
-        selectedQuote: null,
-        premiumBreakdown: null,
-        policyDates: null,
-        ncdCode: '',
-        ncdCodeValidated: null,
-        ncdCodeUsed: false,
-        coverageDurationId: '4q',
-        quoteRulesAgreed: false,
-        documents: {
-          whiteBook: null,
-          insp_front: null, insp_back: null, insp_left: null, insp_right: null, insp_mileage: null,
-        },
-      }),
+      // ─── Journey reset ───────────────────────────────────────
+      resetJourney: () => set({ ...JOURNEY_DEFAULTS, policyStartDate: TODAY() }),
     }),
     {
       name: 'insurshield-storage',
-      partialize: (state) => ({
-        userPhone: state.userPhone,
-        customer: state.customer,
-        isAuthenticated: state.isAuthenticated,
-        registeredAccounts: state.registeredAccounts,
-        quoteRequests: state.quoteRequests,
-        policies: state.policies,
-        vehicleDetails: state.vehicleDetails,
-        vehicleValue: state.vehicleValue,
-        vehicleUsage: state.vehicleUsage,
-        insuranceType: state.insuranceType,
-        selectedInsurers: state.selectedInsurers,
-        quoteStatus: state.quoteStatus,
-        selectedQuote: state.selectedQuote,
-        premiumBreakdown: state.premiumBreakdown,
-        policyDates: state.policyDates,
-        ncdCode: state.ncdCode,
-        ncdCodeValidated: state.ncdCodeValidated,
-        ncdCodeUsed: state.ncdCodeUsed,
-        coverageDurationId: state.coverageDurationId,
-        policyStartDate: state.policyStartDate,
-        consentAccepted: state.consentAccepted,
-        consentTimestamp: state.consentTimestamp,
-        consentRecord: state.consentRecord,
-        quoteRulesAgreed: state.quoteRulesAgreed,
-        quoteRulesTimestamp: state.quoteRulesTimestamp,
-        piaConfig: state.piaConfig,
-        insurersList: state.insurersList,
-        claims: state.claims,
-        supportTickets: state.supportTickets,
-        chatMessages: state.chatMessages,
-        inspections: state.inspections,
-        documents: state.documents,
-        ncdApplications: state.ncdApplications,
+      version: 4,
+      // Stored state is merged over the defaults; the insurer list is reconciled
+      // with the catalogue so stale or partial entries can never break quoting.
+      merge: (persisted, current) => ({
+        ...current,
+        ...persisted,
+        insurersList: reconcileInsurers(persisted?.insurersList),
+        // A start date saved on an earlier day would fail the date input's minimum.
+        policyStartDate: persisted?.policyStartDate >= TODAY() ? persisted.policyStartDate : TODAY(),
+        documents: { ...EMPTY_DOCUMENTS, ...Object.fromEntries(Object.entries(persisted?.documents || {}).filter(([key]) => key in EMPTY_DOCUMENTS)) },
       }),
-    }
-  )
+      migrate: (persisted, version) => {
+        // v1 persisted the "select up to five insurers" model plus support-ticket and chat state.
+        const state = Object.fromEntries(Object.entries(persisted || {}).filter(([key]) => !LEGACY_KEYS.includes(key)));
+        // v3: accounts registered while testing earlier builds are cleared so the
+        // same names and emails can be used fresh in client demos.
+        if (version < 3) {
+          state.registeredAccounts = [DEMO_CUSTOMER_ACCOUNT];
+          if (state.customer?.email !== DEMO_CUSTOMER_ACCOUNT.email) {
+            Object.assign(state, { customer: null, isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null });
+          }
+        }
+        if (version < 4) state.insurersList = reconcileInsurers(state.insurersList);
+        return state;
+      },
+      partialize: ({
+        customer, isAuthenticated, registeredAccounts, staffSession,
+        consentAccepted, consentTimestamp, consentRecord,
+        vehicleDetails, vehicleValue, vehicleUsage, insuranceType, coverageDurationId, policyStartDate, matchRtsaAnniversary, rtsaRegistrationDate, policyDates,
+        activeQuoteRequestId, selectedQuote, premiumBreakdown, documents,
+        ncdCode, ncdCodeValidated, ncdCodeUsed, ncdApplications,
+        piaConfig, insurersList, quoteRequests, policies, claims, inspections,
+      }) => ({
+        customer, isAuthenticated, registeredAccounts, staffSession,
+        consentAccepted, consentTimestamp, consentRecord,
+        vehicleDetails, vehicleValue, vehicleUsage, insuranceType, coverageDurationId, policyStartDate, matchRtsaAnniversary, rtsaRegistrationDate, policyDates,
+        activeQuoteRequestId, selectedQuote, premiumBreakdown, documents,
+        ncdCode, ncdCodeValidated, ncdCodeUsed, ncdApplications,
+        piaConfig, insurersList, quoteRequests, policies, claims, inspections,
+      }),
+    },
+  ),
 );
+
+/** Insurers that currently receive quote requests (shallow-compared so the filtered array is stable). */
+const selectActiveInsurers = (state) => state.insurersList.filter((insurer) => insurer.status !== 'Inactive');
+export const useActiveInsurers = () => useStore(useShallow(selectActiveInsurers));
+
+/** The quote request currently being compared / paid for, if any. */
+export const selectActiveQuoteRequest = (state) =>
+  state.quoteRequests.find((request) => request.id === state.activeQuoteRequestId) || null;
+
+/** Records that belong to the signed-in customer. */
+export const belongsToCustomer = (customer) => (item) => {
+  if (!customer) return false;
+  const emails = [item.customer?.email, item.customerEmail];
+  const phones = [item.customer?.phone, item.customerPhone, item.phone];
+  return emails.includes(customer.email) || phones.includes(customer.phone);
+};

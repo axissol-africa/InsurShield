@@ -1,66 +1,44 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
-import { motion, AnimatePresence } from 'framer-motion';
-import { formatZMW } from '../utils/premiumEngine';
+import { motion } from 'framer-motion';
+import { formatZMW, formatDate } from '../utils/premiumEngine';
 
 // The insurer this portal is logged in as (in a real app this comes from auth)
 const MY_INSURER = 'Prestige Assurance';
 
+/** Claims reach the portal as first notifications; the insurer marks one received when the customer calls. */
 const CLAIM_STATUSES = {
-  Submitted:    { color: 'bg-blue-100 text-blue-800', dot: 'bg-blue-500' },
-  'Under Review': { color: 'bg-amber-100 text-amber-800', dot: 'bg-amber-500' },
-  'Additional Information Required': { color: 'bg-orange-100 text-orange-800', dot: 'bg-orange-500' },
-  Approved:     { color: 'bg-green-100 text-green-800', dot: 'bg-green-500' },
-  Rejected:     { color: 'bg-red-100 text-red-800', dot: 'bg-red-500' },
-  Settled:      { color: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' },
-};
-
-const CLAIM_NEXT_STATUSES = {
-  Submitted:    ['Under Review', 'Additional Information Required', 'Rejected'],
-  'Under Review': ['Approved', 'Additional Information Required', 'Rejected'],
-  'Additional Information Required': ['Under Review', 'Approved', 'Rejected'],
-  Approved:     ['Settled'],
-  Rejected:     [],
-  Settled:      [],
+  Notified: { color: 'bg-blue-100 text-blue-800', dot: 'bg-blue-500' },
+  'Received by insurer': { color: 'bg-primary/10 text-primary', dot: 'bg-primary/50' },
 };
 
 const NCD_STATUSES = {
   Submitted: { color: 'bg-blue-100 text-blue-800' },
   'Under Review': { color: 'bg-amber-100 text-amber-800' },
-  Approved: { color: 'bg-green-100 text-green-800' },
+  Approved: { color: 'bg-primary/10 text-primary' },
   Rejected: { color: 'bg-red-100 text-red-800' },
 };
 
-// Seed mock claims for demo
+// Seeded notifications so the inbox is not empty in a demo
 const SEED_CLAIMS = [
   {
-    id: 'CLM-882031', referenceNumber: 'CLM-882031', phone: '0970123456',
-    insurer: 'Prestige Assurance', type: 'Accident / Collision',
-    fullName: 'Mwiza Banda', incidentDate: '2025-06-10', location: 'Great East Road, near Arcades',
+    id: 'CLM-882031', claimNumber: 'CLM-882031', phone: '0970123456', fullName: 'Mwiza Banda',
+    insurer: 'Prestige Assurance', type: 'Accident / Collision', plate: 'BAA 1234', vehicle: '2020 Toyota Hilux',
+    incidentDate: '2025-06-10', location: 'Great East Road, near Arcades',
     description: 'Rear-ended at traffic lights. Third party vehicle fled the scene.',
     estimatedLoss: '45000', policeReport: true, policeReportNumber: 'ZP/2025/4421',
-    status: 'Under Review',
+    status: 'Received by insurer',
     submittedAt: new Date(Date.now() - 4 * 86400000).toISOString(),
-    timeline: [
-      { status: 'Submitted', note: 'Claim received and logged.', date: new Date(Date.now() - 4 * 86400000).toISOString() },
-      { status: 'Under Review', note: 'Assigned to claims assessor.', date: new Date(Date.now() - 2 * 86400000).toISOString() },
-    ],
-    messages: [
-      { id: 1, senderType: 'insurer', message: 'Your claim has been received and assigned to our assessment team.', sentAt: new Date(Date.now() - 2 * 86400000).toISOString() },
-    ],
+    receivedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
   },
   {
-    id: 'CLM-774510', referenceNumber: 'CLM-774510', phone: '0977334455',
-    insurer: 'Prestige Assurance', type: 'Theft',
-    fullName: 'Chanda Phiri', incidentDate: '2025-06-15', location: 'Woodlands, Lusaka',
+    id: 'CLM-774510', claimNumber: 'CLM-774510', phone: '0977334455', fullName: 'Chanda Phiri',
+    insurer: 'Prestige Assurance', type: 'Theft', plate: 'ABZ 5521', vehicle: '2018 Toyota Corolla',
+    incidentDate: '2025-06-15', location: 'Woodlands, Lusaka',
     description: 'Vehicle stolen from outside residence overnight.',
     estimatedLoss: '95000', policeReport: true, policeReportNumber: 'ZP/2025/5820',
-    status: 'Submitted',
+    status: 'Notified',
     submittedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-    timeline: [
-      { status: 'Submitted', note: 'Claim received and logged.', date: new Date(Date.now() - 1 * 86400000).toISOString() },
-    ],
-    messages: [],
   },
 ];
 
@@ -91,218 +69,70 @@ function timeAgo(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// ─── Claim Detail Panel ───────────────────────────────────────────────────────
-function ClaimDetail({ claim, onBack, allClaims, onUpdate }) {
-  const { updateClaimStatusWithMsg } = useStore();
+// ─── Claim notification panel ────────────────────────────────────────
+function ClaimDetail({ claim, onBack, allClaims }) {
+  const { markClaimReceived } = useStore();
   const live = allClaims.find(c => c.id === claim.id) || claim;
   const meta = CLAIM_STATUSES[live.status] || { color: 'bg-gray-100 text-gray-700', dot: 'bg-gray-400' };
-  const nextStatuses = CLAIM_NEXT_STATUSES[live.status] || [];
+  const received = live.status === 'Received by insurer';
+  const isSeed = !useStore.getState().claims.some(c => c.id === live.id);
+  const [marking, setMarking] = useState(false);
 
-  const [replyText, setReplyText] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('');
-  const [statusNote, setStatusNote] = useState('');
-  const [updating, setUpdating] = useState(false);
-  const [showStatusModal, setShowStatusModal] = useState(false);
-  const [sending, setSending] = useState(false);
-
-  const handleUpdateStatus = () => {
-    if (!selectedStatus) return;
-    setUpdating(true);
-    setTimeout(() => {
-      updateClaimStatusWithMsg(live.id, selectedStatus, statusNote || `Status changed to ${selectedStatus}.`, replyText.trim() || null);
-      setUpdating(false);
-      setShowStatusModal(false);
-      setSelectedStatus('');
-      setStatusNote('');
-      setReplyText('');
-      onUpdate?.();
-    }, 500);
+  const handleReceived = () => {
+    setMarking(true);
+    setTimeout(() => { markClaimReceived(live.id); setMarking(false); }, 400);
   };
 
-  const handleSendMessage = () => {
-    if (!replyText.trim()) return;
-    setSending(true);
-    setTimeout(() => {
-      updateClaimStatusWithMsg(live.id, live.status, null, replyText.trim());
-      setReplyText('');
-      setSending(false);
-    }, 300);
-  };
+  const facts = [
+    ['Customer', `${live.fullName || 'Customer'} · ${live.phone || '—'}`],
+    ['Vehicle', `${live.vehicle || '—'}${live.plate ? ` · ${live.plate}` : ''}`],
+    ['Incident date', formatDate(live.incidentDate)],
+    ['Location', live.location || '—'],
+    ['Estimated loss', live.estimatedLoss ? formatZMW(parseFloat(live.estimatedLoss)) : 'Not stated'],
+    ['Police report', live.policeReport ? `Yes — ${live.policeReportNumber || 'filed'}` : 'No'],
+  ];
 
   return (
-    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col h-full">
-      {/* Header */}
-      <div className="p-5 border-b border-gray-100 bg-white">
-        <div className="flex items-start gap-3 mb-3">
-          <button onClick={onBack} className="p-1.5 hover:bg-gray-100 rounded-full md:hidden">
-            <span className="material-symbols-outlined text-[20px]">arrow_back</span>
-          </button>
+    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex h-full flex-col">
+      <div className="border-b border-gray-100 bg-white p-5">
+        <div className="flex items-start gap-3">
+          <button type="button" onClick={onBack} aria-label="Back" className="rounded-full p-1.5 hover:bg-gray-100 md:hidden"><span className="material-symbols-outlined text-[20px]" aria-hidden="true">arrow_back</span></button>
           <div className="flex-1">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="font-bold text-[13px] text-secondary font-mono">{live.referenceNumber || live.id}</span>
-              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${meta.color}`}>{live.status}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[18px] font-bold text-primary">{live.claimNumber || live.id}</span>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${meta.color}`}>{live.status}</span>
             </div>
-            <h2 className="font-bold text-[17px] text-primary">{live.type}</h2>
-            <p className="text-[13px] text-secondary mt-0.5">{live.fullName} · {live.phone}</p>
+            <h2 className="mt-1 text-[16px] font-bold text-on-surface">{live.type}</h2>
+            <p className="text-[12px] text-secondary">Notified {timeAgo(live.submittedAt)}{received && live.receivedAt ? ` · received ${timeAgo(live.receivedAt)}` : ''}</p>
           </div>
         </div>
+      </div>
 
-        {/* Claim key facts */}
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          {[
-            { label: 'Incident Date', value: live.incidentDate },
-            { label: 'Estimated Loss', value: live.estimatedLoss ? formatZMW(parseFloat(live.estimatedLoss)) : 'Not stated' },
-            { label: 'Location', value: live.location },
-            { label: 'Police Report', value: live.policeReport ? `Yes — ${live.policeReportNumber || 'Filed'}` : 'No' },
-          ].map(f => (
-            <div key={f.label}>
-              <p className="text-[10px] font-bold uppercase text-secondary">{f.label}</p>
-              <p className="text-[13px] font-semibold text-primary">{f.value}</p>
-            </div>
+      <div className="flex-1 space-y-4 overflow-y-auto p-5">
+        <dl className="grid grid-cols-2 gap-3">
+          {facts.map(([label, value]) => (
+            <div key={label}><dt className="text-[10px] font-bold uppercase text-secondary">{label}</dt><dd className="text-[13px] font-semibold text-on-surface">{value}</dd></div>
           ))}
-        </div>
-
-        {live.description && (
-          <div className="mt-3 bg-gray-50 rounded-xl p-3">
-            <p className="text-[11px] font-bold text-secondary uppercase mb-1">Incident Description</p>
-            <p className="text-[13px] text-on-surface leading-relaxed">{live.description}</p>
-          </div>
+        </dl>
+        {live.description && <div className="rounded-xl bg-gray-50 p-3"><p className="mb-1 text-[11px] font-bold uppercase text-secondary">Incident description</p><p className="text-[13px] leading-relaxed text-on-surface">{live.description}</p></div>}
+        {live.supportingDocs?.length > 0 && (
+          <div><p className="mb-1 text-[11px] font-bold uppercase text-secondary">Documents attached</p><ul className="flex flex-wrap gap-2">{live.supportingDocs.map((doc, index) => <li key={`${doc.name}-${index}`} className="rounded-md bg-slate-100 px-2 py-1 text-[12px] font-semibold text-secondary">{doc.name || doc.fileName || 'Document'}</li>)}</ul></div>
         )}
       </div>
 
-      {/* Timeline */}
-      <div className="p-4 border-b border-gray-100 bg-white">
-        <p className="text-[11px] font-bold text-secondary uppercase tracking-wider mb-3">Timeline</p>
-        <div className="relative">
-          <div className="absolute left-2.5 top-0 bottom-0 w-0.5 bg-gray-100" />
-          <div className="space-y-3">
-            {(live.timeline || []).map((step, i) => (
-              <div key={i} className="relative flex items-start gap-3 pl-1">
-                <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center z-10 flex-shrink-0">
-                  <span className="material-symbols-outlined text-white text-[10px]">check</span>
-                </div>
-                <div>
-                  <p className="font-bold text-[12px] text-primary">{step.status}</p>
-                  {step.note && <p className="text-[11px] text-secondary">{step.note}</p>}
-                  <p className="text-[10px] text-secondary">{timeAgo(step.date)}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Conversation */}
-      <div className="flex-1 overflow-y-auto bg-gray-50 p-4 space-y-3">
-        <p className="text-[11px] font-bold text-secondary uppercase tracking-wider">Communication with Claimant</p>
-        {(live.messages || []).length === 0 && (
-          <div className="text-center py-8">
-            <span className="material-symbols-outlined text-gray-300 text-4xl">chat_bubble_outline</span>
-            <p className="text-[13px] text-secondary mt-2">No messages yet. Send the first message below.</p>
-          </div>
-        )}
-        {(live.messages || []).map((msg, i) => (
-          <div key={msg.id || i} className={`flex ${msg.senderType === 'insurer' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-[13px] ${
-              msg.senderType === 'insurer'
-                ? 'bg-primary text-white rounded-tr-sm'
-                : 'bg-white text-on-surface border border-gray-200 rounded-tl-sm'
-            }`}>
-              {msg.senderType !== 'insurer' && (
-                <p className="text-[10px] font-bold text-primary/70 mb-1">{live.fullName?.toUpperCase()}</p>
-              )}
-              <p>{msg.message}</p>
-              <p className={`text-[10px] mt-1 ${msg.senderType === 'insurer' ? 'text-white/60' : 'text-secondary'}`}>
-                {new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Action Bar */}
-      {!['Rejected', 'Settled'].includes(live.status) && (
-        <div className="p-4 bg-white border-t border-gray-100 space-y-3">
-          {/* Status update */}
-          {nextStatuses.length > 0 && (
-            <div className="flex gap-2 flex-wrap">
-              <p className="text-[11px] font-bold text-secondary uppercase w-full">Update Status:</p>
-              {nextStatuses.map(s => (
-                <button key={s} onClick={() => { setSelectedStatus(s); setShowStatusModal(true); }}
-                  className={`px-3 py-1.5 rounded-lg text-[12px] font-bold border-2 transition-all ${
-                    s === 'Approved' ? 'border-green-400 text-green-700 hover:bg-green-50' :
-                    s === 'Rejected' ? 'border-red-400 text-red-700 hover:bg-red-50' :
-                    s === 'Settled' ? 'border-emerald-400 text-emerald-700 hover:bg-emerald-50' :
-                    'border-gray-300 text-gray-700 hover:bg-gray-50'
-                  }`}>
-                  → {s}
-                </button>
-              ))}
-            </div>
-          )}
-          {/* Message */}
-          <div className="flex gap-2">
-            <input value={replyText} onChange={e => setReplyText(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-              placeholder={`Message to ${live.fullName || 'claimant'}...`}
-              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-[14px] focus:ring-2 focus:ring-primary outline-none" />
-            <button onClick={handleSendMessage} disabled={!replyText.trim() || sending}
-              className="bg-primary text-white px-4 py-2.5 rounded-xl hover:bg-primary-container transition-colors disabled:opacity-50">
-              <span className="material-symbols-outlined text-[20px]">send</span>
+      <div className="border-t border-gray-100 bg-gray-50 p-4">
+        {received ? (
+          <p className="flex items-center gap-2 text-[13px] font-semibold text-primary"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">task_alt</span>Received — this claim continues in your own claims system.</p>
+        ) : (
+          <>
+            <p className="mb-3 text-[12px] text-secondary">When the customer calls and quotes this claim number, mark it received. Assessment and settlement continue in your own claims system.</p>
+            <button type="button" onClick={handleReceived} disabled={marking || isSeed} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[14px] font-bold text-white hover:bg-primary-container disabled:opacity-50">
+              <span className={`material-symbols-outlined text-[18px] ${marking ? 'animate-spin' : ''}`} aria-hidden="true">{marking ? 'sync' : 'call_received'}</span>{marking ? 'Saving…' : 'Mark as received'}
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Status Modal */}
-      <AnimatePresence>
-        {showStatusModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
-              className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
-              <h3 className="font-bold text-[18px] text-primary mb-4">Update Claim Status</h3>
-              <div className={`p-3 rounded-xl mb-4 ${
-                selectedStatus === 'Approved' ? 'bg-green-50 border border-green-200' :
-                selectedStatus === 'Rejected' ? 'bg-red-50 border border-red-200' :
-                'bg-amber-50 border border-amber-200'
-              }`}>
-                <p className="text-[13px] font-semibold">
-                  Change status to: <strong>{selectedStatus}</strong>
-                </p>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[12px] font-bold uppercase text-secondary mb-1.5 block">Internal Note (optional)</label>
-                  <input value={statusNote} onChange={e => setStatusNote(e.target.value)}
-                    placeholder="e.g. Approved — vehicle inspection completed"
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-[14px] outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-                <div>
-                  <label className="text-[12px] font-bold uppercase text-secondary mb-1.5 block">Message to Claimant (optional)</label>
-                  <textarea rows={3} value={replyText} onChange={e => setReplyText(e.target.value)}
-                    placeholder={`Notify ${live.fullName} about this status change...`}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-[14px] outline-none focus:ring-2 focus:ring-primary resize-none" />
-                </div>
-                <div className="flex gap-3">
-                  <button onClick={() => setShowStatusModal(false)}
-                    className="flex-1 py-3 border-2 border-gray-200 rounded-xl font-semibold text-secondary hover:bg-gray-50">
-                    Cancel
-                  </button>
-                  <button onClick={handleUpdateStatus} disabled={updating}
-                    className={`flex-1 py-3 rounded-xl font-bold text-white transition-colors ${
-                      selectedStatus === 'Approved' || selectedStatus === 'Settled' ? 'bg-green-600 hover:bg-green-700' :
-                      selectedStatus === 'Rejected' ? 'bg-red-600 hover:bg-red-700' :
-                      'bg-primary hover:bg-primary-container'
-                    }`}>
-                    {updating ? 'Updating...' : `Confirm — ${selectedStatus}`}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
+            {isSeed && <p className="mt-2 text-center text-[11px] text-secondary">Demo record — only claims submitted through InsurShield can be updated.</p>}
+          </>
         )}
-      </AnimatePresence>
+      </div>
     </motion.div>
   );
 }
@@ -328,8 +158,8 @@ export default function InsurerDashboard() {
     return acc;
   }, []).filter(n => n.insurer === MY_INSURER);
 
-  const openClaims = allClaims.filter(c => !['Settled', 'Rejected'].includes(c.status));
-  const urgentClaims = allClaims.filter(c => c.status === 'Submitted');
+  const receivedClaims = allClaims.filter(c => c.status === 'Received by insurer');
+  const urgentClaims = allClaims.filter(c => c.status === 'Notified');
   const pendingNcd = allNcd.filter(n => n.status === 'Submitted' || n.status === 'Under Review');
 
   const seedRequests = [
@@ -342,8 +172,9 @@ export default function InsurerDashboard() {
       ...request,
       vehicle: request.vehicle || 'Vehicle pending',
       value: formatZMW(request.vehicleValue || 0), usage: request.vehicleUsage || 'Private',
-      coverage: request.coverageDurationId || 'Comprehensive', client: request.customer?.fullName || 'Customer',
+      coverage: request.insuranceType === 'ThirdParty' ? 'Third Party Only' : 'Comprehensive', client: request.customer?.fullName || 'Customer',
       time: timeAgo(request.submittedAt), priority: 'New request',
+      quoted: request.insurerQuotes?.[MY_INSURER] || null,
     })),
     ...seedRequests,
   ];
@@ -416,7 +247,7 @@ export default function InsurerDashboard() {
   const TABS = [
     { id: 'overview', label: 'Overview', icon: 'dashboard' },
     { id: 'claims', label: 'Claims', icon: 'report_problem', badge: urgentClaims.length },
-    { id: 'ncd', label: 'NCD Applications', icon: 'discount', badge: pendingNcd.length },
+    { id: 'ncd', label: 'NCD Applications', icon: 'sell', badge: pendingNcd.length },
   ];
 
   return (
@@ -458,9 +289,9 @@ export default function InsurerDashboard() {
           {/* KPI Cards */}
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {[
-              { label: 'New Claims', value: urgentClaims.length, color: 'bg-red-50 border-red-100', tag: 'Urgent', tagColor: 'bg-red-500', icon: 'hourglass_top', textColor: 'text-red-700' },
-              { label: 'Claims Under Review', value: openClaims.length, color: 'bg-amber-50 border-amber-100', tag: 'Active', tagColor: 'bg-amber-500', icon: 'policy', textColor: 'text-amber-700' },
-              { label: 'Pending NCD Apps', value: pendingNcd.length, color: 'bg-blue-50 border-blue-100', tag: 'Review', tagColor: 'bg-blue-500', icon: 'discount', textColor: 'text-blue-700' },
+              { label: 'Awaiting customer call', value: urgentClaims.length, color: 'bg-red-50 border-red-100', tag: 'New', tagColor: 'bg-red-500', icon: 'phone_in_talk', textColor: 'text-red-700' },
+              { label: 'Claims received', value: receivedClaims.length, color: 'bg-primary/5 border-primary/10', tag: 'Done', tagColor: 'bg-primary', icon: 'task_alt', textColor: 'text-primary' },
+              { label: 'Pending NCD Apps', value: pendingNcd.length, color: 'bg-blue-50 border-blue-100', tag: 'Review', tagColor: 'bg-blue-500', icon: 'sell', textColor: 'text-blue-700' },
               { label: 'Active Policies', value: 152, color: 'bg-white border-gray-100', tag: null, icon: 'verified_user', textColor: 'text-primary' },
             ].map((kpi, i) => (
               <div key={i} className={`${kpi.color} p-6 rounded-xl shadow-sm border flex flex-col gap-2 relative overflow-hidden`}>
@@ -498,9 +329,13 @@ export default function InsurerDashboard() {
                     </div>
                     <div className="flex items-center gap-4 md:w-auto w-full justify-between md:justify-end">
                       <span className="text-[12px] text-secondary">{req.time}</span>
-                      <button onClick={() => setSelectedRequest(req)} className="px-4 py-2 bg-primary/10 text-primary hover:bg-primary hover:text-white font-semibold text-[14px] rounded-lg transition-colors flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[18px]">edit_document</span> Process
-                      </button>
+                      {req.quoted ? (
+                        <span className="flex items-center gap-1.5 rounded-lg bg-primary/5 px-3 py-2 text-[13px] font-bold text-primary"><span className="material-symbols-outlined text-[18px]">task_alt</span>Quoted {formatZMW(req.quoted.premium)}</span>
+                      ) : (
+                        <button onClick={() => setSelectedRequest(req)} className="px-4 py-2 bg-primary/10 text-primary hover:bg-primary hover:text-white font-semibold text-[14px] rounded-lg transition-colors flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[18px]">edit_document</span> Send quote
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -516,8 +351,8 @@ export default function InsurerDashboard() {
           {/* Claims List */}
           <div className={`flex flex-col bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden ${selectedClaim ? 'hidden md:flex md:w-80' : 'w-full md:w-80'} flex-shrink-0`}>
             <div className="p-4 border-b border-gray-100">
-              <h3 className="font-bold text-[16px] text-primary">Claims Inbox</h3>
-              <p className="text-[12px] text-secondary">{allClaims.length} total · {urgentClaims.length} new</p>
+              <h3 className="font-bold text-[16px] text-primary">Claim notifications</h3>
+              <p className="text-[12px] text-secondary">{allClaims.length} total · {urgentClaims.length} awaiting the customer's call</p>
             </div>
             <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
               {allClaims.length === 0 && (
@@ -535,7 +370,7 @@ export default function InsurerDashboard() {
                       <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${meta.dot}`} />
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-[13px] text-primary truncate">{claim.type}</p>
-                        <p className="text-[11px] text-secondary">{claim.fullName} · {claim.referenceNumber || claim.id}</p>
+                        <p className="text-[11px] text-secondary">{claim.fullName} · {claim.claimNumber || claim.id}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${meta.color}`}>{claim.status}</span>
                           <span className="text-[10px] text-secondary">{timeAgo(claim.submittedAt)}</span>
@@ -553,8 +388,8 @@ export default function InsurerDashboard() {
             {!selectedClaim ? (
               <div className="text-center p-8">
                 <span className="material-symbols-outlined text-gray-200 text-5xl">policy</span>
-                <p className="font-bold text-[16px] text-primary mt-3 mb-1">Select a Claim</p>
-                <p className="text-[13px] text-secondary">Choose a claim from the list to review details and take action.</p>
+                <p className="font-bold text-[16px] text-primary mt-3 mb-1">Select a notification</p>
+                <p className="text-[13px] text-secondary">Look up the claim number a customer quotes on the phone and mark it received.</p>
               </div>
             ) : (
               <ClaimDetail
@@ -562,7 +397,6 @@ export default function InsurerDashboard() {
                 claim={selectedClaim}
                 allClaims={allClaims}
                 onBack={() => setSelectedClaim(null)}
-                onUpdate={() => {}}
               />
             )}
           </div>
@@ -578,7 +412,7 @@ export default function InsurerDashboard() {
           </div>
           {allNcd.length === 0 && (
             <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
-              <span className="material-symbols-outlined text-gray-200 text-5xl">discount</span>
+              <span className="material-symbols-outlined text-gray-200 text-5xl">sell</span>
               <p className="text-[14px] text-secondary mt-3">No NCD applications yet.</p>
             </div>
           )}
@@ -609,11 +443,11 @@ export default function InsurerDashboard() {
                       </div>
                     </div>
                     {app.approvedCode && (
-                      <div className="mt-3 bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-green-600 text-[18px]">check_circle</span>
+                      <div className="mt-3 bg-primary/5 border border-primary/20 rounded-xl p-3 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[18px]">check_circle</span>
                         <div>
-                          <p className="text-[12px] text-green-800 font-semibold">Approved — NCD Code Issued</p>
-                          <p className="font-mono text-[14px] font-bold text-green-900">{app.approvedCode}</p>
+                          <p className="text-[12px] text-primary font-semibold">Approved — NCD Code Issued</p>
+                          <p className="font-mono text-[14px] font-bold text-on-primary-container">{app.approvedCode}</p>
                         </div>
                       </div>
                     )}
@@ -623,7 +457,7 @@ export default function InsurerDashboard() {
                       <button
                         disabled={ncdActioning === app.id}
                         onClick={() => handleNcdAction(app.id, 'Approved')}
-                        className="px-4 py-2 bg-green-600 text-white font-bold text-[13px] rounded-xl hover:bg-green-700 disabled:opacity-50 flex items-center gap-1">
+                        className="px-4 py-2 bg-primary text-white font-bold text-[13px] rounded-xl hover:bg-primary disabled:opacity-50 flex items-center gap-1">
                         <span className="material-symbols-outlined text-[16px]">check</span>
                         Approve & Issue Code
                       </button>

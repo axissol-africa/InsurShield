@@ -9,7 +9,7 @@ export default function RenewalPage() {
   const renew = (policy) => {
     setVehicleDetails(policy.vehicleDetails || { make: 'Your', model: 'vehicle', year: '', plateNumber: '' });
     setVehicleValue(policy.vehicleValue || policy.insuredValue || 0);
-    setInsuranceType(policy.coverage || 'Comprehensive');
+    setInsuranceType(/third/i.test(policy.coverage || '') ? 'ThirdParty' : 'Comprehensive');
     navigate('/insurance-type');
   };
 

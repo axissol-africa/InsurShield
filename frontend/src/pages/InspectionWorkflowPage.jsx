@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { motion } from 'framer-motion';
 
@@ -10,7 +9,7 @@ const INSPECTION_STATUSES = [
   { id: 'In Progress', label: 'In Progress', icon: 'fact_check', color: 'bg-orange-100 text-orange-800' },
   { id: 'Completed', label: 'Completed', icon: 'task_alt', color: 'bg-teal-100 text-teal-800' },
   { id: 'Report Ready', label: 'Report Ready', icon: 'description', color: 'bg-indigo-100 text-indigo-800' },
-  { id: 'Approved', label: 'Approved', icon: 'verified', color: 'bg-green-100 text-green-800' },
+  { id: 'Approved', label: 'Approved', icon: 'verified', color: 'bg-primary/10 text-primary' },
   { id: 'Failed', label: 'Failed', icon: 'cancel', color: 'bg-red-100 text-red-800' },
 ];
 
@@ -37,8 +36,7 @@ const PHOTO_SLOTS = [
 ];
 
 export default function InspectionWorkflowPage() {
-  const navigate = useNavigate();
-  const { inspections, addInspection, updateInspectionStatus, vehicleDetails } = useStore();
+  const { inspections, addInspection, vehicleDetails } = useStore();
   const [view, setView] = useState('list'); // 'list' | 'request' | 'detail'
   const [selectedInspection, setSelectedInspection] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -232,12 +230,12 @@ export default function InspectionWorkflowPage() {
             {PHOTO_SLOTS.map(slot => {
               const hasPhoto = inspection.photos?.[slot.id] || uploadedPhotos[slot.id];
               return (
-                <div key={slot.id} className={`border-2 border-dashed rounded-xl p-3 text-center transition-colors ${hasPhoto ? 'border-green-400 bg-green-50' : 'border-outline-variant hover:border-primary/50'}`}>
+                <div key={slot.id} className={`border-2 border-dashed rounded-xl p-3 text-center transition-colors ${hasPhoto ? 'border-primary/40 bg-primary/5' : 'border-outline-variant hover:border-primary/50'}`}>
                   {hasPhoto ? (
                     <div>
                       {uploadedPhotos[slot.id] && <img src={uploadedPhotos[slot.id]} alt={slot.label} className="h-16 object-cover rounded-lg mx-auto mb-1" />}
-                      {!uploadedPhotos[slot.id] && <span className="material-symbols-outlined text-green-500 text-3xl">check_circle</span>}
-                      <p className="text-[11px] font-semibold text-green-700">{slot.label}</p>
+                      {!uploadedPhotos[slot.id] && <span className="material-symbols-outlined text-primary text-3xl">check_circle</span>}
+                      <p className="text-[11px] font-semibold text-primary">{slot.label}</p>
                     </div>
                   ) : (
                     <label className="cursor-pointer flex flex-col items-center gap-1">

@@ -1,99 +1,15 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { INSURER_RATES } from '../utils/insurerRates';
 
-// ─── Insurer Contact Directory ────────────────────────────────────────────────
-const INSURER_CONTACTS = [
-  {
-    id: 'prestige',
-    name: 'Prestige Assurance',
-    logo: 'shield',
-    tagline: 'Premium motor coverage since 1995',
-    contactPerson: 'Mrs. Chanda Mwale',
-    role: 'Client Relations Manager',
-    phone: '+260 211 255 100',
-    mobile: '+260 977 255 100',
-    whatsapp: '+260977255100',
-    email: 'claims@prestigeassurance.zm',
-    address: 'Cairo Road, Prestige House, 4th Floor, Lusaka',
-    hours: 'Mon–Fri: 08:00–17:00 · Sat: 09:00–12:00',
-  },
-  {
-    id: 'madison',
-    name: 'Madison General Insurance',
-    logo: 'assured_workload',
-    tagline: "Zambia's most trusted insurer",
-    contactPerson: 'Mr. Bwalya Kapasa',
-    role: 'Motor Claims Officer',
-    phone: '+260 211 374 700',
-    mobile: '+260 966 374 700',
-    whatsapp: '+260966374700',
-    email: 'motorinsurance@madisongeneral.zm',
-    address: 'Madison House, Plot 64489, Lusaka Central',
-    hours: 'Mon–Fri: 08:00–17:00 · Sat: 08:30–12:30',
-  },
-  {
-    id: 'zsic',
-    name: 'ZSIC General Insurance',
-    logo: 'verified_user',
-    tagline: 'Government-backed, nationally trusted',
-    contactPerson: 'Ms. Natasha Phiri',
-    role: 'Senior Insurance Advisor',
-    phone: '+260 211 228 000',
-    mobile: '+260 955 228 000',
-    whatsapp: '+260955228000',
-    email: 'general@zsicinsurance.zm',
-    address: 'ZSIC House, Independence Avenue, Lusaka',
-    hours: 'Mon–Fri: 07:30–17:00',
-  },
-  {
-    id: 'professional',
-    name: 'Professional Insurance Corp.',
-    logo: 'business_center',
-    tagline: 'Tailored coverage for professionals',
-    contactPerson: 'Mr. Musonda Tembo',
-    role: 'Claims & Underwriting Lead',
-    phone: '+260 211 239 500',
-    mobile: '+260 971 239 500',
-    whatsapp: '+260971239500',
-    email: 'info@picinsurance.zm',
-    address: 'Farmers House, Central Business District, Lusaka',
-    hours: 'Mon–Fri: 08:00–17:00 · Sat: 09:00–13:00',
-  },
-  {
-    id: 'hollard',
-    name: 'Hollard Insurance Zambia',
-    logo: 'domain',
-    tagline: 'Pan-African expertise, local service',
-    contactPerson: 'Ms. Grace Lungu',
-    role: 'Motor Products Specialist',
-    phone: '+260 211 374 950',
-    mobile: '+260 968 374 950',
-    whatsapp: '+260968374950',
-    email: 'motorquotes@hollard.zm',
-    address: 'Hollard House, Addis Ababa Drive, Longacres, Lusaka',
-    hours: 'Mon–Fri: 08:00–17:00',
-  },
-  {
-    id: 'nico',
-    name: 'NICO Insurance',
-    logo: 'security',
-    tagline: 'Comprehensive protection, always',
-    contactPerson: 'Mr. Joseph Banda',
-    role: 'Regional Claims Coordinator',
-    phone: '+260 211 231 600',
-    mobile: '+260 962 231 600',
-    whatsapp: '+260962231600',
-    email: 'claims@nico.zm',
-    address: 'Nkwazi House, Nkwazi Road, Lusaka',
-    hours: 'Mon–Fri: 08:00–17:00 · Sat: 09:00–12:00',
-  },
-];
+// Contact directory is derived from the insurer catalogue so it always matches the insurers customers can buy from.
+const INSURER_CONTACTS = INSURER_RATES.map((insurer) => ({ id: insurer.id, name: insurer.name, logo: insurer.icon, ...insurer.contact }));
 
 const FAQS = [
   {
     q: 'How do I start a claim?',
-    a: "Go to the Claims section of InsurShield and click \"Submit a New Claim\". You'll receive a unique reference number instantly that you can use to track the claim — no account needed. Your insurer will also be notified automatically.",
+    a: "Sign in, go to Claims and choose \"Start a claim\". InsurShield records your first notification and gives you a claim number straight away. You then call your insurer, quote the claim number, and they handle the assessment and settlement with you directly.",
   },
   {
     q: 'How do I apply for a No Claim Discount (NCD)?',
@@ -109,11 +25,11 @@ const FAQS = [
   },
   {
     q: 'How long does a claim take to be processed?',
-    a: 'Most insurers aim to assess claims within 5–7 business days. Complex claims or those requiring physical inspection may take longer. Track your claim progress at any time using your reference number under Claims.',
+    a: 'Once you have called your insurer with your claim number, the claim is handled entirely by them. Most insurers aim to assess a claim within 5–7 business days; contact their claims desk (listed on this page) for progress updates.',
   },
   {
     q: 'Can I get a copy of my policy certificate?',
-    a: 'Your policy certificate is emailed after payment confirmation. If not received, contact your insurer directly using the details on this page — they can resend it or issue a certified replacement.',
+    a: 'Your policy certificate is saved under My account as soon as payment is confirmed, and your insurer also emails the official document. If it does not arrive, contact your insurer using the details on this page.',
   },
 ];
 
@@ -304,7 +220,7 @@ export default function SupportPage() {
             onClick={() => navigate('/claims')}
             className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white border-2 border-primary/20 text-primary font-bold px-4 py-2.5 rounded-xl hover:border-primary/40 transition-all text-[13px] active:scale-95"
           >
-            <span className="material-symbols-outlined text-[16px]">discount</span>
+            <span className="material-symbols-outlined text-[16px]">sell</span>
             Apply NCD
           </button>
         </div>

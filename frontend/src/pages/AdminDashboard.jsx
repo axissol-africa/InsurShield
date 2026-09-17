@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { motion } from 'framer-motion';
 import { formatZMW } from '../utils/premiumEngine';
@@ -10,20 +9,28 @@ const MOCK_POLICIES = [
   { id: 'POL-003', client: 'Thandiwe Zulu', vehicle: '2019 Nissan Navara', insurer: 'ValueDirect', premium: 4800, status: 'Expiring Soon' },
 ];
 
-export default function AdminDashboard() {
-  const location = useLocation();
-  const loginRole = location.state?.role || 'admin';
-  const agentName = location.state?.agentName || 'Admin';
+const SubPageHeader = ({ title, onBack }) => (
+  <div className="flex items-center gap-3 mb-8">
+    <button type="button" onClick={onBack} aria-label="Back"
+      className="w-9 h-9 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center hover:bg-gray-50 transition-colors">
+      <span className="material-symbols-outlined text-[20px] text-secondary" aria-hidden="true">arrow_back</span>
+    </button>
+    <h2 className="text-[22px] font-bold text-primary">{title}</h2>
+  </div>
+);
 
-  const { insurersList, addInsurer, updateInsurerRate, claims, piaConfig, setPiaConfig } = useStore();
+export default function AdminDashboard() {
+  const { insurersList, addInsurer, updateInsurerRate, claims, piaConfig, setPiaConfig, staffSession } = useStore();
+  const loginRole = staffSession?.role || 'admin';
+  const agentName = staffSession?.name || 'Admin';
   const [activeView, setActiveView] = useState('dashboard');
 
-  const [newInsurer, setNewInsurer] = useState({ name: '', coverage: '', ratePercentage: '', minimumPremiumZMW: '', logoUrl: '' });
+  const [newInsurer, setNewInsurer] = useState({ name: '', coverage: '', ratePercentage: '', logoUrl: '' });
   const [searchPlate, setSearchPlate] = useState('');
   const [searchResult, setSearchResult] = useState(null);
   const [editingRate, setEditingRate] = useState(null);
   const [editRateValue, setEditRateValue] = useState('');
-  const [piaMinEdit, setPiaMinEdit] = useState(String(piaConfig?.minimumPremiumZMW || 1200));
+  const [piaRateEdit, setPiaRateEdit] = useState(String(piaConfig?.piaRatePercentage ?? 4));
   const [piaSaved, setPiaSaved] = useState(false);
 
   const totalRevenue = MOCK_POLICIES.reduce((sum, p) => sum + p.premium, 0);
@@ -47,14 +54,13 @@ export default function AdminDashboard() {
       addInsurer({
         name: newInsurer.name, coverage: newInsurer.coverage,
         ratePercentage: parseFloat(newInsurer.ratePercentage),
-        minimumPremiumZMW: parseFloat(newInsurer.minimumPremiumZMW) || 1200,
         logoUrl: newInsurer.logoUrl.trim(),
         ncdAllowed: true, maxNcdPercentage: 50,
         inspectionRules: 'NOT REQUIRED', timing: 'AFTER PAYMENT', method: 'SELF-CAPTURE',
         icon: 'business', isBestValue: false, benefits: ['Third Party Property Damage'],
         status: 'Active',
       });
-      setNewInsurer({ name: '', coverage: '', ratePercentage: '', minimumPremiumZMW: '', logoUrl: '' });
+      setNewInsurer({ name: '', coverage: '', ratePercentage: '', logoUrl: '' });
       setActiveView('manage_insurers');
     }
   };
@@ -68,21 +74,9 @@ export default function AdminDashboard() {
   };
 
   const handleSavePIA = () => {
-    setPiaConfig({ minimumPremiumZMW: parseFloat(piaMinEdit) || 1200 });
+    setPiaConfig({ piaRatePercentage: Math.max(0, parseFloat(piaRateEdit) || 0), lastUpdated: new Date().toISOString().split('T')[0], updatedBy: agentName });
     setPiaSaved(true);
   };
-
-  // ─── Shared back-button header ─────────────────────────────
-  const SubPageHeader = ({ title, onBack }) => (
-    <div className="flex items-center gap-3 mb-8">
-      <button onClick={onBack}
-        className="w-9 h-9 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center hover:bg-gray-50 transition-colors">
-        <span className="material-symbols-outlined text-[20px] text-secondary">arrow_back</span>
-      </button>
-      <h2 className="text-[22px] font-bold text-primary">{title}</h2>
-    </div>
-  );
-
 
   // ─── Add Insurer ───────────────────────────────────────────
   if (activeView === 'add_insurer') {
@@ -120,11 +114,9 @@ export default function AdminDashboard() {
                 <p className="text-[11px] text-secondary mt-1">Premium = Vehicle Value × Rate%</p>
               </div>
               <div>
-                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Min Premium (ZMW)</label>
-                <input type="number" value={newInsurer.minimumPremiumZMW}
-                  onChange={e => setNewInsurer(p => ({ ...p, minimumPremiumZMW: e.target.value }))}
-                  className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
-                  placeholder="e.g. 1500" />
+                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">PIA floor</label>
+                <p className="rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] text-on-surface">{piaConfig?.piaRatePercentage ?? 4}% of vehicle value</p>
+                <p className="text-[11px] text-secondary mt-1">Rates below the floor are raised to it automatically.</p>
               </div>
             </div>
             <button type="submit" className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-sm hover:bg-primary-container active:scale-[0.98] transition-all">
@@ -155,7 +147,7 @@ export default function AdminDashboard() {
           </form>
           {searchResult && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6 p-5 bg-surface-container-low border border-outline-variant rounded-xl space-y-3">
-              <div className="flex items-center gap-2 text-green-700 font-bold">
+              <div className="flex items-center gap-2 text-primary font-bold">
                 <span className="material-symbols-outlined text-[18px]">check_circle</span> Session Found
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -197,7 +189,7 @@ export default function AdminDashboard() {
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
           <div className="hidden md:grid grid-cols-5 px-5 py-3 bg-gray-50 border-b border-gray-100 font-bold text-[11px] text-secondary uppercase tracking-wider">
-            <div>Company</div><div>Coverage</div><div>Rate %</div><div>Min Premium</div><div className="text-right">Status</div>
+            <div>Company</div><div>Coverage</div><div>Rate %</div><div>Effective rate</div><div className="text-right">Status</div>
           </div>
           <div className="divide-y divide-gray-50">
             {insurersList.map(insurer => (
@@ -209,7 +201,7 @@ export default function AdminDashboard() {
                     <div className="flex items-center gap-2">
                       <input type="number" step="0.1" value={editRateValue} onChange={e => setEditRateValue(e.target.value)}
                         className="w-20 border border-outline-variant rounded-lg p-1.5 text-[13px] outline-none focus:ring-1 focus:ring-primary" />
-                      <button onClick={() => handleSaveRate(insurer.id)} className="text-green-700"><span className="material-symbols-outlined text-[18px]">check</span></button>
+                      <button onClick={() => handleSaveRate(insurer.id)} className="text-primary"><span className="material-symbols-outlined text-[18px]">check</span></button>
                       <button onClick={() => setEditingRate(null)} className="text-red-500"><span className="material-symbols-outlined text-[18px]">close</span></button>
                     </div>
                   ) : (
@@ -222,9 +214,9 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </div>
-                <div className="text-[13px] text-on-surface">{formatZMW(insurer.minimumPremiumZMW)}</div>
+                <div className="text-[13px] text-on-surface">{Math.max(insurer.ratePercentage, piaConfig?.piaRatePercentage ?? 4)}%{insurer.ratePercentage < (piaConfig?.piaRatePercentage ?? 4) && <span className="ml-1 text-[11px] font-bold text-amber-700">PIA floor</span>}</div>
                 <div className="md:text-right">
-                  <span className={`inline-flex px-3 py-1 rounded-full text-[11px] font-bold uppercase ${insurer.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+                  <span className={`inline-flex px-3 py-1 rounded-full text-[11px] font-bold uppercase ${insurer.status === 'Active' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-600'}`}>
                     {insurer.status || 'Active'}
                   </span>
                 </div>
@@ -247,23 +239,23 @@ export default function AdminDashboard() {
             <div>
               <p className="text-[13px] text-amber-900 font-semibold">Regulatory Setting</p>
               <p className="text-[12px] text-amber-800 mt-1 leading-relaxed">
-                The PIA minimum premium is set by the Pensions and Insurance Authority and applies to all insurers, overriding lower individual minimums.
+                The Pensions and Insurance Authority sets a minimum motor premium as a percentage of the vehicle's declared value. Any insurer rate below it is raised to this floor when quoting.
               </p>
             </div>
           </div>
           <div>
-            <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">PIA Minimum Annual Premium (ZMW)</label>
+            <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">PIA minimum rate (% of vehicle value, per year)</label>
             <div className="relative">
-              <span className="absolute left-3 top-3.5 text-secondary font-bold text-[14px]">ZMW</span>
-              <input type="number" value={piaMinEdit} onChange={e => setPiaMinEdit(e.target.value)}
-                className="w-full bg-surface-container-low border border-outline-variant rounded-xl pl-16 pr-4 py-3 text-[16px] font-semibold focus:ring-2 focus:ring-primary outline-none" />
+              <input type="number" min="0" step="0.1" value={piaRateEdit} onChange={e => setPiaRateEdit(e.target.value)}
+                className="w-full bg-surface-container-low border border-outline-variant rounded-xl pl-4 pr-12 py-3 text-[16px] font-semibold focus:ring-2 focus:ring-primary outline-none" />
+              <span className="absolute right-4 top-3.5 text-secondary font-bold text-[14px]">%</span>
             </div>
-            <p className="text-[12px] text-secondary mt-1">Current: {formatZMW(piaConfig?.minimumPremiumZMW || 1200)}</p>
+            <p className="text-[12px] text-secondary mt-1">Current: {piaConfig?.piaRatePercentage ?? 4}% · e.g. ZMW {((250000 * (piaConfig?.piaRatePercentage ?? 4)) / 100).toLocaleString()} on a ZMW 250,000 vehicle</p>
           </div>
           <button onClick={handleSavePIA} className="w-full bg-primary text-white font-bold py-4 rounded-xl hover:bg-primary-container transition-all">
             Save PIA Configuration
           </button>
-          {piaSaved && <p className="text-center text-[12px] font-semibold text-green-700">PIA configuration updated successfully.</p>}
+          {piaSaved && <p className="text-center text-[12px] font-semibold text-primary">PIA configuration updated successfully.</p>}
         </div>
       </motion.div>
     );
@@ -308,7 +300,7 @@ export default function AdminDashboard() {
             <div>
               <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${kpi.highlight ? 'text-white/70' : 'text-secondary'}`}>{kpi.label}</p>
               <p className={`text-[28px] font-extrabold leading-none ${kpi.highlight ? 'text-white' : 'text-primary'}`}>{kpi.value.toLocaleString()}</p>
-              <p className={`text-[11px] font-semibold mt-1 ${kpi.alert ? 'text-error' : kpi.highlight ? 'text-white/60' : 'text-green-600'}`}>{kpi.change}</p>
+              <p className={`text-[11px] font-semibold mt-1 ${kpi.alert ? 'text-error' : kpi.highlight ? 'text-white/60' : 'text-primary'}`}>{kpi.change}</p>
             </div>
           </div>
         ))}
@@ -347,7 +339,7 @@ export default function AdminDashboard() {
             {[
               { label: 'Claims Under Review', value: openClaims + 12, icon: 'policy', color: 'text-amber-600', view: null },
               { label: 'Policies Expiring (30d)', value: 18, icon: 'event_repeat', color: 'text-orange-600', view: null },
-              { label: 'PIA Min Premium', value: formatZMW(piaConfig?.minimumPremiumZMW || 1200), icon: 'gavel', color: 'text-primary', view: 'pia_config' },
+              { label: 'PIA minimum rate', value: `${piaConfig?.piaRatePercentage ?? 4}% of value`, icon: 'gavel', color: 'text-primary', view: 'pia_config' },
             ].map((item, i) => (
               <button key={i} onClick={() => item.view && setActiveView(item.view)}
                 className={`w-full flex items-center justify-between py-3 border-b border-gray-50 last:border-0 text-left transition-colors rounded-lg px-1 -mx-1 ${item.view ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}>
@@ -374,7 +366,7 @@ export default function AdminDashboard() {
             {[
               { label: 'Manage Insurers', sub: `${insurersList.length} active partners`, icon: 'manage_accounts', view: 'manage_insurers', accent: false },
               { label: 'Onboard New Insurer', sub: 'Add provider & configure rates', icon: 'domain_add', view: 'add_insurer', accent: false },
-              { label: 'PIA Rate Configuration', sub: `Min: ${formatZMW(piaConfig?.minimumPremiumZMW || 1200)}`, icon: 'gavel', view: 'pia_config', accent: false },
+              { label: 'PIA Rate Configuration', sub: `Floor: ${piaConfig?.piaRatePercentage ?? 4}% of vehicle value`, icon: 'gavel', view: 'pia_config', accent: false },
               { label: 'Find Customer Account', sub: 'Assist customers with account access', icon: 'support_agent', view: 'recover_link', accent: false },
             ].map(action => (
               <button key={action.view} onClick={() => setActiveView(action.view)}
@@ -417,7 +409,7 @@ export default function AdminDashboard() {
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="font-bold text-[14px] text-primary">{formatZMW(policy.premium)}</p>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${policy.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${policy.status === 'Active' ? 'bg-primary/10 text-primary' : 'bg-amber-100 text-amber-800'}`}>
                     {policy.status}
                   </span>
                 </div>

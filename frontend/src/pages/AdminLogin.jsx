@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useStore } from '../store/useStore';
 
 const ROLES = [
   {
@@ -35,6 +36,7 @@ export default function AdminLogin() {
   const [error, setError] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const navigate = useNavigate();
+  const startStaffSession = useStore((state) => state.startStaffSession);
 
   const handleRoleSelect = (r) => {
     setRole(r);
@@ -55,12 +57,9 @@ export default function AdminLogin() {
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
-      if (role === 'insurer') {
-        navigate('/insurer');
-      } else {
-        // Pass role via state so AdminDashboard knows who's logged in
-        navigate('/admin', { state: { role, agentName: role === 'support' ? 'Mwango Chirwa' : 'Admin' } });
-      }
+      const name = role === 'insurer' ? 'Prestige Assurance' : 'Admin';
+      startStaffSession({ role, name });
+      navigate(role === 'insurer' ? '/insurer' : '/admin', { replace: true });
     }, 900);
   };
 
