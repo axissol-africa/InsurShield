@@ -118,3 +118,17 @@ describe('PIA floor', () => {
     expect(calculatePremium({ vehicleValueZMW: 100000, insurer, coverageDurationId: '4q', piaRatePercentage: 0 }).finalPremium).toBe(4500);
   });
 });
+
+describe('RTSA anniversary matching is optional', () => {
+  it('without an anniversary date, cover starts on the chosen date with standard day counts', () => {
+    const plain = calculatePolicyDates('2026-09-17', '2q');
+    expect(plain.anchoredToAnniversary).toBe(false);
+    expect(plain.daysTotal).toBe(182);
+    expect(plain.formattedEnd).toBe('18 Mar 2027');
+  });
+  it('the same inputs with an anniversary date produce the aligned period', () => {
+    const aligned = calculatePolicyDates('2026-03-15', '2q', { anniversaryDate: '2020-03-15' });
+    expect(aligned.anchoredToAnniversary).toBe(true);
+    expect(aligned.formattedEnd).toBe('15 Sept 2026');
+  });
+});
