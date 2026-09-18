@@ -7,7 +7,7 @@ import CameraCapture from './CameraCapture';
  * the quote form uses a plain file input (`capture` makes phones open the
  * camera directly while desktops get a file picker).
  */
-export default function InspectionPhotos({ photos = {}, plate = '', onPhoto, highlightMissing = false, footer = null, uploadOnly = false }) {
+export default function InspectionPhotos({ photos = {}, plate = '', onPhoto, highlightMissing = false, footer = null, uploadOnly = false, captureAllLabel = null }) {
   const [activeKey, setActiveKey] = useState(null);
   const [sequence, setSequence] = useState(false);
 
@@ -74,7 +74,7 @@ export default function InspectionPhotos({ photos = {}, plate = '', onPhoto, hig
         {!uploadOnly && missing.length > 0 && (
           <button type="button" onClick={startSequence} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 text-[14px] font-bold text-white hover:bg-primary-container">
             <span className="material-symbols-outlined text-[18px]" aria-hidden="true">photo_camera</span>
-            {missing.length === INSPECTION_SHOTS.length ? 'Capture all 7 photos' : `Capture remaining ${missing.length}`}
+            {captureAllLabel || (missing.length === INSPECTION_SHOTS.length ? 'Capture all 7 photos' : `Capture remaining ${missing.length}`)}
           </button>
         )}
         {footer}

@@ -38,11 +38,11 @@ Use semantic controls, labels, keyboard-focus styles, sufficient contrast, and t
 
 ## Responsive behavior
 
-Support desktop, intermediate widths, and mobile/PWA. Cards stack on narrow displays and actions retain touch-friendly heights.
+Support desktop, intermediate widths, and mobile/PWA. Cards stack on narrow displays and actions retain touch-friendly heights. Vehicle inspection uses QR hand-off on laptop/desktop and opens guided live camera capture directly on mobile.
 
 ## Interaction states
 
-Loading, success, errors, selected controls, disabled inputs, empty lists, and document availability must use the same red/neutral palette.
+Loading, success, errors, selected controls, disabled inputs, empty lists, and document availability must use the same red/neutral palette. Guided photos require a customer clarity/readability confirmation before use.
 
 ## Content voice
 

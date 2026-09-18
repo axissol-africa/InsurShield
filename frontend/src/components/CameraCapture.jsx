@@ -17,6 +17,7 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const [qualityConfirmed, setQualityConfirmed] = useState(false);
 
   useEffect(() => {
     const onKey = (event) => { if (event.key === 'Escape') onCancel(); };
@@ -50,6 +51,7 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
     setPreview(await stampPhoto(canvas.toDataURL('image/jpeg', 0.92), { plate, label: shot.label }));
+    setQualityConfirmed(false);
     setWorking(false);
   };
 
@@ -60,6 +62,7 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
     setError('');
     try {
       setPreview(await stampPhoto(file, { plate, label: shot.label }));
+      setQualityConfirmed(false);
     } catch {
       setError('That photo could not be read. Please try again.');
     } finally {
@@ -68,7 +71,7 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
     }
   };
 
-  const accept = () => { onCapture(shot.key, preview); setPreview(null); };
+  const accept = () => { onCapture(shot.key, preview); setPreview(null); setQualityConfirmed(false); };
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-black text-white" role="dialog" aria-modal="true" aria-labelledby="capture-title">
@@ -99,8 +102,8 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
         {error && <p role="alert" className="rounded-xl bg-red-500/20 px-4 py-2 text-center text-[13px] text-red-100">{error}</p>}
         {preview ? (
           <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => setPreview(null)} className="min-h-12 rounded-xl border border-white/40 font-bold">Retake</button>
-            <button type="button" onClick={accept} className="min-h-12 rounded-xl bg-primary font-bold hover:bg-primary-container">Use this photo</button>
+            <button type="button" onClick={() => { setPreview(null); setQualityConfirmed(false); }} className="min-h-12 rounded-xl border border-white/40 font-bold">Retake</button>
+            <button type="button" onClick={accept} disabled={!qualityConfirmed} className="min-h-12 rounded-xl bg-primary font-bold hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-50">Use this photo</button>
           </div>
         ) : mode === 'live' ? (
           <button type="button" onClick={snap} disabled={working} className="mx-auto flex h-18 w-18 items-center justify-center rounded-full border-4 border-white/80 bg-white/10 disabled:opacity-50" aria-label="Take photo">
@@ -112,6 +115,7 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
             <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={fromFile} disabled={working} />
           </label>
         )}
+        {preview && <label className="flex cursor-pointer items-start gap-2 rounded-xl bg-white/10 px-3 py-2 text-[12px] leading-4 text-white/90"><input type="checkbox" checked={qualityConfirmed} onChange={(event) => setQualityConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 accent-red-600" />I confirm this photo is clear, well lit and the required vehicle detail is readable.</label>}
         <p className="text-center text-[11px] text-white/50">Photos are stamped with the date, time and plate. Gallery images are not accepted.</p>
       </footer>
     </div>

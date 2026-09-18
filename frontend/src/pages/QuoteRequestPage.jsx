@@ -8,6 +8,7 @@ import JourneyProgress from '../components/JourneyProgress';
 import InspectionPhotos from '../components/InspectionPhotos';
 import PhoneHandoff from '../components/PhoneHandoff';
 import { INSPECTION_SHOTS, missingInspectionShots } from '../utils/inspection';
+import { isMobileDevice } from '../utils/device';
 
 
 const inputClass = 'w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30';
@@ -46,6 +47,7 @@ export default function QuoteRequestPage() {
   const [showErrors, setShowErrors] = useState(false);
 
   const activeInsurers = useActiveInsurers();
+  const mobileDevice = isMobileDevice();
   const rtsaAnniversaryDate = vehicleDetails?.rtsaAnniversaryDate || legacyRoadTaxDate(vehicleDetails?.roadTaxExpiry) || vehicleDetails?.registrationDate || '';
   const selectedRtsaAnniversary = rtsaAnniversaryDate || rtsaRegistrationDate;
   const anniversaryDate = matchRtsaAnniversary ? selectedRtsaAnniversary : undefined;
@@ -239,15 +241,15 @@ export default function QuoteRequestPage() {
                   <span className="material-symbols-outlined text-primary" aria-hidden="true">photo_camera</span>
                   <div>
                     <h3 className="text-[14px] font-bold text-on-surface">Vehicle inspection photos</h3>
-                    <p className="text-[12px] text-on-surface-variant">Upload all seven clear views, including the chassis number and car stereo. Or continue on your phone for live camera capture.</p>
+                    <p className="text-[12px] text-on-surface-variant">Upload all seven clear views, including the chassis number and car stereo.{mobileDevice ? ' Open your camera to capture each view now.' : ' Or continue on your phone for live camera capture.'}</p>
                   </div>
                 </div>
-                <button type="button" onClick={() => setHandoffOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-primary/35 bg-white px-3 text-[13px] font-bold text-primary hover:border-primary">
+                {!mobileDevice && <button type="button" onClick={() => setHandoffOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-primary/35 bg-white px-3 text-[13px] font-bold text-primary hover:border-primary">
                   <span className="material-symbols-outlined text-[18px]" aria-hidden="true">qr_code_2</span>Capture live on my phone
-                </button>
+                </button>}
               </div>
               <div className="mt-4">
-                <InspectionPhotos photos={inspectionPhotos} plate={vehicleDetails.plateNumber} onPhoto={setDocument} highlightMissing={showErrors && Boolean(errors.photos)} uploadOnly />
+                <InspectionPhotos photos={inspectionPhotos} plate={vehicleDetails.plateNumber} onPhoto={setDocument} highlightMissing={showErrors && Boolean(errors.photos)} uploadOnly={!mobileDevice} captureAllLabel={mobileDevice ? 'Open camera and capture all 7 photos' : null} />
               </div>
               <FieldError show={showErrors} message={errors.photos} />
             </section>
