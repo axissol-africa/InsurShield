@@ -49,6 +49,23 @@ const updateById = (items, id, updater) => items.map((item) => (item.id === id ?
 /** Unique, human-readable reference: prefix + timestamp + random suffix (two requests in the same instant never collide). */
 const newReference = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
 
+/**
+ * Requests saved before quote validity existed get a deadline from the reply's
+ * sent date and the insurer's validity window, and a request expiry from the
+ * submission date, so the customer sees the same rules on old data.
+ */
+const backfillValidity = (requests, insurers) =>
+  (Array.isArray(requests) ? requests : []).map((request) => {
+    const insurerQuotes = Object.fromEntries(
+      Object.entries(request.insurerQuotes || {}).map(([name, reply]) => {
+        if (reply?.validUntil || !reply?.sentAt) return [name, reply];
+        const days = reply.validityDays || insurers.find((insurer) => insurer.name === name)?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
+        return [name, { ...reply, validityDays: days, validUntil: addDays(reply.sentAt, days) }];
+      }),
+    );
+    return { ...request, insurerQuotes, expiresAt: request.expiresAt || (request.submittedAt ? addDays(request.submittedAt, REQUEST_VALIDITY_DAYS) : undefined) };
+  });
+
 /** State cleared when a quote journey ends (policy issued) or a new one starts. */
 const JOURNEY_DEFAULTS = {
   vehicleDetails: null,
@@ -345,6 +362,7 @@ export const useStore = create(
         ...current,
         ...persisted,
         insurersList: reconcileInsurers(persisted?.insurersList),
+        quoteRequests: backfillValidity(persisted?.quoteRequests, reconcileInsurers(persisted?.insurersList)),
         // A start date saved on an earlier day would fail the date input's minimum.
         policyStartDate: persisted?.policyStartDate >= TODAY() ? persisted.policyStartDate : TODAY(),
         documents: { ...EMPTY_DOCUMENTS, ...Object.fromEntries(Object.entries(persisted?.documents || {}).filter(([key]) => key in EMPTY_DOCUMENTS)) },

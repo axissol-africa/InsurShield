@@ -192,3 +192,18 @@ describe('quote validity and re-quote', () => {
     expect(state().documents.whiteBook).toBeTruthy();
   });
 });
+
+describe('legacy data backfill', () => {
+  it('gives pre-existing replies a validity window on load', async () => {
+    const { useStore: store } = await import('./useStore');
+    const legacy = {
+      id: 'QR-LEGACY', submittedAt: '2026-09-20T09:00:00.000Z', insurers: ['Prestige Assurance'],
+      insurerQuotes: { 'Prestige Assurance': { premium: 10900, sentAt: '2026-09-20T10:00:00.000Z' } },
+    };
+    const merged = store.persist.getOptions().merge({ quoteRequests: [legacy] }, store.getInitialState());
+    const reply = merged.quoteRequests[0].insurerQuotes['Prestige Assurance'];
+    expect(reply.validityDays).toBe(7);
+    expect(reply.validUntil).toBe('2026-09-27T10:00:00.000Z');
+    expect(merged.quoteRequests[0].expiresAt).toBe('2026-10-04T09:00:00.000Z');
+  });
+});
