@@ -25,6 +25,10 @@ Customers on a laptop click **Continue on my phone**: a QR code opens `/capture/
 
 `getUserMedia` needs a secure context, so over plain `http://<lan-ip>` the phone falls back to its camera app via `<input capture="environment">`; on HTTPS (or localhost) the in-page live viewfinder is used.
 
+### Insurer onboarding and quote responses
+
+Super-admin onboards an insurer with a full company record (legal/trading name, PACRA no., TPIN, PIA licence + expiry, head office, claims-desk contact, first product/rate, default quote validity, inspection rule, NCD acceptance) and an **uploaded logo** (`InsurerOnboardingForm.jsx`; images are resized client-side in `utils/files.js`). The insurer portal is designed as a module beside whatever system an insurer already uses: the insurer prepares the quote in its own system, then records the premium/validity/notes and **uploads the quotation document** (PDF/JPG/PNG ≤ 3 MB) with its internal reference; the customer opens it from the comparison page.
+
 ### Quote validity and re-quoting
 
 Each insurer's final quote is an offer with a deadline (`quoteValidityDays` in the catalogue; the insurer can override it per quote and extend an open quote from the portal). The comparison page shows the valid-until date, flags quotes ending within two days, greys out expired ones, and the payment page refuses an expired quote both on open and when Pay is pressed. A request with no valid quotes (or older than 14 days) is marked Expired in the account; **Request new quotes** creates a fresh request pre-filled from the old one, reusing live photos only if they are under 14 days old. Rules live in `src/utils/quoteValidity.js`.

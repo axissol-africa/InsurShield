@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import { formatZMW, formatDate } from '../utils/premiumEngine';
 import { INSURER_RATES } from '../utils/insurerRates';
 import { quoteValidity } from '../utils/quoteValidity';
+import { documentToRecord, formatBytes } from '../utils/files';
+import { COVERAGE_DURATION_OPTIONS } from '../utils/insurerRates';
 
 // The insurer this portal is logged in as (in a real app this comes from auth)
 const MY_INSURER = 'Prestige Assurance';
@@ -166,6 +168,9 @@ export default function InsurerDashboard() {
   const [quotePremium, setQuotePremium] = useState('');
   const [quoteNotes, setQuoteNotes] = useState('');
   const [quoteValidityDays, setQuoteValidityDays] = useState('');
+  const [quoteReference, setQuoteReference] = useState('');
+  const [quoteDocument, setQuoteDocument] = useState(null);
+  const [quoteDocumentError, setQuoteDocumentError] = useState('');
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [ncdActioning, setNcdActioning] = useState(null);
 
@@ -195,6 +200,11 @@ export default function InsurerDashboard() {
       vehicle: request.vehicle || 'Vehicle pending',
       value: formatZMW(request.vehicleValue || 0), usage: request.vehicleUsage || 'Private',
       coverage: request.insuranceType === 'ThirdParty' ? 'Third Party Only' : 'Comprehensive', client: request.customer?.fullName || 'Customer',
+      period: COVERAGE_DURATION_OPTIONS.find(option => option.id === request.coverageDurationId)?.label || '—',
+      dates: request.policyDates ? `${request.policyDates.formattedStart} – ${request.policyDates.formattedEnd}` : 'From payment date',
+      contact: [request.customer?.phone, request.customer?.email].filter(Boolean).join(' · ') || '—',
+      plate: request.vehicleDetails?.plateNumber || '—',
+      photos: (request.inspectionShots || []).length,
       time: timeAgo(request.submittedAt), priority: 'New request',
       quoted: request.insurerQuotes?.[MY_INSURER] || null,
     })),
@@ -205,12 +215,30 @@ export default function InsurerDashboard() {
     e.preventDefault();
     setTimeout(() => {
       if (selectedRequest.id.startsWith('QR-')) {
-        addInsurerQuote(selectedRequest.id, MY_INSURER, { premium: Number(quotePremium), notes: quoteNotes, validityDays: Number(quoteValidityDays) || defaultValidityDays });
+        addInsurerQuote(selectedRequest.id, MY_INSURER, {
+          premium: Number(quotePremium), notes: quoteNotes, validityDays: Number(quoteValidityDays) || defaultValidityDays,
+          insurerReference: quoteReference.trim() || null, document: quoteDocument,
+        });
       }
       setSelectedRequest(null);
       setQuotePremium('');
       setQuoteNotes('');
+      setQuoteReference('');
+      setQuoteDocument(null);
     }, 800);
+  };
+
+  const handleQuoteDocument = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setQuoteDocumentError('');
+    try {
+      setQuoteDocument(await documentToRecord(file));
+    } catch (error) {
+      setQuoteDocumentError(error.message);
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const handleNcdAction = (ncdId, action) => {
@@ -237,7 +265,7 @@ export default function InsurerDashboard() {
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
             <h3 className="text-[16px] font-bold text-primary mb-4 border-b pb-2">Client & Vehicle Information</h3>
             <div className="space-y-4">
-              {[['Vehicle', selectedRequest.vehicle], ['Estimated Value', selectedRequest.value], ['Declared Usage', selectedRequest.usage], ['Requested Coverage', selectedRequest.coverage], ['Client Profile', selectedRequest.client]].map(([k, v]) => (
+              {[['Vehicle', `${selectedRequest.vehicle}${selectedRequest.plate && selectedRequest.plate !== '—' ? ` · ${selectedRequest.plate}` : ''}`], ['Declared Value', selectedRequest.value], ['Declared Usage', selectedRequest.usage], ['Requested Coverage', selectedRequest.coverage], ['Cover Period', selectedRequest.period ? `${selectedRequest.period} · ${selectedRequest.dates}` : '—'], ['Customer', `${selectedRequest.client}${selectedRequest.contact ? ` · ${selectedRequest.contact}` : ''}`], ['Inspection Photos', selectedRequest.photos ? `${selectedRequest.photos} live photos attached` : 'Not captured']].map(([k, v]) => (
                 <div key={k}>
                   <p className="text-[12px] font-bold tracking-wider text-secondary uppercase">{k}</p>
                   <p className="text-[16px] font-semibold">{v}</p>
@@ -246,10 +274,33 @@ export default function InsurerDashboard() {
             </div>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-primary/20">
-            <h3 className="text-[16px] font-bold text-primary mb-4 border-b pb-2">Create Quotation</h3>
+            <h3 className="text-[16px] font-bold text-primary mb-4 border-b pb-2">Upload your quotation</h3>
+            <p className="mb-5 text-[13px] text-secondary">Prepare the quote in your own system as usual, then record the premium here and attach the quotation document. The customer sees it on their comparison page immediately.</p>
             <form onSubmit={handleSubmitQuote} className="space-y-6">
               <div>
-                <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Calculated Premium (ZMW)</label>
+                <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Quotation document (PDF or image)</label>
+                {quoteDocument ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <span className="material-symbols-outlined text-primary">{quoteDocument.type === 'application/pdf' ? 'picture_as_pdf' : 'image'}</span>
+                    <span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-semibold">{quoteDocument.name}</span><span className="text-[11px] text-secondary">{formatBytes(quoteDocument.size)}</span></span>
+                    <button type="button" onClick={() => setQuoteDocument(null)} className="text-[12px] font-bold text-primary hover:underline">Remove</button>
+                  </div>
+                ) : (
+                  <label className="flex cursor-pointer items-center gap-3 rounded-lg border-2 border-dashed border-outline-variant bg-surface-container-low p-4 hover:border-primary/50">
+                    <span className="material-symbols-outlined text-primary">upload_file</span>
+                    <span className="text-[13px]"><span className="block font-semibold text-on-surface">Attach quotation from your system</span><span className="text-secondary">PDF, JPG or PNG up to 3 MB</span></span>
+                    <input type="file" accept="application/pdf,image/jpeg,image/png" className="sr-only" onChange={handleQuoteDocument} />
+                  </label>
+                )}
+                {quoteDocumentError && <p role="alert" className="mt-1 text-[12px] font-medium text-red-700">{quoteDocumentError}</p>}
+              </div>
+              <div>
+                <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Your internal quote reference</label>
+                <input value={quoteReference} onChange={e => setQuoteReference(e.target.value)} className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. PA-Q-2026-00412" />
+                <p className="mt-1 text-[11px] text-secondary">Shown to the customer so they can quote it when they call you.</p>
+              </div>
+              <div>
+                <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Final premium (ZMW) *</label>
                 <input required type="number" value={quotePremium} onChange={e => setQuotePremium(e.target.value)} className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. 12000" />
               </div>
               <div>
@@ -262,7 +313,7 @@ export default function InsurerDashboard() {
                 <textarea rows="3" value={quoteNotes} onChange={e => setQuoteNotes(e.target.value)} className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. Requires tracking device installation..." />
               </div>
               <button type="submit" className="w-full bg-primary text-white font-semibold text-[16px] py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2">
-                <span className="material-symbols-outlined">send</span> Send Quote to Client
+                <span className="material-symbols-outlined">send</span> Send quote to customer
               </button>
             </form>
           </div>

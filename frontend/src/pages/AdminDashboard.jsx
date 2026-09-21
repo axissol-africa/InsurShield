@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { motion } from 'framer-motion';
-import { formatZMW } from '../utils/premiumEngine';
+import { formatZMW, formatDate } from '../utils/premiumEngine';
+import InsurerOnboardingForm from '../components/InsurerOnboardingForm';
 
 const MOCK_POLICIES = [
   { id: 'POL-001', client: 'Mwiza Banda', vehicle: '2020 Toyota Hilux', insurer: 'Prestige Assurance', premium: 8000, status: 'Active' },
@@ -20,14 +21,13 @@ const SubPageHeader = ({ title, onBack }) => (
 );
 
 export default function AdminDashboard() {
-  const { insurersList, addInsurer, updateInsurerRate, claims, piaConfig, setPiaConfig, staffSession } = useStore();
+  const { insurersList, addInsurer, updateInsurerRate, claims, piaConfig, setPiaConfig, staffSession, registeredAccounts, quoteRequests, policies } = useStore();
   const loginRole = staffSession?.role || 'admin';
   const agentName = staffSession?.name || 'Admin';
   const [activeView, setActiveView] = useState('dashboard');
 
-  const [newInsurer, setNewInsurer] = useState({ name: '', coverage: '', ratePercentage: '', logoUrl: '' });
-  const [searchPlate, setSearchPlate] = useState('');
-  const [searchResult, setSearchResult] = useState(null);
+  const [accountQuery, setAccountQuery] = useState('');
+  const [accountResult, setAccountResult] = useState(null);
   const [editingRate, setEditingRate] = useState(null);
   const [editRateValue, setEditRateValue] = useState('');
   const [piaRateEdit, setPiaRateEdit] = useState(String(piaConfig?.piaRatePercentage ?? 4));
@@ -36,33 +36,19 @@ export default function AdminDashboard() {
   const totalRevenue = MOCK_POLICIES.reduce((sum, p) => sum + p.premium, 0);
   const openClaims = claims.filter(c => !['Settled', 'Rejected'].includes(c.status)).length;
 
-  const handleSearchLink = (e) => {
+  const handleFindAccount = (e) => {
     e.preventDefault();
-    if (searchPlate) {
-      setSearchResult({
-        plate: searchPlate.toUpperCase(),
-        phone: '097XXXXXXX',
-        status: 'Awaiting Payment',
-        link: `https://insurshield.zm/track/${Math.random().toString(36).substring(7)}`
-      });
-    }
+    const query = accountQuery.trim().toLowerCase();
+    if (!query) return;
+    const account = registeredAccounts.find(item => item.email.toLowerCase() === query || item.phone === query);
+    const requests = account ? quoteRequests.filter(item => item.customer?.email === account.email || item.customer?.phone === account.phone) : [];
+    const heldPolicies = account ? policies.filter(item => item.customerEmail === account.email || item.customerPhone === account.phone) : [];
+    setAccountResult(account ? { account, requests, policies: heldPolicies } : { notFound: true });
   };
 
-  const handleAddInsurer = (e) => {
-    e.preventDefault();
-    if (newInsurer.name && newInsurer.ratePercentage) {
-      addInsurer({
-        name: newInsurer.name, coverage: newInsurer.coverage,
-        ratePercentage: parseFloat(newInsurer.ratePercentage),
-        logoUrl: newInsurer.logoUrl.trim(),
-        ncdAllowed: true, maxNcdPercentage: 50,
-        inspectionRules: 'NOT REQUIRED', timing: 'AFTER PAYMENT', method: 'SELF-CAPTURE',
-        icon: 'business', isBestValue: false, benefits: ['Third Party Property Damage'],
-        status: 'Active',
-      });
-      setNewInsurer({ name: '', coverage: '', ratePercentage: '', logoUrl: '' });
-      setActiveView('manage_insurers');
-    }
+  const handleAddInsurer = (insurer) => {
+    addInsurer(insurer);
+    setActiveView('manage_insurers');
   };
 
   const handleSaveRate = (insurerId) => {
@@ -82,87 +68,46 @@ export default function AdminDashboard() {
   if (activeView === 'add_insurer') {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <SubPageHeader title="Onboard New Insurer" onBack={() => setActiveView('manage_insurers')} />
-        <div className="max-w-2xl bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-          <form onSubmit={handleAddInsurer} className="space-y-5">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Company Name *</label>
-                <input required value={newInsurer.name} onChange={e => setNewInsurer(p => ({ ...p, name: e.target.value }))}
-                  className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
-                  placeholder="e.g. Zambia Life Insurance" />
-              </div>
-              <div className="col-span-2">
-                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Coverage Plan Name</label>
-                <input value={newInsurer.coverage} onChange={e => setNewInsurer(p => ({ ...p, coverage: e.target.value }))}
-                  className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
-                  placeholder="e.g. Comprehensive Gold Plan" />
-              </div>
-              <div className="col-span-2">
-                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Company Logo URL</label>
-                <input type="url" value={newInsurer.logoUrl} onChange={e => setNewInsurer(p => ({ ...p, logoUrl: e.target.value }))}
-                  className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
-                  placeholder="https://example.com/company-logo.png" />
-                <p className="text-[11px] text-secondary mt-1">Optional. The logo will appear in the moving partner strip on the home page.</p>
-              </div>
-              <div>
-                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Premium Rate (%) *</label>
-                <input required type="number" step="0.1" min="0.1" max="20" value={newInsurer.ratePercentage}
-                  onChange={e => setNewInsurer(p => ({ ...p, ratePercentage: e.target.value }))}
-                  className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
-                  placeholder="e.g. 4.0" />
-                <p className="text-[11px] text-secondary mt-1">Premium = Vehicle Value × Rate%</p>
-              </div>
-              <div>
-                <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">PIA floor</label>
-                <p className="rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] text-on-surface">{piaConfig?.piaRatePercentage ?? 4}% of vehicle value</p>
-                <p className="text-[11px] text-secondary mt-1">Rates below the floor are raised to it automatically.</p>
-              </div>
-            </div>
-            <button type="submit" className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-sm hover:bg-primary-container active:scale-[0.98] transition-all">
-              Save Insurance Company
-            </button>
-          </form>
+        <SubPageHeader title="Onboard an insurance company" onBack={() => setActiveView('manage_insurers')} />
+        <div className="max-w-3xl rounded-2xl border border-gray-100 bg-white p-8 shadow-sm">
+          <p className="mb-6 text-[13px] text-secondary">Once onboarded, the company receives every eligible quote request, appears in the insurer directory, and can respond from the insurer portal. Licence details are shown to InsurShield staff only.</p>
+          <InsurerOnboardingForm piaRatePercentage={piaConfig?.piaRatePercentage ?? 4} onSubmit={handleAddInsurer} onCancel={() => setActiveView('manage_insurers')} />
         </div>
       </motion.div>
     );
   }
 
-  // ─── Recover Link ──────────────────────────────────────────
+  // ─── Find customer account ─────────────────────────────────
   if (activeView === 'recover_link') {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         <SubPageHeader title="Find Customer Account" onBack={() => setActiveView('dashboard')} />
         <div className="max-w-xl bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-          <form onSubmit={handleSearchLink} className="space-y-4">
+          <form onSubmit={handleFindAccount} className="space-y-4">
             <div>
-              <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Plate Number or Phone</label>
-              <input required value={searchPlate} onChange={e => setSearchPlate(e.target.value)}
-                className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary uppercase tracking-widest font-bold"
-                placeholder="e.g. BAA 1234" />
+              <label className="text-[12px] font-bold uppercase tracking-wider text-secondary mb-1.5 block">Customer email or mobile number</label>
+              <input required value={accountQuery} onChange={e => setAccountQuery(e.target.value)}
+                className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary"
+                placeholder="name@email.com or 0970 123 456" />
             </div>
             <button type="submit" className="w-full bg-primary text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">
-              <span className="material-symbols-outlined text-[18px]">search</span> Search Database
+              <span className="material-symbols-outlined text-[18px]">search</span> Find account
             </button>
           </form>
-          {searchResult && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6 p-5 bg-surface-container-low border border-outline-variant rounded-xl space-y-3">
-              <div className="flex items-center gap-2 text-primary font-bold">
-                <span className="material-symbols-outlined text-[18px]">check_circle</span> Session Found
+          {accountResult?.notFound && <p className="mt-5 rounded-xl bg-amber-50 p-4 text-[13px] text-amber-900">No account matches those details. Ask the customer to register, or check the spelling of the email address.</p>}
+          {accountResult?.account && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-6 space-y-4">
+              <div className="rounded-xl border border-outline-variant bg-surface-container-low p-5">
+                <div className="flex items-center gap-2 text-primary font-bold"><span className="material-symbols-outlined text-[18px]">check_circle</span> Account found</div>
+                <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px]">
+                  <div><dt className="text-[10px] uppercase font-bold text-secondary">Name</dt><dd className="font-semibold">{accountResult.account.fullName}</dd></div>
+                  <div><dt className="text-[10px] uppercase font-bold text-secondary">Mobile</dt><dd className="font-semibold">{accountResult.account.phone}</dd></div>
+                  <div className="col-span-2"><dt className="text-[10px] uppercase font-bold text-secondary">Email</dt><dd className="font-semibold">{accountResult.account.email}</dd></div>
+                  <div><dt className="text-[10px] uppercase font-bold text-secondary">Quote requests</dt><dd className="font-semibold">{accountResult.requests.length}</dd></div>
+                  <div><dt className="text-[10px] uppercase font-bold text-secondary">Policies</dt><dd className="font-semibold">{accountResult.policies.length}</dd></div>
+                </dl>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><p className="text-[10px] uppercase font-bold text-secondary">Plate</p><p className="font-semibold text-primary">{searchResult.plate}</p></div>
-                <div><p className="text-[10px] uppercase font-bold text-secondary">Status</p><p className="font-semibold">{searchResult.status}</p></div>
-              </div>
-              <code className="block text-[12px] text-blue-600 bg-white p-2 rounded-lg border break-all">{searchResult.link}</code>
-              <div className="flex gap-3">
-                <button className="flex-1 py-2.5 border-2 border-primary text-primary font-semibold rounded-xl flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[16px]">sms</span>SMS
-                </button>
-                <button onClick={() => navigator.clipboard?.writeText(searchResult.link)} className="flex-1 py-2.5 border-2 border-primary text-primary font-semibold rounded-xl flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined text-[16px]">content_copy</span>Copy
-                </button>
-              </div>
+              <p className="text-[12px] text-secondary">Passwords and OTPs are never shown to staff. To restore access, guide the customer through <strong>Forgot password</strong> on the sign-in screen; a verification code is sent to their mobile number.</p>
             </motion.div>
           )}
         </div>
@@ -170,7 +115,6 @@ export default function AdminDashboard() {
     );
   }
 
-  // ─── Manage Insurers ───────────────────────────────────────
   if (activeView === 'manage_insurers') {
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -189,13 +133,16 @@ export default function AdminDashboard() {
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
           <div className="hidden md:grid grid-cols-5 px-5 py-3 bg-gray-50 border-b border-gray-100 font-bold text-[11px] text-secondary uppercase tracking-wider">
-            <div>Company</div><div>Coverage</div><div>Rate %</div><div>Effective rate</div><div className="text-right">Status</div>
+            <div>Company</div><div>Licence</div><div>Rate %</div><div>Effective rate</div><div className="text-right">Status</div>
           </div>
           <div className="divide-y divide-gray-50">
             {insurersList.map(insurer => (
               <div key={insurer.id} className="px-5 py-4 grid grid-cols-1 md:grid-cols-5 gap-2 md:gap-0 items-center hover:bg-gray-50 transition-colors">
-                <div className="font-semibold text-primary text-[14px]">{insurer.name}</div>
-                <div className="text-[13px] text-secondary">{insurer.coverage || '—'}</div>
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-gray-100 bg-white">{insurer.logoUrl ? <img src={insurer.logoUrl} alt="" className="max-h-7 max-w-7 object-contain" /> : <span className="material-symbols-outlined text-[18px] text-primary">{insurer.icon || 'business'}</span>}</span>
+                  <div><div className="font-semibold text-primary text-[14px]">{insurer.name}</div><div className="text-[11px] text-secondary">{insurer.coverage || '—'} · quotes valid {insurer.quoteValidityDays || 5} days</div></div>
+                </div>
+                <div className="text-[13px] text-secondary">{insurer.licenceNumber ? <>{insurer.licenceNumber}<span className="block text-[11px]">expires {formatDate(insurer.licenceExpiry)}</span></> : <span className="text-amber-700">Licence not recorded</span>}</div>
                 <div>
                   {editingRate === insurer.id ? (
                     <div className="flex items-center gap-2">

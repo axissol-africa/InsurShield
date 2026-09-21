@@ -4,6 +4,7 @@ import { useStore, selectActiveQuoteRequest } from '../store/useStore';
 import { calculatePremium, formatZMW, formatDate } from '../utils/premiumEngine';
 import { sameInsurerName } from '../utils/insurerRates';
 import { quoteValidity, requestStatus } from '../utils/quoteValidity';
+import { openDocument } from '../utils/files';
 import JourneyProgress from '../components/JourneyProgress';
 
 /**
@@ -143,6 +144,7 @@ export default function QuotesComparisonPage() {
                 <Row key={row.key} label={row.label} quotes={quotes} render={(quote) => <BenefitCell value={benefitCell(quote, row)} />} />
               ))}
               {quotes.some((quote) => quote.reply?.notes) && <Row label="Insurer notes" quotes={quotes} render={(quote) => quote.reply?.notes || '—'} />}
+              {quotes.some((quote) => quote.reply?.document || quote.reply?.insurerReference) && <Row label="Quotation document" quotes={quotes} render={(quote) => <QuoteDocument reply={quote.reply} />} />}
               <tr className="border-t border-slate-200 bg-slate-50">
                 <th scope="row" className="sr-only">Choose</th>
                 {quotes.map((quote, index) => (
@@ -196,6 +198,21 @@ function PriceBlock({ quote, size }) {
       ) : (
         <p className="mt-1.5 text-[12px] text-secondary">Indicative estimate · awaiting insurer's final quote</p>
       )}
+    </div>
+  );
+}
+
+/** The insurer's own quotation document and reference, as uploaded from its system. */
+function QuoteDocument({ reply }) {
+  if (!reply) return <span className="text-secondary/70">—</span>;
+  return (
+    <div className="space-y-1.5 text-[13px]">
+      {reply.document && (
+        <button type="button" onClick={() => openDocument(reply.document)} className="inline-flex items-center gap-1.5 font-bold text-primary hover:underline">
+          <span className="material-symbols-outlined text-[18px]" aria-hidden="true">{reply.document.type === 'application/pdf' ? 'picture_as_pdf' : 'image'}</span>View quotation
+        </button>
+      )}
+      {reply.insurerReference && <p className="text-secondary">Insurer ref <span className="font-mono font-semibold text-on-surface">{reply.insurerReference}</span></p>}
     </div>
   );
 }
@@ -257,6 +274,7 @@ function QuoteCard({ quote, lowest, benefitRows, disabled, onChoose, onRequote }
         })}
       </ul>
       {quote.reply?.notes && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-[13px] text-blue-900"><strong>Insurer note:</strong> {quote.reply.notes}</p>}
+      {(quote.reply?.document || quote.reply?.insurerReference) && <div className="mt-3"><QuoteDocument reply={quote.reply} /></div>}
       <div className="mt-5"><ChooseButton quote={quote} primary={lowest} disabled={disabled} onChoose={onChoose} onRequote={onRequote} label={`Choose ${quote.name}`} /></div>
     </article>
   );
