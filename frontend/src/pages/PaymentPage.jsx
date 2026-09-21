@@ -5,6 +5,7 @@ import { cn } from '../utils/cn';
 import { useStore } from '../store/useStore';
 import { formatZMW } from '../utils/premiumEngine';
 import { RTSA_ANNIVERSARY_FEE } from '../utils/rtsa';
+import { quoteValidity } from '../utils/quoteValidity';
 import JourneyProgress from '../components/JourneyProgress';
 
 const NETWORKS = ['MTN Mobile Money', 'Airtel Money', 'Zamtel Kwacha'];
@@ -14,7 +15,8 @@ const labelClass = 'mb-2 block text-[12px] font-bold uppercase tracking-[0.05em]
 
 export default function PaymentPage() {
   const navigate = useNavigate();
-  const { selectedQuote, vehicleDetails, policyDates, customer, matchRtsaAnniversary } = useStore();
+  const { selectedQuote, vehicleDetails, policyDates, customer, matchRtsaAnniversary, requoteFromRequest } = useStore();
+  const [expiredAtPay, setExpiredAtPay] = useState(false);
   const [method, setMethod] = useState('momo');
   const [mobileNumber, setMobileNumber] = useState(customer?.phone || '');
   const [processing, setProcessing] = useState(false);
@@ -36,9 +38,38 @@ export default function PaymentPage() {
 
   const rtsaFee = matchRtsaAnniversary ? RTSA_ANNIVERSARY_FEE : 0;
   const total = selectedQuote.price + rtsaFee;
+  // A final quote is an offer with a deadline: checked when the page opens and again on Pay.
+  const validity = quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null);
+  const quoteExpired = validity.expired || expiredAtPay;
+
+  const requote = () => {
+    if (selectedQuote.requestId) requoteFromRequest(selectedQuote.requestId);
+    navigate('/quote-request');
+  };
+
+  if (quoteExpired) {
+    return (
+      <>
+        <JourneyProgress current={6} />
+        <main className="mx-auto flex min-h-[60vh] max-w-xl items-center px-5">
+          <section role="alert" className="w-full rounded-2xl border border-red-200 bg-white p-8 text-center">
+            <span className="material-symbols-outlined text-[48px] text-red-700" aria-hidden="true">event_busy</span>
+            <h1 className="mt-3 text-2xl font-extrabold">This quote has expired</h1>
+            <p className="mt-2 text-secondary">{selectedQuote.name}'s quote {validity.validUntil ? `was valid until ${validity.label.replace('Expired on ', '')}` : 'is no longer valid'}. Insurers need to quote again before you can pay — your vehicle details are carried over.</p>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
+              <button type="button" onClick={requote} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-primary px-6 font-bold text-white hover:bg-primary-container"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">refresh</span>Get fresh quotes</button>
+              <Link to="/quotes-comparison" className="inline-flex min-h-12 items-center justify-center rounded-lg border-2 border-primary px-6 font-bold text-primary hover:bg-primary/5">See other quotes</Link>
+            </div>
+          </section>
+        </main>
+      </>
+    );
+  }
 
   const handlePay = (event) => {
     event.preventDefault();
+    // Re-check at the moment of authorisation; a quote valid now stays purchasable while confirmation is pending.
+    if (quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null).expired) { setExpiredAtPay(true); return; }
     setProcessing(true);
     // Prototype: simulate the payment gateway round-trip.
     setTimeout(() => navigate('/confirmation', { replace: true }), 1800);
@@ -60,6 +91,7 @@ export default function PaymentPage() {
               <Summary label="Plate" value={vehicleDetails?.plateNumber || '—'} />
               <Summary label="Cover period" value={policyDates ? `${policyDates.formattedStart} – ${policyDates.formattedEnd}` : selectedQuote.breakdown?.coverageDuration || '—'} />
               <Summary label="Premium basis" value={selectedQuote.isFinal ? 'Final quote from insurer' : 'Indicative estimate · confirmed by insurer on issue'} />
+              {validity.validUntil && <Summary label="Quote validity" value={validity.label} highlight={validity.expiringSoon} />}
             </dl>
 
             <Link to="/quotes-comparison" className="mt-6 inline-flex items-center gap-1 text-[14px] font-semibold text-primary hover:underline">
@@ -117,11 +149,11 @@ export default function PaymentPage() {
   );
 }
 
-function Summary({ label, value }) {
+function Summary({ label, value, highlight = false }) {
   return (
     <div>
       <dt className="text-[11px] font-bold uppercase tracking-[0.05em] text-on-surface-variant">{label}</dt>
-      <dd className="mt-1 text-[15px] font-semibold text-on-surface">{value}</dd>
+      <dd className={`mt-1 text-[15px] font-semibold ${highlight ? 'text-amber-800' : 'text-on-surface'}`}>{value}</dd>
     </div>
   );
 }

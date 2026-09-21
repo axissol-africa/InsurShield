@@ -28,10 +28,11 @@ export const COVERAGE_DURATION_OPTIONS = [
   { id: '4q',  label: '1 Year (12 Months)',     months: 12,  days: 365 },
 ];
 
-/** Insurers on the platform. `contact` is the claims desk customers call after a first notification. */
+/** Insurers on the platform. `contact` is the claims desk customers call after a first notification; `quoteValidityDays` is how long the insurer's final quote stays open. */
 export const INSURER_RATES = [
   {
     id: '1',
+    quoteValidityDays: 7,
     name: 'Prestige Assurance',
     coverage: 'Comprehensive Gold Plan',
     ratePercentage: 4.5,
@@ -58,6 +59,7 @@ export const INSURER_RATES = [
   },
   {
     id: '2',
+    quoteValidityDays: 2,
     name: 'Global Guard Insurance',
     coverage: 'Elite Security Policy',
     ratePercentage: 4.0,
@@ -83,6 +85,7 @@ export const INSURER_RATES = [
   },
   {
     id: '3',
+    quoteValidityDays: 5,
     name: 'ValueDirect Insurance',
     coverage: 'Essential Shield',
     ratePercentage: 4.2,
@@ -107,6 +110,7 @@ export const INSURER_RATES = [
   },
   {
     id: '4',
+    quoteValidityDays: 3,
     name: 'Metro Safe Assurance',
     coverage: 'Standard Protection',
     ratePercentage: 5.0,
@@ -134,6 +138,7 @@ export const INSURER_RATES = [
   },
   {
     id: '5',
+    quoteValidityDays: 6,
     name: 'Madison General',
     coverage: 'Comprehensive Zambia Plan',
     ratePercentage: 4.3,

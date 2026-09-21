@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { motion } from 'framer-motion';
 import { formatZMW, formatDate } from '../utils/premiumEngine';
+import { INSURER_RATES } from '../utils/insurerRates';
+import { quoteValidity } from '../utils/quoteValidity';
 
 // The insurer this portal is logged in as (in a real app this comes from auth)
 const MY_INSURER = 'Prestige Assurance';
@@ -137,13 +139,33 @@ function ClaimDetail({ claim, onBack, allClaims }) {
   );
 }
 
+// ─── Sent quote with its validity and an extend action ───────────────────────
+function QuotedStatus({ reply, onExtend }) {
+  const validity = quoteValidity(reply);
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <span className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-bold ${validity.expired ? 'bg-slate-200 text-slate-600' : 'bg-primary/5 text-primary'}`}>
+        <span className="material-symbols-outlined text-[18px]">{validity.expired ? 'event_busy' : 'task_alt'}</span>Quoted {formatZMW(reply.premium)}
+      </span>
+      {validity.validUntil && (
+        <span className={`flex items-center gap-2 text-[11px] ${validity.expired ? 'text-red-700' : validity.expiringSoon ? 'text-amber-800' : 'text-secondary'}`}>
+          {validity.label}
+          {!validity.expired && <button type="button" onClick={onExtend} className="font-bold text-primary hover:underline">Extend 7 days</button>}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── Main InsurerDashboard ────────────────────────────────────────────────────
 export default function InsurerDashboard() {
-  const { claims, ncdApplications, quoteRequests, updateNcdApplicationStatus, addInsurerQuote } = useStore();
+  const { claims, ncdApplications, quoteRequests, updateNcdApplicationStatus, addInsurerQuote, extendInsurerQuote } = useStore();
+  const defaultValidityDays = INSURER_RATES.find(insurer => insurer.name === MY_INSURER)?.quoteValidityDays || 5;
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [quotePremium, setQuotePremium] = useState('');
   const [quoteNotes, setQuoteNotes] = useState('');
+  const [quoteValidityDays, setQuoteValidityDays] = useState('');
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [ncdActioning, setNcdActioning] = useState(null);
 
@@ -183,7 +205,7 @@ export default function InsurerDashboard() {
     e.preventDefault();
     setTimeout(() => {
       if (selectedRequest.id.startsWith('QR-')) {
-        addInsurerQuote(selectedRequest.id, MY_INSURER, { premium: Number(quotePremium), notes: quoteNotes });
+        addInsurerQuote(selectedRequest.id, MY_INSURER, { premium: Number(quotePremium), notes: quoteNotes, validityDays: Number(quoteValidityDays) || defaultValidityDays });
       }
       setSelectedRequest(null);
       setQuotePremium('');
@@ -229,6 +251,11 @@ export default function InsurerDashboard() {
               <div>
                 <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Calculated Premium (ZMW)</label>
                 <input required type="number" value={quotePremium} onChange={e => setQuotePremium(e.target.value)} className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary" placeholder="e.g. 12000" />
+              </div>
+              <div>
+                <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Quote valid for (days)</label>
+                <input type="number" min="1" max="30" value={quoteValidityDays} onChange={e => setQuoteValidityDays(e.target.value)} className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-3 text-[16px] outline-none focus:ring-2 focus:ring-primary" placeholder={`Default ${defaultValidityDays} days`} />
+                <p className="mt-1 text-[11px] text-secondary">After this the customer cannot pay on this quote and must request new quotes. You can extend an open quote from the list.</p>
               </div>
               <div>
                 <label className="text-[12px] font-bold tracking-wider text-secondary uppercase block mb-2">Special Conditions / Notes</label>
@@ -330,7 +357,7 @@ export default function InsurerDashboard() {
                     <div className="flex items-center gap-4 md:w-auto w-full justify-between md:justify-end">
                       <span className="text-[12px] text-secondary">{req.time}</span>
                       {req.quoted ? (
-                        <span className="flex items-center gap-1.5 rounded-lg bg-primary/5 px-3 py-2 text-[13px] font-bold text-primary"><span className="material-symbols-outlined text-[18px]">task_alt</span>Quoted {formatZMW(req.quoted.premium)}</span>
+                        <QuotedStatus reply={req.quoted} onExtend={() => extendInsurerQuote(req.id, MY_INSURER, 7)} />
                       ) : (
                         <button onClick={() => setSelectedRequest(req)} className="px-4 py-2 bg-primary/10 text-primary hover:bg-primary hover:text-white font-semibold text-[14px] rounded-lg transition-colors flex items-center gap-2">
                           <span className="material-symbols-outlined text-[18px]">edit_document</span> Send quote

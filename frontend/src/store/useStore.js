@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { INSURER_RATES, PIA_CONFIG, reconcileInsurers } from '../utils/insurerRates';
 import { INSPECTION_KEYS } from '../utils/inspection';
+import { DEFAULT_QUOTE_VALIDITY_DAYS, REQUEST_VALIDITY_DAYS, addDays, photosReusable, requestStatus } from '../utils/quoteValidity';
 
 /**
  * InsurShield — Application Store
@@ -45,6 +46,9 @@ const withTimestamp = (record, key = 'updatedAt') => ({ ...record, [key]: new Da
 
 const updateById = (items, id, updater) => items.map((item) => (item.id === id ? updater(item) : item));
 
+/** Unique, human-readable reference: prefix + timestamp + random suffix (two requests in the same instant never collide). */
+const newReference = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+
 /** State cleared when a quote journey ends (policy issued) or a new one starts. */
 const JOURNEY_DEFAULTS = {
   vehicleDetails: null,
@@ -57,6 +61,8 @@ const JOURNEY_DEFAULTS = {
   rtsaRegistrationDate: '',
   policyDates: null,
   activeQuoteRequestId: null,
+  requotedFromId: null,
+  photosCapturedAt: null,
   selectedQuote: null,
   premiumBreakdown: null,
   ncdCode: '',
@@ -150,8 +156,9 @@ export const useStore = create(
       setPolicyStartDate: (policyStartDate) => set({ policyStartDate }),
       setRtsaAnniversary: (matchRtsaAnniversary, rtsaRegistrationDate) =>
         set((state) => ({ matchRtsaAnniversary, rtsaRegistrationDate: rtsaRegistrationDate ?? state.rtsaRegistrationDate })),
-      setDocuments: (updates) => set((state) => ({ documents: { ...state.documents, ...updates } })),
-      setDocument: (type, url) => set((state) => ({ documents: { ...state.documents, [type]: url } })),
+      setDocuments: (updates) => set((state) => ({ documents: { ...state.documents, ...updates }, photosCapturedAt: new Date().toISOString() })),
+      setDocument: (type, url) =>
+        set((state) => ({ documents: { ...state.documents, [type]: url }, ...(type.startsWith('insp_') ? { photosCapturedAt: new Date().toISOString() } : {}) })),
 
       /**
        * Submit the customer's request to every active insurer at once.
@@ -160,12 +167,16 @@ export const useStore = create(
       submitQuoteRequest: ({ customer, policyDates }) => {
         const state = get();
         const insurers = state.insurersList.filter((insurer) => insurer.status !== 'Inactive');
-        const id = `QR-${Date.now()}`;
+        const id = newReference('QR');
         const { vehicleDetails } = state;
+        const submittedAt = new Date().toISOString();
         const request = {
           id,
           status: 'Submitted',
-          submittedAt: new Date().toISOString(),
+          submittedAt,
+          // The declared value and live photos go stale; without valid quotes the request expires.
+          expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
+          requotedFromId: state.requotedFromId,
           customer,
           insurers: insurers.map((insurer) => insurer.name),
           insurerIds: insurers.map((insurer) => insurer.id),
@@ -183,19 +194,65 @@ export const useStore = create(
           policyDates,
           // Photo blobs stay in `documents`; the request records which shots were captured.
           inspectionShots: INSPECTION_KEYS.filter((key) => Boolean(state.documents[key])),
+          photosCapturedAt: state.photosCapturedAt,
         };
-        set({ quoteRequests: [request, ...state.quoteRequests], activeQuoteRequestId: id, policyDates });
+        const quoteRequests = state.requotedFromId
+          ? updateById(state.quoteRequests, state.requotedFromId, (old) => ({ ...old, status: 'Expired', requotedAs: id }))
+          : state.quoteRequests;
+        set({ quoteRequests: [request, ...quoteRequests], activeQuoteRequestId: id, policyDates, requotedFromId: null });
         return id;
       },
 
-      /** Insurer portal: attach a final quote to a request. */
+      /**
+       * Start a fresh request from an expired one: the journey is pre-filled
+       * with the old vehicle, value, usage, period and documents. Live photos
+       * are reused only while still within the reuse window.
+       */
+      requoteFromRequest: (requestId) => {
+        const state = get();
+        const old = state.quoteRequests.find((request) => request.id === requestId);
+        if (!old) return false;
+        const reusePhotos = photosReusable(old.photosCapturedAt);
+        set({
+          ...JOURNEY_DEFAULTS,
+          policyStartDate: TODAY(),
+          vehicleDetails: old.vehicleDetails,
+          vehicleValue: old.vehicleValue,
+          vehicleUsage: old.vehicleUsage,
+          insuranceType: old.insuranceType,
+          coverageDurationId: old.coverageDurationId,
+          matchRtsaAnniversary: Boolean(old.matchRtsaAnniversary),
+          rtsaRegistrationDate: old.rtsaRegistrationDate || '',
+          documents: reusePhotos ? { ...state.documents } : { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
+          photosCapturedAt: reusePhotos ? old.photosCapturedAt : null,
+          requotedFromId: requestId,
+        });
+        return true;
+      },
+
+      /** Insurer portal: attach a final quote to a request. The quote is valid for the insurer's configured number of days. */
       addInsurerQuote: (requestId, insurerName, quote) =>
+        set((state) => {
+          const insurer = state.insurersList.find((item) => item.name === insurerName);
+          const validityDays = quote.validityDays || insurer?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
+          const sentAt = new Date().toISOString();
+          return {
+            quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({
+              ...request,
+              status: 'Quoted',
+              insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...quote, sentAt, validityDays, validUntil: addDays(sentAt, validityDays) } },
+            })),
+          };
+        }),
+
+      /** Insurer portal: extend an unexpired quote's validity. */
+      extendInsurerQuote: (requestId, insurerName, extraDays) =>
         set((state) => ({
-          quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({
-            ...request,
-            status: 'Quoted',
-            insurerQuotes: { ...request.insurerQuotes, [insurerName]: withTimestamp(quote, 'sentAt') },
-          })),
+          quoteRequests: updateById(state.quoteRequests, requestId, (request) => {
+            const reply = request.insurerQuotes?.[insurerName];
+            if (!reply?.validUntil) return request;
+            return { ...request, insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...reply, validUntil: addDays(reply.validUntil, extraDays), extendedAt: new Date().toISOString() } } };
+          }),
         })),
 
       /** Reopen an earlier request (from the account page) for comparison. */
@@ -310,14 +367,14 @@ export const useStore = create(
         customer, isAuthenticated, registeredAccounts, staffSession,
         consentAccepted, consentTimestamp, consentRecord,
         vehicleDetails, vehicleValue, vehicleUsage, insuranceType, coverageDurationId, policyStartDate, matchRtsaAnniversary, rtsaRegistrationDate, policyDates,
-        activeQuoteRequestId, selectedQuote, premiumBreakdown, documents,
+        activeQuoteRequestId, requotedFromId, photosCapturedAt, selectedQuote, premiumBreakdown, documents,
         ncdCode, ncdCodeValidated, ncdCodeUsed, ncdApplications,
         piaConfig, insurersList, quoteRequests, policies, claims, inspections,
       }) => ({
         customer, isAuthenticated, registeredAccounts, staffSession,
         consentAccepted, consentTimestamp, consentRecord,
         vehicleDetails, vehicleValue, vehicleUsage, insuranceType, coverageDurationId, policyStartDate, matchRtsaAnniversary, rtsaRegistrationDate, policyDates,
-        activeQuoteRequestId, selectedQuote, premiumBreakdown, documents,
+        activeQuoteRequestId, requotedFromId, photosCapturedAt, selectedQuote, premiumBreakdown, documents,
         ncdCode, ncdCodeValidated, ncdCodeUsed, ncdApplications,
         piaConfig, insurersList, quoteRequests, policies, claims, inspections,
       }),
@@ -328,6 +385,9 @@ export const useStore = create(
 /** Insurers that currently receive quote requests (shallow-compared so the filtered array is stable). */
 const selectActiveInsurers = (state) => state.insurersList.filter((insurer) => insurer.status !== 'Inactive');
 export const useActiveInsurers = () => useStore(useShallow(selectActiveInsurers));
+
+/** Status of every request for the signed-in customer, newest first. */
+export const requestStatusOf = (request) => requestStatus(request);
 
 /** The quote request currently being compared / paid for, if any. */
 export const selectActiveQuoteRequest = (state) =>

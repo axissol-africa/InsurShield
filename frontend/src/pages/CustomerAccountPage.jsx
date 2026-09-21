@@ -1,13 +1,14 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '../store/useStore';
 import { formatZMW, formatDate } from '../utils/premiumEngine';
+import { requestStatus } from '../utils/quoteValidity';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '../utils/policyDocuments';
 
 const cardClass = 'rounded-2xl border border-slate-200 bg-white p-6 shadow-sm';
 
 export default function CustomerAccountPage() {
   const navigate = useNavigate();
-  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount } = useStore();
+  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount, requoteFromRequest } = useStore();
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
 
   const mine = belongsToCustomer(customer);
@@ -18,6 +19,10 @@ export default function CustomerAccountPage() {
   const openRequest = (request) => {
     setActiveQuoteRequest(request.id);
     navigate('/quotes-comparison');
+  };
+  const requote = (request) => {
+    requoteFromRequest(request.id);
+    navigate('/quote-request');
   };
 
   const removeAccount = () => {
@@ -88,20 +93,36 @@ export default function CustomerAccountPage() {
           {myRequests.length ? (
             <ul className="mt-4 space-y-3">
               {myRequests.map((request) => {
-                const replies = Object.keys(request.insurerQuotes || {}).length;
                 const total = request.insurers?.length || 0;
+                const status = requestStatus(request);
+                const badge = {
+                  expired: ['bg-slate-200 text-slate-700', 'Expired'],
+                  expiring: ['bg-amber-100 text-amber-800', `Expiring soon · ${status.validQuotes} valid`],
+                  quoted: ['bg-primary/10 text-primary', `${status.replies}/${total} replied`],
+                  pending: ['bg-amber-100 text-amber-800', `${status.replies}/${total} replied`],
+                }[status.status];
                 return (
-                  <li key={request.id} className="rounded-xl bg-slate-50 p-4">
+                  <li key={request.id} className={`rounded-xl p-4 ${status.status === 'expired' ? 'bg-slate-100' : 'bg-slate-50'}`}>
                     <div className="flex justify-between gap-3">
                       <div>
                         <p className="font-bold text-primary">{request.vehicle}</p>
-                        <p className="text-xs text-secondary">{request.id} · sent {formatDate(request.submittedAt)} to {total} insurers</p>
+                        <p className="text-xs text-secondary">{request.id} · sent {formatDate(request.submittedAt)} to {total} insurers{request.requotedAs ? ` · re-requested as ${request.requotedAs}` : ''}</p>
                       </div>
-                      <span className={`h-fit rounded-md px-2 py-1 text-xs font-bold ${replies === total ? 'bg-primary/10 text-primary' : 'bg-amber-100 text-amber-800'}`}>{replies}/{total} replied</span>
+                      <span className={`h-fit whitespace-nowrap rounded-md px-2 py-1 text-xs font-bold ${badge[0]}`}>{badge[1]}</span>
                     </div>
-                    <button type="button" onClick={() => openRequest(request)} className="mt-3 inline-flex min-h-10 items-center text-sm font-bold text-primary hover:underline">
-                      Compare quotes <span className="material-symbols-outlined ml-1 text-[16px]" aria-hidden="true">arrow_forward</span>
-                    </button>
+                    {status.status === 'expired' ? (
+                      request.requotedAs ? (
+                        <p className="mt-3 text-[13px] text-secondary">These quotes lapsed; the new request carries your details.</p>
+                      ) : (
+                        <button type="button" onClick={() => requote(request)} className="mt-3 inline-flex min-h-10 items-center gap-1 text-sm font-bold text-primary hover:underline">
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">refresh</span>Request new quotes
+                        </button>
+                      )
+                    ) : (
+                      <button type="button" onClick={() => openRequest(request)} className="mt-3 inline-flex min-h-10 items-center text-sm font-bold text-primary hover:underline">
+                        Compare quotes <span className="material-symbols-outlined ml-1 text-[16px]" aria-hidden="true">arrow_forward</span>
+                      </button>
+                    )}
                   </li>
                 );
               })}

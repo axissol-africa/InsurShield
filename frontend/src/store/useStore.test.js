@@ -139,3 +139,56 @@ describe('belongsToCustomer', () => {
     expect(belongsToCustomer(null)({ customerEmail: 'a@example.com' })).toBe(false);
   });
 });
+
+describe('quote validity and re-quote', () => {
+  it('stamps an insurer reply with its validity window', () => {
+    signInDemo();
+    seedVehicle();
+    const id = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    state().addInsurerQuote(id, 'Global Guard Insurance', { premium: 9000 });
+    const reply = state().quoteRequests[0].insurerQuotes['Global Guard Insurance'];
+    expect(reply.validityDays).toBe(2); // Global Guard's configured window
+    expect(new Date(reply.validUntil) - new Date(reply.sentAt)).toBe(2 * 24 * 60 * 60 * 1000);
+    expect(state().quoteRequests[0].expiresAt).toBeTruthy();
+
+    state().extendInsurerQuote(id, 'Global Guard Insurance', 7);
+    expect(new Date(state().quoteRequests[0].insurerQuotes['Global Guard Insurance'].validUntil) - new Date(reply.validUntil)).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('re-quotes from an expired request with details carried over and the old one linked', () => {
+    signInDemo();
+    seedVehicle();
+    state().setVehicleUsage('Commercial (Taxis & Yangos)');
+    const oldId = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    // The customer wandered off: journey fields changed but the documents are still on the device.
+    state().setVehicleDetails(null);
+    state().setVehicleValue(0);
+    state().setVehicleUsage('');
+
+    expect(state().requoteFromRequest(oldId)).toBe(true);
+    expect(state().vehicleDetails.plateNumber).toBe('BAA 1234');
+    expect(state().vehicleUsage).toBe('Commercial (Taxis & Yangos)');
+    expect(state().vehicleValue).toBe(250000);
+    expect(state().requotedFromId).toBe(oldId);
+    expect(state().documents.insp_front).toBeTruthy(); // photos are recent enough to reuse
+
+    const newId = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    const old = state().quoteRequests.find((request) => request.id === oldId);
+    const fresh = state().quoteRequests.find((request) => request.id === newId);
+    expect(old.status).toBe('Expired');
+    expect(old.requotedAs).toBe(newId);
+    expect(fresh.requotedFromId).toBe(oldId);
+    expect(state().requotedFromId).toBeNull();
+  });
+
+  it('drops stale photos when re-quoting', () => {
+    signInDemo();
+    seedVehicle();
+    state().setDocument('whiteBook', 'blob:whitebook');
+    const oldId = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    useStore.setState({ quoteRequests: state().quoteRequests.map((request) => (request.id === oldId ? { ...request, photosCapturedAt: '2020-01-01T00:00:00.000Z' } : request)) });
+    state().requoteFromRequest(oldId);
+    expect(state().documents.insp_front).toBeNull();
+    expect(state().documents.whiteBook).toBeTruthy();
+  });
+});

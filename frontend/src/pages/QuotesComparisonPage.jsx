@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useStore, selectActiveQuoteRequest } from '../store/useStore';
 import { calculatePremium, formatZMW, formatDate } from '../utils/premiumEngine';
 import { sameInsurerName } from '../utils/insurerRates';
+import { quoteValidity, requestStatus } from '../utils/quoteValidity';
 import JourneyProgress from '../components/JourneyProgress';
 
 /**
@@ -31,7 +32,7 @@ const benefitCell = (quote, row) => {
 
 export default function QuotesComparisonPage() {
   const navigate = useNavigate();
-  const { insurersList, selectQuote, quoteRequests, customer, piaConfig } = useStore();
+  const { insurersList, selectQuote, quoteRequests, customer, piaConfig, requoteFromRequest } = useStore();
   const request = useStore(selectActiveQuoteRequest);
 
   const quotes = useMemo(() => {
@@ -50,17 +51,27 @@ export default function QuotesComparisonPage() {
         const finalBreakdown = reply
           ? { ...breakdown, basePremium: reply.premium, ncdDiscount: 0, appliedNcdPercentage: 0, finalPremium: reply.premium, source: 'insurer' }
           : { ...breakdown, source: 'estimate' };
-        return { ...insurer, breakdown: finalBreakdown, premium: finalBreakdown.finalPremium, estimate: breakdown.finalPremium, reply, isFinal: Boolean(reply) };
+        const validity = quoteValidity(reply);
+        return { ...insurer, breakdown: finalBreakdown, premium: finalBreakdown.finalPremium, estimate: breakdown.finalPremium, reply, isFinal: Boolean(reply), validity, expired: validity.expired };
       })
-      .sort((a, b) => a.premium - b.premium);
+      // Expired offers sink to the bottom; everything else is ordered by price.
+      .sort((a, b) => Number(a.expired) - Number(b.expired) || a.premium - b.premium);
   }, [request, insurersList, piaConfig?.piaRatePercentage]);
 
   const repliedCount = quotes.filter((quote) => quote.isFinal).length;
   const benefitRows = BENEFIT_ROWS.filter((row) => quotes.some((quote) => benefitCell(quote, row)));
+  const status = requestStatus(request);
+  const requestExpired = status.status === 'expired';
 
   const choose = (quote) => {
-    selectQuote({ ...quote, price: quote.premium, requestId: request.id }, quote.breakdown);
+    if (quote.expired || requestExpired) return;
+    selectQuote({ ...quote, price: quote.premium, requestId: request.id, validUntil: quote.validity.validUntil }, quote.breakdown);
     navigate('/payment');
+  };
+
+  const requote = () => {
+    requoteFromRequest(request.id);
+    navigate('/quote-request');
   };
 
   if (!request) return <NoActiveRequest requests={quoteRequests} customer={customer} />;
@@ -84,6 +95,24 @@ export default function QuotesComparisonPage() {
           </div>
         </header>
 
+        {requestExpired ? (
+          <section role="alert" className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-5">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined text-[26px] text-red-700" aria-hidden="true">event_busy</span>
+              <div>
+                <h2 className="text-[17px] font-extrabold text-red-900">These quotes have expired</h2>
+                <p className="mt-1 text-[14px] text-red-800">Insurers only hold a quote open for a limited time. Request fresh quotes and every insurer will quote again — your vehicle details are carried over.</p>
+              </div>
+            </div>
+            <button type="button" onClick={requote} className="inline-flex min-h-12 items-center gap-2 rounded-lg bg-primary px-5 text-[15px] font-bold text-white hover:bg-primary-container"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">refresh</span>Request new quotes</button>
+          </section>
+        ) : status.status === 'expiring' && (
+          <p className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[14px] text-amber-900">
+            <span className="material-symbols-outlined text-[22px] text-amber-700" aria-hidden="true">timer</span>
+            <span><strong>Some quotes expire soon.</strong> Each insurer sets how long its quote stays open — check the valid-until date on each one and pay before it lapses.</span>
+          </p>
+        )}
+
         {/* Desktop: fixed comparison rows */}
         <div className="mt-8 hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white xl:block">
           <table className="w-full border-collapse text-left">
@@ -95,9 +124,10 @@ export default function QuotesComparisonPage() {
                     <span className="flex items-center gap-2 text-[19px] font-extrabold"><span className="material-symbols-outlined text-primary" aria-hidden="true">{quote.icon || 'shield'}</span>{quote.name}</span>
                     <span className="mt-1 block text-[12px] font-semibold text-secondary">{quote.coverage}</span>
                     <span className="mt-2 flex flex-wrap gap-1.5">
-                      {index === 0 && <Badge tone="primary">Lowest</Badge>}
-                      <QuoteStatusBadge isFinal={quote.isFinal} />
+                      {index === 0 && !quote.expired && <Badge tone="primary">Lowest</Badge>}
+                      <QuoteStatusBadge quote={quote} />
                     </span>
+                    <ValidityLine quote={quote} />
                   </th>
                 ))}
               </tr>
@@ -117,7 +147,7 @@ export default function QuotesComparisonPage() {
                 <th scope="row" className="sr-only">Choose</th>
                 {quotes.map((quote, index) => (
                   <td key={quote.id} className="p-5">
-                    <button type="button" onClick={() => choose(quote)} className={`min-h-13 w-full rounded-lg text-[15px] font-bold ${index === 0 ? 'bg-primary text-white hover:bg-primary-container' : 'border-2 border-primary text-primary hover:bg-primary/5'}`}>Choose {quote.name.split(' ')[0]}</button>
+                    <ChooseButton quote={quote} primary={index === 0} disabled={requestExpired} onChoose={() => choose(quote)} onRequote={requote} label={`Choose ${quote.name.split(' ')[0]}`} />
                   </td>
                 ))}
               </tr>
@@ -127,10 +157,10 @@ export default function QuotesComparisonPage() {
 
         {/* Mobile / tablet: stacked cards */}
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:hidden">
-          {quotes.map((quote, index) => <QuoteCard key={quote.id} quote={quote} lowest={index === 0} benefitRows={benefitRows} onChoose={() => choose(quote)} />)}
+          {quotes.map((quote, index) => <QuoteCard key={quote.id} quote={quote} lowest={index === 0 && !quote.expired} benefitRows={benefitRows} disabled={requestExpired} onChoose={() => choose(quote)} onRequote={requote} />)}
         </div>
 
-        <p className="mt-7 text-center text-[14px] text-secondary">Choosing an insurer takes you to payment. Indicative estimates are confirmed by the insurer before your policy is issued.</p>
+        <p className="mt-7 text-center text-[14px] text-secondary">Choosing an insurer takes you to payment. Each final quote is valid until the date shown; indicative estimates are confirmed by the insurer before your policy is issued.</p>
       </main>
     </>
   );
@@ -171,23 +201,47 @@ function PriceBlock({ quote, size }) {
 }
 
 function Badge({ tone, children }) {
-  const tones = { primary: 'bg-primary/10 text-primary', amber: 'bg-amber-100 text-amber-800', blue: 'bg-blue-100 text-blue-800' };
+  const tones = { primary: 'bg-primary/10 text-primary', amber: 'bg-amber-100 text-amber-800', blue: 'bg-blue-100 text-blue-800', grey: 'bg-slate-200 text-slate-600' };
   return <span className={`rounded-md px-2 py-0.5 text-[11px] font-extrabold uppercase ${tones[tone]}`}>{children}</span>;
 }
 
-function QuoteStatusBadge({ isFinal }) {
-  return isFinal ? <Badge tone="blue">Final quote</Badge> : <Badge tone="amber">Estimate</Badge>;
+function QuoteStatusBadge({ quote }) {
+  if (quote.expired) return <Badge tone="grey">Expired</Badge>;
+  if (quote.isFinal) return <>{quote.validity.expiringSoon && <Badge tone="amber">Expires soon</Badge>}<Badge tone="blue">Final quote</Badge></>;
+  return <Badge tone="amber">Estimate</Badge>;
 }
 
-function QuoteCard({ quote, lowest, benefitRows, onChoose }) {
+/** "Valid until 28 Sep · 5 days left" (final quotes only). */
+function ValidityLine({ quote }) {
+  if (!quote.isFinal) return null;
   return (
-    <article className={`rounded-2xl border-2 bg-white p-5 ${lowest ? 'border-primary' : 'border-slate-200'}`}>
+    <span className={`mt-2 flex items-center gap-1 text-[12px] ${quote.expired ? 'text-red-700' : quote.validity.expiringSoon ? 'text-amber-800' : 'text-secondary'}`}>
+      <span className="material-symbols-outlined text-[15px]" aria-hidden="true">{quote.expired ? 'event_busy' : 'event_available'}</span>{quote.validity.label}
+    </span>
+  );
+}
+
+function ChooseButton({ quote, primary, disabled, onChoose, onRequote, label }) {
+  if (quote.expired || disabled) {
+    return (
+      <button type="button" onClick={onRequote} className="min-h-13 w-full rounded-lg border-2 border-dashed border-slate-300 text-[14px] font-bold text-secondary hover:border-primary hover:text-primary">
+        {quote.expired ? 'Expired · request a new quote' : 'Request new quotes'}
+      </button>
+    );
+  }
+  return <button type="button" onClick={onChoose} className={`min-h-13 w-full rounded-lg text-[15px] font-bold ${primary ? 'bg-primary text-white hover:bg-primary-container' : 'border-2 border-primary text-primary hover:bg-primary/5'}`}>{label}</button>;
+}
+
+function QuoteCard({ quote, lowest, benefitRows, disabled, onChoose, onRequote }) {
+  return (
+    <article className={`rounded-2xl border-2 bg-white p-5 ${quote.expired ? 'border-slate-200 opacity-70' : lowest ? 'border-primary' : 'border-slate-200'}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="material-symbols-outlined text-[26px] text-primary" aria-hidden="true">{quote.icon || 'shield'}</span>
         <h2 className="text-[20px] font-extrabold tracking-[-.02em]">{quote.name}</h2>
         {lowest && <Badge tone="primary">Lowest</Badge>}
-        <QuoteStatusBadge isFinal={quote.isFinal} />
+        <QuoteStatusBadge quote={quote} />
       </div>
+      <ValidityLine quote={quote} />
       <p className="mt-1 text-[12px] font-semibold uppercase tracking-wide text-secondary">{quote.coverage}</p>
       <div className="mt-3"><PriceBlock quote={quote} size="card" /></div>
       <p className="mt-2 text-[13px] text-secondary">{quote.breakdown.coverageDays ? `${quote.breakdown.coverageDays} days` : quote.breakdown.coverageDuration} · {quote.ratePercentage}% of vehicle value · inspection {INSPECTION_LABELS[quote.inspectionRules]?.toLowerCase() || 'may be requested'}</p>
@@ -203,7 +257,7 @@ function QuoteCard({ quote, lowest, benefitRows, onChoose }) {
         })}
       </ul>
       {quote.reply?.notes && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-[13px] text-blue-900"><strong>Insurer note:</strong> {quote.reply.notes}</p>}
-      <button type="button" onClick={onChoose} className={`mt-5 min-h-13 w-full rounded-lg text-[15px] font-bold ${lowest ? 'bg-primary text-white hover:bg-primary-container' : 'border-2 border-primary text-primary hover:bg-primary/5'}`}>Choose {quote.name}</button>
+      <div className="mt-5"><ChooseButton quote={quote} primary={lowest} disabled={disabled} onChoose={onChoose} onRequote={onRequote} label={`Choose ${quote.name}`} /></div>
     </article>
   );
 }

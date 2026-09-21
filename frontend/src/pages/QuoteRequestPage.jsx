@@ -37,7 +37,7 @@ export default function QuoteRequestPage() {
   const {
     vehicleValue, vehicleUsage, vehicleDetails, insuranceType, documents, customer,
     coverageDurationId, setCoverageDuration, policyStartDate, setPolicyStartDate, setDocument, setDocuments, submitQuoteRequest,
-    matchRtsaAnniversary, rtsaRegistrationDate, setRtsaAnniversary, piaConfig,
+    matchRtsaAnniversary, rtsaRegistrationDate, setRtsaAnniversary, piaConfig, requotedFromId,
   } = useStore();
   const [handoffOpen, setHandoffOpen] = useState(false);
   const priorPolicyStartDate = useRef(policyStartDate);
@@ -130,6 +130,13 @@ export default function QuoteRequestPage() {
             One request goes to all {activeInsurers.length} insurers on InsurShield at the same time. Each insurer reviews your details and replies with its own final quote for you to compare.
           </p>
         </header>
+
+        {requotedFromId && (
+          <p className="mx-auto mt-6 flex max-w-3xl items-start gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 text-[14px] text-on-surface">
+            <span className="material-symbols-outlined text-[22px] text-primary" aria-hidden="true">refresh</span>
+            <span><strong>Fresh quotes for {requotedFromId}.</strong> Your previous quotes expired, so we've carried over your vehicle, value, usage and cover period. Check the details{missingPhotos.length ? ', retake the inspection photos (the earlier ones are too old to reuse),' : ''} and re-accept the declaration to send the request to all insurers again.</span>
+          </p>
+        )}
 
         <section aria-labelledby="estimates-heading" className="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-end justify-between gap-3">

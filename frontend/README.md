@@ -25,6 +25,10 @@ Customers on a laptop click **Continue on my phone**: a QR code opens `/capture/
 
 `getUserMedia` needs a secure context, so over plain `http://<lan-ip>` the phone falls back to its camera app via `<input capture="environment">`; on HTTPS (or localhost) the in-page live viewfinder is used.
 
+### Quote validity and re-quoting
+
+Each insurer's final quote is an offer with a deadline (`quoteValidityDays` in the catalogue; the insurer can override it per quote and extend an open quote from the portal). The comparison page shows the valid-until date, flags quotes ending within two days, greys out expired ones, and the payment page refuses an expired quote both on open and when Pay is pressed. A request with no valid quotes (or older than 14 days) is marked Expired in the account; **Request new quotes** creates a fresh request pre-filled from the old one, reusing live photos only if they are under 14 days old. Rules live in `src/utils/quoteValidity.js`.
+
 ### RTSA anniversary alignment
 
 On the request page a customer can tick **Match my cover to the RTSA registration anniversary** and enter the registration date. Cover then ends on the next quarterly anniversary boundary after the chosen number of quarters (see `calculatePolicyDates`), and the premium is pro-rated by the actual number of days.
