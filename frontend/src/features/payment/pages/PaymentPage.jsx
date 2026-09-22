@@ -97,7 +97,7 @@ export default function PaymentPage() {
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mx-auto grid w-full max-w-5xl gap-6 lg:grid-cols-[1fr_400px] lg:items-start">
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
             <h1 className="text-[28px] font-extrabold tracking-[-.03em] text-on-surface">Confirm and pay</h1>
-            <p className="mt-1 text-[15px] text-secondary">Your policy with {selectedQuote.name} is issued as soon as payment is confirmed.</p>
+            <p className="mt-1 text-[15px] text-secondary">Once payment is confirmed, {selectedQuote.name} prepares your official policy certificate; it appears in My account when issued.</p>
 
             <dl className="mt-6 grid gap-x-6 gap-y-4 sm:grid-cols-2">
               <Summary label="Insurer" value={selectedQuote.name} />

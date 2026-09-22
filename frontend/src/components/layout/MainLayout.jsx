@@ -55,20 +55,31 @@ export default function MainLayout() {
               <span className="material-symbols-outlined text-[28px]" aria-hidden="true">{menuOpen ? 'close' : 'menu'}</span>
             </button>
           )}
-          <Link to="/" className="font-serif text-[30px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</Link>
+          <Link to="/" onClick={() => setMenuOpen(false)} className="font-serif text-[26px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</Link>
         </div>
 
         {isPortal ? (
-          <div className="ml-auto flex shrink-0 items-center gap-3">
+          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
             {staffSession && (
               <>
+                {/* Who is signed in: full name and portal on wider screens, a short role badge on phones. */}
+                <span data-testid="portal-role" className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[12px] font-bold text-primary sm:hidden">
+                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{staffSession.role === 'insurer' ? 'business' : 'admin_panel_settings'}</span>
+                  {staffSession.role === 'insurer' ? 'Insurer' : 'Staff'}
+                </span>
                 <span className="hidden text-[14px] text-secondary sm:block">
                   <strong className="text-on-surface">{staffSession.name}</strong> · {staffSession.role === 'insurer' ? 'Insurer portal' : 'Staff portal'}
                 </span>
-                <button type="button" onClick={handleStaffSignOut} className="rounded-lg border border-slate-200 px-4 py-2 text-[13px] font-bold text-primary hover:bg-primary/5">Sign out</button>
+                <button type="button" onClick={handleStaffSignOut} aria-label="Sign out" className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-2.5 text-[13px] font-bold text-primary hover:bg-primary/5 sm:px-4">
+                  <span className="material-symbols-outlined text-[20px] sm:hidden" aria-hidden="true">logout</span>
+                  <span className="hidden sm:inline">Sign out</span>
+                </button>
               </>
             )}
-            <Link to="/" className="text-[14px] font-medium text-secondary hover:text-primary" aria-label="Customer site"><span className="hidden sm:inline">Customer site</span><span className="material-symbols-outlined sm:hidden" aria-hidden="true">home</span></Link>
+            <Link to="/" aria-label="Customer site" className="inline-flex h-9 items-center justify-center text-[14px] font-medium text-secondary hover:text-primary">
+              <span className="hidden sm:inline">Customer site</span>
+              <span className="material-symbols-outlined text-[22px] sm:hidden" aria-hidden="true">home</span>
+            </Link>
           </div>
         ) : (
           <>
@@ -81,12 +92,12 @@ export default function MainLayout() {
                   <Link to="/account" className="hidden text-[15px] font-bold text-on-surface sm:block">{customer?.fullName?.split(' ')[0]}</Link>
                   <span className="hidden h-5 w-px bg-slate-200 sm:block" aria-hidden="true" />
                   <button type="button" onClick={handleSignOut} className="hidden text-[14px] font-medium text-secondary hover:text-primary sm:block">Sign out</button>
-                  <Link to="/account" aria-label="My account" className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Link to="/account" aria-label="My account" onClick={() => setMenuOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
                     <span className="material-symbols-outlined text-lg" aria-hidden="true">person</span>
                   </Link>
                 </>
               ) : (
-                <Link to={loginHref} className="rounded-lg bg-primary px-4 py-2 text-[13px] font-bold text-white hover:bg-primary-container">Log in</Link>
+                <Link to={loginHref} onClick={() => setMenuOpen(false)} className="rounded-lg bg-primary px-4 py-2 text-[13px] font-bold text-white hover:bg-primary-container">Log in</Link>
               )}
             </div>
           </>
@@ -94,8 +105,11 @@ export default function MainLayout() {
       </header>
 
       {menuOpen && !isPortal && (
-        <div className="fixed inset-x-0 top-20 z-40 border-b border-slate-200 bg-white p-4 shadow-lg md:hidden">
-          <nav aria-label="Mobile" className="grid gap-1">
+        <div className="fixed inset-0 top-20 z-40 md:hidden">
+          {/* Tapping outside the sheet closes it. */}
+          <div className="absolute inset-0 bg-black/30" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+          <nav aria-label="Mobile" className="relative grid gap-1 border-b border-slate-200 bg-white p-4 shadow-lg">
+            {isAuthenticated && <p className="px-4 pb-2 pt-1 text-[12px] font-bold uppercase tracking-wider text-secondary">Signed in as {customer?.fullName}</p>}
             {links.map((link) => (
               <NavLink key={link.to} to={link.to} end={link.to === '/'} onClick={() => setMenuOpen(false)} className={({ isActive }) => `rounded-lg px-4 py-3 text-[15px] font-semibold ${isActive ? 'bg-primary/10 text-primary' : 'text-secondary'}`}>
                 {link.label}

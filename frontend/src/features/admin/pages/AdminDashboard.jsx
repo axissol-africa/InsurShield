@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore, useActiveInsurers } from '@/store';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
@@ -19,14 +19,14 @@ const inputClass = 'w-full rounded-xl border border-outline-variant bg-surface-c
 const labelClass = 'mb-1.5 block text-[12px] font-bold uppercase tracking-wider text-secondary';
 
 const SubPageHeader = ({ title, onBack, action }) => (
-  <div className="mb-8 flex items-center justify-between gap-4">
+  <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
     <div className="flex items-center gap-3">
       <button type="button" onClick={onBack} aria-label="Back" className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white shadow-sm transition-colors hover:bg-gray-50">
         <span className="material-symbols-outlined text-[20px] text-secondary" aria-hidden="true">arrow_back</span>
       </button>
-      <h2 className="text-[22px] font-bold text-primary">{title}</h2>
+      <h2 className="text-[19px] font-bold text-primary sm:whitespace-nowrap sm:text-[22px]">{title}</h2>
     </div>
-    {action}
+    {action && <div className="shrink-0">{action}</div>}
   </div>
 );
 
@@ -43,6 +43,8 @@ export default function AdminDashboard() {
   const [view, setView] = useState('dashboard');
   const [editingInsurer, setEditingInsurer] = useState(null);
   const [viewingInsurer, setViewingInsurer] = useState(null);
+
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [view]);
 
   const openClaims = claims.filter((claim) => claim.status === 'Notified').length;
   const recentPolicies = [...policies, ...DEMO_RECENT_POLICIES].slice(0, 5);
@@ -75,7 +77,7 @@ export default function AdminDashboard() {
 
   if (view === 'manage_insurers') {
     const addButton = (
-      <button type="button" onClick={() => { setEditingInsurer(null); setView('add_insurer'); }} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-primary-container">
+      <button type="button" onClick={() => { setEditingInsurer(null); setView('add_insurer'); }} className="flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-primary px-3 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-primary-container sm:px-4">
         <span className="material-symbols-outlined text-[18px]" aria-hidden="true">add</span>Add Insurer
       </button>
     );
@@ -119,7 +121,7 @@ export default function AdminDashboard() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="mb-1 text-[11px] font-bold uppercase tracking-widest text-secondary">Admin Overview</p>
           <h1 className="text-[30px] font-bold leading-tight text-primary">InsurShield Dashboard</h1>
@@ -127,7 +129,7 @@ export default function AdminDashboard() {
         </div>
         <div className="flex items-center gap-2 rounded-xl border border-gray-100 bg-white px-4 py-2.5 shadow-sm">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary"><span className="material-symbols-outlined text-[16px] text-white" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">person</span></div>
-          <div><p className="text-[12px] font-bold leading-tight text-primary">{agentName}</p><p className="text-[10px] capitalize text-secondary">{agentRole}</p></div>
+          <div><p className="whitespace-nowrap text-[12px] font-bold leading-tight text-primary">{agentName}</p><p className="text-[10px] capitalize text-secondary">{agentRole}</p></div>
         </div>
       </div>
 

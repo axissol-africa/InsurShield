@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
@@ -27,6 +27,9 @@ export default function InsurerDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [quotingRequest, setQuotingRequest] = useState(null);
   const [issuingPolicy, setIssuingPolicy] = useState(null);
+
+  // Sub-views (quote form, certificate upload) replace the dashboard; start them at the top on phones.
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [quotingRequest, issuingPolicy, activeTab]);
 
   const insurerName = (staffSession?.role === 'insurer' && staffSession.name) || DEFAULT_PORTAL_INSURER;
   const insurer = insurersList.find((item) => item.name === insurerName);
@@ -71,7 +74,7 @@ export default function InsurerDashboard() {
     { id: 'overview', label: 'Overview', icon: 'dashboard', badge: awaitingQuote.length },
     { id: 'policies', label: 'Paid policies', icon: 'verified_user', badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: 'report_problem', badge: newClaims.length },
-    { id: 'ncd', label: 'NCD Applications', icon: 'sell', badge: openNcd.length },
+    { id: 'ncd', label: 'NCD Applications', shortLabel: 'NCD', icon: 'sell', badge: openNcd.length },
   ];
   const kpis = [
     { label: 'Requests awaiting a quote', value: awaitingQuote.length, icon: 'request_quote', tag: 'Respond' },
@@ -95,12 +98,12 @@ export default function InsurerDashboard() {
         </div>
       </section>
 
-      <div role="tablist" className="mb-6 flex overflow-x-auto border-b border-gray-200">
+      <div role="tablist" className="mb-6 grid grid-cols-2 border-b border-gray-200 sm:flex">
         {tabs.map((tab) => (
           <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex shrink-0 items-center gap-2 border-b-2 px-5 py-3 text-[14px] font-semibold transition-colors ${activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-secondary hover:text-primary'}`}>
+            className={`flex items-center justify-center gap-2 border-b-2 px-3 py-3 text-[13px] font-semibold transition-colors sm:justify-start sm:px-5 sm:text-[14px] ${activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-secondary hover:text-primary'}`}>
             <Icon name={tab.icon} className="text-[18px]" />
-            {tab.label}
+            {tab.shortLabel ? <><span className="sm:hidden">{tab.shortLabel}</span><span className="hidden sm:inline">{tab.label}</span></> : tab.label}
             {tab.badge > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{tab.badge}</span>}
           </button>
         ))}

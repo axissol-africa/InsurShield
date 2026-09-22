@@ -61,7 +61,7 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
 
   await expect(page).toHaveURL(/payment/);
   await expect(page.getByRole('heading', { name: 'Confirm and pay' })).toBeVisible();
-  await expect(page.getByText('Your policy with Prestige Assurance')).toBeVisible();
+  await expect(page.getByText('Prestige Assurance prepares your official policy certificate')).toBeVisible();
   await page.getByRole('button', { name: /^Pay ZMW/ }).click();
 
   await expect(page).toHaveURL(/confirmation/);
