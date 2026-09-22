@@ -19,7 +19,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['tests/**/*.spec.js', 'playwright.config.js', 'capture-relay.js', 'capture-relay.test.js'],
+    files: ['tests/**/*.spec.js', 'playwright.config.js', 'vite.config.js', 'tools/**/*.js'],
     languageOptions: { globals: globals.node },
   },
   {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { documentToRecord } from '../utils/files';
+import { documentToRecord } from '@/lib/files';
 
 /**
  * State for a single uploaded document (quotation, certificate…): the stored

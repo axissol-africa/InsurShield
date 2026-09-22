@@ -1,5 +1,5 @@
 /**
- * Demo records for the insurer portal.
+ * Demo records: the demo customer account and the insurer-portal records.
  *
  * They live in the store like real records so every portal action (mark a
  * claim received, approve an NCD application, issue a certificate) works on
@@ -7,8 +7,18 @@
  * to first load and then persist unchanged.
  */
 
+/** The customer account every fresh install can sign in with. */
+export const DEMO_CUSTOMER_ACCOUNT = {
+  id: 'CUS-DEMO-001',
+  fullName: 'Mwiza Banda',
+  email: 'mwiza.banda@insurshield.zm',
+  phone: '0970123456',
+  password: 'Customer123!',
+  consentTimestamp: '2026-09-01T09:00:00.000Z',
+};
+
 const DEMO_INSURER = 'Prestige Assurance';
-const DEMO_CUSTOMER = { fullName: 'Mwiza Banda', phone: '0970123456', email: 'mwiza.banda@insurshield.zm' };
+const DEMO_CUSTOMER = { fullName: DEMO_CUSTOMER_ACCOUNT.fullName, phone: DEMO_CUSTOMER_ACCOUNT.phone, email: DEMO_CUSTOMER_ACCOUNT.email };
 
 const daysAgo = (days) => new Date(Date.now() - days * 86_400_000).toISOString();
 const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
