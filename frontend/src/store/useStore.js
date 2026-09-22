@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { INSURER_RATES, PIA_CONFIG, reconcileInsurers } from '../utils/insurerRates';
 import { INSPECTION_KEYS } from '../utils/inspection';
 import { DEFAULT_QUOTE_VALIDITY_DAYS, REQUEST_VALIDITY_DAYS, addDays, photosReusable, requestStatus } from '../utils/quoteValidity';
+import { SEED_CLAIMS, SEED_NCD_APPLICATIONS, SEED_POLICIES, SEED_QUOTE_REQUESTS, withSeed } from './demoSeed';
 
 /**
  * InsurShield — Application Store
@@ -45,6 +46,7 @@ const matchesIdentifier = (account, identifier) =>
 const withTimestamp = (record, key = 'updatedAt') => ({ ...record, [key]: new Date().toISOString() });
 
 const updateById = (items, id, updater) => items.map((item) => (item.id === id ? updater(item) : item));
+const insurerReceivesRequests = (insurer) => !['Inactive', 'Deleted'].includes(insurer.status);
 
 /** Unique, human-readable reference: prefix + timestamp + random suffix (two requests in the same instant never collide). */
 const newReference = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
@@ -82,6 +84,7 @@ const JOURNEY_DEFAULTS = {
   photosCapturedAt: null,
   selectedQuote: null,
   premiumBreakdown: null,
+  paymentReceipt: null,
   ncdCode: '',
   ncdCodeValidated: null,
   ncdCodeUsed: false,
@@ -183,7 +186,7 @@ export const useStore = create(
        */
       submitQuoteRequest: ({ customer, policyDates }) => {
         const state = get();
-        const insurers = state.insurersList.filter((insurer) => insurer.status !== 'Inactive');
+        const insurers = state.insurersList.filter(insurerReceivesRequests);
         const id = newReference('QR');
         const { vehicleDetails } = state;
         const submittedAt = new Date().toISOString();
@@ -276,6 +279,7 @@ export const useStore = create(
       setActiveQuoteRequest: (activeQuoteRequestId) => set({ activeQuoteRequestId, selectedQuote: null, premiumBreakdown: null }),
 
       selectQuote: (quote, breakdown) => set({ selectedQuote: quote, premiumBreakdown: breakdown }),
+      recordPayment: (paymentReceipt) => set({ paymentReceipt }),
 
       // ─── NCD code (pre-approved by an insurer) ───────────────
       setNcdCode: (ncdCode) => set({ ncdCode }),
@@ -283,7 +287,7 @@ export const useStore = create(
       clearNcdCode: () => set({ ncdCode: '', ncdCodeValidated: null, ncdCodeUsed: false }),
       markNcdCodeUsed: () => set({ ncdCodeUsed: true }),
 
-      ncdApplications: [],
+      ncdApplications: SEED_NCD_APPLICATIONS,
       addNcdApplication: (application) =>
         set((state) => ({
           ncdApplications: [
@@ -311,25 +315,41 @@ export const useStore = create(
 
       insurersList: INSURER_RATES,
       addInsurer: (insurer) =>
-        set((state) => ({ insurersList: [...state.insurersList, { ...insurer, id: Date.now().toString() }] })),
-      updateInsurerRate: (insurerId, updates) =>
-        set((state) => ({ insurersList: updateById(state.insurersList, insurerId, (insurer) => ({ ...insurer, ...updates })) })),
+        set((state) => ({ insurersList: [...state.insurersList, { ...insurer, id: newReference('INS') }] })),
+      updateInsurer: (insurerId, updates) =>
+        set((state) => ({ insurersList: updateById(state.insurersList, insurerId, (insurer) => withTimestamp({ ...insurer, ...updates })) })),
+      setInsurerStatus: (insurerId, status) => get().updateInsurer(insurerId, { status }),
+      // Soft delete retains historical quotes, policies and claims while
+      // removing the insurer from every new quote-request distribution.
+      deleteInsurer: (insurerId) => get().updateInsurer(insurerId, { status: 'Deleted', deletedAt: new Date().toISOString() }),
 
       // ─── Records shared across portals ───────────────────────
-      quoteRequests: [],
-      policies: [],
+      quoteRequests: SEED_QUOTE_REQUESTS,
+      // A policy is created when the customer pays and becomes Active only once
+      // the insurer uploads the official certificate from its own system.
+      policies: SEED_POLICIES,
       addPolicy: (policy) =>
         set((state) =>
           state.policies.some((item) => item.policyNumber === policy.policyNumber)
             ? state
-            : { policies: [{ ...policy, issuedAt: new Date().toISOString(), status: 'Active' }, ...state.policies] },
+            : { policies: [{ ...policy, receivedAt: new Date().toISOString(), status: policy.status || 'Active' }, ...state.policies] },
         ),
+      issuePolicyCertificate: (policyNumber, { certificateDocument, insurerPolicyNumber }) =>
+        set((state) => ({
+          policies: state.policies.map((policy) => (policy.policyNumber === policyNumber ? {
+            ...policy,
+            status: 'Active',
+            certificateDocument,
+            insurerPolicyNumber: insurerPolicyNumber || policy.insurerPolicyNumber || policy.policyNumber,
+            issuedAt: new Date().toISOString(),
+          } : policy)),
+        })),
 
       // ─── Claims (first notification only) ───────────────────
       // InsurShield records the notification and issues a claim number. The
       // customer then calls the insurer, who handles assessment and settlement
       // outside the platform; the insurer can mark the notification as received.
-      claims: [],
+      claims: SEED_CLAIMS,
       addClaim: (claim) =>
         set((state) => ({
           claims: [{ ...claim, id: claim.claimNumber, status: 'Notified', submittedAt: new Date().toISOString() }, ...state.claims],
@@ -355,14 +375,14 @@ export const useStore = create(
     }),
     {
       name: 'insurshield-storage',
-      version: 4,
+      version: 5,
       // Stored state is merged over the defaults; the insurer list is reconciled
       // with the catalogue so stale or partial entries can never break quoting.
       merge: (persisted, current) => ({
         ...current,
         ...persisted,
         insurersList: reconcileInsurers(persisted?.insurersList),
-        quoteRequests: backfillValidity(persisted?.quoteRequests, reconcileInsurers(persisted?.insurersList)),
+        quoteRequests: backfillValidity(persisted?.quoteRequests ?? current.quoteRequests, reconcileInsurers(persisted?.insurersList)),
         // A start date saved on an earlier day would fail the date input's minimum.
         policyStartDate: persisted?.policyStartDate >= TODAY() ? persisted.policyStartDate : TODAY(),
         documents: { ...EMPTY_DOCUMENTS, ...Object.fromEntries(Object.entries(persisted?.documents || {}).filter(([key]) => key in EMPTY_DOCUMENTS)) },
@@ -379,20 +399,27 @@ export const useStore = create(
           }
         }
         if (version < 4) state.insurersList = reconcileInsurers(state.insurersList);
+        // v5: insurer-portal demo records moved into the store so portal actions work on them.
+        if (version < 5) {
+          state.quoteRequests = withSeed(state.quoteRequests, SEED_QUOTE_REQUESTS);
+          state.claims = withSeed(state.claims, SEED_CLAIMS);
+          state.ncdApplications = withSeed(state.ncdApplications, SEED_NCD_APPLICATIONS);
+          state.policies = withSeed(state.policies, SEED_POLICIES, 'policyNumber');
+        }
         return state;
       },
       partialize: ({
         customer, isAuthenticated, registeredAccounts, staffSession,
         consentAccepted, consentTimestamp, consentRecord,
         vehicleDetails, vehicleValue, vehicleUsage, insuranceType, coverageDurationId, policyStartDate, matchRtsaAnniversary, rtsaRegistrationDate, policyDates,
-        activeQuoteRequestId, requotedFromId, photosCapturedAt, selectedQuote, premiumBreakdown, documents,
+        activeQuoteRequestId, requotedFromId, photosCapturedAt, selectedQuote, premiumBreakdown, paymentReceipt, documents,
         ncdCode, ncdCodeValidated, ncdCodeUsed, ncdApplications,
         piaConfig, insurersList, quoteRequests, policies, claims, inspections,
       }) => ({
         customer, isAuthenticated, registeredAccounts, staffSession,
         consentAccepted, consentTimestamp, consentRecord,
         vehicleDetails, vehicleValue, vehicleUsage, insuranceType, coverageDurationId, policyStartDate, matchRtsaAnniversary, rtsaRegistrationDate, policyDates,
-        activeQuoteRequestId, requotedFromId, photosCapturedAt, selectedQuote, premiumBreakdown, documents,
+        activeQuoteRequestId, requotedFromId, photosCapturedAt, selectedQuote, premiumBreakdown, paymentReceipt, documents,
         ncdCode, ncdCodeValidated, ncdCodeUsed, ncdApplications,
         piaConfig, insurersList, quoteRequests, policies, claims, inspections,
       }),
@@ -401,7 +428,7 @@ export const useStore = create(
 );
 
 /** Insurers that currently receive quote requests (shallow-compared so the filtered array is stable). */
-const selectActiveInsurers = (state) => state.insurersList.filter((insurer) => insurer.status !== 'Inactive');
+const selectActiveInsurers = (state) => state.insurersList.filter(insurerReceivesRequests);
 export const useActiveInsurers = () => useStore(useShallow(selectActiveInsurers));
 
 /** Status of every request for the signed-in customer, newest first. */

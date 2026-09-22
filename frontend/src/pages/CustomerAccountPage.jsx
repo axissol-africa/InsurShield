@@ -3,6 +3,10 @@ import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '../store/use
 import { formatZMW, formatDate } from '../utils/premiumEngine';
 import { requestStatus } from '../utils/quoteValidity';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '../utils/policyDocuments';
+import { openDocument } from '../utils/files';
+
+/** The insurer's uploaded certificate; policies issued before certificates were uploaded get a generated summary. */
+const openCertificate = (policy) => (policy.certificateDocument ? openDocument(policy.certificateDocument) : downloadPolicyCertificate(policy));
 
 const cardClass = 'rounded-2xl border border-slate-200 bg-white p-6 shadow-sm';
 
@@ -12,7 +16,8 @@ export default function CustomerAccountPage() {
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
 
   const mine = belongsToCustomer(customer);
-  const myPolicies = policies.filter(mine);
+  const myPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Active');
+  const pendingPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Awaiting insurer certificate');
   const myRequests = quoteRequests.filter(mine);
   const myClaims = claims.filter(mine);
 
@@ -53,6 +58,18 @@ export default function CustomerAccountPage() {
         ))}
       </section>
 
+      {pendingPolicies.length > 0 && (
+        <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-primary" aria-hidden="true">pending_actions</span>
+            <div>
+              <h2 className="font-bold text-on-surface">Policy certificate being prepared</h2>
+              {pendingPolicies.map((policy) => <p key={policy.policyNumber} className="mt-1 text-sm text-secondary">{policy.insurer} is preparing the certificate for paid quote <span className="font-mono font-semibold text-on-surface">{policy.quoteRequestId}</span>. It will appear under Policies when issued.</p>)}
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="mt-7 grid gap-5 lg:grid-cols-2">
         <div className={cardClass}>
           <div className="flex items-center justify-between gap-3">
@@ -68,7 +85,7 @@ export default function CustomerAccountPage() {
                       <p className="font-bold text-primary">{policy.insurer}</p>
                       <p className="text-xs text-secondary">{policy.policyNumber} · {policy.vehicle}{policy.vehicleDetails?.plateNumber ? ` · ${policy.vehicleDetails.plateNumber}` : ''}</p>
                     </div>
-                    <span className="h-fit rounded-md bg-primary/10 px-2 py-1 text-xs font-bold text-primary">{policy.status || 'Active'}</span>
+                    <span className="h-fit rounded-md bg-primary/10 px-2 py-1 text-xs font-bold text-primary">Active</span>
                   </div>
                   <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                     <div><dt className="text-xs text-secondary">Cover</dt><dd className="font-semibold">{policy.coverage || 'Comprehensive'}</dd></div>
@@ -77,7 +94,7 @@ export default function CustomerAccountPage() {
                     <div><dt className="text-xs text-secondary">Issued</dt><dd className="font-semibold">{formatDate(policy.issuedAt)}</dd></div>
                   </dl>
                   <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-                    <button type="button" onClick={() => downloadPolicyCertificate(policy)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-primary px-3 text-xs font-bold text-primary hover:bg-primary/5"><span className="material-symbols-outlined text-[16px]" aria-hidden="true">download</span>Policy certificate</button>
+                    <button type="button" onClick={() => openCertificate(policy)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-primary px-3 text-xs font-bold text-primary hover:bg-primary/5"><span className="material-symbols-outlined text-[16px]" aria-hidden="true">{policy.certificateDocument ? 'open_in_new' : 'download'}</span>Policy certificate</button>
                     {policy.rtsaAnniversaryFee > 0 && <button type="button" onClick={() => downloadRtsaDisc(policy)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-primary px-3 text-xs font-bold text-primary hover:bg-primary/5"><span className="material-symbols-outlined text-[16px]" aria-hidden="true">download</span>RTSA disc</button>}
                   </div>
                 </li>

@@ -55,3 +55,4 @@ React 19, Tailwind v4, existing theme tokens, no new UI dependency. Verify with 
 ## Open questions
 
 - [ ] Confirm final RTSA fee and digital-disc integration rules when a backend is available. Owner: product/RTSA integration. Impact: payment and document generation.
+- [ ] Define insurer API authentication, idempotency, document storage and webhook contracts before replacing prototype browser storage. Owner: platform integrations. Impact: quote, claim and policy dispatch.

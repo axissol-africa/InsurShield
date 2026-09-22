@@ -43,20 +43,23 @@ export default function MainLayout() {
     <div className="flex min-h-screen flex-col bg-background text-on-background selection:bg-primary/20">
       <header className="fixed top-0 z-50 flex h-20 w-full items-center border-b border-slate-200 bg-white px-5 lg:px-[5.5vw]">
         <div className="flex min-w-0 items-center gap-4">
-          <button
-            type="button"
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
-            aria-expanded={menuOpen}
-            className="-ml-2 inline-flex h-10 w-10 items-center justify-center text-primary md:hidden"
-          >
-            <span className="material-symbols-outlined text-[28px]" aria-hidden="true">{menuOpen ? 'close' : 'menu'}</span>
-          </button>
+          {/* The staff portal has no customer navigation, so no hamburger. */}
+          {!isPortal && (
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={menuOpen}
+              className="-ml-2 inline-flex h-10 w-10 items-center justify-center text-primary md:hidden"
+            >
+              <span className="material-symbols-outlined text-[28px]" aria-hidden="true">{menuOpen ? 'close' : 'menu'}</span>
+            </button>
+          )}
           <Link to="/" className="font-serif text-[30px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</Link>
         </div>
 
         {isPortal ? (
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex shrink-0 items-center gap-3">
             {staffSession && (
               <>
                 <span className="hidden text-[14px] text-secondary sm:block">
@@ -65,7 +68,7 @@ export default function MainLayout() {
                 <button type="button" onClick={handleStaffSignOut} className="rounded-lg border border-slate-200 px-4 py-2 text-[13px] font-bold text-primary hover:bg-primary/5">Sign out</button>
               </>
             )}
-            <Link to="/" className="text-[14px] font-medium text-secondary hover:text-primary">Customer site</Link>
+            <Link to="/" className="text-[14px] font-medium text-secondary hover:text-primary" aria-label="Customer site"><span className="hidden sm:inline">Customer site</span><span className="material-symbols-outlined sm:hidden" aria-hidden="true">home</span></Link>
           </div>
         ) : (
           <>

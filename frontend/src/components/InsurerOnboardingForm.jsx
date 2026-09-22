@@ -15,6 +15,16 @@ const EMPTY = {
   logoUrl: '',
 };
 
+const toForm = (insurer) => insurer ? {
+  ...EMPTY,
+  ...insurer,
+  ratePercentage: insurer.ratePercentage ?? '',
+  quoteValidityDays: String(insurer.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS),
+  contactPerson: insurer.contact?.contactPerson || '', contactRole: insurer.contact?.role || '',
+  phone: insurer.contact?.phone || '', mobile: insurer.contact?.mobile || '', email: insurer.contact?.email || '',
+  address: insurer.contact?.address || insurer.address || '', hours: insurer.contact?.hours || EMPTY.hours,
+} : EMPTY;
+
 const field = 'w-full rounded-xl border border-outline-variant bg-surface-container-low p-3 text-[15px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30';
 const label = 'mb-1.5 block text-[12px] font-bold uppercase tracking-wider text-secondary';
 
@@ -23,8 +33,8 @@ const label = 'mb-1.5 block text-[12px] font-bold uppercase tracking-wider text-
  * licence, claims-desk contact, first product/rate, and an uploaded logo.
  * Submits the shape the insurer catalogue and contact directory expect.
  */
-export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onCancel }) {
-  const [form, setForm] = useState(EMPTY);
+export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onCancel, insurer = null }) {
+  const [form, setForm] = useState(() => toForm(insurer));
   const [logoError, setLogoError] = useState('');
   const [error, setError] = useState('');
 
@@ -66,8 +76,10 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
       ncdAccepted: form.ncdAccepted,
       timing: 'AFTER PAYMENT', method: 'SELF-CAPTURE', icon: 'business', isBestValue: false,
       benefits: ['Third Party Property Damage'],
-      status: 'Active',
-      onboardedAt: new Date().toISOString(),
+      // Editing must preserve the company's current operational status and
+      // original onboarding record; only a newly onboarded insurer starts active.
+      status: insurer?.status || 'Active',
+      onboardedAt: insurer?.onboardedAt || new Date().toISOString(),
       contact: {
         tagline: '',
         contactPerson: form.contactPerson.trim(), role: form.contactRole.trim(),
@@ -146,7 +158,9 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
       {error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700">{error}</p>}
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button type="submit" className="flex-1 rounded-xl bg-primary py-4 font-bold text-white shadow-sm hover:bg-primary-container">Onboard insurance company</button>
+        <button type="submit" className="flex-1 rounded-xl bg-primary py-4 font-bold text-white shadow-sm hover:bg-primary-container">
+          {insurer ? 'Update insurer' : 'Onboard insurance company'}
+        </button>
         <button type="button" onClick={onCancel} className="rounded-xl border border-outline-variant px-6 py-4 font-semibold text-secondary hover:bg-gray-50">Cancel</button>
       </div>
     </form>

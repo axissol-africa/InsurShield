@@ -15,7 +15,7 @@ const labelClass = 'mb-2 block text-[12px] font-bold uppercase tracking-[0.05em]
 
 export default function PaymentPage() {
   const navigate = useNavigate();
-  const { selectedQuote, vehicleDetails, policyDates, customer, matchRtsaAnniversary, requoteFromRequest } = useStore();
+  const { selectedQuote, vehicleDetails, policyDates, customer, matchRtsaAnniversary, requoteFromRequest, recordPayment } = useStore();
   const [expiredAtPay, setExpiredAtPay] = useState(false);
   const [method, setMethod] = useState('momo');
   const [mobileNumber, setMobileNumber] = useState(customer?.phone || '');
@@ -71,6 +71,14 @@ export default function PaymentPage() {
     // Re-check at the moment of authorisation; a quote valid now stays purchasable while confirmation is pending.
     if (quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null).expired) { setExpiredAtPay(true); return; }
     setProcessing(true);
+    recordPayment({
+      transactionId: `TXN-${Date.now().toString(36).toUpperCase()}`,
+      status: 'Confirmed',
+      method: method === 'momo' ? 'Mobile money' : 'Card',
+      amount: total,
+      currency: 'ZMW',
+      confirmedAt: new Date().toISOString(),
+    });
     // Prototype: simulate the payment gateway round-trip.
     setTimeout(() => navigate('/confirmation', { replace: true }), 1800);
   };

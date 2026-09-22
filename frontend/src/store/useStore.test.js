@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEMO_CUSTOMER_ACCOUNT, belongsToCustomer, selectActiveQuoteRequest, useStore } from './useStore';
+import { SEED_CLAIMS, SEED_POLICIES, SEED_QUOTE_REQUESTS } from './demoSeed';
 import { INSPECTION_KEYS } from '../utils/inspection';
 
 const initial = useStore.getInitialState();
-const reset = () => useStore.setState({ ...initial, registeredAccounts: [DEMO_CUSTOMER_ACCOUNT] }, true);
+// Start every test from an empty platform: no demo records, only the demo account.
+const reset = () => useStore.setState({ ...initial, registeredAccounts: [DEMO_CUSTOMER_ACCOUNT], quoteRequests: [], policies: [], claims: [], ncdApplications: [] }, true);
 const state = () => useStore.getState();
 
 const signInDemo = () => state().authenticateCustomer(DEMO_CUSTOMER_ACCOUNT.email, DEMO_CUSTOMER_ACCOUNT.password);
@@ -61,7 +63,7 @@ describe('quote requests', () => {
   it('sends a request to every active insurer and records the captured shots', () => {
     signInDemo();
     seedVehicle();
-    state().updateInsurerRate('4', { status: 'Inactive' });
+    state().setInsurerStatus('4', 'Inactive');
     const id = state().submitQuoteRequest({ customer: { fullName: 'Mwiza Banda', phone: '0970123456', email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
 
     const request = selectActiveQuoteRequest(state());
@@ -205,5 +207,119 @@ describe('legacy data backfill', () => {
     expect(reply.validityDays).toBe(7);
     expect(reply.validUntil).toBe('2026-09-27T10:00:00.000Z');
     expect(merged.quoteRequests[0].expiresAt).toBe('2026-10-04T09:00:00.000Z');
+  });
+});
+
+describe('insurer lifecycle', () => {
+  const activeNames = () => state().insurersList.filter((insurer) => !['Inactive', 'Deleted'].includes(insurer.status)).map((insurer) => insurer.name);
+
+  it('deactivates, reactivates and soft-deletes without losing the record', () => {
+    state().setInsurerStatus('2', 'Inactive');
+    expect(activeNames()).not.toContain('Global Guard Insurance');
+    state().setInsurerStatus('2', 'Active');
+    expect(activeNames()).toContain('Global Guard Insurance');
+
+    state().deleteInsurer('5');
+    const deleted = state().insurersList.find((insurer) => insurer.id === '5');
+    expect(deleted.status).toBe('Deleted');
+    expect(deleted.deletedAt).toBeTruthy();
+    expect(state().insurersList).toHaveLength(5); // kept for history
+  });
+
+  it('sends new requests only to insurers that still receive them', () => {
+    signInDemo();
+    seedVehicle();
+    state().setInsurerStatus('2', 'Inactive');
+    state().deleteInsurer('5');
+    state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    expect(selectActiveQuoteRequest(state()).insurers).toEqual(['Prestige Assurance', 'ValueDirect Insurance', 'Metro Safe Assurance']);
+  });
+
+  it('edits keep the id and stamp the change', () => {
+    state().updateInsurer('1', { licenceNumber: 'PIA/GI/2026/001', ratePercentage: 4.4 });
+    const prestige = state().insurersList.find((insurer) => insurer.id === '1');
+    expect(prestige.licenceNumber).toBe('PIA/GI/2026/001');
+    expect(prestige.ratePercentage).toBe(4.4);
+    expect(prestige.updatedAt).toBeTruthy();
+  });
+
+  it('gives onboarded insurers unique ids', () => {
+    const company = { name: 'A', ratePercentage: 4, status: 'Active', contact: {} };
+    state().addInsurer(company);
+    state().addInsurer({ ...company, name: 'B' });
+    const ids = state().insurersList.map((insurer) => insurer.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('two-step policy issue', () => {
+  const paid = { policyNumber: 'POL-ABC123', insurer: 'Prestige Assurance', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, status: 'Awaiting insurer certificate', premium: 10900 };
+  const certificate = { name: 'cert.pdf', type: 'application/pdf', size: 10, dataUrl: 'data:application/pdf;base64,AA==' };
+
+  it('keeps a paid policy pending until the insurer uploads the certificate', () => {
+    state().addPolicy(paid);
+    expect(state().policies[0].status).toBe('Awaiting insurer certificate');
+    expect(state().policies[0].receivedAt).toBeTruthy();
+
+    state().issuePolicyCertificate('POL-ABC123', { certificateDocument: certificate, insurerPolicyNumber: 'PA-2026-00412' });
+    const [policy] = state().policies;
+    expect(policy.status).toBe('Active');
+    expect(policy.certificateDocument).toEqual(certificate);
+    expect(policy.insurerPolicyNumber).toBe('PA-2026-00412');
+    expect(policy.issuedAt).toBeTruthy();
+  });
+
+  it('falls back to the platform policy number and ignores unknown policies', () => {
+    state().addPolicy(paid);
+    state().issuePolicyCertificate('POL-NOPE', { certificateDocument: certificate, insurerPolicyNumber: '' });
+    expect(state().policies[0].status).toBe('Awaiting insurer certificate');
+    state().issuePolicyCertificate('POL-ABC123', { certificateDocument: certificate, insurerPolicyNumber: '' });
+    expect(state().policies[0].insurerPolicyNumber).toBe('POL-ABC123');
+  });
+
+  it('records the payment receipt for the confirmation and clears it with the journey', () => {
+    const receipt = { transactionId: 'TXN-1', status: 'Confirmed', amount: 10900 };
+    state().recordPayment(receipt);
+    expect(state().paymentReceipt).toEqual(receipt);
+    state().resetJourney();
+    expect(state().paymentReceipt).toBeNull();
+  });
+});
+
+describe('quote replies', () => {
+  it('ignores replies and extensions for unknown requests or insurers', () => {
+    signInDemo();
+    seedVehicle();
+    const id = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    state().addInsurerQuote('QR-NOPE', 'Prestige Assurance', { premium: 1 });
+    state().extendInsurerQuote(id, 'Prestige Assurance', 7); // nothing to extend yet
+    expect(state().quoteRequests).toHaveLength(1);
+    expect(state().quoteRequests[0].insurerQuotes).toEqual({});
+    expect(state().quoteRequests[0].status).toBe('Submitted');
+  });
+});
+
+describe('demo records', () => {
+  it('are part of the initial platform state', () => {
+    expect(initial.claims).toEqual(SEED_CLAIMS);
+    expect(initial.policies).toEqual(SEED_POLICIES);
+    expect(initial.quoteRequests).toEqual(SEED_QUOTE_REQUESTS);
+  });
+
+  it('are added once to storage saved before v5, without duplicating existing records', async () => {
+    const { migrate } = useStore.persist.getOptions();
+    const own = { id: 'CLM-1', claimNumber: 'CLM-1', insurer: 'Prestige Assurance', status: 'Notified' };
+    const migrated = migrate({ claims: [own, SEED_CLAIMS[0]], policies: [], quoteRequests: [] }, 4);
+    expect(migrated.claims.map((claim) => claim.id)).toEqual(['CLM-1', ...SEED_CLAIMS.map((claim) => claim.id)]);
+    expect(migrated.policies).toEqual(SEED_POLICIES);
+    expect(migrated.quoteRequests.map((request) => request.id)).toEqual(SEED_QUOTE_REQUESTS.map((request) => request.id));
+    expect(migrate({ claims: [] }, 5).claims).toEqual([]);
+  });
+
+  it('are invisible to the demo customer unless addressed to them', () => {
+    const mine = belongsToCustomer({ email: DEMO_CUSTOMER_ACCOUNT.email, phone: DEMO_CUSTOMER_ACCOUNT.phone });
+    expect(SEED_QUOTE_REQUESTS.some(mine)).toBe(false);
+    expect(SEED_POLICIES.filter(mine)).toHaveLength(1);
+    expect(SEED_CLAIMS.filter(mine).map((claim) => claim.id)).toEqual(['CLM-882031']);
   });
 });

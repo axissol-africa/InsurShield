@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { INSURER_RATES } from '../utils/insurerRates';
+import { useStore } from '../store/useStore';
 
-// Contact directory is derived from the insurer catalogue so it always matches the insurers customers can buy from.
-const INSURER_CONTACTS = INSURER_RATES.map((insurer) => ({ id: insurer.id, name: insurer.name, logo: insurer.icon, ...insurer.contact }));
+// The directory is derived from the live insurer list so onboarding, edits and removals show immediately.
+const toContact = (insurer) => ({ id: insurer.id, name: insurer.tradingName || insurer.name, logo: insurer.icon, logoUrl: insurer.logoUrl, contactPerson: '', role: '', phone: '', mobile: '', whatsapp: '', email: '', address: '', hours: '', tagline: '', ...insurer.contact });
 
 const FAQS = [
   {
@@ -71,7 +71,7 @@ function InsurerCard({ insurer }) {
       {/* Card Header — uses system primary color */}
       <div className="bg-primary p-5 flex items-center gap-4">
         <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
-          <span className="material-symbols-outlined text-white text-2xl">{insurer.logo}</span>
+          {insurer.logoUrl ? <img src={insurer.logoUrl} alt="" className="h-8 w-8 rounded bg-white object-contain p-0.5" /> : <span className="material-symbols-outlined text-white text-2xl">{insurer.logo}</span>}
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-white text-[16px] leading-tight">{insurer.name}</h3>
@@ -177,8 +177,10 @@ function DetailRow({ icon, label, value, href }) {
 export default function SupportPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const insurersList = useStore((state) => state.insurersList);
+  const directory = insurersList.filter((insurer) => insurer.status !== 'Deleted').map(toContact);
 
-  const filtered = INSURER_CONTACTS.filter(ins =>
+  const filtered = directory.filter(ins =>
     ins.name.toLowerCase().includes(search.toLowerCase()) ||
     ins.contactPerson.toLowerCase().includes(search.toLowerCase())
   );

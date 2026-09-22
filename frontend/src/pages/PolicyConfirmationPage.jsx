@@ -4,7 +4,6 @@ import { motion } from 'framer-motion';
 import { useStore } from '../store/useStore';
 import { formatZMW, formatDate } from '../utils/premiumEngine';
 import { RTSA_ANNIVERSARY_FEE } from '../utils/rtsa';
-import { downloadPolicyCertificate, downloadRtsaDisc } from '../utils/policyDocuments';
 import JourneyProgress from '../components/JourneyProgress';
 import { JOURNEY_COMPLETE } from '../components/journeySteps';
 
@@ -14,7 +13,7 @@ const coverLabel = (type) => (type === 'ThirdParty' ? 'Third party only' : 'Comp
 
 export default function PolicyConfirmationPage() {
   const navigate = useNavigate();
-  const { customer, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney } = useStore();
+  const { customer, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney } = useStore();
   const [issuing, setIssuing] = useState(true);
 
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
@@ -24,11 +23,6 @@ export default function PolicyConfirmationPage() {
   const premium = insurancePremium + rtsaFee;
   const validFrom = policyDates?.formattedStart || formatDate(new Date());
   const validUntil = policyDates?.formattedEnd || '—';
-  const issuedPolicy = {
-    policyNumber, insurer: selectedQuote?.name, vehicle: vehicleDetails ? `${vehicleDetails.year || ''} ${vehicleDetails.make || ''} ${vehicleDetails.model || ''}`.trim() : 'Vehicle',
-    vehicleDetails, policyDates, customerName: customer?.fullName, premium,
-  };
-
   useEffect(() => {
     if (!selectedQuote) return undefined;
     const timer = setTimeout(() => {
@@ -47,12 +41,18 @@ export default function PolicyConfirmationPage() {
         customerName: customer?.fullName,
         customerEmail: customer?.email,
         customerPhone: customer?.phone,
+        quoteRequestId: selectedQuote.requestId || null,
+        insurerQuoteReference: selectedQuote.reply?.insurerReference || null,
+        quoteDocument: selectedQuote.reply?.document || null,
+        paymentStatus: 'Paid',
+        paymentProof: paymentReceipt || { transactionId: `TXN-${selectedQuote.requestId?.slice(-6) || 'PENDING'}`, status: 'Confirmed', amount: premium, currency: 'ZMW', confirmedAt: new Date().toISOString() },
+        status: 'Awaiting insurer certificate',
       });
       if (ncdCodeValidated) markNcdCodeUsed();
       setIssuing(false);
     }, ISSUE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [addPolicy, customer, insurancePremium, insuranceType, markNcdCodeUsed, matchRtsaAnniversary, ncdCodeValidated, policyDates, policyNumber, premium, rtsaFee, selectedQuote, vehicleDetails, vehicleValue]);
+  }, [addPolicy, customer, insurancePremium, insuranceType, markNcdCodeUsed, matchRtsaAnniversary, ncdCodeValidated, paymentReceipt, policyDates, policyNumber, premium, rtsaFee, selectedQuote, vehicleDetails, vehicleValue]);
 
   if (!selectedQuote) {
     return (
@@ -80,7 +80,7 @@ export default function PolicyConfirmationPage() {
             <div className="rounded-2xl border border-gray-100 bg-white py-16 text-center shadow-sm" role="status" aria-live="polite">
               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }} className="mx-auto h-14 w-14 rounded-full border-4 border-primary border-t-transparent" />
               <h1 className="mt-6 text-[24px] font-bold text-primary">Payment received</h1>
-              <p className="mt-2 px-6 text-[14px] text-on-surface-variant">Issuing your policy with {selectedQuote.name}…</p>
+              <p className="mt-2 px-6 text-[14px] text-on-surface-variant">Sending your paid quote to {selectedQuote.name} for policy issue…</p>
             </div>
           ) : (
             <>
@@ -88,18 +88,18 @@ export default function PolicyConfirmationPage() {
                 <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300, damping: 20 }} className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-primary/5">
                   <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">verified</span>
                 </motion.div>
-                <h1 className="text-[40px] font-extrabold tracking-[-.045em] text-primary">You're covered</h1>
-                <p className="mt-2 text-[16px] text-secondary">Your policy is active and saved to your InsurShield account.</p>
+                <h1 className="text-[40px] font-extrabold tracking-[-.045em] text-primary">Payment received</h1>
+                <p className="mt-2 text-[16px] text-secondary">{selectedQuote.name} is preparing your official policy certificate.</p>
               </div>
 
               <article className="relative overflow-hidden rounded-2xl border-x border-b border-t-4 border-slate-200 border-t-primary bg-white shadow-sm">
                 <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 z-0 -translate-x-1/2 -translate-y-1/2 -rotate-12 select-none text-[6rem] font-black text-gray-50/60">INSURSHIELD</div>
                 <header className="relative z-10 flex items-center justify-between border-b border-gray-100 bg-surface-container-low p-5">
                   <div>
-                    <h2 className="text-[17px] font-bold text-primary">Policy certificate</h2>
-                    <p className="mt-0.5 text-[12px] font-bold tracking-[0.05em] text-secondary">{policyNumber}</p>
+                    <h2 className="text-[17px] font-bold text-primary">Paid quote confirmation</h2>
+                    <p className="mt-0.5 text-[12px] font-bold tracking-[0.05em] text-secondary">Quote request: {selectedQuote.requestId}</p>
                   </div>
-                  <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">Active</span>
+                  <span className="rounded-full bg-slate-200 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Awaiting certificate</span>
                 </header>
 
                 <dl className="relative z-10 grid grid-cols-2 gap-4 p-5">
@@ -122,10 +122,7 @@ export default function PolicyConfirmationPage() {
                   <div className="mt-2 flex justify-between border-t border-gray-200 pt-2 text-[15px]"><span className="font-bold text-primary">Total paid</span><span className="font-extrabold text-primary">{formatZMW(premium)}</span></div>
                 </div>
 
-                <footer className="relative z-10 flex gap-3 border-t border-gray-100 bg-gray-50 p-4">
-                  <button type="button" onClick={() => downloadPolicyCertificate(issuedPolicy)} className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-outline-variant bg-white py-3 font-semibold text-on-surface-variant hover:bg-gray-50"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">download</span>Download certificate</button>
-                  <button type="button" className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-outline-variant bg-white py-3 font-semibold text-on-surface-variant hover:bg-gray-50"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">share</span>Share</button>
-              </footer>
+                <footer className="relative z-10 border-t border-gray-100 bg-gray-50 p-4 text-[13px] text-secondary"><span className="material-symbols-outlined mr-2 align-middle text-primary" aria-hidden="true">pending_actions</span>Your insurer will upload the official certificate. It will then be available in My account.</footer>
               </article>
 
               {rtsaFee > 0 && (
@@ -135,9 +132,9 @@ export default function PolicyConfirmationPage() {
                       <h2 className="text-[17px] font-bold text-primary">RTSA Road Tax Disc</h2>
                       <p className="mt-1 text-sm text-secondary">Your RTSA anniversary is included with this payment.</p>
                     </div>
-                    <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary">Available</span>
+                    <span className="rounded-full bg-slate-200 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">With certificate</span>
                   </div>
-                  <button type="button" onClick={() => downloadRtsaDisc(issuedPolicy)} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border-2 border-primary bg-white px-4 text-sm font-bold text-primary hover:bg-primary/5"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">download</span>Download RTSA disc</button>
+                  <p className="mt-3 text-sm text-secondary">The RTSA disc will be available after your insurer issues the policy certificate.</p>
                 </section>
               )}
 
