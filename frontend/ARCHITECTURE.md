@@ -7,6 +7,7 @@ frontend/
 ├── src/
 │   ├── main.jsx               Entry: mounts <App/>, registers the service worker in production
 │   ├── index.css              Tailwind v4 theme tokens (colours, fonts) and base styles
+│   │                          (the icon font itself is declared in index.html so it loads before the bundle)
 │   ├── app/                   Composition root
 │   │   ├── App.jsx            Router and route table
 │   │   └── guards.jsx         CustomerRoute / StaffRoute
@@ -53,6 +54,7 @@ frontend/
 │   ├── lib/                   Framework-level helpers: apiClient (axios), files, documents, device, time, cn
 │   └── test/                  Vitest setup and smoke test
 ├── tools/capture-relay.js     Dev-server relay for the phone hand-off (documents the production endpoints)
+├── tools/build-icon-font.mjs  Rebuilds the self-hosted Material Symbols subset in public/fonts (run after adding an icon)
 ├── tests/                     Playwright end-to-end specs
 ├── public/                    PWA manifest, service worker, icons
 └── .env.example               Environment variables

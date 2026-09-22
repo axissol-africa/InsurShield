@@ -66,7 +66,7 @@ The code is organised by feature, with a service layer between the UI and the ba
 | `src/components/` | Shared UI only (`ui/`, `layout/`). |
 | `src/lib/` | Framework-level helpers: axios client, file/document helpers, formatting. |
 | `src/hooks/` | Reusable React hooks. |
-| `tools/` | Development tooling (the photo hand-off relay used by the Vite dev server). |
+| `tools/` | Development tooling: the photo hand-off relay used by the Vite dev server, and `build-icon-font.mjs`, which regenerates the self-hosted icon subset in `public/fonts/` (run it after adding a Material Symbols icon; a unit test fails if an icon is missing). |
 | `tests/` | Playwright end-to-end specs. |
 
 `@/` resolves to `src/` (configured in `vite.config.js` and `jsconfig.json`).
