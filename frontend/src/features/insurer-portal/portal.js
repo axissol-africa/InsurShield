@@ -8,15 +8,21 @@ export const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
 const OPEN_NCD_STATUSES = ['Submitted', 'Under Review'];
 export const isOpenNcdApplication = (application) => OPEN_NCD_STATUSES.includes(application.status);
 
+/**
+ * Status chips. Open work carries the accent; anything already dealt with is
+ * neutral, so a queue reads at a glance without relying on colour alone —
+ * the label is always present.
+ */
 const STATUS_STYLES = {
-  Notified: { badge: 'bg-primary/10 text-primary', dot: 'bg-primary' },
-  'Received by insurer': { badge: 'bg-primary/10 text-primary', dot: 'bg-primary/50' },
-  Submitted: { badge: 'bg-primary/10 text-primary' },
-  'Under Review': { badge: 'bg-primary/10 text-primary' },
-  Approved: { badge: 'bg-primary/10 text-primary' },
-  Rejected: { badge: 'bg-red-100 text-red-800' },
+  Notified: { badge: 'border-primary/30 bg-primary/10 text-primary', dot: 'bg-primary' },
+  'Received by insurer': { badge: 'border-line-strong text-ink-muted', dot: 'bg-line-strong' },
+  Submitted: { badge: 'border-primary/30 bg-primary/10 text-primary', dot: 'bg-primary' },
+  'Under Review': { badge: 'border-primary/30 bg-primary/10 text-primary', dot: 'bg-primary' },
+  Approved: { badge: 'border-line-strong text-ink-muted', dot: 'bg-line-strong' },
+  Rejected: { badge: 'border-primary bg-primary text-white', dot: 'bg-primary' },
 };
-export const statusStyle = (status) => STATUS_STYLES[status] || { badge: 'bg-gray-100 text-gray-700', dot: 'bg-gray-400' };
+export const statusStyle = (status) =>
+  STATUS_STYLES[status] || { badge: 'border-line-strong text-ink-muted', dot: 'bg-line-strong' };
 
 export const pageSlice = (items, page, pageSize) => items.slice((page - 1) * pageSize, page * pageSize);
 

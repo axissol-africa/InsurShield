@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import Meta from '@/components/ui/Meta';
 import { useStore } from '@/store';
 
 // The directory is derived from the live insurer list so onboarding, edits and removals show immediately.
@@ -37,13 +38,14 @@ const FAQS = [
 function FAQItem({ q, a }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border border-outline-variant rounded-xl overflow-hidden bg-white">
+    <div className="overflow-hidden rounded-[1px] border border-line bg-canvas">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-surface-container-low transition-colors"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors duration-200 ease-out hover:bg-canvas-2"
       >
-        <p className="font-semibold text-[14px] text-primary pr-4">{q}</p>
-        <span className={`material-symbols-outlined text-secondary flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}>
+        <p className="text-[14px] font-medium text-ink">{q}</p>
+        <span className={`material-symbols-outlined shrink-0 text-[20px] text-ink-faint transition-transform duration-200 ease-out ${open ? 'rotate-180' : ''}`}>
           expand_more
         </span>
       </button>
@@ -53,7 +55,7 @@ function FAQItem({ q, a }) {
           animate={{ opacity: 1, height: 'auto' }}
           className="px-4 pb-4"
         >
-          <p className="text-[13px] text-on-surface-variant leading-relaxed">{a}</p>
+          <p className="text-[13px] text-ink-muted leading-relaxed">{a}</p>
         </motion.div>
       )}
     </div>
@@ -66,27 +68,26 @@ function InsurerCard({ insurer }) {
   return (
     <motion.div
       layout
-      className="bg-white rounded-2xl border border-outline-variant shadow-sm overflow-hidden hover:shadow-md transition-shadow"
+      className="overflow-hidden rounded-[1px] border border-line bg-canvas transition-colors duration-200 ease-out"
     >
-      {/* Card Header — uses system primary color */}
-      <div className="bg-primary p-5 flex items-center gap-4">
-        <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0">
-          {insurer.logoUrl ? <img src={insurer.logoUrl} alt="" className="h-8 w-8 rounded bg-white object-contain p-0.5" /> : <span className="material-symbols-outlined text-white text-2xl">{insurer.logo}</span>}
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-white text-[16px] leading-tight">{insurer.name}</h3>
-          <p className="text-white/75 text-[12px] mt-0.5">{insurer.tagline}</p>
+      <div className="flex items-center gap-4 border-b border-dashed border-line p-5">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-primary">
+          {insurer.logoUrl ? <img src={insurer.logoUrl} alt="" className="h-8 w-8 object-contain" /> : <span className="material-symbols-outlined text-[22px]">{insurer.logo}</span>}
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[16px] font-medium leading-tight tracking-[-0.01em] text-ink">{insurer.name}</h3>
+          <p className="mt-1 text-[12px] text-ink-muted">{insurer.tagline}</p>
         </div>
       </div>
 
       {/* Contact Person Badge */}
-      <div className="px-5 py-3 border-b border-outline-variant flex items-center gap-3">
+      <div className="px-5 py-3 border-b border-line-strong flex items-center gap-3">
         <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
           <span className="material-symbols-outlined text-primary text-[18px]">person</span>
         </div>
         <div>
-          <p className="font-bold text-[14px] text-on-surface">{insurer.contactPerson}</p>
-          <p className="text-[11px] text-secondary">{insurer.role}</p>
+          <p className="font-medium text-[14px] text-ink">{insurer.contactPerson}</p>
+          <p className="text-[11px] text-ink-muted">{insurer.role}</p>
         </div>
       </div>
 
@@ -94,39 +95,39 @@ function InsurerCard({ insurer }) {
       <div className="p-4 grid grid-cols-3 gap-2">
         <a
           href={`tel:${insurer.mobile}`}
-          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-xl hover:bg-primary/10 transition-colors group"
+          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-[1px] hover:bg-primary/10 transition-colors group"
         >
-          <div className="w-9 h-9 bg-white rounded-lg shadow-sm flex items-center justify-center group-hover:scale-110 transition-transform border border-outline-variant">
+          <div className="w-9 h-9 bg-white rounded-[1px] flex items-center justify-center group-hover:scale-110 transition-transform border border-line-strong">
             <span className="material-symbols-outlined text-primary text-[20px]">phone</span>
           </div>
-          <p className="text-[10px] font-bold text-primary uppercase tracking-wide">Call</p>
+          <p className="text-[10px] font-medium text-primary uppercase tracking-wide">Call</p>
         </a>
         <a
           href={`https://wa.me/${insurer.whatsapp}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-xl hover:bg-primary/10 transition-colors group"
+          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-[1px] hover:bg-primary/10 transition-colors group"
         >
-          <div className="w-9 h-9 bg-white rounded-lg shadow-sm flex items-center justify-center group-hover:scale-110 transition-transform border border-outline-variant">
+          <div className="w-9 h-9 bg-white rounded-[1px] flex items-center justify-center group-hover:scale-110 transition-transform border border-line-strong">
             <span className="material-symbols-outlined text-primary text-[20px]">chat</span>
           </div>
-          <p className="text-[10px] font-bold text-primary uppercase tracking-wide">WhatsApp</p>
+          <p className="text-[10px] font-medium text-primary uppercase tracking-wide">WhatsApp</p>
         </a>
         <a
           href={`mailto:${insurer.email}`}
-          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-xl hover:bg-primary/10 transition-colors group"
+          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-[1px] hover:bg-primary/10 transition-colors group"
         >
-          <div className="w-9 h-9 bg-white rounded-lg shadow-sm flex items-center justify-center group-hover:scale-110 transition-transform border border-outline-variant">
+          <div className="w-9 h-9 bg-white rounded-[1px] flex items-center justify-center group-hover:scale-110 transition-transform border border-line-strong">
             <span className="material-symbols-outlined text-primary text-[20px]">email</span>
           </div>
-          <p className="text-[10px] font-bold text-primary uppercase tracking-wide">Email</p>
+          <p className="text-[10px] font-medium text-primary uppercase tracking-wide">Email</p>
         </a>
       </div>
 
       {/* Expand / Collapse */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-5 py-3 border-t border-outline-variant text-[13px] font-semibold text-secondary hover:text-primary hover:bg-surface-container-low transition-colors"
+        className="w-full flex items-center justify-between px-5 py-3 border-t border-line-strong text-[13px] font-semibold text-ink-muted hover:text-primary hover:bg-canvas-2 transition-colors"
       >
         <span>{expanded ? 'Hide details' : 'View full contact details'}</span>
         <span className={`material-symbols-outlined text-[18px] transition-transform ${expanded ? 'rotate-180' : ''}`}>
@@ -138,7 +139,7 @@ function InsurerCard({ insurer }) {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="px-5 pb-5 space-y-3 border-t border-outline-variant pt-4 bg-surface-container-low/40"
+          className="px-5 pb-5 space-y-3 border-t border-line-strong pt-4 bg-canvas-2/40"
         >
           <DetailRow icon="phone" label="Office Line" value={insurer.phone} href={`tel:${insurer.phone}`} />
           <DetailRow icon="smartphone" label="Mobile / WhatsApp" value={insurer.mobile} href={`tel:${insurer.mobile}`} />
@@ -154,12 +155,12 @@ function InsurerCard({ insurer }) {
 function DetailRow({ icon, label, value, href }) {
   const content = (
     <div className="flex items-start gap-3">
-      <div className="w-8 h-8 bg-white border border-outline-variant rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm">
-        <span className="material-symbols-outlined text-secondary text-[16px]">{icon}</span>
+      <div className="w-8 h-8 bg-white border border-line-strong rounded-[1px] flex items-center justify-center flex-shrink-0 mt-0.5">
+        <span className="material-symbols-outlined text-ink-muted text-[16px]">{icon}</span>
       </div>
       <div>
-        <p className="text-[10px] uppercase font-bold tracking-wider text-secondary">{label}</p>
-        <p className="text-[13px] text-on-surface font-medium mt-0.5">{value}</p>
+        <p className="text-[10px] uppercase font-medium tracking-wider text-ink-muted">{label}</p>
+        <p className="text-[13px] text-ink font-medium mt-0.5">{value}</p>
       </div>
     </div>
   );
@@ -186,41 +187,43 @@ export default function SupportPage() {
   );
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="max-w-3xl mx-auto px-4 py-8 pb-24"
-    >
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative overflow-hidden">
+      <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
+      <div className="relative mx-auto w-full max-w-[1100px] px-6 py-12 pb-24 lg:px-10">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-[28px] font-bold text-primary">Contact Your Insurer</h1>
-        <p className="text-[14px] text-on-surface-variant mt-1">
-          Reach your insurance company's dedicated team directly for policy queries, claims assistance, and more.
+      <header className="border-b border-line pb-8">
+        <span className="inline-flex items-center gap-3">
+          <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
+          <Meta className="text-ink-muted">Insurer directory</Meta>
+        </span>
+        <h1 className="mt-6 text-[36px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Contact your insurer</h1>
+        <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">
+          Reach your insurance company's claims desk directly for policy queries, claims assistance and more.
         </p>
-      </div>
+      </header>
 
-      {/* Quick Action Banner */}
-      <div className="bg-gradient-to-r from-primary/10 to-primary/5 border border-primary/20 rounded-2xl p-5 mb-6 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-        <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center flex-shrink-0">
-          <span className="material-symbols-outlined text-primary text-2xl">info</span>
-        </div>
+      {/* Two things people usually came here to do, but can do on InsurShield. */}
+      <div className="mt-8 flex flex-col gap-4 border border-dashed border-line-strong p-5 sm:flex-row sm:items-center">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-primary">
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">info</span>
+        </span>
         <div className="flex-1">
-          <p className="font-bold text-primary text-[15px]">Need to file a claim or apply for NCD?</p>
-          <p className="text-[13px] text-on-surface-variant mt-1">
+          <p className="text-[15px] font-medium text-ink">Need to file a claim or apply for NCD?</p>
+          <p className="mt-1.5 text-[13px] leading-[1.55] text-ink-muted">
             You can do this directly through InsurShield — no account needed. For all other questions, contact your insurer below.
           </p>
         </div>
-        <div className="flex gap-3 flex-shrink-0 w-full sm:w-auto">
+        <div className="flex w-full shrink-0 gap-3 sm:w-auto">
           <button
             onClick={() => navigate('/claims')}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-primary text-white font-bold px-4 py-2.5 rounded-xl hover:bg-primary-container transition-all text-[13px] active:scale-95"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-primary text-white font-medium px-4 py-2.5 rounded-[1px] hover:bg-[#b91c1c] transition-all text-[13px] active:scale-95"
           >
             <span className="material-symbols-outlined text-[16px]">report_problem</span>
             File Claim
           </button>
           <button
             onClick={() => navigate('/claims')}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white border-2 border-primary/20 text-primary font-bold px-4 py-2.5 rounded-xl hover:border-primary/40 transition-all text-[13px] active:scale-95"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white border-2 border-primary/20 text-primary font-medium px-4 py-2.5 rounded-[1px] hover:border-primary/40 transition-all text-[13px] active:scale-95"
           >
             <span className="material-symbols-outlined text-[16px]">sell</span>
             Apply NCD
@@ -230,22 +233,22 @@ export default function SupportPage() {
 
       {/* Search */}
       <div className="relative mb-6">
-        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-secondary text-[20px]">search</span>
+        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted text-[20px]">search</span>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search by insurer name or contact person..."
-          className="w-full bg-white border border-outline-variant rounded-xl pl-10 pr-4 py-3 text-[14px] focus:ring-2 focus:ring-primary outline-none shadow-sm"
+          className="w-full bg-white border border-line-strong rounded-[1px] pl-10 pr-4 py-3 text-[14px] focus:ring-2 focus:ring-primary outline-none"
         />
       </div>
 
       {/* Insurer Cards */}
       <div className="space-y-4 mb-10">
         {filtered.length === 0 ? (
-          <div className="text-center py-12 text-secondary">
+          <div className="text-center py-12 text-ink-muted">
             <span className="material-symbols-outlined text-4xl mb-2 block opacity-40">search_off</span>
             <p className="font-semibold">No insurer found matching "{search}"</p>
-            <button onClick={() => setSearch('')} className="mt-3 text-primary font-bold text-[14px] underline">
+            <button onClick={() => setSearch('')} className="mt-3 text-primary font-medium text-[14px] underline">
               Clear search
             </button>
           </div>
@@ -264,26 +267,30 @@ export default function SupportPage() {
       </div>
 
       {/* PIA Regulatory Notice */}
-      <div className="bg-surface-container-low border border-outline-variant rounded-2xl p-5 mb-8 flex items-start gap-3">
-        <span className="material-symbols-outlined text-secondary text-[22px] flex-shrink-0 mt-0.5">gavel</span>
+      <div className="bg-canvas-2 border border-line-strong rounded-[1px] p-5 mb-8 flex items-start gap-3">
+        <span className="material-symbols-outlined text-ink-muted text-[22px] flex-shrink-0 mt-0.5">gavel</span>
         <div>
-          <p className="font-bold text-on-surface text-[14px]">Regulated by the PIA</p>
-          <p className="text-[12px] text-on-surface-variant mt-1 leading-relaxed">
+          <p className="font-medium text-ink text-[14px]">Regulated by the PIA</p>
+          <p className="text-[12px] text-ink-muted mt-1 leading-relaxed">
             All insurance companies listed are regulated by the{' '}
-            <strong className="text-on-surface">Pensions and Insurance Authority (PIA) of Zambia</strong>.
+            <strong className="text-ink">Pensions and Insurance Authority (PIA) of Zambia</strong>.
             If you have an unresolved dispute with any insurer, you may escalate to the PIA directly at{' '}
-            <a href="tel:+260211254644" className="font-bold text-primary underline">+260 211 254 644</a> or{' '}
-            <a href="mailto:info@pia.org.zm" className="font-bold text-primary underline">info@pia.org.zm</a>.
+            <a href="tel:+260211254644" className="font-medium text-primary underline">+260 211 254 644</a> or{' '}
+            <a href="mailto:info@pia.org.zm" className="font-medium text-primary underline">info@pia.org.zm</a>.
           </p>
         </div>
       </div>
 
       {/* FAQs */}
       <div>
-        <h2 className="text-[20px] font-bold text-primary mb-4">Frequently Asked Questions</h2>
+        <div className="mb-5 flex items-center gap-4">
+          <Meta className="text-primary">Frequently asked</Meta>
+          <span className="h-px w-12 bg-line" aria-hidden="true" />
+        </div>
         <div className="space-y-2">
           {FAQS.map((faq, i) => <FAQItem key={i} q={faq.q} a={faq.a} />)}
         </div>
+      </div>
       </div>
     </motion.div>
   );

@@ -18,7 +18,7 @@ const PERSISTED_KEYS = [
   'customer', 'isAuthenticated', 'authToken', 'registeredAccounts', 'staffSession',
   'consentAccepted', 'consentTimestamp', 'consentRecord',
   'vehicleDetails', 'vehicleValue', 'vehicleUsage', 'insuranceType', 'coverageDurationId', 'policyStartDate', 'matchRtsaAnniversary', 'rtsaRegistrationDate', 'policyDates',
-  'activeQuoteRequestId', 'requotedFromId', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt', 'documents',
+  'activeQuoteRequestId', 'requotedFromId', 'renewalOfPolicyNumber', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt', 'documents',
   'ncdCode', 'ncdCodeValidated', 'ncdCodeUsed', 'ncdApplications',
   'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections',
 ];

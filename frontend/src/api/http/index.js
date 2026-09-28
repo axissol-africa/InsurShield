@@ -47,6 +47,7 @@ export const payments = {
 export const policies = {
   listMine: () => apiClient.get('/policies'),
   get: (policyNumber) => apiClient.get(`/policies/${policyNumber}`),
+  renew: (policyNumber) => apiClient.post(`/policies/${policyNumber}/renew`),
   listForInsurer: () => apiClient.get('/insurer/policies'),
   issueCertificate: (policyNumber, issuance) => apiClient.post(`/insurer/policies/${policyNumber}/certificate`, issuance),
 };

@@ -66,9 +66,27 @@ export const createSessionSlice = (set, get) => ({
       ...SIGNED_OUT,
     })),
 
-  // ─── Backend session token (unused in mock mode) ─────────
+  // ─── Backend session token ───────────────────────────────
   authToken: null,
   setAuthToken: (authToken) => set({ authToken }),
+
+  // ─── Keycloak-backed session ─────────────────────────────
+  /**
+   * Adopts the signed-in customer resolved from Keycloak, together with the
+   * consent the backend holds for them. Consent belongs to the account rather
+   * than the browser, so signing out and back in does not ask for it again.
+   */
+  applyCustomerSession: (customer, consent = null) =>
+    set({
+      customer: { fullName: customer.fullName, email: customer.email, phone: customer.phone ?? null },
+      isAuthenticated: true,
+      consentAccepted: Boolean(consent?.accepted),
+      consentTimestamp: consent?.acceptedAt ?? null,
+      consentRecord: consent?.accepted ? { noticeVersion: consent.noticeVersion, acceptedAt: consent.acceptedAt } : null,
+    }),
+
+  /** Clears everything tied to the person, leaving prototype catalogue data. */
+  clearCustomerSession: () => set(SIGNED_OUT),
 
   // ─── Staff / insurer portal session ──────────────────────
   staffSession: null, // { role: 'admin' | 'support' | 'insurer', name }

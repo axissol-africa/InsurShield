@@ -1,23 +1,29 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '@/store';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocuments';
 import { openDocument } from '@/lib/files';
+import Meta from '@/components/ui/Meta';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+
+const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
 
 /** The insurer's uploaded certificate; policies issued before certificates were uploaded get a generated summary. */
-const openCertificate = (policy) => (policy.certificateDocument ? openDocument(policy.certificateDocument) : downloadPolicyCertificate(policy));
-
-const cardClass = 'rounded-2xl border border-slate-200 bg-white p-6 shadow-sm';
+const openCertificate = (policy) =>
+  policy.certificateDocument ? openDocument(policy.certificateDocument) : downloadPolicyCertificate(policy);
 
 export default function CustomerAccountPage() {
   const navigate = useNavigate();
   const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount, requoteFromRequest } = useStore();
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
 
   const mine = belongsToCustomer(customer);
   const myPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Active');
-  const pendingPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Awaiting insurer certificate');
+  const pendingPolicies = policies.filter((policy) => mine(policy) && policy.status === AWAITING_CERTIFICATE);
   const myRequests = quoteRequests.filter(mine);
   const myClaims = claims.filter(mine);
 
@@ -29,146 +35,278 @@ export default function CustomerAccountPage() {
     requoteFromRequest(request.id);
     navigate('/quote-request');
   };
-
   const removeAccount = () => {
-    if (!window.confirm(`Remove the account for ${customer?.email}? You can register again with the same details.`)) return;
+    setConfirmingRemoval(false);
     deleteCurrentAccount(); // CustomerRoute sends the visitor home once the session ends
   };
 
+  const summary = [
+    ['Active policies', myPolicies.length, 'verified_user'],
+    ['Quote requests', myRequests.length, 'send'],
+    ['Claims', myClaims.length, 'report_problem'],
+  ];
+
   return (
-    <main className="mx-auto w-full max-w-[1500px] px-5 py-10 pb-24 sm:px-8 lg:py-12">
-      <section className="rounded-2xl bg-primary p-7 text-white md:p-10">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-white/70">My InsurShield</p>
-        <h1 className="mt-3 text-[38px] font-extrabold tracking-[-.04em] sm:text-[48px]">Welcome back, {customer?.fullName?.split(' ')[0] || 'there'}.</h1>
-        <p className="mt-3 max-w-3xl text-[17px] text-white/90">Your policies, quote requests, renewals and claims — all in one place.</p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Link to="/insurance-type" className="rounded-lg bg-white px-5 py-3 text-sm font-bold text-primary hover:bg-white/90">Get quotes</Link>
-          <Link to="/renewal" className="rounded-lg border-2 border-white px-5 py-3 text-sm font-bold text-white hover:bg-white/10">Renew a policy</Link>
-          <Link to="/claims" className="rounded-lg border-2 border-white px-5 py-3 text-sm font-bold text-white hover:bg-white/10">Claims & NCD</Link>
-        </div>
-      </section>
+    <main className="relative overflow-hidden">
+      <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
 
-      <section aria-label="Summary" className="mt-6 grid gap-4 sm:grid-cols-3">
-        {[['Active policies', myPolicies.length, 'verified_user'], ['Quote requests', myRequests.length, 'send'], ['Claims', myClaims.length, 'report_problem']].map(([label, value, icon]) => (
-          <div key={label} className={cardClass}>
-            <span className="material-symbols-outlined text-primary" aria-hidden="true">{icon}</span>
-            <p className="mt-4 text-4xl font-extrabold tracking-[-.04em] text-on-surface">{value}</p>
-            <p className="mt-1 text-[15px] text-secondary">{label}</p>
+      <div className="relative mx-auto w-full max-w-[1200px] px-6 py-12 pb-24 lg:px-10">
+        {/* ── Who this is ──────────────────────────────────────── */}
+        <section className="border-b border-line pb-8">
+          <span className="inline-flex items-center gap-3">
+            <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
+            <Meta className="text-ink-muted">My InsurShield</Meta>
+          </span>
+          <h1 className="mt-6 text-[36px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[46px]">
+            Welcome back, {customer?.fullName?.split(' ')[0] || 'there'}.
+          </h1>
+          <p className="mt-4 max-w-xl text-[16px] leading-[1.6] text-ink-muted">
+            Your policies, quote requests, renewals and claims — all in one place.
+          </p>
+
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link
+              to="/insurance-type"
+              className="group relative inline-flex min-h-[48px] items-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]"
+            >
+              <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
+              <span className="relative">Get quotes</span>
+              <span className="material-symbols-outlined relative text-[18px] transition-transform duration-200 ease-out group-hover:translate-x-1" aria-hidden="true">arrow_forward</span>
+            </Link>
+            {[['Renew a policy', '/renewal'], ['Claims & NCD', '/claims']].map(([label, to]) => (
+              <Link
+                key={to}
+                to={to}
+                className="inline-flex min-h-[48px] items-center rounded-[1px] border border-dashed border-line-strong px-6 text-[15px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary"
+              >
+                {label}
+              </Link>
+            ))}
           </div>
-        ))}
-      </section>
+        </section>
 
-      {pendingPolicies.length > 0 && (
-        <section className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-          <div className="flex items-start gap-3">
-            <span className="material-symbols-outlined text-primary" aria-hidden="true">pending_actions</span>
-            <div>
-              <h2 className="font-bold text-on-surface">Policy certificate being prepared</h2>
-              {pendingPolicies.map((policy) => <p key={policy.policyNumber} className="mt-1 text-sm text-secondary">{policy.insurer} is preparing the certificate for paid quote <span className="font-mono font-semibold text-on-surface">{policy.quoteRequestId}</span>. It will appear under Policies when issued.</p>)}
+        {/* ── Counts ───────────────────────────────────────────── */}
+        <section aria-label="Summary" className="grid grid-cols-3 border-b border-line">
+          {summary.map(([label, value, icon], index) => (
+            <div
+              key={label}
+              className={`border-line py-7 pr-4 ${index === 0 ? '' : 'border-l pl-4 sm:pl-6'}`}
+            >
+              <span className="material-symbols-outlined text-[19px] text-primary" aria-hidden="true">{icon}</span>
+              <p className="mt-4 text-[32px] font-semibold leading-none tracking-[-0.03em] text-ink sm:text-[38px]">{value}</p>
+              <p className="mt-3 text-[13px] leading-[1.35] text-ink-muted">{label}</p>
             </div>
-          </div>
+          ))}
         </section>
-      )}
 
-      <section className="mt-7 grid gap-5 lg:grid-cols-2">
-        <div className={cardClass}>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[22px] font-extrabold">Policies</h2>
-            {myPolicies.length > 0 && <Link to="/renewal" className="text-sm font-bold text-primary hover:underline">Renew</Link>}
-          </div>
-          {myPolicies.length ? (
-            <ul className="mt-4 space-y-3">
-              {myPolicies.map((policy) => (
-                <li key={policy.policyNumber} className="rounded-xl bg-slate-50 p-4">
-                  <div className="flex justify-between gap-3">
-                    <div>
-                      <p className="font-bold text-primary">{policy.insurer}</p>
-                      <p className="text-xs text-secondary">{policy.policyNumber} · {policy.vehicle}{policy.vehicleDetails?.plateNumber ? ` · ${policy.vehicleDetails.plateNumber}` : ''}</p>
-                    </div>
-                    <span className="h-fit rounded-md bg-primary/10 px-2 py-1 text-xs font-bold text-primary">Active</span>
-                  </div>
-                  <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                    <div><dt className="text-xs text-secondary">Cover</dt><dd className="font-semibold">{policy.coverage || 'Comprehensive'}</dd></div>
-                    <div><dt className="text-xs text-secondary">Premium</dt><dd className="font-semibold">{formatZMW(policy.premium || 0)}</dd></div>
-                    <div><dt className="text-xs text-secondary">Valid until</dt><dd className="font-semibold">{policy.policyDates?.formattedEnd || '—'}</dd></div>
-                    <div><dt className="text-xs text-secondary">Issued</dt><dd className="font-semibold">{formatDate(policy.issuedAt)}</dd></div>
-                  </dl>
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200 pt-3">
-                    <button type="button" onClick={() => openCertificate(policy)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-primary px-3 text-xs font-bold text-primary hover:bg-primary/5"><span className="material-symbols-outlined text-[16px]" aria-hidden="true">{policy.certificateDocument ? 'open_in_new' : 'download'}</span>Policy certificate</button>
-                    {policy.rtsaAnniversaryFee > 0 && <button type="button" onClick={() => downloadRtsaDisc(policy)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-primary px-3 text-xs font-bold text-primary hover:bg-primary/5"><span className="material-symbols-outlined text-[16px]" aria-hidden="true">download</span>RTSA disc</button>}
-                  </div>
-                </li>
+        {pendingPolicies.length > 0 && (
+          <section className="mt-8 flex gap-4 border border-dashed border-line-strong p-5">
+            <span className="material-symbols-outlined shrink-0 text-[20px] text-primary" aria-hidden="true">pending_actions</span>
+            <div>
+              <Meta className="text-ink-muted">Certificate being prepared</Meta>
+              {pendingPolicies.map((policy) => (
+                <p key={policy.policyNumber} className="mt-3 text-[13px] leading-[1.55] text-ink-muted">
+                  {policy.insurer} is preparing the certificate for paid quote{' '}
+                  <span className="font-mono text-ink">{policy.quoteRequestId}</span>. It appears
+                  under Policies once issued.
+                </p>
               ))}
-            </ul>
-          ) : (
-            <Empty text="Policies you buy through InsurShield will appear here." />
-          )}
-        </div>
+            </div>
+          </section>
+        )}
 
-        <div className={cardClass}>
-          <h2 className="text-[22px] font-extrabold">Quote requests</h2>
-          {myRequests.length ? (
-            <ul className="mt-4 space-y-3">
-              {myRequests.map((request) => {
-                const total = request.insurers?.length || 0;
-                const status = requestStatus(request);
-                const badge = {
-                  expired: ['bg-slate-200 text-slate-700', 'Expired'],
-                  expiring: ['bg-amber-100 text-amber-800', `Expiring soon · ${status.validQuotes} valid`],
-                  quoted: ['bg-primary/10 text-primary', `${status.replies}/${total} replied`],
-                  pending: ['bg-amber-100 text-amber-800', `${status.replies}/${total} replied`],
-                }[status.status];
-                return (
-                  <li key={request.id} className={`rounded-xl p-4 ${status.status === 'expired' ? 'bg-slate-100' : 'bg-slate-50'}`}>
-                    <div className="flex justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-primary">{request.vehicle}</p>
-                        <p className="text-xs text-secondary">{request.id} · sent {formatDate(request.submittedAt)} to {total} insurers{request.requotedAs ? ` · re-requested as ${request.requotedAs}` : ''}</p>
-                      </div>
-                      <span className={`h-fit whitespace-nowrap rounded-md px-2 py-1 text-xs font-bold ${badge[0]}`}>{badge[1]}</span>
-                    </div>
-                    {status.status === 'expired' ? (
-                      request.requotedAs ? (
-                        <p className="mt-3 text-[13px] text-secondary">These quotes lapsed; the new request carries your details.</p>
-                      ) : (
-                        <button type="button" onClick={() => requote(request)} className="mt-3 inline-flex min-h-10 items-center gap-1 text-sm font-bold text-primary hover:underline">
-                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">refresh</span>Request new quotes
-                        </button>
-                      )
-                    ) : (
-                      <button type="button" onClick={() => openRequest(request)} className="mt-3 inline-flex min-h-10 items-center text-sm font-bold text-primary hover:underline">
-                        Compare quotes <span className="material-symbols-outlined ml-1 text-[16px]" aria-hidden="true">arrow_forward</span>
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <Empty text="Send one request and every insurer on InsurShield will reply here." action={<Link to="/insurance-type" className="font-bold text-primary hover:underline">Start a quote</Link>} />
-          )}
-        </div>
-      </section>
-
-      <section className={`mt-5 ${cardClass}`}>
-        <h2 className="text-[22px] font-extrabold">Claims & NCD</h2>
-        <p className="mt-2 text-sm text-secondary">{myClaims.length ? `${myClaims.length} claim${myClaims.length === 1 ? '' : 's'} linked to this account.` : 'No claims yet. If you ever need to, you can notify your insurer from here.'}</p>
-        <Link to="/claims" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-primary/10 px-4 text-sm font-bold text-primary hover:bg-primary/15">Manage claims</Link>
-      </section>
-
-      {!isDemoAccount && (
-        <section className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-300 p-5">
+        {/* ── Policies and requests ────────────────────────────── */}
+        <section className="mt-10 grid gap-8 lg:grid-cols-2">
           <div>
-            <h2 className="text-[15px] font-bold">Account details</h2>
-            <p className="mt-1 text-sm text-secondary">{customer?.fullName} · {customer?.email} · {customer?.phone}</p>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <Meta className="text-primary">Policies</Meta>
+                <span className="h-px w-12 bg-line" aria-hidden="true" />
+              </div>
+              {myPolicies.length > 0 && (
+                <Link to="/renewal" className="font-mono text-[11px] uppercase tracking-[0.1em] text-primary underline-offset-4 hover:underline">
+                  Renew
+                </Link>
+              )}
+            </div>
+
+            {myPolicies.length ? (
+              <ul className="mt-5 border border-line">
+                {myPolicies.map((policy, index) => (
+                  <li key={policy.policyNumber} className={`p-5 ${index === 0 ? '' : 'border-t border-dashed border-line'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-[15px] font-medium tracking-[-0.01em] text-ink">{policy.insurer}</p>
+                        <Meta className="mt-1.5 block truncate text-primary">{policy.policyNumber}</Meta>
+                        <p className="mt-1 truncate text-[12px] text-ink-muted">
+                          {policy.vehicle}{policy.vehicleDetails?.plateNumber ? ` · ${policy.vehicleDetails.plateNumber}` : ''}
+                        </p>
+                      </div>
+                      <Meta className="shrink-0 rounded-[1px] border border-primary/30 bg-primary/10 px-2 py-1 text-primary">Active</Meta>
+                    </div>
+
+                    <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
+                      {[
+                        ['Cover', policy.coverage || 'Comprehensive'],
+                        ['Premium', formatZMW(policy.premium || 0)],
+                        ['Valid until', policy.policyDates?.formattedEnd || '—'],
+                        ['Issued', formatDate(policy.issuedAt)],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="font-mono text-[11px] uppercase leading-none tracking-[0.1em] text-ink-faint">{label}</dt>
+                          <dd className="mt-2 text-[14px] text-ink">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+
+                    <div className="mt-5 flex flex-wrap gap-2 border-t border-dashed border-line pt-4">
+                      <button type="button" onClick={() => openCertificate(policy)} className={documentButton}>
+                        <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
+                          {policy.certificateDocument ? 'open_in_new' : 'download'}
+                        </span>
+                        Policy certificate
+                      </button>
+                      {policy.rtsaAnniversaryFee > 0 && (
+                        <button type="button" onClick={() => downloadRtsaDisc(policy)} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">download</span>
+                          RTSA disc
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty text="Policies you buy through InsurShield will appear here." />
+            )}
           </div>
-          <button type="button" onClick={removeAccount} className="text-sm font-bold text-red-700 hover:underline">Remove this account</button>
+
+          <div>
+            <div className="flex items-center gap-4">
+              <Meta className="text-primary">Quote requests</Meta>
+              <span className="h-px w-12 bg-line" aria-hidden="true" />
+            </div>
+
+            {myRequests.length ? (
+              <ul className="mt-5 border border-line">
+                {myRequests.map((request, index) => {
+                  const total = request.insurers?.length || 0;
+                  const status = requestStatus(request);
+                  const [tone, label] = {
+                    expired: ['border-line-strong text-ink-faint', 'Expired'],
+                    expiring: ['border-primary/30 bg-primary/10 text-primary', `Expiring · ${status.validQuotes} valid`],
+                    quoted: ['border-primary/30 bg-primary/10 text-primary', `${status.replies}/${total} replied`],
+                    pending: ['border-line-strong text-ink-muted', `${status.replies}/${total} replied`],
+                  }[status.status];
+
+                  return (
+                    <li key={request.id} className={`p-5 ${index === 0 ? '' : 'border-t border-dashed border-line'} ${status.status === 'expired' ? 'bg-canvas-2' : ''}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-[15px] font-medium tracking-[-0.01em] text-ink">{request.vehicle}</p>
+                          <Meta className="mt-1.5 block truncate text-primary">{request.id}</Meta>
+                          <p className="mt-1 text-[12px] leading-[1.45] text-ink-muted">
+                            Sent {formatDate(request.submittedAt)} to {total} insurers
+                            {request.requotedAs ? ` · re-requested as ${request.requotedAs}` : ''}
+                          </p>
+                        </div>
+                        <Meta className={`shrink-0 whitespace-nowrap rounded-[1px] border px-2 py-1 ${tone}`}>{label}</Meta>
+                      </div>
+
+                      {status.status === 'expired' ? (
+                        request.requotedAs ? (
+                          <p className="mt-4 text-[13px] text-ink-muted">These quotes lapsed; the new request carries your details.</p>
+                        ) : (
+                          <button type="button" onClick={() => requote(request)} className="mt-4 inline-flex items-center gap-2 text-[14px] font-medium text-primary underline-offset-4 hover:underline">
+                            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">refresh</span>
+                            Request new quotes
+                          </button>
+                        )
+                      ) : (
+                        <button type="button" onClick={() => openRequest(request)} className="group mt-4 inline-flex items-center gap-2 text-[14px] font-medium text-primary underline-offset-4 hover:underline">
+                          Compare quotes
+                          <span className="material-symbols-outlined text-[16px] transition-transform duration-200 ease-out group-hover:translate-x-1" aria-hidden="true">arrow_forward</span>
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <Empty
+                text="Send one request and every insurer on InsurShield will reply here."
+                action={<Link to="/insurance-type" className="text-primary underline-offset-4 hover:underline">Start a quote</Link>}
+              />
+            )}
+          </div>
         </section>
-      )}
+
+        {/* ── Claims ───────────────────────────────────────────── */}
+        <section className="mt-10 flex flex-col gap-5 border border-line p-6 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <Meta className="text-primary">Claims &amp; NCD</Meta>
+            <p className="mt-3 text-[14px] leading-[1.55] text-ink-muted">
+              {myClaims.length
+                ? `${myClaims.length} claim${myClaims.length === 1 ? '' : 's'} linked to this account.`
+                : 'No claims yet. If you ever need to, you can notify your insurer from here.'}
+            </p>
+          </div>
+          <Link
+            to="/claims"
+            className="inline-flex min-h-[46px] shrink-0 items-center justify-center rounded-[1px] border border-dashed border-line-strong px-6 text-[14px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary"
+          >
+            Manage claims
+          </Link>
+        </section>
+
+        {/* ── The account itself ───────────────────────────────── */}
+        {!isDemoAccount && (
+          <section className="mt-6 flex flex-col gap-4 border border-dashed border-line-strong p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <Meta className="text-ink-muted">Account details</Meta>
+              {/* A phone number is not collected at sign-up, so it is only shown once there is one. */}
+              <p className="mt-3 text-[14px] text-ink-muted">
+                {[customer?.fullName, customer?.email, customer?.phone].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmingRemoval(true)}
+              className="shrink-0 self-start font-mono text-[11px] uppercase tracking-[0.1em] text-primary underline-offset-4 hover:underline sm:self-auto"
+            >
+              Close this account
+            </button>
+          </section>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={confirmingRemoval}
+        destructive
+        title="Close your account?"
+        description="You will be signed out and will need to register again to use InsurShield."
+        consequences={[
+          { text: 'You lose access to your quote requests and documents.' },
+          { text: 'Your policies, claims and payment records are kept for regulatory retention.', kept: true },
+          { text: 'An account holding cover in force cannot be closed until that cover ends.', kept: true },
+        ]}
+        confirmLabel="Close account"
+        cancelLabel="Keep my account"
+        onConfirm={removeAccount}
+        onCancel={() => setConfirmingRemoval(false)}
+      />
     </main>
   );
 }
 
+const documentButton =
+  'inline-flex min-h-10 items-center gap-2 rounded-[1px] border border-dashed border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary';
+
 function Empty({ text, action }) {
-  return <p className="mt-4 rounded-xl bg-surface-container-low p-4 text-sm text-secondary">{text}{action && <> {action}</>}</p>;
+  return (
+    <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-5 border border-dashed border-line-strong p-6 text-[13px] leading-[1.6] text-ink-muted">
+      {text}
+      {action && <> {action}</>}
+    </motion.p>
+  );
 }

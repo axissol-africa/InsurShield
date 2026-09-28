@@ -13,13 +13,15 @@
  *  - Documents (quotations, certificates, photos): uploaded as multipart and referenced by `DocumentRecord`.
  *
  * Endpoints
- *  auth        POST /auth/register · POST /auth/login · POST /auth/otp · POST /auth/otp/verify · POST /auth/password-reset · POST /auth/staff/login · GET /auth/me
+ *  auth        GET  /auth/me · POST /auth/consent   (sign-in and sign-up happen on Keycloak's own pages)
+ *  account     DELETE /account
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
  *  insurers    GET  /insurers · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · GET /insurers/directory
  *  payments    POST /payments · GET /payments/:id
- *  policies    GET  /policies · GET /policies/:number · GET /insurer/policies · POST /insurer/policies/:number/certificate
+ *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
+ *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
  *  claims      POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id

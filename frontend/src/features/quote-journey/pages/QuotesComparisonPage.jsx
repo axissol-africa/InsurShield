@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import Meta from '@/components/ui/Meta';
 import { useStore, selectActiveQuoteRequest } from '@/store';
 import { calculatePremium, formatZMW, formatDate } from '@/domain/premiumEngine';
 import { sameInsurerName } from '@/domain/insurers';
@@ -80,15 +81,21 @@ export default function QuotesComparisonPage() {
   return (
     <>
       <JourneyProgress current={5} />
-      <main className="mx-auto w-full max-w-[1550px] px-5 py-10 pb-24 sm:px-8 lg:py-12">
-        <header className="rounded-2xl bg-primary p-7 text-white sm:p-10">
-          <p className="text-[13px] font-extrabold uppercase tracking-[.12em] text-white/85">Request {request.id} · sent {formatDate(request.submittedAt)}</p>
-          <h1 className="mt-3 text-[34px] font-extrabold leading-tight tracking-[-.04em] sm:text-[44px]">Compare your quotes</h1>
+      <main className="relative overflow-hidden">
+        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
+        <div className="relative mx-auto w-full max-w-[1400px] px-6 py-12 pb-24 lg:px-10">
+        <header className="border-b border-line pb-8">
+          <span className="inline-flex items-center gap-3">
+            <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
+            <Meta className="text-primary">{request.id}</Meta>
+            <Meta className="text-ink-faint">sent {formatDate(request.submittedAt)}</Meta>
+          </span>
+          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Compare your quotes</h1>
           <p className="mt-3 max-w-3xl text-[16px] leading-7 text-white/95">
             {request.vehicle} · declared value <strong>{formatZMW(request.vehicleValue)}</strong> · {request.vehicleUsage || 'Individual'} use
             {request.policyDates && <> · cover {request.policyDates.formattedStart} to {request.policyDates.formattedEnd} ({request.policyDates.daysTotal} days{request.policyDates.anchoredToAnniversary ? ', aligned to RTSA anniversary' : ''})</>}
           </p>
-          <div className="mt-5 inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-[14px]">
+          <div className="mt-5 inline-flex items-center gap-2 rounded-[1px] bg-white/15 px-4 py-2 text-[14px]">
             <span className="material-symbols-outlined text-[18px]" aria-hidden="true">{repliedCount === quotes.length ? 'task_alt' : 'schedule'}</span>
             {repliedCount === quotes.length
               ? 'All insurers have sent their final quotes.'
@@ -97,33 +104,33 @@ export default function QuotesComparisonPage() {
         </header>
 
         {requestExpired ? (
-          <section role="alert" className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-5">
+          <section role="alert" className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[1px] border border-primary/30 bg-primary/[0.06] p-5">
             <div className="flex items-start gap-3">
-              <span className="material-symbols-outlined text-[26px] text-red-700" aria-hidden="true">event_busy</span>
+              <span className="material-symbols-outlined text-[26px] text-primary" aria-hidden="true">event_busy</span>
               <div>
-                <h2 className="text-[17px] font-extrabold text-red-900">These quotes have expired</h2>
-                <p className="mt-1 text-[14px] text-red-800">Insurers only hold a quote open for a limited time. Request fresh quotes and every insurer will quote again — your vehicle details are carried over.</p>
+                <h2 className="text-[17px] font-semibold text-primary">These quotes have expired</h2>
+                <p className="mt-1 text-[14px] text-primary">Insurers only hold a quote open for a limited time. Request fresh quotes and every insurer will quote again — your vehicle details are carried over.</p>
               </div>
             </div>
-            <button type="button" onClick={requote} className="inline-flex min-h-12 items-center gap-2 rounded-lg bg-primary px-5 text-[15px] font-bold text-white hover:bg-primary-container"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">refresh</span>Request new quotes</button>
+            <button type="button" onClick={requote} className="inline-flex min-h-12 items-center gap-2 rounded-[1px] bg-primary px-5 text-[15px] font-medium text-white hover:bg-[#b91c1c]"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">refresh</span>Request new quotes</button>
           </section>
         ) : status.status === 'expiring' && (
-          <p className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[14px] text-amber-900">
-            <span className="material-symbols-outlined text-[22px] text-amber-700" aria-hidden="true">timer</span>
+          <p className="mt-6 flex items-start gap-3 rounded-[1px] border border-primary/30 bg-primary/[0.06] p-4 text-[14px] text-primary">
+            <span className="material-symbols-outlined text-[22px] text-primary" aria-hidden="true">timer</span>
             <span><strong>Some quotes expire soon.</strong> Each insurer sets how long its quote stays open — check the valid-until date on each one and pay before it lapses.</span>
           </p>
         )}
 
         {/* Desktop: fixed comparison rows */}
-        <div className="mt-8 hidden overflow-x-auto rounded-2xl border border-slate-200 bg-white xl:block">
+        <div className="mt-8 hidden overflow-x-auto rounded-[1px] border border-line bg-white xl:block">
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="bg-slate-50 align-top">
-                <th scope="col" className="w-[18%] p-5 text-[12px] font-extrabold uppercase tracking-wide text-secondary">Compare</th>
+              <tr className="bg-canvas-2 align-top">
+                <th scope="col" className="w-[18%] p-5 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">Compare</th>
                 {quotes.map((quote, index) => (
                   <th key={quote.id} scope="col" className="p-5">
-                    <span className="flex items-center gap-2 text-[19px] font-extrabold"><span className="material-symbols-outlined text-primary" aria-hidden="true">{quote.icon || 'shield'}</span>{quote.name}</span>
-                    <span className="mt-1 block text-[12px] font-semibold text-secondary">{quote.coverage}</span>
+                    <span className="flex items-center gap-2 text-[19px] font-semibold"><span className="material-symbols-outlined text-primary" aria-hidden="true">{quote.icon || 'shield'}</span>{quote.name}</span>
+                    <span className="mt-1 block text-[12px] font-semibold text-ink-muted">{quote.coverage}</span>
                     <span className="mt-2 flex flex-wrap gap-1.5">
                       {index === 0 && !quote.expired && <Badge tone="primary">Lowest</Badge>}
                       <QuoteStatusBadge quote={quote} />
@@ -134,8 +141,8 @@ export default function QuotesComparisonPage() {
               </tr>
             </thead>
             <tbody>
-              <tr className="border-t border-slate-200 bg-slate-50/60">
-                <th scope="row" className="p-5 text-[12px] font-extrabold uppercase text-secondary">{quotes[0]?.breakdown.coverageDays ? `${quotes[0].breakdown.coverageDays}-day` : quotes[0]?.breakdown.coverageDuration} premium</th>
+              <tr className="border-t border-line bg-canvas-2/60">
+                <th scope="row" className="p-5 text-[12px] font-semibold uppercase text-ink-muted">{quotes[0]?.breakdown.coverageDays ? `${quotes[0].breakdown.coverageDays}-day` : quotes[0]?.breakdown.coverageDuration} premium</th>
                 {quotes.map((quote) => <td key={quote.id} className="whitespace-nowrap p-5 align-top"><PriceBlock quote={quote} size="table" /></td>)}
               </tr>
               <Row label="Insurer rate" quotes={quotes} render={(quote) => <><strong>{quote.ratePercentage}%</strong> of vehicle value</>} />
@@ -145,7 +152,7 @@ export default function QuotesComparisonPage() {
               ))}
               {quotes.some((quote) => quote.reply?.notes) && <Row label="Insurer notes" quotes={quotes} render={(quote) => quote.reply?.notes || '—'} />}
               {quotes.some((quote) => quote.reply?.document || quote.reply?.insurerReference) && <Row label="Quotation document" quotes={quotes} render={(quote) => <QuoteDocument reply={quote.reply} />} />}
-              <tr className="border-t border-slate-200 bg-slate-50">
+              <tr className="border-t border-line bg-canvas-2">
                 <th scope="row" className="sr-only">Choose</th>
                 {quotes.map((quote, index) => (
                   <td key={quote.id} className="p-5">
@@ -162,7 +169,8 @@ export default function QuotesComparisonPage() {
           {quotes.map((quote, index) => <QuoteCard key={quote.id} quote={quote} lowest={index === 0 && !quote.expired} benefitRows={benefitRows} disabled={requestExpired} onChoose={() => choose(quote)} onRequote={requote} />)}
         </div>
 
-        <p className="mt-7 text-center text-[14px] text-secondary">Choosing an insurer takes you to payment. Each final quote is valid until the date shown; indicative estimates are confirmed by the insurer before your policy is issued.</p>
+        <p className="mt-7 text-center text-[14px] text-ink-muted">Choosing an insurer takes you to payment. Each final quote is valid until the date shown; indicative estimates are confirmed by the insurer before your policy is issued.</p>
+        </div>
       </main>
     </>
   );
@@ -170,15 +178,15 @@ export default function QuotesComparisonPage() {
 
 function Row({ label, quotes, render }) {
   return (
-    <tr className="border-t border-slate-200">
-      <th scope="row" className="p-5 text-[12px] font-extrabold uppercase text-secondary">{label}</th>
-      {quotes.map((quote) => <td key={quote.id} className="p-5 text-[15px] text-on-surface">{render(quote)}</td>)}
+    <tr className="border-t border-line">
+      <th scope="row" className="p-5 text-[12px] font-semibold uppercase text-ink-muted">{label}</th>
+      {quotes.map((quote) => <td key={quote.id} className="p-5 text-[15px] text-ink">{render(quote)}</td>)}
     </tr>
   );
 }
 
 function BenefitCell({ value }) {
-  if (!value) return <span className="text-secondary/70" aria-label="Not included">—</span>;
+  if (!value) return <span className="text-ink-muted/70" aria-label="Not included">—</span>;
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className="material-symbols-outlined text-[20px] text-primary" aria-hidden="true">check</span>
@@ -192,11 +200,11 @@ function PriceBlock({ quote, size }) {
   const amountClass = size === 'card' ? 'text-[32px]' : 'text-[26px]';
   return (
     <div>
-      <p className={`${amountClass} font-extrabold leading-none tracking-[-.04em] text-primary`}>{formatZMW(quote.premium)}</p>
+      <p className={`${amountClass} font-semibold leading-none tracking-[-.04em] text-primary`}>{formatZMW(quote.premium)}</p>
       {quote.isFinal ? (
-        <p className="mt-1.5 text-[12px] text-secondary">Final quote from insurer{quote.estimate !== quote.premium && <> · estimate was <s>{formatZMW(quote.estimate)}</s></>}</p>
+        <p className="mt-1.5 text-[12px] text-ink-muted">Final quote from insurer{quote.estimate !== quote.premium && <> · estimate was <s>{formatZMW(quote.estimate)}</s></>}</p>
       ) : (
-        <p className="mt-1.5 text-[12px] text-secondary">Indicative estimate · awaiting insurer's final quote</p>
+        <p className="mt-1.5 text-[12px] text-ink-muted">Indicative estimate · awaiting insurer's final quote</p>
       )}
     </div>
   );
@@ -204,22 +212,22 @@ function PriceBlock({ quote, size }) {
 
 /** The insurer's own quotation document and reference, as uploaded from its system. */
 function QuoteDocument({ reply }) {
-  if (!reply) return <span className="text-secondary/70">—</span>;
+  if (!reply) return <span className="text-ink-muted/70">—</span>;
   return (
     <div className="space-y-1.5 text-[13px]">
       {reply.document && (
-        <button type="button" onClick={() => openDocument(reply.document)} className="inline-flex items-center gap-1.5 font-bold text-primary hover:underline">
+        <button type="button" onClick={() => openDocument(reply.document)} className="inline-flex items-center gap-1.5 font-medium text-primary hover:underline">
           <span className="material-symbols-outlined text-[18px]" aria-hidden="true">{reply.document.type === 'application/pdf' ? 'picture_as_pdf' : 'image'}</span>View quotation
         </button>
       )}
-      {reply.insurerReference && <p className="text-secondary">Insurer ref <span className="font-mono font-semibold text-on-surface">{reply.insurerReference}</span></p>}
+      {reply.insurerReference && <p className="text-ink-muted">Insurer ref <span className="font-mono font-semibold text-ink">{reply.insurerReference}</span></p>}
     </div>
   );
 }
 
 function Badge({ tone, children }) {
-  const tones = { primary: 'bg-primary/10 text-primary', amber: 'bg-amber-100 text-amber-800', blue: 'bg-blue-100 text-blue-800', grey: 'bg-slate-200 text-slate-600' };
-  return <span className={`rounded-md px-2 py-0.5 text-[11px] font-extrabold uppercase ${tones[tone]}`}>{children}</span>;
+  const tones = { primary: 'bg-primary/10 text-primary', amber: 'bg-primary/[0.06] text-primary', blue: 'bg-canvas-2 text-ink-muted', grey: 'bg-line text-ink-muted' };
+  return <span className={`rounded-[1px] px-2 py-0.5 text-[11px] font-semibold uppercase ${tones[tone]}`}>{children}</span>;
 }
 
 function QuoteStatusBadge({ quote }) {
@@ -232,7 +240,7 @@ function QuoteStatusBadge({ quote }) {
 function ValidityLine({ quote }) {
   if (!quote.isFinal) return null;
   return (
-    <span className={`mt-2 flex items-center gap-1 text-[12px] ${quote.expired ? 'text-red-700' : quote.validity.expiringSoon ? 'text-amber-800' : 'text-secondary'}`}>
+    <span className={`mt-2 flex items-center gap-1 text-[12px] ${quote.expired ? 'text-primary' : quote.validity.expiringSoon ? 'text-primary' : 'text-ink-muted'}`}>
       <span className="material-symbols-outlined text-[15px]" aria-hidden="true">{quote.expired ? 'event_busy' : 'event_available'}</span>{quote.validity.label}
     </span>
   );
@@ -241,39 +249,39 @@ function ValidityLine({ quote }) {
 function ChooseButton({ quote, primary, disabled, onChoose, onRequote, label }) {
   if (quote.expired || disabled) {
     return (
-      <button type="button" onClick={onRequote} className="min-h-13 w-full rounded-lg border-2 border-dashed border-slate-300 text-[14px] font-bold text-secondary hover:border-primary hover:text-primary">
+      <button type="button" onClick={onRequote} className="min-h-13 w-full rounded-[1px] border-2 border-dashed border-line text-[14px] font-medium text-ink-muted hover:border-primary hover:text-primary">
         {quote.expired ? 'Expired · request a new quote' : 'Request new quotes'}
       </button>
     );
   }
-  return <button type="button" onClick={onChoose} className={`min-h-13 w-full rounded-lg text-[15px] font-bold ${primary ? 'bg-primary text-white hover:bg-primary-container' : 'border-2 border-primary text-primary hover:bg-primary/5'}`}>{label}</button>;
+  return <button type="button" onClick={onChoose} className={`min-h-13 w-full rounded-[1px] text-[15px] font-medium ${primary ? 'bg-primary text-white hover:bg-[#b91c1c]' : 'border-2 border-primary text-primary hover:bg-primary/5'}`}>{label}</button>;
 }
 
 function QuoteCard({ quote, lowest, benefitRows, disabled, onChoose, onRequote }) {
   return (
-    <article className={`rounded-2xl border-2 bg-white p-5 ${quote.expired ? 'border-slate-200 opacity-70' : lowest ? 'border-primary' : 'border-slate-200'}`}>
+    <article className={`rounded-[1px] border-2 bg-white p-5 ${quote.expired ? 'border-line opacity-70' : lowest ? 'border-primary' : 'border-line'}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="material-symbols-outlined text-[26px] text-primary" aria-hidden="true">{quote.icon || 'shield'}</span>
-        <h2 className="text-[20px] font-extrabold tracking-[-.02em]">{quote.name}</h2>
+        <h2 className="text-[20px] font-semibold tracking-[-.02em]">{quote.name}</h2>
         {lowest && <Badge tone="primary">Lowest</Badge>}
         <QuoteStatusBadge quote={quote} />
       </div>
       <ValidityLine quote={quote} />
-      <p className="mt-1 text-[12px] font-semibold uppercase tracking-wide text-secondary">{quote.coverage}</p>
+      <p className="mt-1 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">{quote.coverage}</p>
       <div className="mt-3"><PriceBlock quote={quote} size="card" /></div>
-      <p className="mt-2 text-[13px] text-secondary">{quote.breakdown.coverageDays ? `${quote.breakdown.coverageDays} days` : quote.breakdown.coverageDuration} · {quote.ratePercentage}% of vehicle value · inspection {INSPECTION_LABELS[quote.inspectionRules]?.toLowerCase() || 'may be requested'}</p>
-      <ul className="mt-4 grid gap-1.5 border-t border-slate-100 pt-4 text-[14px]">
+      <p className="mt-2 text-[13px] text-ink-muted">{quote.breakdown.coverageDays ? `${quote.breakdown.coverageDays} days` : quote.breakdown.coverageDuration} · {quote.ratePercentage}% of vehicle value · inspection {INSPECTION_LABELS[quote.inspectionRules]?.toLowerCase() || 'may be requested'}</p>
+      <ul className="mt-4 grid gap-1.5 border-t border-line pt-4 text-[14px]">
         {benefitRows.map((row) => {
           const value = benefitCell(quote, row);
           return (
-            <li key={row.key} className={`flex items-center justify-between gap-3 ${value ? 'text-on-surface' : 'text-secondary/60'}`}>
+            <li key={row.key} className={`flex items-center justify-between gap-3 ${value ? 'text-ink' : 'text-ink-muted/60'}`}>
               <span>{row.label}</span>
               <span className="text-right text-[13px]">{value ? (value === 'Included' ? <span className="material-symbols-outlined text-[18px] text-primary" aria-label="Included">check</span> : value) : '—'}</span>
             </li>
           );
         })}
       </ul>
-      {quote.reply?.notes && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-[13px] text-blue-900"><strong>Insurer note:</strong> {quote.reply.notes}</p>}
+      {quote.reply?.notes && <p className="mt-3 rounded-[1px] bg-canvas-2 p-3 text-[13px] text-ink-muted"><strong>Insurer note:</strong> {quote.reply.notes}</p>}
       {(quote.reply?.document || quote.reply?.insurerReference) && <div className="mt-3"><QuoteDocument reply={quote.reply} /></div>}
       <div className="mt-5"><ChooseButton quote={quote} primary={lowest} disabled={disabled} onChoose={onChoose} onRequote={onRequote} label={`Choose ${quote.name}`} /></div>
     </article>
@@ -286,12 +294,12 @@ function NoActiveRequest({ requests, customer }) {
     <>
       <JourneyProgress current={5} />
       <main className="mx-auto flex min-h-[60vh] max-w-xl items-center px-5 py-10">
-        <section className="w-full rounded-2xl border border-slate-200 bg-white p-8 text-center">
+        <section className="w-full rounded-[1px] border border-line bg-white p-8 text-center">
           <span className="material-symbols-outlined text-[48px] text-primary" aria-hidden="true">compare_arrows</span>
-          <h1 className="mt-3 text-2xl font-extrabold">No quotes to compare yet</h1>
-          <p className="mt-2 text-secondary">Send a quote request and every insurer on InsurShield will reply here.</p>
-          <Link to="/insurance-type" className="mt-6 inline-flex min-h-12 items-center rounded-lg bg-primary px-6 font-bold text-white hover:bg-primary-container">Start a quote request</Link>
-          {previous.length > 0 && <p className="mt-4 text-[13px] text-secondary">Your {previous.length} earlier request{previous.length === 1 ? '' : 's'} can be found in <Link to="/account" className="font-bold text-primary hover:underline">My account</Link>.</p>}
+          <h1 className="mt-3 text-2xl font-semibold">No quotes to compare yet</h1>
+          <p className="mt-2 text-ink-muted">Send a quote request and every insurer on InsurShield will reply here.</p>
+          <Link to="/insurance-type" className="mt-6 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 font-medium text-white hover:bg-[#b91c1c]">Start a quote request</Link>
+          {previous.length > 0 && <p className="mt-4 text-[13px] text-ink-muted">Your {previous.length} earlier request{previous.length === 1 ? '' : 's'} can be found in <Link to="/account" className="font-medium text-primary hover:underline">My account</Link>.</p>}
         </section>
       </main>
     </>

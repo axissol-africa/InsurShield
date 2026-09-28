@@ -78,8 +78,8 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
       <header className="flex items-center justify-between gap-3 px-4 py-3">
         <button type="button" onClick={onCancel} className="rounded-full p-2 hover:bg-white/10" aria-label="Close camera"><span className="material-symbols-outlined" aria-hidden="true">close</span></button>
         <div className="text-center">
-          <p className="text-[11px] font-bold uppercase tracking-widest text-white/60">Photo {step} of {total}</p>
-          <h2 id="capture-title" className="text-[17px] font-extrabold">{shot.label}</h2>
+          <p className="text-[11px] font-medium uppercase tracking-widest text-white/60">Photo {step} of {total}</p>
+          <h2 id="capture-title" className="text-[17px] font-semibold">{shot.label}</h2>
         </div>
         <span className="w-10" aria-hidden="true" />
       </header>
@@ -95,27 +95,27 @@ export default function CameraCapture({ shot, plate, step, total, onCapture, onC
             <p className="mt-3 text-[15px] text-white/85">Open your camera to take this photo now.</p>
           </div>
         )}
-        {!preview && <p className="pointer-events-none absolute inset-x-4 bottom-4 rounded-xl bg-black/60 px-4 py-3 text-center text-[13px] leading-5 text-white/90">{shot.hint}</p>}
+        {!preview && <p className="pointer-events-none absolute inset-x-4 bottom-4 rounded-[1px] bg-black/60 px-4 py-3 text-center text-[13px] leading-5 text-white/90">{shot.hint}</p>}
       </div>
 
       <footer className="space-y-3 px-4 py-4">
-        {error && <p role="alert" className="rounded-xl bg-red-500/20 px-4 py-2 text-center text-[13px] text-red-100">{error}</p>}
+        {error && <p role="alert" className="rounded-[1px] bg-red-500/20 px-4 py-2 text-center text-[13px] text-red-100">{error}</p>}
         {preview ? (
           <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => { setPreview(null); setQualityConfirmed(false); }} className="min-h-12 rounded-xl border border-white/40 font-bold">Retake</button>
-            <button type="button" onClick={accept} disabled={!qualityConfirmed} className="min-h-12 rounded-xl bg-primary font-bold hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-50">Use this photo</button>
+            <button type="button" onClick={() => { setPreview(null); setQualityConfirmed(false); }} className="min-h-12 rounded-[1px] border border-white/40 font-medium">Retake</button>
+            <button type="button" onClick={accept} disabled={!qualityConfirmed} className="min-h-12 rounded-[1px] bg-primary font-medium transition-colors duration-200 ease-out hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:bg-white/15 disabled:text-white/40 disabled:hover:bg-white/15">Use this photo</button>
           </div>
         ) : mode === 'live' ? (
-          <button type="button" onClick={snap} disabled={working} className="mx-auto flex h-18 w-18 items-center justify-center rounded-full border-4 border-white/80 bg-white/10 disabled:opacity-50" aria-label="Take photo">
+          <button type="button" onClick={snap} disabled={working} className="mx-auto flex h-18 w-18 items-center justify-center rounded-full border-4 border-white/80 bg-white/10 transition-opacity duration-200 ease-out disabled:cursor-not-allowed disabled:opacity-40" aria-label="Take photo">
             <span className="h-14 w-14 rounded-full bg-white" />
           </button>
         ) : (
-          <label className="flex min-h-14 cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary text-[16px] font-bold hover:bg-primary-container">
+          <label className="flex min-h-14 cursor-pointer items-center justify-center gap-2 rounded-[1px] bg-primary text-[16px] font-medium hover:bg-[#b91c1c]">
             <span className="material-symbols-outlined" aria-hidden="true">photo_camera</span>{working ? 'Processing…' : 'Open camera'}
             <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={fromFile} disabled={working} />
           </label>
         )}
-        {preview && <label className="flex cursor-pointer items-start gap-2 rounded-xl bg-white/10 px-3 py-2 text-[12px] leading-4 text-white/90"><input type="checkbox" checked={qualityConfirmed} onChange={(event) => setQualityConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 accent-red-600" />I confirm this photo is clear, well lit and the required vehicle detail is readable.</label>}
+        {preview && <label className="flex cursor-pointer items-start gap-2 rounded-[1px] bg-white/10 px-3 py-2 text-[12px] leading-4 text-white/90"><input type="checkbox" checked={qualityConfirmed} onChange={(event) => setQualityConfirmed(event.target.checked)} className="mt-0.5 h-4 w-4 accent-red-600" />I confirm this photo is clear, well lit and the required vehicle detail is readable.</label>}
         <p className="text-center text-[11px] text-white/50">Photos are stamped with the date, time and plate. Gallery images are not accepted.</p>
       </footer>
     </div>

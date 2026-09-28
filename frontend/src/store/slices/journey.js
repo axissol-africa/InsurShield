@@ -21,6 +21,7 @@ export const JOURNEY_DEFAULTS = {
   policyDates: null,
   activeQuoteRequestId: null,
   requotedFromId: null,
+  renewalOfPolicyNumber: null,
   photosCapturedAt: null,
   selectedQuote: null,
   premiumBreakdown: null,
@@ -64,6 +65,7 @@ export const createJourneySlice = (set, get) => ({
       // The declared value and live photos go stale; without valid quotes the request expires.
       expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
       requotedFromId: state.requotedFromId,
+      renewalOfPolicyNumber: state.renewalOfPolicyNumber,
       customer,
       insurers: insurers.map((insurer) => insurer.name),
       insurerIds: insurers.map((insurer) => insurer.id),
@@ -84,7 +86,7 @@ export const createJourneySlice = (set, get) => ({
     const quoteRequests = state.requotedFromId
       ? updateById(state.quoteRequests, state.requotedFromId, (old) => ({ ...old, status: 'Expired', requotedAs: id }))
       : state.quoteRequests;
-    set({ quoteRequests: [request, ...quoteRequests], activeQuoteRequestId: id, policyDates, requotedFromId: null });
+    set({ quoteRequests: [request, ...quoteRequests], activeQuoteRequestId: id, policyDates, requotedFromId: null, renewalOfPolicyNumber: null });
     return id;
   },
 
@@ -111,6 +113,31 @@ export const createJourneySlice = (set, get) => ({
       documents: reusePhotos ? { ...state.documents } : { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
       photosCapturedAt: reusePhotos ? old.photosCapturedAt : null,
       requotedFromId: requestId,
+    });
+    return true;
+  },
+
+  /**
+   * Start a renewal from an existing policy: the journey is pre-filled with the
+   * policy's vehicle, value and cover, and new cover starts the day the old
+   * policy ends so there is no gap. Photos are never carried over — an insurer
+   * quoting a renewal needs to see the vehicle as it is now.
+   */
+  renewFromPolicy: (policyNumber) => {
+    const state = get();
+    const policy = state.policies.find((entry) => entry.policyNumber === policyNumber);
+    if (!policy) return false;
+    const endDate = policy.policyDates?.endDate;
+    const resumeDate = endDate ? new Date(endDate).toISOString().slice(0, 10) : TODAY();
+    set({
+      ...JOURNEY_DEFAULTS,
+      // Renewing late must not backdate cover to a day that has already passed.
+      policyStartDate: resumeDate > TODAY() ? resumeDate : TODAY(),
+      vehicleDetails: policy.vehicleDetails || null,
+      vehicleValue: policy.vehicleValue || policy.insuredValue || 0,
+      insuranceType: /third/i.test(policy.coverage || '') ? 'ThirdParty' : 'Comprehensive',
+      documents: { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
+      renewalOfPolicyNumber: policyNumber,
     });
     return true;
   },

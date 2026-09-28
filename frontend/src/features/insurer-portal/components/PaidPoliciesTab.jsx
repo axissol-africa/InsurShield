@@ -5,6 +5,7 @@ import { openDocument } from '@/lib/files';
 import { downloadPolicyCertificate } from '@/lib/policyDocuments';
 import { timeAgo } from '@/lib/time';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
+import Meta from '@/components/ui/Meta';
 import { BackButton, DocumentPicker, EmptyState, Fact, Icon, fieldLabelClass, inputClass, outlineButtonClass, primaryButtonClass } from './ui';
 
 const coverPeriod = (policy) => `${policy.policyDates?.formattedStart || '—'} – ${policy.policyDates?.formattedEnd || '—'}`;
@@ -16,17 +17,33 @@ const coverPeriod = (policy) => `${policy.policyDates?.formattedStart || '—'} 
 export default function PaidPoliciesTab({ policies, onIssue }) {
   return (
     <section>
-      <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h3 className="text-[20px] font-bold text-primary">Paid policy delivery</h3>
-          <p className="mt-1 text-[13px] text-secondary">Each item is linked to the exact quote request your team sent to the customer.</p>
+          <div className="flex items-center gap-4">
+            <Meta className="text-primary">Paid policy delivery</Meta>
+            <span className="h-px w-12 bg-line" aria-hidden="true" />
+          </div>
+          <p className="mt-3 max-w-xl text-[13px] leading-[1.55] text-ink-muted">
+            Each item is linked to the exact quote request your team sent to the customer.
+          </p>
         </div>
-        <span className="text-[13px] font-semibold text-secondary">{policies.length} paid {policies.length === 1 ? 'policy' : 'policies'} received</span>
+        <Meta className="shrink-0 text-ink-faint">
+          {policies.length} paid {policies.length === 1 ? 'policy' : 'policies'} received
+        </Meta>
       </div>
+
       {policies.length === 0 ? (
-        <EmptyState icon="verified_user" title="No paid policies received yet" hint="When a customer pays for your accepted quote, the paid request appears here for your team to issue the official certificate." />
+        <EmptyState
+          icon="verified_user"
+          title="No paid policies received yet"
+          hint="When a customer pays for your accepted quote, the paid request appears here for your team to issue the official certificate."
+        />
       ) : (
-        <div className="space-y-4">{policies.map((policy) => <PaidPolicyCard key={policy.policyNumber} policy={policy} onIssue={() => onIssue(policy)} />)}</div>
+        <div className="space-y-5">
+          {policies.map((policy) => (
+            <PaidPolicyCard key={policy.policyNumber} policy={policy} onIssue={() => onIssue(policy)} />
+          ))}
+        </div>
       )}
     </section>
   );
@@ -34,39 +51,89 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
 
 function PaidPolicyCard({ policy, onIssue }) {
   const issued = policy.status === 'Active';
+
   return (
-    <article className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-gray-100 bg-primary/5 p-5 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">{issued ? 'Official policy issued' : 'Paid quote received'}</p>
-          <h3 className="mt-1 font-mono text-[20px] font-extrabold text-primary">{policy.policyNumber}</h3>
-          <p className="mt-1 text-[13px] text-secondary">Paid quote request: <span className="font-mono font-bold text-on-surface">{policy.quoteRequestId || 'Legacy policy — quote reference unavailable'}</span></p>
+    <article className={`border ${issued ? 'border-line' : 'ticked border-primary'}`}>
+      {/* Reference header: what this is, and which request it came from. */}
+      <div className="flex flex-col gap-4 border-b border-dashed border-line p-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <Meta className="text-ink-muted">{issued ? 'Official policy issued' : 'Paid quote received'}</Meta>
+          <h3 className="mt-3 font-mono text-[20px] tracking-[0.02em] text-primary">{policy.policyNumber}</h3>
+          <p className="mt-2 text-[13px] text-ink-muted">
+            Paid quote request:{' '}
+            <span className="font-mono text-ink">
+              {policy.quoteRequestId || 'Legacy policy — quote reference unavailable'}
+            </span>
+          </p>
         </div>
-        <span className={`inline-flex w-fit items-center gap-1 rounded-full px-3 py-1 text-[11px] font-bold uppercase ${issued ? 'bg-primary text-white' : 'bg-slate-200 text-slate-700'}`}>
-          <Icon name={issued ? 'task_alt' : 'pending_actions'} className="text-[15px]" />{issued ? 'Paid · Active' : 'Paid · Awaiting issue'}
+        <span
+          className={`inline-flex w-fit shrink-0 items-center gap-2 rounded-[1px] border px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] ${
+            issued ? 'border-line-strong text-ink-muted' : 'border-primary bg-primary text-white'
+          }`}
+        >
+          <Icon name={issued ? 'task_alt' : 'pending_actions'} className="text-[15px]" />
+          {issued ? 'Paid · Active' : 'Paid · Awaiting issue'}
         </span>
       </div>
 
-      <dl className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div><dt className="text-[10px] font-bold uppercase text-secondary">Customer</dt><dd className="mt-1 text-[14px] font-semibold text-on-surface">{policy.customerName || 'Customer'}</dd><dd className="text-[12px] text-secondary">{policy.customerPhone || policy.customerEmail || 'Contact not supplied'}</dd></div>
-        <div><dt className="text-[10px] font-bold uppercase text-secondary">Vehicle</dt><dd className="mt-1 text-[14px] font-semibold text-on-surface">{policy.vehicle || 'Vehicle'}</dd><dd className="text-[12px] text-secondary">{policy.vehicleDetails?.plateNumber || 'Plate not supplied'}</dd></div>
-        <div><dt className="text-[10px] font-bold uppercase text-secondary">Cover period</dt><dd className="mt-1 text-[14px] font-semibold text-on-surface">{coverPeriod(policy)}</dd><dd className="text-[12px] text-secondary">{policy.coverage || policy.plan || 'Policy cover'}</dd></div>
-        <div><dt className="text-[10px] font-bold uppercase text-secondary">Premium paid</dt><dd className="mt-1 text-[18px] font-extrabold text-primary">{formatZMW(policy.premium || 0)}</dd><dd className="text-[12px] text-secondary">Received {timeAgo(policy.receivedAt || policy.issuedAt) || 'just now'}</dd></div>
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-5 p-5 sm:grid-cols-2 lg:grid-cols-4">
+        <Fact
+          label="Customer"
+          value={<>{policy.customerName || 'Customer'}<span className="mt-1 block text-[12px] text-ink-muted">{policy.customerPhone || policy.customerEmail || 'Contact not supplied'}</span></>}
+        />
+        <Fact
+          label="Vehicle"
+          value={<>{policy.vehicle || 'Vehicle'}<span className="mt-1 block font-mono text-[12px] text-ink-muted">{policy.vehicleDetails?.plateNumber || 'Plate not supplied'}</span></>}
+        />
+        <Fact
+          label="Cover period"
+          value={<>{coverPeriod(policy)}<span className="mt-1 block text-[12px] text-ink-muted">{policy.coverage || policy.plan || 'Policy cover'}</span></>}
+        />
+        <Fact
+          label="Premium paid"
+          value={<><span className="text-[18px] font-semibold tracking-[-0.02em] text-primary">{formatZMW(policy.premium || 0)}</span><span className="mt-1 block text-[12px] text-ink-muted">Received {timeAgo(policy.receivedAt || policy.issuedAt) || 'just now'}</span></>}
+        />
       </dl>
 
-      <div className="mx-5 mb-5 flex flex-col gap-3 rounded-xl border border-primary/20 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* The action this card exists for. */}
+      <div className="mx-5 mb-5 flex flex-col gap-4 border border-dashed border-line-strong p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <Icon name="description" className="text-primary" />
+          <Icon name="description" className="text-[20px] text-primary" />
           <div>
-            <p className="text-[13px] font-bold text-on-surface">{issued ? 'Official policy certificate' : 'Official certificate required'}</p>
-            <p className="text-[11px] text-secondary">{issued ? 'Available to the customer in My account.' : 'Review the paid quote, then upload the certificate from your insurer system.'}</p>
+            <p className="text-[13px] font-medium text-ink">
+              {issued ? 'Official policy certificate' : 'Official certificate required'}
+            </p>
+            <p className="mt-1 text-[12px] leading-[1.5] text-ink-muted">
+              {issued
+                ? 'Available to the customer in My account.'
+                : 'Review the paid quote, then upload the certificate from your insurer system.'}
+            </p>
           </div>
         </div>
-        {!issued && <button type="button" onClick={onIssue} className={primaryButtonClass}><Icon name="edit_document" className="text-[16px]" />Review & issue policy</button>}
-        {issued && policy.certificateDocument && <button type="button" onClick={() => openDocument(policy.certificateDocument)} className={outlineButtonClass}><Icon name="open_in_new" className="text-[16px]" />View certificate</button>}
-        {issued && !policy.certificateDocument && <button type="button" onClick={() => downloadPolicyCertificate(policy)} className={outlineButtonClass}><Icon name="download" className="text-[16px]" />Download certificate</button>}
+        {!issued && (
+          <button type="button" onClick={onIssue} className={`${primaryButtonClass} shrink-0`}>
+            <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
+            <Icon name="edit_document" className="relative text-[16px]" />
+            <span className="relative">Review &amp; issue policy</span>
+          </button>
+        )}
+        {issued && policy.certificateDocument && (
+          <button type="button" onClick={() => openDocument(policy.certificateDocument)} className={`${outlineButtonClass} shrink-0`}>
+            <Icon name="open_in_new" className="text-[16px]" />View certificate
+          </button>
+        )}
+        {issued && !policy.certificateDocument && (
+          <button type="button" onClick={() => downloadPolicyCertificate(policy)} className={`${outlineButtonClass} shrink-0`}>
+            <Icon name="download" className="text-[16px]" />Download certificate
+          </button>
+        )}
       </div>
-      {policy.insurerQuoteReference && <p className="mx-5 mb-5 rounded-lg bg-primary/5 px-3 py-2 text-[12px] text-secondary">Your quote reference: <span className="font-mono font-bold text-on-surface">{policy.insurerQuoteReference}</span></p>}
+
+      {policy.insurerQuoteReference && (
+        <p className="mx-5 mb-5 border-t border-dashed border-line pt-4 text-[12px] text-ink-muted">
+          Your quote reference: <span className="font-mono text-ink">{policy.insurerQuoteReference}</span>
+        </p>
+      )}
     </article>
   );
 }
@@ -87,66 +154,107 @@ export function PolicyIssuePanel({ policy, onBack, onIssued }) {
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-8">
-      <div className="mb-6 flex items-center gap-4">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-10">
+      <div className="mb-8 flex items-center gap-4 border-b border-line pb-7">
         <BackButton onClick={onBack} />
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-secondary">Paid policy received</p>
-          <h2 className="text-[22px] font-bold text-primary">Issue policy for {policy.quoteRequestId}</h2>
+          <Meta className="text-ink-muted">Paid policy received</Meta>
+          <h2 className="mt-3 text-[24px] font-semibold tracking-[-0.03em] text-ink">
+            Issue policy for <span className="font-mono text-primary">{policy.quoteRequestId}</span>
+          </h2>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-          <div className="border-b border-gray-100 pb-4">
-            <h3 className="text-[17px] font-bold text-primary">Paid quote in full</h3>
-            <p className="mt-1 font-mono text-[12px] text-secondary">{policy.quoteRequestId} · {policy.insurerQuoteReference || 'No insurer quote reference'}</p>
+        {/* ── What was paid for ──────────────────────────────────── */}
+        <section className="border border-line p-6">
+          <div className="border-b border-dashed border-line pb-4">
+            <Meta className="text-primary">Paid quote in full</Meta>
+            <p className="mt-3 font-mono text-[12px] text-ink-faint">
+              {policy.quoteRequestId} · {policy.insurerQuoteReference || 'No insurer quote reference'}
+            </p>
           </div>
-          <dl className="mt-5 grid grid-cols-2 gap-4">
-            <Fact label="Customer" value={<>{policy.customerName}<span className="block text-[12px] font-normal text-secondary">{policy.customerPhone}<br />{policy.customerEmail}</span></>} />
-            <Fact label="Vehicle" value={<>{policy.vehicle}<span className="block text-[12px] font-normal text-secondary">{policy.vehicleDetails?.plateNumber || '—'}</span></>} />
-            <Fact label="Cover" value={<>{policy.plan || policy.coverage}<span className="block text-[12px] font-normal text-secondary">{policy.coverage}</span></>} />
-            <Fact label="Premium paid" value={<span className="text-[18px] font-extrabold text-primary">{formatZMW(policy.premium || 0)}</span>} />
+
+          <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5">
+            <Fact label="Customer" value={<>{policy.customerName}<span className="mt-1 block text-[12px] text-ink-muted">{policy.customerPhone}<br />{policy.customerEmail}</span></>} />
+            <Fact label="Vehicle" value={<>{policy.vehicle}<span className="mt-1 block font-mono text-[12px] text-ink-muted">{policy.vehicleDetails?.plateNumber || '—'}</span></>} />
+            <Fact label="Cover" value={<>{policy.plan || policy.coverage}<span className="mt-1 block text-[12px] text-ink-muted">{policy.coverage}</span></>} />
+            <Fact label="Premium paid" value={<span className="text-[18px] font-semibold tracking-[-0.02em] text-primary">{formatZMW(policy.premium || 0)}</span>} />
             <Fact label="Cover period" value={coverPeriod(policy)} wide />
           </dl>
 
-          <div className="mt-5 rounded-xl border border-primary/20 bg-primary/5 p-4">
-            <div className="flex items-center gap-2">
-              <Icon name="receipt_long" className="text-primary" />
-              <p className="text-[12px] font-bold text-on-surface">Payment verification</p>
-              <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase text-white">{proof.status || 'Confirmed'}</span>
+          {/* Payment is verified before a certificate is ever requested. */}
+          <div className="mt-6 border border-dashed border-line-strong p-4">
+            <div className="flex items-center gap-2.5">
+              <Icon name="receipt_long" className="text-[18px] text-primary" />
+              <Meta className="text-ink-muted">Payment verification</Meta>
+              <Meta className="ml-auto rounded-[1px] border border-primary bg-primary px-2 py-1 text-white">
+                {proof.status || 'Confirmed'}
+              </Meta>
             </div>
-            <dl className="mt-3 grid grid-cols-2 gap-3 text-[12px]">
-              <div><dt className="font-bold uppercase text-secondary">Transaction reference</dt><dd className="mt-1 font-mono font-bold text-on-surface">{proof.transactionId || `TXN-${policy.quoteRequestId}`}</dd></div>
-              <div><dt className="font-bold uppercase text-secondary">Payment method</dt><dd className="mt-1 font-semibold text-on-surface">{proof.method || 'Payment gateway'}</dd></div>
-              <div><dt className="font-bold uppercase text-secondary">Amount confirmed</dt><dd className="mt-1 font-bold text-primary">{formatZMW(proof.amount || policy.premium || 0)}</dd></div>
-              <div><dt className="font-bold uppercase text-secondary">Confirmed at</dt><dd className="mt-1 font-semibold text-on-surface">{proof.confirmedAt ? formatDate(proof.confirmedAt) : 'Just now'}</dd></div>
+            <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
+              <Fact label="Transaction reference" value={<span className="font-mono">{proof.transactionId || `TXN-${policy.quoteRequestId}`}</span>} />
+              <Fact label="Payment method" value={proof.method || 'Payment gateway'} />
+              <Fact label="Amount confirmed" value={<span className="text-primary">{formatZMW(proof.amount || policy.premium || 0)}</span>} />
+              <Fact label="Confirmed at" value={proof.confirmedAt ? formatDate(proof.confirmedAt) : 'Just now'} />
             </dl>
           </div>
 
-          <div className="mt-4 rounded-xl bg-slate-50 p-4">
-            <p className="text-[12px] font-bold text-on-surface">Customer quote document</p>
+          <div className="mt-5 border-t border-dashed border-line pt-5">
+            <Meta className="text-ink-faint">Customer quote document</Meta>
             {policy.quoteDocument ? (
-              <button type="button" onClick={() => openDocument(policy.quoteDocument)} className="mt-2 inline-flex items-center gap-2 text-[13px] font-bold text-primary hover:underline"><Icon name="open_in_new" className="text-[17px]" />View uploaded quote: {policy.quoteDocument.name}</button>
+              <button
+                type="button"
+                onClick={() => openDocument(policy.quoteDocument)}
+                className="mt-3 inline-flex items-center gap-2 text-[13px] font-medium text-primary underline-offset-4 hover:underline"
+              >
+                <Icon name="open_in_new" className="text-[17px]" />
+                View uploaded quote: {policy.quoteDocument.name}
+              </button>
             ) : (
-              <p className="mt-1 text-[12px] text-secondary">No quote file is attached to this record. The paid quote details are shown above.</p>
+              <p className="mt-3 text-[12px] leading-[1.5] text-ink-muted">
+                No quote file is attached to this record. The paid quote details are shown above.
+              </p>
             )}
           </div>
         </section>
 
-        <form onSubmit={submit} className="rounded-2xl border border-primary/20 bg-white p-6 shadow-sm">
-          <h3 className="text-[17px] font-bold text-primary">Upload official policy certificate</h3>
-          <p className="mt-1 text-[13px] text-secondary">Prepare the certificate in your insurer system, then upload the final file. The same document becomes available to the customer.</p>
-          <label className="mt-5 block">
+        {/* ── The certificate that activates the policy ──────────── */}
+        <form onSubmit={submit} className="ticked border border-primary p-6">
+          <Meta className="text-primary">Upload official policy certificate</Meta>
+          <p className="mt-3 text-[13px] leading-[1.55] text-ink-muted">
+            Prepare the certificate in your insurer system, then upload the final file. The same
+            document becomes available to the customer.
+          </p>
+
+          <label className="mt-6 block">
             <span className={fieldLabelClass}>Your policy number</span>
-            <input value={insurerPolicyNumber} onChange={(event) => setInsurerPolicyNumber(event.target.value)} className={inputClass} placeholder="e.g. PA-2026-00412" />
+            <input
+              value={insurerPolicyNumber}
+              onChange={(event) => setInsurerPolicyNumber(event.target.value)}
+              className={inputClass}
+              placeholder="e.g. PA-2026-00412"
+            />
           </label>
-          <div className="mt-5">
+
+          <div className="mt-6">
             <span className={fieldLabelClass}>Official policy certificate *</span>
-            <DocumentPicker document={certificate.document} onPick={certificate.pick} onClear={certificate.clear} error={certificate.error} prompt="Upload certificate from your system" />
+            <DocumentPicker
+              document={certificate.document}
+              onPick={certificate.pick}
+              onClear={certificate.clear}
+              error={certificate.error}
+              prompt="Upload certificate from your system"
+            />
           </div>
-          <button type="submit" className="mt-6 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 text-[15px] font-bold text-white hover:bg-primary-container">
-            <Icon name="verified" className="text-[18px]" />Issue active policy & send certificate
+
+          <button
+            type="submit"
+            className="group relative mt-7 flex min-h-[50px] w-full items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-4 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
+            <Icon name="verified" className="relative text-[18px]" />
+            <span className="relative">Issue active policy &amp; send certificate</span>
           </button>
         </form>
       </div>

@@ -1,0 +1,101 @@
+# Local development infrastructure.
+#
+# Both services speak the same protocols as their AWS counterparts, so moving to
+# production is a change of environment variables rather than a change of code:
+#   postgres -> Amazon RDS for PostgreSQL   (DATABASE_URL)
+#   minio    -> Amazon S3                   (S3_* variables; MinIO is S3-compatible)
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: insurshield-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: insurshield
+      POSTGRES_PASSWORD: insurshield
+      POSTGRES_DB: insurshield
+      # Match the collation/encoding RDS uses so local and production sort alike.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the Keycloak database on a fresh volume.
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insurshield -d insurshield"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: insurshield-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: insurshield
+      MINIO_ROOT_PASSWORD: insurshield-dev-secret
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console -> http://localhost:9001
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Creates the private documents bucket on first boot, then exits.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 insurshield insurshield-dev-secret &&
+      mc mb --ignore-existing local/insurshield-documents &&
+      mc anonymous set none local/insurshield-documents &&
+      echo 'bucket ready: insurshield-documents (private)'
+      "
+
+  # Identity provider. Runs in dev mode locally (embedded H2, HTTP, realm
+  # imported on boot) so a checkout needs no setup. Production runs the same
+  # image with KC_DB=postgres against RDS and TLS terminated in front of it —
+  # see docs/DEPLOYMENT.md.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    container_name: insurshield-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8080
+      KC_HEALTH_ENABLED: "true"
+      # Same engine as production; only the URL and credentials change there.
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: insurshield
+      KC_DB_PASSWORD: insurshield
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      # The management port serves health; curl is not in the image, so this
+      # uses the JVM's own HTTP client via a bash /dev/tcp probe.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  postgres-data:
+  minio-data:

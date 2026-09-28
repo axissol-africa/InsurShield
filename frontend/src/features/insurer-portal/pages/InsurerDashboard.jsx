@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import { AWAITING_CERTIFICATE, isOpenNcdApplication, toPortalRequest } from '@/features/insurer-portal/portal';
 import { Icon } from '@/features/insurer-portal/components/ui';
+import Meta from '@/components/ui/Meta';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
 import PaidPoliciesTab, { PolicyIssuePanel } from '@/features/insurer-portal/components/PaidPoliciesTab';
@@ -31,7 +32,11 @@ export default function InsurerDashboard() {
   // Sub-views (quote form, certificate upload) replace the dashboard; start them at the top on phones.
   useEffect(() => { window.scrollTo({ top: 0 }); }, [quotingRequest, issuingPolicy, activeTab]);
 
-  const insurerName = (staffSession?.role === 'insurer' && staffSession.name) || DEFAULT_PORTAL_INSURER;
+  // A Keycloak-backed session names the insurer separately from the staff
+  // member; the prototype session puts the insurer in `name`.
+  const insurerName =
+    (staffSession?.role === 'insurer' && (staffSession.insurerName || staffSession.name)) ||
+    DEFAULT_PORTAL_INSURER;
   const insurer = insurersList.find((item) => item.name === insurerName);
   const defaultValidityDays = insurer?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
 
@@ -85,42 +90,103 @@ export default function InsurerDashboard() {
   const attentionCount = awaitingQuote.length + awaitingCertificate.length + newClaims.length + openNcd.length;
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-8">
-      <section className="mb-6 flex items-start justify-between gap-4">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-10">
+      {/* ── Who is signed in, and what is waiting ──────────────── */}
+      <section className="flex flex-wrap items-end justify-between gap-6 border-b border-line pb-7">
         <div>
-          <p className="mb-1 text-[12px] font-bold uppercase tracking-wider text-secondary">Insurer Portal</p>
-          <h2 className="text-[30px] font-bold leading-tight text-primary">{insurerName}</h2>
-          <p className="mt-0.5 text-[14px] text-secondary">{plural(newClaims.length, 'new claim')} · {plural(openNcd.length, 'NCD application')} pending</p>
+          <span className="inline-flex items-center gap-3">
+            <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
+            <Meta className="text-ink-muted">Insurer portal</Meta>
+          </span>
+          <h2 className="mt-5 text-[32px] font-semibold leading-[1.05] tracking-[-0.035em] text-ink sm:text-[40px]">
+            {insurerName}
+          </h2>
+          <p className="mt-3 text-[14px] text-ink-muted">
+            {plural(newClaims.length, 'new claim')} · {plural(openNcd.length, 'NCD application')} pending
+          </p>
         </div>
-        <div className="relative rounded-full border border-gray-100 bg-white p-3 shadow-sm" aria-label={`${attentionCount} items need attention`}>
-          <Icon name="notifications" className="text-2xl text-primary" />
-          {attentionCount > 0 && <span className="absolute right-2 top-2 h-3 w-3 animate-pulse rounded-full border-2 border-white bg-red-500" />}
+
+        {/* A readout rather than a bell: the number is the useful part. */}
+        <div
+          className={`flex items-center gap-4 rounded-[1px] border px-5 py-3 ${attentionCount > 0 ? 'border-primary bg-primary/[0.03]' : 'border-dashed border-line-strong'}`}
+        >
+          <div>
+            <Meta className={attentionCount > 0 ? 'text-primary' : 'text-ink-faint'}>Needs attention</Meta>
+            <p className={`mt-2 text-[26px] font-semibold leading-none tracking-[-0.02em] ${attentionCount > 0 ? 'text-primary' : 'text-ink-faint'}`}>
+              {attentionCount}
+            </p>
+          </div>
+          {attentionCount > 0 && (
+            <span aria-hidden="true" className="flex items-center gap-1.5">
+              {Array.from({ length: 6 }, (_, index) => (
+                <span
+                  key={index}
+                  className="dot-pulse block h-[3px] w-[3px] rounded-full bg-primary"
+                  style={{ animationDelay: `${index * 0.12}s` }}
+                />
+              ))}
+            </span>
+          )}
         </div>
       </section>
 
-      <div role="tablist" className="mb-6 grid grid-cols-2 border-b border-gray-200 sm:flex">
-        {tabs.map((tab) => (
-          <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center justify-center gap-2 border-b-2 px-3 py-3 text-[13px] font-semibold transition-colors sm:justify-start sm:px-5 sm:text-[14px] ${activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-secondary hover:text-primary'}`}>
-            <Icon name={tab.icon} className="text-[18px]" />
-            {tab.shortLabel ? <><span className="sm:hidden">{tab.shortLabel}</span><span className="hidden sm:inline">{tab.label}</span></> : tab.label}
-            {tab.badge > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{tab.badge}</span>}
-          </button>
-        ))}
+      {/* ── Sections ───────────────────────────────────────────── */}
+      <div role="tablist" className="-mb-px flex overflow-x-auto border-b border-line">
+        {tabs.map((tab) => {
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex shrink-0 items-center gap-2.5 border-b-2 px-5 py-4 font-mono text-[12px] uppercase tracking-[0.1em] transition-colors duration-200 ease-out ${
+                active ? 'border-primary text-primary' : 'border-transparent text-ink-faint hover:text-ink'
+              }`}
+            >
+              <Icon name={tab.icon} className="text-[17px]" />
+              {tab.shortLabel ? (
+                <>
+                  <span className="sm:hidden">{tab.shortLabel}</span>
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </>
+              ) : (
+                tab.label
+              )}
+              {tab.badge > 0 && (
+                <span className={`flex h-[18px] min-w-[18px] items-center justify-center rounded-[1px] px-1 text-[10px] leading-none ${active ? 'bg-primary text-white' : 'bg-primary/10 text-primary'}`}>
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {activeTab === 'overview' && (
         <>
-          <section className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {kpis.map((kpi) => (
-              <div key={kpi.label} className="relative flex flex-col gap-2 overflow-hidden rounded-xl border border-primary/10 bg-primary/5 p-6 shadow-sm">
-                {kpi.tag && <span className="absolute right-0 top-0 rounded-bl-lg bg-primary px-2 py-1 text-[10px] font-bold uppercase text-white">{kpi.tag}</span>}
-                <Icon name={kpi.icon} className="text-2xl text-primary" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-secondary">{kpi.label}</p>
-                <p className="text-[32px] font-bold leading-tight text-primary">{kpi.value}</p>
+          {/* Counts read as one instrument panel rather than four cards. */}
+          <section className="mb-10 grid grid-cols-2 border-b border-line lg:grid-cols-4">
+            {kpis.map((kpi, index) => (
+              <div
+                key={kpi.label}
+                className={`border-line py-7 pr-5 ${index % 2 === 1 ? 'border-l pl-5' : ''} ${index < 2 ? 'border-b lg:border-b-0' : ''} lg:border-l lg:pl-6 ${index === 0 ? 'lg:border-l-0 lg:pl-0' : ''}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <Icon name={kpi.icon} className="text-[19px] text-primary" />
+                  {kpi.tag && (
+                    <Meta className="rounded-[1px] border border-primary/30 bg-primary/10 px-2 py-1 text-primary">
+                      {kpi.tag}
+                    </Meta>
+                  )}
+                </div>
+                <p className="mt-5 text-[34px] font-semibold leading-none tracking-[-0.03em] text-ink">{kpi.value}</p>
+                <p className="mt-3 max-w-[170px] text-[13px] leading-[1.4] text-ink-muted">{kpi.label}</p>
               </div>
             ))}
           </section>
+
           <RequestQueue
             title="Quote requests"
             countLabel={`${awaitingQuote.length} awaiting a quote`}
@@ -139,9 +205,9 @@ export default function InsurerDashboard() {
         </>
       )}
 
-      {activeTab === 'policies' && <PaidPoliciesTab policies={myPolicies} onIssue={setIssuingPolicy} />}
-      {activeTab === 'claims' && <ClaimsTab claims={myClaims} />}
-      {activeTab === 'ncd' && <NcdTab applications={myNcd} />}
+      {activeTab === 'policies' && <div className="pt-8"><PaidPoliciesTab policies={myPolicies} onIssue={setIssuingPolicy} /></div>}
+      {activeTab === 'claims' && <div className="pt-8"><ClaimsTab claims={myClaims} /></div>}
+      {activeTab === 'ncd' && <div className="pt-8"><NcdTab applications={myNcd} /></div>}
     </motion.div>
   );
 }

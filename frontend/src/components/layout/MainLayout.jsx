@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
+import { signOutOfKeycloak } from '@/lib/keycloak';
 
 const CUSTOMER_LINKS = [
   { to: '/', label: 'Home' },
@@ -17,20 +18,25 @@ const navClass = ({ isActive }) =>
 export default function MainLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAuthenticated, customer, signOut, staffSession, endStaffSession } = useStore();
+  const { isAuthenticated, customer, staffSession, endStaffSession } = useStore();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Each journey step is a new page; start it at the top.
   useEffect(() => { window.scrollTo({ top: 0 }); }, [location.pathname]);
 
   const isPortal = PORTAL_ROUTES.some((route) => location.pathname === route || location.pathname.startsWith(`${route}/`));
+  // The phone capture page needs no identity, and its Keycloak host is not
+  // reachable from the phone — so it shows the brand alone, with nothing to
+  // tap that would strand someone half way through their photos.
+  const isCapture = location.pathname.startsWith('/capture/');
   const currentHref = `${location.pathname}${location.search}`;
   const loginHref = location.pathname === '/create-account' ? currentHref : `/create-account?next=${encodeURIComponent(currentHref)}`;
 
+  // Ends the Keycloak session too, otherwise the next visit is silently
+  // signed straight back in.
   const handleSignOut = () => {
     setMenuOpen(false);
-    signOut();
-    navigate('/');
+    signOutOfKeycloak();
   };
   const handleStaffSignOut = () => {
     endStaffSession();
@@ -44,7 +50,7 @@ export default function MainLayout() {
       <header className="fixed top-0 z-50 flex h-20 w-full items-center border-b border-slate-200 bg-white px-5 lg:px-[5.5vw]">
         <div className="flex min-w-0 items-center gap-4">
           {/* The staff portal has no customer navigation, so no hamburger. */}
-          {!isPortal && (
+          {!isPortal && !isCapture && (
             <button
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
@@ -55,22 +61,26 @@ export default function MainLayout() {
               <span className="material-symbols-outlined text-[28px]" aria-hidden="true">{menuOpen ? 'close' : 'menu'}</span>
             </button>
           )}
-          <Link to="/" onClick={() => setMenuOpen(false)} className="font-serif text-[26px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</Link>
+          {isCapture ? (
+            <span className="font-serif text-[26px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</span>
+          ) : (
+            <Link to="/" onClick={() => setMenuOpen(false)} className="font-serif text-[26px] leading-none tracking-[-0.05em] text-primary sm:text-[32px]">InsurShield</Link>
+          )}
         </div>
 
-        {isPortal ? (
+        {isCapture ? null : isPortal ? (
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
             {staffSession && (
               <>
                 {/* Who is signed in: full name and portal on wider screens, a short role badge on phones. */}
-                <span data-testid="portal-role" className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[12px] font-bold text-primary sm:hidden">
+                <span data-testid="portal-role" className="inline-flex items-center gap-1.5 rounded-[1px] border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-primary sm:hidden">
                   <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{staffSession.role === 'insurer' ? 'business' : 'admin_panel_settings'}</span>
                   {staffSession.role === 'insurer' ? 'Insurer' : 'Staff'}
                 </span>
-                <span className="hidden text-[14px] text-secondary sm:block">
-                  <strong className="text-on-surface">{staffSession.name}</strong> · {staffSession.role === 'insurer' ? 'Insurer portal' : 'Staff portal'}
+                <span className="hidden font-mono text-[12px] uppercase tracking-[0.1em] text-ink-faint sm:block">
+                  <span className="text-ink">{staffSession.name}</span> · {staffSession.role === 'insurer' ? 'Insurer portal' : 'Staff portal'}
                 </span>
-                <button type="button" onClick={handleStaffSignOut} aria-label="Sign out" className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 px-2.5 text-[13px] font-bold text-primary hover:bg-primary/5 sm:px-4">
+                <button type="button" onClick={handleStaffSignOut} aria-label="Sign out" className="inline-flex h-9 items-center justify-center rounded-[1px] border border-dashed border-line-strong px-2.5 text-[13px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary sm:px-4">
                   <span className="material-symbols-outlined text-[20px] sm:hidden" aria-hidden="true">logout</span>
                   <span className="hidden sm:inline">Sign out</span>
                 </button>
@@ -104,7 +114,7 @@ export default function MainLayout() {
         )}
       </header>
 
-      {menuOpen && !isPortal && (
+      {menuOpen && !isPortal && !isCapture && (
         <div className="fixed inset-0 top-20 z-40 md:hidden">
           {/* Tapping outside the sheet closes it. */}
           <div className="absolute inset-0 bg-black/30" onClick={() => setMenuOpen(false)} aria-hidden="true" />
@@ -122,8 +132,11 @@ export default function MainLayout() {
 
       <main className="flex-1 pt-20">
         {isPortal ? (
-          <div className="min-h-[calc(100vh-80px)] bg-gray-50/80">
-            <div className="mx-auto max-w-screen-xl px-4 py-8 sm:px-6 lg:px-10"><Outlet /></div>
+          <div className="relative min-h-[calc(100vh-80px)] bg-canvas">
+            <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.35]" aria-hidden="true" />
+            {/* Staff surfaces are data-dense tables and queues, so they use the
+                full width of a desktop rather than a reading-width column. */}
+            <div className="relative w-full px-4 py-8 sm:px-6 lg:px-10 2xl:px-16"><Outlet /></div>
           </div>
         ) : (
           <Outlet />

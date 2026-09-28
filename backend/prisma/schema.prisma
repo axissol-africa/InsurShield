@@ -1,0 +1,781 @@
+// InsurShield data model.
+//
+// Mirrors the API contract in `frontend/src/api/contracts.js` and the safeguards
+// required by `docs/INSURER_API_INTEGRATION.md`. Two rules run through it:
+//
+//  1. Files are never stored in the database. `Document` holds metadata and an
+//     object-storage key; bytes live in S3 (MinIO locally) behind signed URLs.
+//  2. Money is `Decimal`, never `Float`. Premiums are ZMW and must reconcile
+//     exactly with the insurer's own quotation document.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+  runtime      = "nodejs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum QuoteRequestStatus {
+  SUBMITTED
+  QUOTED
+  EXPIRED
+}
+
+enum InsuranceType {
+  COMPREHENSIVE
+  THIRD_PARTY
+}
+
+/// '1q'..'4q' in the contract.
+enum CoverageDuration {
+  Q1
+  Q2
+  Q3
+  Q4
+}
+
+enum InsurerStatus {
+  ACTIVE
+  INACTIVE
+  DELETED
+}
+
+enum PolicyStatus {
+  AWAITING_INSURER_CERTIFICATE
+  ACTIVE
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum PaymentMethod {
+  MOBILE_MONEY
+  CARD
+}
+
+enum ClaimStatus {
+  NOTIFIED
+  RECEIVED_BY_INSURER
+}
+
+enum NcdStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  VERIFICATION_REQUIRED
+  APPROVED
+  REJECTED
+}
+
+enum InspectionStatus {
+  REQUESTED
+  SCHEDULED
+  INSPECTOR_ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  REPORT_READY
+  APPROVED
+  FAILED
+}
+
+enum InspectionRule {
+  NOT_REQUIRED
+  OPTIONAL
+  REQUIRED
+}
+
+enum InspectionTiming {
+  BEFORE_QUOTATION
+  BEFORE_PAYMENT
+  AFTER_PAYMENT
+}
+
+enum InspectionMethod {
+  SELF_CAPTURE
+  PHYSICAL
+}
+
+enum StaffRole {
+  SUPER_ADMIN
+  ADMIN
+  INSURER_USER
+}
+
+enum DocumentKind {
+  QUOTATION
+  CERTIFICATE
+  INSPECTION_PHOTO
+  CLAIM_ATTACHMENT
+  INSURER_LOGO
+  NCD_EVIDENCE
+}
+
+// PARKED — SMS phone verification. Keycloak provides TOTP but not SMS, so this
+// would live here rather than in the realm. Uncomment this enum together with
+// the OtpChallenge model and Customer.phoneVerifiedAt below, then migrate.
+// enum OtpPurpose {
+//   REGISTRATION
+//   PASSWORD_RESET
+// }
+
+enum DeliveryStatus {
+  PENDING
+  DELIVERED
+  ACKNOWLEDGED
+  FAILED
+}
+
+enum DeliveryKind {
+  QUOTE_REQUEST
+  PAID_POLICY
+  CLAIM_NOTIFICATION
+}
+
+enum ActorType {
+  CUSTOMER
+  STAFF
+  INSURER
+  SYSTEM
+}
+
+// ─────────────────────── Identity & consent ───────────────────────
+
+model Customer {
+  id           String    @id @default(uuid()) @db.Uuid
+  /// The `sub` claim from Keycloak. Credentials live there, never here.
+  keycloakId   String    @unique
+  fullName     String
+  email        String    @unique
+  phone        String    @unique
+  // PARKED with the OTP flow above — set once SMS verification completes.
+  // phoneVerifiedAt DateTime?
+  emailVerifiedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  consents        ConsentRecord[]
+  quoteRequests   QuoteRequest[]
+  payments        Payment[]
+  policies        Policy[]
+  claims          ClaimNotification[]
+  ncdApplications NcdApplication[]
+  inspections     Inspection[]
+  documents       Document[]
+
+  @@index([deletedAt])
+  @@map("customers")
+}
+
+/// Append-only. A customer who re-accepts new terms gets a new row; rows are
+/// never updated, so the consent trail stays auditable.
+model ConsentRecord {
+  id             String   @id @default(uuid()) @db.Uuid
+  customerId     String   @db.Uuid
+  customer       Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  privacyVersion String
+  termsVersion   String
+  acceptedAt     DateTime @default(now())
+  ipAddress      String?
+  userAgent      String?
+
+  @@index([customerId, acceptedAt])
+  @@map("consent_records")
+}
+
+// PARKED — see the OtpPurpose note above.
+// Server-issued, expiry-bound SMS OTP for verifying a Zambian mobile number.
+// Only the hash would be stored, never the code.
+// model OtpChallenge {
+//   id          String     @id @default(uuid()) @db.Uuid
+//   phone       String
+//   codeHash    String
+//   purpose     OtpPurpose
+//   expiresAt   DateTime
+//   attempts    Int        @default(0)
+//   consumedAt  DateTime?
+//   createdAt   DateTime   @default(now())
+//
+//   @@index([phone, purpose, expiresAt])
+//   @@map("otp_challenges")
+// }
+
+model StaffUser {
+  id           String    @id @default(uuid()) @db.Uuid
+  /// The `sub` claim from Keycloak. Credentials live there, never here.
+  keycloakId   String    @unique
+  email        String    @unique
+  fullName     String
+  role         StaffRole
+  /// Set for INSURER_USER: the insurer whose portal this account can see.
+  insurerId    String?   @db.Uuid
+  insurer      Insurer?  @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  piaConfigUpdates PiaConfig[]
+  documents        Document[]
+
+  @@index([insurerId])
+  @@map("staff_users")
+}
+
+// ─────────────────────────── Insurers ───────────────────────────
+
+model Insurer {
+  id                String           @id @default(uuid()) @db.Uuid
+  name              String           @unique
+  tradingName       String?
+  status            InsurerStatus    @default(ACTIVE)
+  /// Annual rate as a percentage of declared vehicle value.
+  ratePercentage    Decimal          @db.Decimal(5, 2)
+  quoteValidityDays Int
+  coverage          String
+  plan              String?
+  licenceNumber     String?
+  licenceExpiry     DateTime?
+  /// Company registration and tax numbers captured during onboarding.
+  registrationNumber String?
+  tpin               String?
+  website            String?
+  logoUrl           String?
+  ncdAccepted       Boolean          @default(true)
+  inspectionRule    InspectionRule   @default(OPTIONAL)
+  inspectionTiming  InspectionTiming @default(BEFORE_PAYMENT)
+  inspectionMethod  InspectionMethod @default(SELF_CAPTURE)
+  icon              String?
+  isBestValue       Boolean          @default(false)
+  benefits          String[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  deletedAt         DateTime?
+
+  contact       InsurerContact?
+  integration   InsurerIntegration?
+  staffUsers    StaffUser[]
+  recipients    QuoteRequestRecipient[]
+  quotes        InsurerQuote[]
+  policies      Policy[]
+  claims        ClaimNotification[]
+  ncdApplications NcdApplication[]
+  ncdCodes      NcdCode[]
+  inspections   Inspection[]
+  deliveries    IntegrationDelivery[]
+
+  @@index([status])
+  @@map("insurers")
+}
+
+/// The claims desk customers contact after a first notification.
+model InsurerContact {
+  insurerId     String  @id @db.Uuid
+  insurer       Insurer @relation(fields: [insurerId], references: [id], onDelete: Cascade)
+  tagline       String?
+  contactPerson String
+  role          String
+  phone         String
+  mobile        String?
+  whatsapp      String?
+  email         String
+  address       String?
+  hours         String?
+
+  @@map("insurer_contacts")
+}
+
+/// Server-to-server credentials from the onboarding flow. None of this may ever
+/// reach the browser; `clientSecretEncrypted` is encrypted at the application
+/// layer before it is written.
+model InsurerIntegration {
+  insurerId             String    @id @db.Uuid
+  insurer               Insurer   @relation(fields: [insurerId], references: [id], onDelete: Cascade)
+  apiBaseUrl            String
+  publicSigningKey      String
+  quoteCallbackUrl      String?
+  claimsCallbackUrl     String?
+  policyCallbackUrl     String?
+  clientId              String    @unique
+  clientSecretEncrypted String
+  sandboxMode           Boolean   @default(true)
+  activatedAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("insurer_integrations")
+}
+
+// ─────────────────────────── Documents ───────────────────────────
+
+/// Metadata only. The file itself lives in private object storage under
+/// `storageKey`; the API hands out short-lived signed URLs.
+model Document {
+  id             String       @id @default(uuid()) @db.Uuid
+  kind           DocumentKind
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  storageKey     String       @unique
+  checksumSha256 String?
+  uploadedAt     DateTime     @default(now())
+
+  uploadedByCustomerId String?    @db.Uuid
+  uploadedByCustomer   Customer?  @relation(fields: [uploadedByCustomerId], references: [id], onDelete: SetNull)
+  uploadedByStaffId    String?    @db.Uuid
+  uploadedByStaff      StaffUser? @relation(fields: [uploadedByStaffId], references: [id], onDelete: SetNull)
+
+  insurerQuote        InsurerQuote?
+  inspectionShot      InspectionShot?
+  inspectionPhoto     InspectionPhoto?
+  claimAttachment     ClaimAttachment?
+  policyQuoteDocs     Policy[]        @relation("PolicyQuoteDocument")
+  policyCertificates  Policy[]        @relation("PolicyCertificate")
+
+  @@index([kind])
+  @@map("documents")
+}
+
+// ─────────────────────────── Vehicles ───────────────────────────
+
+model Vehicle {
+  id                  String    @id @default(uuid()) @db.Uuid
+  plateNumber         String
+  make                String
+  model               String
+  year                String
+  color               String?
+  chassisNumber       String?
+  engineNumber        String?
+  registrationDate    DateTime?
+  /// Supplied by RTSA; cover periods can be anchored to this anniversary.
+  rtsaAnniversaryDate DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  quoteRequests QuoteRequest[]
+  policies      Policy[]
+
+  @@index([plateNumber])
+  @@map("vehicles")
+}
+
+// ────────────────────── Quote requests & quotes ──────────────────────
+
+model QuoteRequest {
+  id          String             @id
+  status      QuoteRequestStatus @default(SUBMITTED)
+  submittedAt DateTime           @default(now())
+  expiresAt   DateTime
+
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  vehicleId  String   @db.Uuid
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+
+  /// Declared value in ZMW; the premium is derived from it.
+  vehicleValue       Decimal          @db.Decimal(14, 2)
+  vehicleUsage       String
+  insuranceType      InsuranceType
+  coverageDuration   CoverageDuration
+  matchRtsaAnniversary Boolean        @default(false)
+  rtsaRegistrationDate DateTime?
+
+  /// Flattened from the contract's `policyDates`; everything else there is derived.
+  policyStartDate DateTime?
+  policyEndDate   DateTime?
+  coverageDays    Int?
+
+  /// NCD only discounts the quote from the insurer that issued the code.
+  ncdCode       String?
+  ncdPercentage Int?
+
+  photosCapturedAt DateTime?
+
+  requotedFromId String?       @unique
+  requotedFrom   QuoteRequest? @relation("Requote", fields: [requotedFromId], references: [id], onDelete: SetNull)
+  requotedAs     QuoteRequest? @relation("Requote")
+
+  /// Set when this request was started to renew an existing policy. Not unique:
+  /// a renewal request that lapses must not block renewing the policy again.
+  renewalOfPolicyNumber String?
+  renewalOfPolicy       Policy? @relation("PolicyRenewal", fields: [renewalOfPolicyNumber], references: [policyNumber], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients      QuoteRequestRecipient[]
+  quotes          InsurerQuote[]
+  inspectionShots InspectionShot[]
+  payments        Payment[]
+  policies        Policy[]
+
+  @@index([customerId, submittedAt])
+  @@index([status, expiresAt])
+  @@index([renewalOfPolicyNumber])
+  @@map("quote_requests")
+}
+
+/// One row per insurer the request was sent to, carrying the delivery audit
+/// trail the integration doc requires.
+model QuoteRequestRecipient {
+  id             String         @id @default(uuid()) @db.Uuid
+  quoteRequestId String
+  quoteRequest   QuoteRequest   @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  insurerId      String         @db.Uuid
+  insurer        Insurer        @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+  status         DeliveryStatus @default(PENDING)
+  attempts       Int            @default(0)
+  deliveredAt    DateTime?
+  acknowledgedAt DateTime?
+  lastError      String?
+
+  @@unique([quoteRequestId, insurerId])
+  @@index([insurerId, status])
+  @@map("quote_request_recipients")
+}
+
+/// An insurer's single final reply. `premium` must equal the premium printed on
+/// `document`, which the insurer produced in its own system.
+model InsurerQuote {
+  id             String       @id @default(uuid()) @db.Uuid
+  quoteRequestId String
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  insurerId      String       @db.Uuid
+  insurer        Insurer      @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+
+  premium          Decimal  @db.Decimal(14, 2)
+  notes            String?
+  insurerReference String?
+  validityDays     Int
+  sentAt           DateTime @default(now())
+  validUntil       DateTime
+  extendedAt       DateTime?
+
+  documentId String   @unique @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  payments Payment[]
+  policies Policy[]
+
+  /// One final quote per insurer per request.
+  @@unique([quoteRequestId, insurerId])
+  /// Deduplicates insurer retries, per INSURER_API_INTEGRATION.md step 4.
+  @@unique([quoteRequestId, insurerReference])
+  @@index([validUntil])
+  @@map("insurer_quotes")
+}
+
+/// One of the seven live capture shots (see frontend/src/domain/inspection.js).
+model InspectionShot {
+  id             String       @id @default(uuid()) @db.Uuid
+  quoteRequestId String
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  shotKey        String
+  documentId     String       @unique @db.Uuid
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  capturedAt     DateTime     @default(now())
+
+  @@unique([quoteRequestId, shotKey])
+  @@map("inspection_shots")
+}
+
+// ─────────────────────── Payments & policies ───────────────────────
+
+model Payment {
+  id            String        @id @default(uuid()) @db.Uuid
+  transactionId String        @unique
+  status        PaymentStatus @default(PENDING)
+  method        PaymentMethod
+  amount        Decimal       @db.Decimal(14, 2)
+  currency      String        @default("ZMW")
+  confirmedAt   DateTime?
+  failureReason String?
+  /// Reference returned by the mobile-money or card provider.
+  providerReference String?
+  /// Sent by the client so a retried POST cannot charge twice.
+  idempotencyKey    String  @unique
+
+  customerId     String       @db.Uuid
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quoteRequestId String
+  quoteRequest   QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Restrict)
+  insurerQuoteId String       @db.Uuid
+  insurerQuote   InsurerQuote @relation(fields: [insurerQuoteId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  policy Policy?
+
+  @@index([customerId, createdAt])
+  @@index([status])
+  @@map("payments")
+}
+
+/// Created only after a server-verified payment, in
+/// `AWAITING_INSURER_CERTIFICATE`. Payment alone never produces a certificate:
+/// the policy becomes ACTIVE when the insurer posts its own certificate.
+model Policy {
+  policyNumber        String       @id
+  insurerPolicyNumber String?
+  status              PolicyStatus @default(AWAITING_INSURER_CERTIFICATE)
+
+  insurerId  String   @db.Uuid
+  insurer    Insurer  @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  vehicleId  String   @db.Uuid
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+
+  coverage String
+  plan     String?
+  premium  Decimal @db.Decimal(14, 2)
+
+  policyStartDate DateTime?
+  policyEndDate   DateTime?
+
+  quoteRequestId        String?
+  quoteRequest          QuoteRequest? @relation(fields: [quoteRequestId], references: [id], onDelete: SetNull)
+  insurerQuoteId        String?       @db.Uuid
+  insurerQuote          InsurerQuote? @relation(fields: [insurerQuoteId], references: [id], onDelete: SetNull)
+  insurerQuoteReference String?
+
+  quoteDocumentId String?   @db.Uuid
+  quoteDocument   Document? @relation("PolicyQuoteDocument", fields: [quoteDocumentId], references: [id], onDelete: SetNull)
+  /// Uploaded by the insurer; its arrival is what makes the policy ACTIVE.
+  certificateDocumentId String?   @db.Uuid
+  certificateDocument   Document? @relation("PolicyCertificate", fields: [certificateDocumentId], references: [id], onDelete: SetNull)
+
+  paymentId String  @unique @db.Uuid
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  receivedAt DateTime  @default(now())
+  issuedAt   DateTime?
+  updatedAt  DateTime  @updatedAt
+
+  claims ClaimNotification[]
+  /// Quote requests started to renew this policy.
+  renewals QuoteRequest[] @relation("PolicyRenewal")
+
+  /// Idempotency for insurer issue callbacks: a retry cannot create a duplicate.
+  @@unique([quoteRequestId, insurerPolicyNumber])
+  @@index([customerId, receivedAt])
+  @@index([insurerId, status])
+  @@map("policies")
+}
+
+// ─────────────────────────── Claims ───────────────────────────
+
+/// First notification only; the claim itself continues in the insurer's system.
+model ClaimNotification {
+  claimNumber String      @id
+  status      ClaimStatus @default(NOTIFIED)
+
+  insurerId  String    @db.Uuid
+  insurer    Insurer   @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+  customerId String?   @db.Uuid
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  policyNumber String?
+  policy       Policy? @relation(fields: [policyNumber], references: [policyNumber], onDelete: SetNull)
+
+  fullName     String
+  phone        String
+  email        String?
+  plate        String
+  vehicleLabel String
+  type         String
+  incidentDate DateTime
+  location     String
+  description  String
+  estimatedLoss Decimal? @db.Decimal(14, 2)
+  policeReport       Boolean @default(false)
+  policeReportNumber String?
+  /// Why the notification came in outside the insurer's reporting window.
+  lateReason         String?
+
+  submittedAt DateTime  @default(now())
+  receivedAt  DateTime?
+  /// The insurer's own claim reference, shown alongside ours.
+  insurerClaimReference String?
+
+  attachments ClaimAttachment[]
+
+  @@index([customerId, submittedAt])
+  @@index([insurerId, status])
+  @@map("claim_notifications")
+}
+
+model ClaimAttachment {
+  id          String            @id @default(uuid()) @db.Uuid
+  claimNumber String
+  claim       ClaimNotification @relation(fields: [claimNumber], references: [claimNumber], onDelete: Cascade)
+  documentId  String            @unique @db.Uuid
+  document    Document          @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@map("claim_attachments")
+}
+
+// ───────────────────────────── NCD ─────────────────────────────
+
+model NcdApplication {
+  id                String    @id @default(uuid()) @db.Uuid
+  applicationNumber String    @unique
+  insurerId         String    @db.Uuid
+  insurer           Insurer   @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+  customerId        String?   @db.Uuid
+  customer          Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  policyNumber    String
+  fullName        String
+  phone           String
+  yearsClaimFree  Int
+  status          NcdStatus @default(SUBMITTED)
+  approvedCodeId  String?   @unique
+  approvedCode    NcdCode?  @relation(fields: [approvedCodeId], references: [code], onDelete: SetNull)
+  submittedAt     DateTime  @default(now())
+  decidedAt       DateTime?
+
+  @@index([insurerId, status])
+  @@map("ncd_applications")
+}
+
+/// A discount code is only honoured by the insurer that issued it.
+model NcdCode {
+  code           String    @id
+  insurerId      String    @db.Uuid
+  insurer        Insurer   @relation(fields: [insurerId], references: [id], onDelete: Restrict)
+  percentage     Int
+  yearsClaimFree Int
+  issuedAt       DateTime  @default(now())
+  expiresAt      DateTime?
+  redeemedAt     DateTime?
+
+  application NcdApplication?
+
+  @@map("ncd_codes")
+}
+
+// ───────────────────────── Inspections ─────────────────────────
+
+/// The scheduled physical/assisted inspection workflow, distinct from the seven
+/// self-capture shots attached to a quote request.
+model Inspection {
+  id     String           @id
+  status InspectionStatus @default(REQUESTED)
+
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  insurerId  String?  @db.Uuid
+  insurer    Insurer? @relation(fields: [insurerId], references: [id], onDelete: SetNull)
+
+  vehiclePlate      String
+  vehicleLabel      String
+  preferredDate     DateTime?
+  preferredTime     String?
+  preferredLocation String?
+  scheduledDate     DateTime?
+  inspectorName     String?
+  inspectorPhone    String?
+  location          String?
+  notes             String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  photos InspectionPhoto[]
+
+  @@index([customerId, createdAt])
+  @@index([status])
+  @@map("inspections")
+}
+
+model InspectionPhoto {
+  id           String     @id @default(uuid()) @db.Uuid
+  inspectionId String
+  inspection   Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  slot         String
+  documentId   String     @unique @db.Uuid
+  document     Document   @relation(fields: [documentId], references: [id], onDelete: Restrict)
+
+  @@unique([inspectionId, slot])
+  @@map("inspection_photos")
+}
+
+// ────────────────────── Platform configuration ──────────────────────
+
+/// Single row (id = "current"). The PIA minimum rate is a regulatory floor: no
+/// insurer may quote below `piaRatePercentage`% of declared vehicle value.
+model PiaConfig {
+  id                String     @id @default("current")
+  piaRatePercentage Decimal    @db.Decimal(5, 2)
+  updatedByStaffId  String?    @db.Uuid
+  updatedByStaff    StaffUser? @relation(fields: [updatedByStaffId], references: [id], onDelete: SetNull)
+  updatedAt         DateTime   @updatedAt
+
+  @@map("pia_config")
+}
+
+// ──────────────────────── Audit & idempotency ────────────────────────
+
+/// Replays the stored response when a client retries a POST with the same key,
+/// so money and policy records are never created twice.
+model IdempotencyRecord {
+  key            String   @id
+  endpoint       String
+  requestHash    String
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
+
+/// Every server-to-server call to an insurer, with its acknowledgement.
+model IntegrationDelivery {
+  id             String         @id @default(uuid()) @db.Uuid
+  insurerId      String         @db.Uuid
+  insurer        Insurer        @relation(fields: [insurerId], references: [id], onDelete: Cascade)
+  kind           DeliveryKind
+  /// The QR-…, POL-… or CLM-… reference this delivery concerns.
+  referenceId    String
+  endpoint       String
+  attempt        Int            @default(1)
+  status         DeliveryStatus @default(PENDING)
+  requestPayload Json
+  responseStatus Int?
+  responseBody   Json?
+  error          String?
+  createdAt      DateTime       @default(now())
+
+  @@index([insurerId, kind, referenceId])
+  @@index([status, createdAt])
+  @@map("integration_deliveries")
+}
+
+model AuditLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  actorType  ActorType
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorType, actorId, createdAt])
+  @@map("audit_logs")
+}

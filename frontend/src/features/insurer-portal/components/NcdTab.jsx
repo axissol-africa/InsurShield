@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useStore } from '@/store';
 import { isOpenNcdApplication, statusStyle } from '@/features/insurer-portal/portal';
-import { EmptyState, Icon } from './ui';
+import Meta from '@/components/ui/Meta';
+import { EmptyState, Fact, Icon } from './ui';
 
 const newNcdCode = () => `NCD-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 
@@ -19,56 +20,96 @@ export default function NcdTab({ applications }) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[18px] font-bold text-primary">NCD Applications</h3>
-        <span className="text-[13px] text-secondary">{applications.length} total</span>
+    <div>
+      <div className="mb-5 flex items-end justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Meta className="text-primary">NCD applications</Meta>
+          <span className="h-px w-12 bg-line" aria-hidden="true" />
+        </div>
+        <Meta className="text-ink-faint">{applications.length} total</Meta>
       </div>
-      {applications.length === 0 && <EmptyState icon="sell" title="No NCD applications yet." />}
-      {applications.map((application) => (
-        <NcdApplicationCard key={application.id} application={application} busy={busyId === application.id} onDecide={(status) => decide(application.id, status)} />
-      ))}
+
+      {applications.length === 0 ? (
+        <EmptyState icon="sell" title="No NCD applications yet." />
+      ) : (
+        <div className="border border-line">
+          {applications.map((application, index) => (
+            <NcdApplicationRow
+              key={application.id}
+              application={application}
+              isFirst={index === 0}
+              busy={busyId === application.id}
+              onDecide={(status) => decide(application.id, status)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
+/**
+ * Approving issues a discount code, so it is the only filled action; the other
+ * two are outlined. Rejection is deliberately not styled as an emergency — it
+ * is a routine outcome.
+ */
 const DECISIONS = [
-  { status: 'Approved', label: 'Approve & Issue Code', icon: 'check', className: 'bg-primary text-white hover:bg-primary-container' },
-  { status: 'Under Review', label: 'Mark Under Review', icon: 'pending', className: 'bg-amber-100 text-amber-800 hover:bg-amber-200' },
-  { status: 'Rejected', label: 'Reject', icon: 'close', className: 'bg-red-50 text-red-700 hover:bg-red-100' },
+  { status: 'Approved', label: 'Approve & issue code', icon: 'check', filled: true },
+  { status: 'Under Review', label: 'Mark under review', icon: 'pending', filled: false },
+  { status: 'Rejected', label: 'Reject', icon: 'close', filled: false },
 ];
 
-function NcdApplicationCard({ application, busy, onDecide }) {
+function NcdApplicationRow({ application, isFirst, busy, onDecide }) {
   const style = statusStyle(application.status);
+
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className="text-[14px] font-bold text-primary">{application.fullName}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${style.badge}`}>{application.status}</span>
+    <div className={`group relative p-5 transition-colors duration-200 ease-out hover:bg-canvas-2 ${isFirst ? '' : 'border-t border-dashed border-line'}`}>
+      <span className="beam pointer-events-none absolute left-0 top-0 h-px w-1/4 bg-primary" aria-hidden="true" />
+
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[16px] font-medium tracking-[-0.015em] text-ink">{application.fullName}</span>
+            <Meta className={`rounded-[1px] border px-2 py-1 ${style.badge}`}>{application.status}</Meta>
           </div>
-          <p className="font-mono text-[12px] text-secondary">{application.applicationNumber || application.id}</p>
-          <dl className="mt-3 grid grid-cols-3 gap-3">
-            <div><dt className="text-[10px] font-bold uppercase text-secondary">Policy No.</dt><dd className="font-mono text-[13px] font-semibold">{application.policyNumber}</dd></div>
-            <div><dt className="text-[10px] font-bold uppercase text-secondary">Years Claim-Free</dt><dd className="text-[13px] font-semibold">{application.yearsClaimFree} yr{application.yearsClaimFree === 1 ? '' : 's'}</dd></div>
-            <div><dt className="text-[10px] font-bold uppercase text-secondary">Expected Discount</dt><dd className="text-[13px] font-bold text-primary">{application.yearsClaimFree * 10}%</dd></div>
+          <Meta className="mt-2 block text-primary">{application.applicationNumber || application.id}</Meta>
+
+          <dl className="mt-5 grid max-w-xl grid-cols-3 gap-x-6 gap-y-4">
+            <Fact label="Policy no." value={<span className="font-mono">{application.policyNumber}</span>} />
+            <Fact label="Years claim-free" value={`${application.yearsClaimFree} yr${application.yearsClaimFree === 1 ? '' : 's'}`} />
+            <Fact
+              label="Expected discount"
+              value={<span className="text-primary">{application.yearsClaimFree * 10}%</span>}
+            />
           </dl>
+
           {application.approvedCode && (
-            <div className="mt-3 flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
+            <div className="mt-5 inline-flex items-center gap-3 rounded-[1px] border border-primary bg-primary/[0.03] px-4 py-3">
               <Icon name="check_circle" className="text-[18px] text-primary" />
               <div>
-                <p className="text-[12px] font-semibold text-primary">Approved — NCD Code Issued</p>
-                <p className="font-mono text-[14px] font-bold text-on-primary-container">{application.approvedCode}</p>
+                <Meta className="text-ink-muted">Code issued</Meta>
+                <p className="mt-1.5 font-mono text-[15px] tracking-[0.04em] text-primary">{application.approvedCode}</p>
               </div>
             </div>
           )}
         </div>
+
         {isOpenNcdApplication(application) && (
-          <div className="flex flex-shrink-0 flex-col gap-2">
+          <div className="flex shrink-0 flex-col gap-2">
             {DECISIONS.map((decision) => (
-              <button key={decision.status} type="button" disabled={busy} onClick={() => onDecide(decision.status)} className={`flex items-center gap-1 rounded-xl px-4 py-2 text-[13px] font-bold disabled:opacity-50 ${decision.className}`}>
-                <Icon name={decision.icon} className="text-[16px]" />{decision.label}
+              <button
+                key={decision.status}
+                type="button"
+                disabled={busy}
+                onClick={() => onDecide(decision.status)}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-[1px] px-4 text-[13px] font-medium transition-colors duration-200 ease-out disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas ${
+                  decision.filled
+                    ? 'bg-primary text-white hover:bg-[#b91c1c]'
+                    : 'border border-dashed border-line-strong text-ink hover:border-primary hover:text-primary'
+                }`}
+              >
+                <Icon name={decision.icon} className="text-[16px]" />
+                {decision.label}
               </button>
             ))}
           </div>

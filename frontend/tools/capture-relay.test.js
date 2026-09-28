@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, it } from 'vitest';
 import captureRelay from './capture-relay.js';
 
+const disconnect = (req) => req.emit('close');
+
 let handler;
 
 beforeAll(() => {
@@ -22,6 +24,23 @@ const call = (method, url, body) =>
     if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body)));
     req.emit('end');
   });
+
+/** SSE responses never call end(), so collect the frames they write instead. */
+const openStream = (url) => {
+  const req = new EventEmitter();
+  req.method = 'GET';
+  req.url = url;
+  const frames = [];
+  const res = {
+    headers: null,
+    writeHead(status, headers) { this.statusCode = status; this.headers = headers; },
+    write(chunk) { frames.push(chunk); return true; },
+    end() {},
+    setHeader() {},
+  };
+  handler(req, res);
+  return { req, res, frames, events: () => frames.filter((f) => f.startsWith('data: ')).map((f) => JSON.parse(f.slice(6))) };
+};
 
 describe('capture relay', () => {
   it('reports a reachable origin', async () => {
@@ -53,6 +72,41 @@ describe('capture relay', () => {
     expect((await call('PUT', `/${code}/photos/insp_front`, { dataUrl: 'hello' })).status).toBe(400);
     expect((await call('GET', '/NOPE00')).status).toBe(404);
     expect((await call('DELETE', `/${code}`)).status).toBe(404);
+  });
+
+  it('streams each photo to a watching laptop as it arrives', async () => {
+    const { code } = (await call('POST', '/', { plate: 'BAA 1234', shots: ['insp_front', 'insp_back'] })).body;
+    const stream = openStream(`/${code}/events`);
+
+    expect(stream.res.statusCode).toBe(200);
+    expect(stream.res.headers['Content-Type']).toBe('text/event-stream');
+    // The first frame carries the session so a reconnecting laptop catches up.
+    expect(stream.events()[0]).toMatchObject({ type: 'session', session: { code, plate: 'BAA 1234' } });
+
+    await call('PUT', `/${code}/photos/insp_front`, { dataUrl: 'data:image/jpeg;base64,AAAA' });
+    expect(stream.events().at(-1)).toEqual({ type: 'photo', key: 'insp_front', dataUrl: 'data:image/jpeg;base64,AAAA', count: 1 });
+
+    await call('POST', `/${code}/complete`);
+    expect(stream.events().at(-1)).toEqual({ type: 'complete', count: 1 });
+  });
+
+  it('sends a catch-up frame holding photos taken before the laptop connected', async () => {
+    const { code } = (await call('POST', '/', { plate: 'BAA 1234', shots: ['insp_front'] })).body;
+    await call('PUT', `/${code}/photos/insp_front`, { dataUrl: 'data:image/jpeg;base64,BBBB' });
+
+    const stream = openStream(`/${code}/events`);
+    expect(stream.events()[0].session.photos).toEqual({ insp_front: 'data:image/jpeg;base64,BBBB' });
+  });
+
+  it('stops writing to a laptop that has disconnected', async () => {
+    const { code } = (await call('POST', '/', { plate: 'BAA 1234', shots: ['insp_front'] })).body;
+    const stream = openStream(`/${code}/events`);
+    const before = stream.frames.length;
+
+    disconnect(stream.req);
+    await call('PUT', `/${code}/photos/insp_front`, { dataUrl: 'data:image/jpeg;base64,CCCC' });
+
+    expect(stream.frames.length).toBe(before);
   });
 
   it('rejects malformed JSON', async () => {
