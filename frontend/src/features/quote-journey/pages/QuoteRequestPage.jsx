@@ -1,20 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import Meta from '@/components/ui/Meta';
 import { useStore, useActiveInsurers } from '@/store';
+import { submitQuoteRequest } from '@/features/quote-journey/submitRequest';
 import { calculatePolicyDates, calculatePremium, formatDate, formatZMW } from '@/domain/premiumEngine';
 import { COVERAGE_DURATION_OPTIONS } from '@/domain/insurers';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
 import InspectionPhotos from '@/features/quote-journey/components/InspectionPhotos';
+import GuidedCapture from '@/features/quote-journey/components/GuidedCapture';
 import PhoneHandoff from '@/features/quote-journey/components/PhoneHandoff';
 import { INSPECTION_SHOTS, missingInspectionShots } from '@/domain/inspection';
 import { isMobileDevice } from '@/lib/device';
+import { fieldClass as inputClass } from '@/components/ui/field';
+import { captureApi } from '@/api/capture';
 
 
-const inputClass = 'w-full rounded-[1px] border border-line-strong bg-canvas-2 p-3 text-[15px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30';
 
-const fileUrl = (event) => (event.target.files?.[0] ? URL.createObjectURL(event.target.files[0]) : null);
+const fileDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error('The White Book could not be read. Please choose it again.'));
+  reader.readAsDataURL(file);
+});
 const today = () => new Date().toISOString().split('T')[0];
 
 const currentYearRtsaAnniversary = (registrationDate) => {
@@ -35,17 +42,25 @@ const legacyRoadTaxDate = (value) => {
 
 export default function QuoteRequestPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const captureCode = searchParams.get('capture');
   const {
     vehicleValue, vehicleUsage, vehicleDetails, insuranceType, documents, customer,
-    coverageDurationId, setCoverageDuration, policyStartDate, setPolicyStartDate, setDocument, setDocuments, submitQuoteRequest,
+    coverageDurationId, setCoverageDuration, policyStartDate, setPolicyStartDate, setDocument, setDocuments,
     matchRtsaAnniversary, rtsaRegistrationDate, setRtsaAnniversary, piaConfig, requotedFromId,
+    setVehicleDetails, setVehicleValue, setVehicleUsage, setInsuranceType,
   } = useStore();
   const [handoffOpen, setHandoffOpen] = useState(false);
   const priorPolicyStartDate = useRef(policyStartDate);
+  const resumedCaptureCode = useRef('');
 
   const [contact, setContact] = useState({ fullName: customer?.fullName || '', phone: customer?.phone || '', email: customer?.email || '' });
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const [showErrors, setShowErrors] = useState(false);
+  const [resuming, setResuming] = useState(Boolean(captureCode));
+  const [resumeError, setResumeError] = useState('');
 
   const activeInsurers = useActiveInsurers();
   const mobileDevice = isMobileDevice();
@@ -57,7 +72,48 @@ export default function QuoteRequestPage() {
   const missingPhotos = missingInspectionShots(documents);
   const inspectionPhotos = useMemo(() => Object.fromEntries(INSPECTION_SHOTS.map((shot) => [shot.key, documents[shot.key]])), [documents]);
   const receivePhotos = useCallback((photos) => setDocuments(photos), [setDocuments]);
+  const removePhoto = useCallback((key) => setDocument(key, null), [setDocument]);
+  const clearInspectionPhotos = useCallback(() => {
+    setDocuments(Object.fromEntries(INSPECTION_SHOTS.map((shot) => [shot.key, null])));
+  }, [setDocuments]);
   const closeHandoff = useCallback(() => setHandoffOpen(false), []);
+
+  // Older builds persisted the White Book as a browser-only blob URL. Those
+  // URLs stop working after a refresh or on a phone, so remove the stale value
+  // and ask once for a durable data copy instead of failing at submission.
+  useEffect(() => {
+    if (typeof documents.whiteBook === 'string' && documents.whiteBook.startsWith('blob:')) setDocument('whiteBook', null);
+  }, [documents.whiteBook, setDocument]);
+
+  useEffect(() => {
+    if (!captureCode || resumedCaptureCode.current === captureCode) return undefined;
+    let cancelled = false;
+    setResuming(true);
+    captureApi.get(captureCode)
+      .then((session) => {
+        if (cancelled) return;
+        const draft = session.journey;
+        if (!draft) throw new Error('This phone hand-off does not contain a quote to continue. Start a new phone capture from your computer.');
+        setVehicleDetails(draft.vehicleDetails);
+        setVehicleValue(draft.vehicleValue);
+        setVehicleUsage(draft.vehicleUsage);
+        setInsuranceType(draft.insuranceType);
+        setCoverageDuration(draft.coverageDurationId);
+        setPolicyStartDate(draft.policyStartDate);
+        setRtsaAnniversary(Boolean(draft.matchRtsaAnniversary), draft.rtsaRegistrationDate || '');
+        setDocuments({ ...(draft.documents || {}), ...(session.photos || {}) });
+        setContact(draft.contact || { fullName: '', phone: '', email: '' });
+        resumedCaptureCode.current = captureCode;
+        setResuming(false);
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setResumeError(caught.message || 'We could not restore this quote on your phone.');
+          setResuming(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [captureCode, setCoverageDuration, setDocuments, setInsuranceType, setPolicyStartDate, setRtsaAnniversary, setVehicleDetails, setVehicleUsage, setVehicleValue]);
 
   useEffect(() => {
     if (!matchRtsaAnniversary || !selectedRtsaAnniversary) return;
@@ -93,26 +149,41 @@ export default function QuoteRequestPage() {
   const firstError = Object.keys(errors).find((key) => errors[key]);
   const missingVehicle = !vehicleDetails || !vehicleValue;
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
     if (firstError) {
       setShowErrors(true);
       document.getElementById(`section-${firstError}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    submitQuoteRequest({ customer: contact, policyDates });
-    navigate('/quotes-comparison');
+    setSending(true);
+    setSendError('');
+    try {
+      await submitQuoteRequest({ customer: contact, policyDates });
+      navigate(`/quotes-comparison${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`);
+    } catch (error) {
+      setSendError(error.message || 'Your request could not be sent. Please try again.');
+      setSending(false);
+    }
   };
 
-  if (missingVehicle) {
+  if (resuming) {
+    return (
+      <main className="flex min-h-[60vh] items-center justify-center bg-canvas px-6">
+        <p className="text-[15px] text-ink-muted">Restoring your quote on this phone…</p>
+      </main>
+    );
+  }
+
+  if (resumeError || missingVehicle) {
     return (
       <>
         <JourneyProgress current={4} />
         <main className="mx-auto flex min-h-[60vh] max-w-xl items-center px-5">
           <section className="w-full rounded-[1px] border border-line bg-white p-8 text-center">
             <span className="material-symbols-outlined text-[48px] text-primary" aria-hidden="true">directions_car</span>
-            <h1 className="mt-3 text-2xl font-semibold">Let's start with your vehicle</h1>
-            <p className="mt-2 text-ink-muted">We need your cover choice, vehicle details and declared value before insurers can quote.</p>
+            <h1 className="mt-3 text-2xl font-semibold">{resumeError ? 'This phone link is no longer available' : "Let's start with your vehicle"}</h1>
+            <p className="mt-2 text-ink-muted">{resumeError || 'We need your cover choice, vehicle details and declared value before insurers can quote.'}</p>
             <button type="button" onClick={() => navigate('/insurance-type')} className="mt-6 min-h-12 rounded-[1px] bg-primary px-6 font-medium text-white hover:bg-[#b91c1c]">Start a quote</button>
           </section>
         </main>
@@ -123,15 +194,14 @@ export default function QuoteRequestPage() {
   return (
     <>
       <JourneyProgress current={4} />
-      <motion.main initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative overflow-hidden">
+      {/* `clip` rather than `hidden`: it still contains the backdrop
+          horizontally, but does not become a scroll container — which would
+          stop the send bar below from sticking to the bottom of the screen. */}
+      <motion.main initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative overflow-x-clip">
         <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
         <div className="relative mx-auto w-full max-w-[1200px] px-6 py-12 pb-24 lg:px-10">
         <header className="border-b border-line pb-8">
-          <span className="inline-flex items-center gap-3">
-            <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-            <Meta className="text-ink-muted">Step 04 · Request quotes</Meta>
-          </span>
-          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">Request your quotes</h1>
+          <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Request your quotes</h1>
           <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">
             One request goes to all {activeInsurers.length} insurers on InsurShield at the same time. Each reviews your details and replies with its own final quote for you to compare.
           </p>
@@ -175,7 +245,7 @@ export default function QuoteRequestPage() {
 
             <div id="section-anniversary" className={`mt-5 rounded-[1px] border p-4 ${matchRtsaAnniversary ? 'border-primary/30 bg-primary/5' : 'border-line bg-white'}`}>
               <label className="flex cursor-pointer items-start gap-3">
-                <input type="checkbox" className="mt-0.5 h-5 w-5 accent-red-600" checked={matchRtsaAnniversary} onChange={(e) => toggleRtsaAnniversary(e.target.checked)} />
+                <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0 accent-red-600" checked={matchRtsaAnniversary} onChange={(e) => toggleRtsaAnniversary(e.target.checked)} />
                 <span>
                   <span className="block text-[14px] font-medium text-ink">Match my policy start to the RTSA registration anniversary</span>
                   <span className="block text-[12px] text-ink-muted">Use the vehicle’s RTSA registration day and month as this year’s policy start date. Your cover period is then calculated from that anniversary.</span>
@@ -243,7 +313,10 @@ export default function QuoteRequestPage() {
                   <span className="text-[12px] text-ink-muted">{documents.whiteBook ? 'Added' : 'Required to verify vehicle ownership'}</span>
                 </span>
                 <span className="rounded-[1px] bg-white px-3 py-2 text-[12px] font-medium text-primary">{documents.whiteBook ? 'Replace' : 'Upload'}</span>
-                <input className="sr-only" type="file" accept="image/*,.pdf" onChange={(e) => setDocument('whiteBook', fileUrl(e))} />
+                <input className="sr-only" type="file" accept="image/*,.pdf" onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (file) setDocument('whiteBook', await fileDataUrl(file));
+                }} />
               </label>
               <FieldError show={showErrors} message={errors.whiteBook} />
             </section>
@@ -254,7 +327,7 @@ export default function QuoteRequestPage() {
                   <span className="material-symbols-outlined text-primary" aria-hidden="true">photo_camera</span>
                   <div>
                     <h3 className="text-[14px] font-medium text-ink">Vehicle inspection photos</h3>
-                    <p className="text-[12px] text-ink-muted">Upload all seven clear views, including the chassis number and car stereo.{mobileDevice ? ' Open your camera to capture each view now.' : ' Or continue on your phone for live camera capture.'}</p>
+                    <p className="text-[12px] text-ink-muted">Upload all seven clear views, including the chassis number and car stereo.{mobileDevice ? (missingPhotos.length ? ' Open your camera to capture each view now.' : ' All seven live photos are ready to review below.') : ' Or continue on your phone for live camera capture.'}</p>
                   </div>
                 </div>
                 {!mobileDevice && <button type="button" onClick={() => setHandoffOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-[1px] border border-primary/35 bg-white px-3 text-[13px] font-medium text-primary hover:border-primary">
@@ -262,14 +335,23 @@ export default function QuoteRequestPage() {
                 </button>}
               </div>
               <div className="mt-4">
-                <InspectionPhotos photos={inspectionPhotos} plate={vehicleDetails.plateNumber} onPhoto={setDocument} highlightMissing={showErrors && Boolean(errors.photos)} uploadOnly={!mobileDevice} captureAllLabel={mobileDevice ? 'Open camera and capture all 7 photos' : null} />
+                {mobileDevice && missingPhotos.length ? (
+                  <GuidedCapture photos={inspectionPhotos} plate={vehicleDetails.plateNumber} onPhoto={setDocument} />
+                ) : (
+                  <InspectionPhotos photos={inspectionPhotos} plate={vehicleDetails.plateNumber} onPhoto={setDocument} onRemove={removePhoto} highlightMissing={showErrors && Boolean(errors.photos)} />
+                )}
               </div>
+              {!mobileDevice && !missingPhotos.length && (
+                <button type="button" onClick={clearInspectionPhotos} className="mt-4 text-[12px] font-medium text-primary hover:underline">
+                  Start a fresh set of seven photos
+                </button>
+              )}
               <FieldError show={showErrors} message={errors.photos} />
             </section>
 
             <div id="section-declaration" className="mt-6">
               <label className={`flex cursor-pointer items-start gap-3 rounded-[1px] border p-4 transition-colors ${declarationAccepted ? 'border-primary/30 bg-primary/5' : showErrors && errors.declaration ? 'border-primary/30 bg-primary/[0.06]' : 'border-line bg-white hover:border-primary/40'}`}>
-                <input className="mt-0.5 h-5 w-5 accent-red-600" type="checkbox" checked={declarationAccepted} onChange={(e) => setDeclarationAccepted(e.target.checked)} />
+                <input className="mt-0.5 h-5 w-5 shrink-0 accent-red-600" type="checkbox" checked={declarationAccepted} onChange={(e) => setDeclarationAccepted(e.target.checked)} />
                 <span className="text-[13px] leading-relaxed text-ink">
                   <strong>I confirm</strong> the vehicle and contact information is accurate, I am authorised to insure this vehicle, and I consent to InsurShield sharing these details with all its listed insurers solely to prepare quotations.
                 </span>
@@ -277,10 +359,17 @@ export default function QuoteRequestPage() {
               <FieldError show={showErrors} message={errors.declaration} />
             </div>
 
-            <button type="submit" className="mt-6 flex min-h-14 w-full items-center justify-center gap-2 rounded-[1px] bg-primary text-[16px] font-medium text-white hover:bg-[#b91c1c]">
-              <span className="material-symbols-outlined" aria-hidden="true">send</span>
-              Send request to {activeInsurers.length} insurers
-            </button>
+            {sendError && <p role="alert" className="mt-6 rounded-[1px] border border-primary/30 bg-primary/5 px-4 py-3 text-[14px] text-primary">{sendError}</p>}
+
+            {/* This form is several screens long on a phone. The action rides
+                the bottom of the screen so sending is always one tap away,
+                and returns to the flow of the page from tablet width up. */}
+            <div className="sticky bottom-0 z-30 -mx-5 -mb-5 mt-6 border-t border-line bg-white/95 px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur-sm sm:static sm:m-0 sm:mt-6 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+              <button type="submit" disabled={sending} className="flex min-h-14 w-full items-center justify-center gap-2 rounded-[1px] bg-primary text-[16px] font-medium text-white hover:bg-[#b91c1c] disabled:opacity-60">
+                <span className={`material-symbols-outlined ${sending ? 'animate-spin' : ''}`} aria-hidden="true">{sending ? 'sync' : 'send'}</span>
+                {sending ? 'Sending your request…' : `Send request to ${activeInsurers.length} insurers`}
+              </button>
+            </div>
           </form>
 
           <aside className="space-y-4 lg:sticky lg:top-24">
@@ -300,7 +389,24 @@ export default function QuoteRequestPage() {
         </div>
         </div>
       </motion.main>
-      {handoffOpen && <PhoneHandoff plate={vehicleDetails.plateNumber} onPhotos={receivePhotos} onClose={closeHandoff} />}
+      {handoffOpen && <PhoneHandoff
+        plate={vehicleDetails.plateNumber}
+        photos={inspectionPhotos}
+        journey={{
+          vehicleDetails,
+          vehicleValue,
+          vehicleUsage,
+          insuranceType,
+          coverageDurationId,
+          policyStartDate,
+          matchRtsaAnniversary,
+          rtsaRegistrationDate,
+          documents: { whiteBook: documents.whiteBook || null },
+          contact,
+        }}
+        onPhotos={receivePhotos}
+        onClose={closeHandoff}
+      />}
     </>
   );
 }

@@ -1,9 +1,7 @@
 // @ts-check
 import { test, expect } from '@playwright/test';
 
-// 1×1 PNG — enough for the photo stamping canvas to decode.
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-const image = (name) => ({ name, mimeType: 'image/png', buffer: PNG });
+import { tinyImage, vehiclePhoto } from './fixtures/photos';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -33,8 +31,19 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   await page.getByRole('button', { name: 'Continue to quote request' }).click();
   await expect(page).toHaveURL(/create-account\?next=%2Fquote-request/);
   await expect(page.getByText('Your vehicle details are saved')).toBeVisible();
-  await page.getByRole('button', { name: 'Use demo credentials' }).click();
-  await page.getByRole('button', { name: 'Log in' }).click();
+
+  // Signing in happens on Keycloak's own pages, outside this application, so
+  // the test takes the session as given and returns where it was sent from.
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
+    Object.assign(store.state, {
+      customer: { fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm', phone: '0970123456' },
+      isAuthenticated: true,
+      consentAccepted: true,
+    });
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+  await page.goto('/quote-request');
 
   // Request page: estimates reflect value + usage; validation lists every gap
   await expect(page).toHaveURL(/quote-request/);
@@ -47,8 +56,15 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
 
   // Documents
   const inputs = page.locator('input[type="file"]');
-  await inputs.nth(0).setInputFiles(image('whitebook.png'));
-  for (let index = 1; index <= 7; index += 1) await inputs.nth(index).setInputFiles(image(`shot-${index}.png`));
+  await inputs.nth(0).setInputFiles(tinyImage('whitebook.png'));
+
+  // An unusable photo is refused where it is chosen, with the reason, instead
+  // of reaching an insurer who sends the whole request back.
+  await inputs.nth(1).setInputFiles(tinyImage('screenshot.png'));
+  await expect(page.getByText(/too small to read/)).toBeVisible();
+  await expect(page.getByText('0 of 7 captured')).toBeVisible();
+
+  for (let index = 1; index <= 7; index += 1) await inputs.nth(index).setInputFiles(vehiclePhoto(`shot-${index}.png`));
   await expect(page.getByText('7 of 7 captured')).toBeVisible();
   await page.getByText('I confirm the vehicle and contact information').click();
   await page.getByRole('button', { name: /Send request to 5 insurers/ }).click();
@@ -71,7 +87,7 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   // The paid quote is waiting for the insurer's certificate
   await page.getByRole('button', { name: 'My account' }).click();
   await expect(page).toHaveURL(/account/);
-  await expect(page.getByText('Policy certificate being prepared')).toBeVisible();
+  await expect(page.getByText('Certificate being prepared')).toBeVisible();
 
   // Insurer issues the certificate from its own system (the demo portal acts as Prestige Assurance)
   await page.evaluate(() => {
@@ -82,13 +98,13 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   await page.goto('/insurer');
   await page.getByRole('tab', { name: /Paid policies/ }).click();
   await page.getByRole('button', { name: /Review & issue policy/ }).first().click();
-  await page.locator('input[type="file"]').setInputFiles(image('certificate.png'));
+  await page.locator('input[type="file"]').setInputFiles(tinyImage('certificate.png'));
   await page.getByRole('button', { name: /Issue active policy/ }).click();
   await expect(page.getByText('Official policy issued').first()).toBeVisible();
 
   // Customer now holds an active policy with the certificate
   await page.goto('/account');
-  await expect(page.getByRole('heading', { name: 'Policies' })).toBeVisible();
+  await expect(page.getByText('Policies', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Prestige Assurance', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Policy certificate/ })).toBeVisible();
 });
@@ -113,7 +129,7 @@ test('insurer reply replaces the estimate on the comparison page', async ({ page
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   });
   await page.goto('/quotes-comparison');
-  await expect(page.getByText('1 of 2 insurers have replied')).toBeVisible();
+  await expect(page.getByText(/1 of 2 insurers have replied/)).toBeVisible();
   await expect(page.getByText('ZMW 10,900.00').first()).toBeVisible();
   await expect(page.getByText('Final quote from insurer').first()).toBeVisible();
   await expect(page.getByText('Includes windscreen').first()).toBeVisible();
@@ -140,7 +156,7 @@ test('a claim produces a claim number and the insurer contact', async ({ page })
   await page.getByPlaceholder(/Provide a clear/).fill('Stolen overnight.');
   await page.getByRole('button', { name: 'Get my claim number' }).click();
   await expect(page.getByRole('heading', { name: 'Your claim number is ready' })).toBeVisible({ timeout: 10000 });
-  await expect(page.getByText(/CLM-\d{6}/).first()).toBeVisible();
+  await expect(page.getByText(/CLM-[A-Z0-9]+/).first()).toBeVisible();
   await expect(page.getByRole('link', { name: /\+260/ })).toBeVisible();
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
+import { env } from '@/config/env';
 
 /**
  * Gate for customer-only pages (quote request, comparison, payment, account,
@@ -14,7 +15,12 @@ export function CustomerRoute({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAuthenticated, consentAccepted } = useStore();
-  const allowed = isAuthenticated && consentAccepted;
+  // The QR capture code is a short-lived bearer credential in the local demo
+  // relay. It lets a customer finish the same journey on their phone without
+  // requiring a second local browser account. This is intentionally disabled
+  // for production, where the backend must validate a signed resume token.
+  const captureContinuation = !env.isProduction && new URLSearchParams(location.search).has('capture');
+  const allowed = (isAuthenticated && consentAccepted) || captureContinuation;
   const [hadAccessOnMount] = useState(allowed);
 
   useEffect(() => {

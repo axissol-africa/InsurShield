@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
+import { coverPeriod } from '@/domain/coverPeriod';
 import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
 import { JOURNEY_COMPLETE } from '@/features/quote-journey/journeySteps';
@@ -14,16 +15,24 @@ const coverLabel = (type) => (type === 'ThirdParty' ? 'Third party only' : 'Comp
 
 export default function PolicyConfirmationPage() {
   const navigate = useNavigate();
-  const { customer, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney } = useStore();
+  const [searchParams] = useSearchParams();
+  const captureCode = searchParams.get('capture');
+  const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
+  const { customer, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
   const [issuing, setIssuing] = useState(true);
+  const [rating, setRating] = useState(0);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewed, setReviewed] = useState(false);
 
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
   const policyNumber = `POL-${reference}`;
   const insurancePremium = premiumBreakdown?.finalPremium ?? selectedQuote?.price ?? 0;
   const rtsaFee = matchRtsaAnniversary ? RTSA_ANNIVERSARY_FEE : 0;
   const premium = insurancePremium + rtsaFee;
-  const validFrom = policyDates?.formattedStart || formatDate(new Date());
-  const validUntil = policyDates?.formattedEnd || '—';
+  const cover = coverPeriod(policyDates);
+  const validFrom = cover.known ? cover.start : formatDate(new Date());
+  const validUntil = cover.end;
+  const existingReview = insurerReviews.find((review) => review.policyNumber === policyNumber && review.customerEmail === customer?.email);
   useEffect(() => {
     if (!selectedQuote) return undefined;
     const timer = setTimeout(() => {
@@ -64,7 +73,7 @@ export default function PolicyConfirmationPage() {
             <Meta className="text-ink-muted">Confirmation</Meta>
             <h1 className="mt-5 text-[28px] font-semibold tracking-[-0.03em] text-ink">Nothing to confirm yet</h1>
             <p className="mt-3 text-[15px] leading-[1.6] text-ink-muted">Your issued policies are always available in your account.</p>
-            <Link to="/account" className="mt-8 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">Go to my account</Link>
+            <Link to={continuation('/account')} className="mt-8 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">Go to my account</Link>
           </section>
         </div>
       </main>
@@ -73,7 +82,13 @@ export default function PolicyConfirmationPage() {
 
   const finish = () => {
     resetJourney();
-    navigate('/account');
+    navigate(continuation('/account'));
+  };
+
+  const submitReview = () => {
+    if (!rating || !selectedQuote || !customer?.email) return;
+    submitInsurerReview({ insurer: selectedQuote.name, policyNumber, customerEmail: customer.email, rating, comment: reviewText });
+    setReviewed(true);
   };
 
   return (
@@ -101,7 +116,7 @@ export default function PolicyConfirmationPage() {
                     <span className="material-symbols-outlined text-[26px] text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">verified</span>
                   </motion.span>
                   <div>
-                    <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">Payment received</h1>
+                    <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Payment received</h1>
                     <p className="mt-4 max-w-[52ch] text-[16px] leading-[1.6] text-ink-muted">{selectedQuote.name} is preparing your official policy certificate.</p>
                   </div>
                 </div>
@@ -163,6 +178,33 @@ export default function PolicyConfirmationPage() {
                     {selectedQuote.inspectionRules === 'REQUIRED' && <Next icon="photo_camera">{selectedQuote.name} requires a vehicle inspection — they will contact you on {customer?.phone || 'your number'} to arrange it.</Next>}
                     <Next icon="event_repeat">We'll remind you to renew on {policyDates?.formattedReminder || '30 days before expiry'}.</Next>
                   </ul>
+                </section>
+
+                <section className="border border-line bg-white p-5" aria-labelledby="review-heading">
+                  <Meta className="text-primary">Customer review</Meta>
+                  <h2 id="review-heading" className="mt-3 text-[18px] font-semibold tracking-[-.02em] text-ink">How was {selectedQuote.name}?</h2>
+                  <p className="mt-2 text-[13px] leading-[1.55] text-ink-muted">Rate your quotation and purchase experience. Your rating helps other customers compare insurers.</p>
+                  {reviewed || existingReview ? (
+                    <p className="mt-4 flex items-center gap-2 border border-primary/25 bg-primary/5 px-3 py-3 text-[13px] text-ink">
+                      <span className="material-symbols-outlined text-primary" aria-hidden="true">task_alt</span>
+                      Thanks — your {existingReview?.rating || rating}-star rating has been recorded.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="mt-4 flex gap-1" role="radiogroup" aria-label={`Rate ${selectedQuote.name} from one to five stars`}>
+                        {[1, 2, 3, 4, 5].map((value) => (
+                          <button key={value} type="button" role="radio" aria-checked={rating === value} onClick={() => setRating(value)} className={`p-1 ${value <= rating ? 'text-primary' : 'text-line-strong hover:text-primary'}`} aria-label={`${value} star${value === 1 ? '' : 's'}`}>
+                            <span className="text-[27px] leading-none" aria-hidden="true">★</span>
+                          </button>
+                        ))}
+                      </div>
+                      <label className="mt-4 block">
+                        <span className="sr-only">Optional review</span>
+                        <textarea value={reviewText} onChange={(event) => setReviewText(event.target.value)} maxLength={500} rows={3} placeholder="Optional: tell other customers what went well" className="w-full resize-none rounded-[1px] border border-line-strong bg-canvas-2 p-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30" />
+                      </label>
+                      <button type="button" disabled={!rating} onClick={submitReview} className="mt-3 inline-flex min-h-10 w-full items-center justify-center rounded-[1px] bg-primary px-4 text-[13px] font-medium text-white hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-45">Submit rating</button>
+                    </>
+                  )}
                 </section>
 
                 <div className="grid gap-3 sm:grid-cols-2">

@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore, useActiveInsurers } from '@/store';
+import { api } from '@/api';
+import { hydrateAdmin } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import Meta from '@/components/ui/Meta';
+import Badge from '@/components/ui/Badge';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
+import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
 import InsurerTable from '@/features/admin/components/InsurerTable';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
 
-const inputClass =
-  'w-full rounded-[1px] border border-line-strong bg-canvas p-3 text-[15px] text-ink outline-none transition-colors duration-200 ease-out focus:border-primary focus:ring-1 focus:ring-primary';
-const labelClass =
-  'mb-2 block font-mono text-[12px] uppercase leading-none tracking-[0.12em] text-ink-muted';
 
 /**
  * Premium confirmed per month over the last twelve, from the records the
@@ -106,7 +106,7 @@ function AdminSidebar({ items, view, onSelect }) {
   return (
     <nav
       aria-label="Admin sections"
-      className={`-mx-4 flex shrink-0 gap-2 overflow-x-auto border-b border-line px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:flex-col lg:gap-0 lg:overflow-visible lg:border-b-0 lg:border-r lg:px-0 lg:pb-0 ${
+      className={`no-scrollbar -mx-4 flex shrink-0 gap-2 overflow-x-auto border-b border-line px-4 pb-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:flex-col lg:gap-0 lg:overflow-visible lg:border-b-0 lg:border-r lg:px-0 lg:pb-0 ${
         collapsed ? 'lg:w-[68px] lg:pr-4' : 'lg:w-[236px] lg:pr-6'
       } lg:sticky lg:top-[104px] lg:max-h-[calc(100vh-128px)] lg:self-start lg:overflow-y-auto`}
     >
@@ -177,7 +177,9 @@ function AdminSidebar({ items, view, onSelect }) {
 
 /** Super-admin console: insurer onboarding and lifecycle, PIA floor, customer account lookup. */
 export default function AdminDashboard() {
-  const { insurersList, addInsurer, updateInsurer, setInsurerStatus, deleteInsurer, claims, piaConfig, setPiaConfig, staffSession, registeredAccounts, quoteRequests, policies } = useStore();
+  const { insurersList, claims, piaConfig, staffSession, registeredAccounts, quoteRequests, policies } = useStore();
+
+  useEffect(() => { void hydrateAdmin(); }, []);
   const activeInsurers = useActiveInsurers();
   const piaRate = piaConfig?.piaRatePercentage ?? 4;
   const agentName = staffSession?.name || 'Admin';
@@ -203,21 +205,26 @@ export default function AdminDashboard() {
   const recentPolicies = policies.slice(0, 6);
 
   const showInsurers = () => { setEditingInsurer(null); setViewingInsurer(null); setView('manage_insurers'); };
-  const saveInsurer = (insurer) => {
-    if (editingInsurer) updateInsurer(editingInsurer.id, insurer);
-    else addInsurer(insurer);
+  const saveInsurer = async (insurer) => {
+    if (editingInsurer) await api.insurers.update(editingInsurer.id, insurer);
+    else await api.insurers.create(insurer);
+    await hydrateAdmin();
     showInsurers();
   };
   // Removal is soft: the insurer stops receiving requests but its history
   // stays readable, per INSURER_API_INTEGRATION.md. The dialog says so, since
   // "delete" otherwise reads as destroying records.
   const confirmDelete = (insurer) => setPendingDelete(insurer);
-  const runDelete = () => {
-    deleteInsurer(pendingDelete.id);
+  const runDelete = async () => {
+    await api.insurers.remove(pendingDelete.id);
+    await hydrateAdmin();
     setPendingDelete(null);
     setShowDeleted(true);
   };
-  const restoreInsurer = (insurer) => updateInsurer(insurer.id, { status: 'Active', deletedAt: null });
+  const restoreInsurer = async (insurer) => {
+    await api.insurers.setStatus(insurer.id, 'Active');
+    await hydrateAdmin();
+  };
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Overview', icon: 'dashboard', hint: 'Platform totals', matches: ['dashboard'] },
@@ -283,8 +290,8 @@ export default function AdminDashboard() {
           piaRatePercentage={piaRate}
           onView={(insurer) => { setViewingInsurer(insurer); setView('view_insurer'); }}
           onEdit={(insurer) => { setEditingInsurer(insurer); setView('edit_insurer'); }}
-          onRateChange={(id, ratePercentage) => updateInsurer(id, { ratePercentage })}
-          onStatusChange={setInsurerStatus}
+          onRateChange={async (id, ratePercentage) => { await api.insurers.update(id, { ratePercentage }); await hydrateAdmin(); }}
+          onStatusChange={async (id, status) => { await api.insurers.setStatus(id, status); await hydrateAdmin(); }}
           onDelete={confirmDelete}
         />
       </>
@@ -292,7 +299,7 @@ export default function AdminDashboard() {
   } else if (view === 'find_account') {
     content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} onBack={() => setView('dashboard')} />;
   } else if (view === 'pia_config') {
-    content = <PiaConfiguration piaRate={piaRate} onSave={(rate) => setPiaConfig({ piaRatePercentage: rate, lastUpdated: new Date().toISOString().split('T')[0], updatedBy: agentName })} onBack={() => setView('dashboard')} />;
+    content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => { await api.config.setPia({ piaRatePercentage: rate }); await hydrateAdmin(); }} onBack={() => setView('dashboard')} />;
   } else {
     content = renderOverview();
   }
@@ -528,7 +535,7 @@ function InsurerProfile({ insurer, onBack }) {
             </span>
             <div><h3 className="text-[22px] font-semibold tracking-[-0.02em] text-ink">{insurer.name}</h3><p className="mt-1.5 text-[13px] text-ink-muted">Read-only company profile</p></div>
           </div>
-          <span className={`inline-flex w-fit rounded-full px-3 py-1 text-[11px] font-bold uppercase ${insurer.status === 'Active' ? 'bg-primary/10 text-primary' : 'bg-gray-100 text-gray-600'}`}>{insurer.status || 'Active'}</span>
+          <Badge variant={(insurer.status || 'Active') === 'Active' ? 'default' : 'muted'} className="w-fit">{insurer.status || 'Active'}</Badge>
         </div>
         <dl className="grid gap-x-8 gap-y-6 p-6 sm:grid-cols-2 xl:grid-cols-3">
           {details.map(([label, value]) => (

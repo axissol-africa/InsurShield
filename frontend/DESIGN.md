@@ -2,7 +2,7 @@
 
 ## Source of truth
 
-Status: Active · 17 September 2026. Product surfaces: customer motor-insurance journey, customer account, staff portals, inspection hand-off. Evidence reviewed: supplied desktop/mobile references, current React pages, and `src/index.css` tokens.
+Status: Active · 29 September 2026. Product surfaces: customer motor-insurance journey, customer account, staff portals, inspection hand-off. Evidence reviewed: supplied desktop/mobile references, current React pages, `src/index.css` tokens, and the shadcn/ui component catalogue.
 
 ## Brand
 
@@ -22,15 +22,15 @@ Customer journey: coverage, vehicle identification, vehicle use, quote request, 
 
 ## Design principles
 
-Use direct language, visible totals, and consistent card/form layouts. A status should remain understandable through copy and iconography, not colour alone.
+Use direct language, visible totals, and consistent card/form layouts. A status should remain understandable through copy and iconography, not colour alone. Keep the approved Home page unchanged; polish the application shell and task screens independently.
 
 ## Visual language
 
-Primary: `#dc2626`; primary container: `#fee2e2`; text: `#111827`; surfaces: white and slate/neutral. Positive or completed states use the red palette and explicit labels such as “Active”, “Available”, or “Complete”; no green state palette. Inter is the UI typeface. Use rounded cards, restrained shadows, and short functional motion only.
+Primary: `#dc2626`; primary container: `#fee2e2`; text: `#111827`; surfaces: white and slate/neutral. Positive or completed states use the red palette and explicit labels such as “Active”, “Available”, or “Complete”; no green state palette. Inter is the UI typeface. Use rounded cards, restrained shadows, and short functional motion only. Customer app routes use a compact mobile/PWA header, safe-area spacing, and no iOS input zoom; Home retains its approved chrome.
 
 ## Components
 
-Reuse current buttons, cards, inputs, JourneyProgress, and document actions. Status badges use primary-container backgrounds and primary text; neutral pending states use slate.
+Reuse current buttons, cards, inputs, JourneyProgress, and document actions. Existing primitives follow shadcn-style responsibilities (Card, Button, Badge, Dialog, Tabs) without importing a competing visual library. Status badges use primary-container backgrounds and primary text; neutral pending states use slate.
 
 ## Accessibility
 

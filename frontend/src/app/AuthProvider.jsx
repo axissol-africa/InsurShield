@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useStore } from '@/store';
 import { keycloak, initKeycloak } from '@/lib/keycloak';
 import { apiClient } from '@/lib/apiClient';
+import { env } from '@/config/env';
 
 /**
  * Restores the Keycloak session on load and keeps the store in step with it.
@@ -16,11 +17,13 @@ import { apiClient } from '@/lib/apiClient';
  * link is its authorisation. Bootstrapping Keycloak there would block the page
  * on a request that cannot succeed.
  */
-const isPhoneCapture = (pathname) => pathname.startsWith('/capture/');
+const isPhoneCapture = (pathname, search) =>
+  pathname.startsWith('/capture/')
+  || (!env.isProduction && new URLSearchParams(search).has('capture'));
 
 export default function AuthProvider({ children }) {
-  const { pathname } = useLocation();
-  const skipAuth = isPhoneCapture(pathname);
+  const { pathname, search } = useLocation();
+  const skipAuth = isPhoneCapture(pathname, search);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -29,8 +32,9 @@ export default function AuthProvider({ children }) {
 
     const sync = async () => {
       let authenticated = false;
+      let reachable = false;
       try {
-        authenticated = await initKeycloak();
+        ({ authenticated, reachable } = await initKeycloak());
       } catch (error) {
         // A Keycloak that is down must not take the whole site with it —
         // public pages keep working, signed out.
@@ -41,7 +45,10 @@ export default function AuthProvider({ children }) {
       const store = useStore.getState();
 
       if (!authenticated) {
-        store.clearCustomerSession();
+        // Only an identity server that answered can end a session. If it could
+        // not be reached, whatever the browser holds is left alone: signing
+        // someone out because a check failed loses their work for no reason.
+        if (reachable) store.clearCustomerSession();
         setReady(true);
         return;
       }

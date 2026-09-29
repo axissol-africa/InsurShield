@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { toContract } from '../common/contract.js';
 import {
   ClaimStatus,
   DeliveryStatus,
@@ -77,7 +78,7 @@ export class InsurerPortalService {
 
     return {
       id: request.id,
-      status: request.status,
+      status: toContract.quoteRequestStatus(request.status),
       deliveryStatus,
       submittedAt: request.submittedAt.toISOString(),
       expiresAt: request.expiresAt.toISOString(),
@@ -91,8 +92,8 @@ export class InsurerPortalService {
       },
       vehicleValue: request.vehicleValue.toNumber(),
       vehicleUsage: request.vehicleUsage,
-      insuranceType: request.insuranceType,
-      coverageDurationId: request.coverageDuration,
+      insuranceType: toContract.insuranceType(request.insuranceType),
+      coverageDurationId: toContract.coverageDuration(request.coverageDuration),
       policyDates:
         request.policyStartDate && request.policyEndDate
           ? {
@@ -247,7 +248,7 @@ export class InsurerPortalService {
       policies.map(async (policy) => ({
         policyNumber: policy.policyNumber,
         insurerPolicyNumber: policy.insurerPolicyNumber,
-        status: policy.status,
+        status: toContract.policyStatus(policy.status),
         coverage: policy.coverage,
         plan: policy.plan,
         premium: policy.premium.toNumber(),
@@ -317,7 +318,7 @@ export class InsurerPortalService {
     return {
       policyNumber: updated.policyNumber,
       insurerPolicyNumber: updated.insurerPolicyNumber,
-      status: updated.status,
+      status: toContract.policyStatus(updated.status),
       issuedAt: updated.issuedAt!.toISOString(),
       certificateDocument: await this.documents.record(dto.certificateDocumentId),
     };
@@ -335,7 +336,7 @@ export class InsurerPortalService {
     return Promise.all(
       claims.map(async (claim) => ({
         claimNumber: claim.claimNumber,
-        status: claim.status,
+        status: toContract.claimStatus(claim.status),
         fullName: claim.fullName,
         phone: claim.phone,
         email: claim.email,
@@ -420,7 +421,7 @@ export class InsurerPortalService {
       fullName: application.fullName,
       phone: application.phone,
       yearsClaimFree: application.yearsClaimFree,
-      status: application.status,
+      status: toContract.ncdStatus(application.status),
       approvedCode: application.approvedCode?.code ?? null,
       submittedAt: application.submittedAt.toISOString(),
       decidedAt: application.decidedAt?.toISOString() ?? null,
@@ -456,7 +457,7 @@ export class InsurerPortalService {
       });
       return {
         id: updated.id,
-        status: updated.status,
+        status: toContract.ncdStatus(updated.status),
         approvedCode: null,
         decidedAt: updated.decidedAt?.toISOString() ?? null,
       };
@@ -486,7 +487,7 @@ export class InsurerPortalService {
 
     return {
       id: updated.id,
-      status: updated.status,
+      status: toContract.ncdStatus(updated.status),
       approvedCode: code,
       percentage,
       decidedAt: updated.decidedAt!.toISOString(),

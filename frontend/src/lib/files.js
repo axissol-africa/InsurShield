@@ -55,3 +55,26 @@ export function openDocument(record) {
 }
 
 export const formatBytes = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+/**
+ * Turns a stored photo or document back into a `File` for upload.
+ *
+ * The journey keeps captures as data URLs so they survive a reload before the
+ * request is sent; the API wants the bytes. Blob URLs are fetched, which is
+ * how a browser reads back something it minted itself.
+ */
+export async function toUploadableFile(source, name) {
+  if (source instanceof File) return source;
+  if (typeof source !== 'string') throw new Error('That document could not be read for upload.');
+  let blob;
+  try {
+    blob = await (await fetch(source)).blob();
+  } catch {
+    // Blob URLs are scoped to the browser which made them. This gives a
+    // useful recovery message if an older phone hand-off predates portable
+    // document transfer rather than exposing the browser's "Failed to fetch".
+    throw new Error('This document was added on another device. Upload it again here to continue.');
+  }
+  const extension = blob.type === 'application/pdf' ? 'pdf' : blob.type === 'image/png' ? 'png' : 'jpg';
+  return new File([blob], name.includes('.') ? name : `${name}.${extension}`, { type: blob.type || 'image/jpeg' });
+}

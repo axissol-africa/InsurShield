@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { toContract } from '../common/contract.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import {
   ClaimStatus,
@@ -132,7 +133,7 @@ export class AdminService {
 
     return policies.map((policy) => ({
       policyNumber: policy.policyNumber,
-      status: policy.status,
+      status: toContract.policyStatus(policy.status),
       insurer: policy.insurer.name,
       customerName: policy.customer.fullName,
       vehicle: `${policy.vehicle.year} ${policy.vehicle.make} ${policy.vehicle.model}`.trim(),

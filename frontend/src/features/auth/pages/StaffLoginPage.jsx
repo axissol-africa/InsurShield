@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
+import { fieldClass as inputClass } from '@/components/ui/field';
 import Meta from '@/components/ui/Meta';
 
 const ROLES = [
@@ -29,8 +30,6 @@ const CREDENTIALS = {
   insurer: { email: 'insurer@insurshield.zm', password: 'insurer123' },
 };
 
-const inputClass =
-  'w-full rounded-[1px] border border-line-strong bg-canvas p-3 text-[15px] text-ink outline-none transition-colors duration-200 ease-out focus:border-primary focus:ring-1 focus:ring-primary';
 
 export default function AdminLogin() {
   const [email, setEmail] = useState('');

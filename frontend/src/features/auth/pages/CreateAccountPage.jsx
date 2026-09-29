@@ -90,7 +90,7 @@ export default function CreateAccountPage() {
           <Meta className="text-ink-muted">Your account</Meta>
         </span>
 
-        <h1 className="mt-7 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">
+        <h1 className="mt-7 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">
           {wantsSignUp ? 'Create your account' : 'Sign in to InsurShield'}
         </h1>
 

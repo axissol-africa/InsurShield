@@ -1,22 +1,22 @@
 import { useState } from 'react';
-import { useStore } from '@/store';
+import { api } from '@/api';
+import { hydrateInsurerPortal } from '@/api/sync';
 import { isOpenNcdApplication, statusStyle } from '@/features/insurer-portal/portal';
 import Meta from '@/components/ui/Meta';
 import { EmptyState, Fact, Icon } from './ui';
 
-const newNcdCode = () => `NCD-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-
 /** No-claim-discount applications: approve (issuing a code), hold for review, or reject. */
 export default function NcdTab({ applications }) {
-  const updateNcdApplicationStatus = useStore((state) => state.updateNcdApplicationStatus);
   const [busyId, setBusyId] = useState(null);
 
-  const decide = (id, status) => {
+  const decide = async (id, status) => {
     setBusyId(id);
-    setTimeout(() => {
-      updateNcdApplicationStatus(id, status, status === 'Approved' ? newNcdCode() : null);
+    try {
+      await api.ncd.decide(id, status);
+      await hydrateInsurerPortal();
+    } finally {
       setBusyId(null);
-    }, 700);
+    }
   };
 
   return (

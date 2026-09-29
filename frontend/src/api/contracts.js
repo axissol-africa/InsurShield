@@ -64,6 +64,12 @@
  * @property {string} [notes]
  * @property {string|null} insurerReference
  * @property {DocumentRecord} document   the quotation prepared in the insurer's own system
+ * @property {Object} coverGuide         matching reusable insurer guide, attached automatically with the quote
+ * @property {'Comprehensive'|'ThirdParty'} coverGuide.coverageType
+ * @property {DocumentRecord} coverGuide.document
+ * @property {string[]} coverGuide.benefits
+ * @property {string} [coverGuide.inspectionRules]
+ * @property {string|null} [coverGuide.claimsContact]
  * @property {number} validityDays
  * @property {string} sentAt
  * @property {string} validUntil

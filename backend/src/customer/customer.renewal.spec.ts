@@ -23,6 +23,7 @@ const vehicle = {
 
 const policyRow = (overrides: Record<string, unknown> = {}) => ({
   policyNumber: 'POL-000001',
+  customer: { fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm', phone: '0970123456' },
   insurerPolicyNumber: null,
   status: 'ACTIVE',
   insurer: { name: 'Global Guard Insurance' },
@@ -63,6 +64,7 @@ const buildService = (policy: ReturnType<typeof policyRow> | null, insurers = [{
         created.push(data);
         return {
           ...data,
+          customer: { fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm', phone: '0970123456' },
           vehicle,
           recipients: [],
           quotes: [],

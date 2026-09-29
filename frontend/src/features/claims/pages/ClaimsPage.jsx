@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useStore, belongsToCustomer } from '@/store';
+import { useStore, useActiveInsurers, belongsToCustomer } from '@/store';
 import { motion } from 'framer-motion';
 import Meta from '@/components/ui/Meta';
+import Badge from '@/components/ui/Badge';
+import { api } from '@/api';
+import { hydrateCustomer, hydrateDirectory } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
-import { INSURER_RATES } from '@/domain/insurers';
 
 const CLAIM_TYPES = [
   'Accident / Collision', 'Theft', 'Fire Damage', 'Natural Disaster',
@@ -13,9 +15,11 @@ const CLAIM_TYPES = [
 ];
 
 /** A claim only goes through first notification here; the insurer handles everything after the call. */
+// Status is carried by the shared badge, so a claim here reads the same as a
+// policy, a quote or an NCD application anywhere else in the product.
 const CLAIM_STATUSES = {
-  Notified: 'bg-canvas-2 text-ink-muted',
-  'Received by insurer': 'bg-primary/10 text-primary',
+  Notified: 'muted',
+  'Received by insurer': 'default',
 };
 
 const NCD_TIERS = [
@@ -24,11 +28,11 @@ const NCD_TIERS = [
 ];
 
 const NCD_APPLICATION_STATUSES = [
-  { id: 'Submitted', color: 'bg-canvas-2 text-ink-muted' },
-  { id: 'Under Review', color: 'bg-primary/[0.06] text-primary' },
-  { id: 'Verification Required', color: 'bg-primary/[0.06] text-primary' },
-  { id: 'Approved', color: 'bg-primary/10 text-primary' },
-  { id: 'Rejected', color: 'bg-primary/[0.06] text-primary' },
+  { id: 'Submitted', variant: 'muted' },
+  { id: 'Under Review', variant: 'warning' },
+  { id: 'Verification Required', variant: 'warning' },
+  { id: 'Approved', variant: 'success' },
+  { id: 'Rejected', variant: 'outline' },
 ];
 
 const CLAIM_DOCUMENT_GUIDANCE = [
@@ -40,31 +44,8 @@ const CLAIM_DOCUMENT_GUIDANCE = [
 ];
 
 // Seeded so the demo customer already has one notification on record.
-const SEED_CLAIMS = [
-  {
-    id: 'CLM-882031', claimNumber: 'CLM-882031', phone: '0970123456', fullName: 'Mwiza Banda',
-    insurer: 'Prestige Assurance', type: 'Accident / Collision', plate: 'BAA 1234', vehicle: '2020 Toyota Hilux',
-    incidentDate: '2025-06-10', location: 'Great East Road, near Arcades',
-    description: 'Rear-ended at traffic lights. Third party vehicle fled the scene.',
-    estimatedLoss: '45000', policeReport: true, policeReportNumber: 'ZP/2025/4421',
-    status: 'Received by insurer',
-    submittedAt: new Date(Date.now() - 4 * 86400000).toISOString(),
-    receivedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-    supportingDocs: [{ name: 'Police report' }, { name: 'Accident photos' }],
-  },
-];
-
-const SEED_NCD = [
-  {
-    id: 'NCDA-991200', applicationNumber: 'NCDA-991200', phone: '0970123456',
-    insurer: 'Prestige Assurance', policyNumber: 'PA-2023-0045',
-    yearsClaimFree: 2, status: 'Approved', approvedCode: 'NCD-D3E4F',
-    submittedAt: new Date(Date.now() - 10 * 86400000).toISOString(),
-  },
-];
-
 // ─── Sub-components ──────────────────────────────────────────────────────────
-const insurerContact = (name) => INSURER_RATES.find((insurer) => insurer.name === name)?.contact || null;
+
 
 function CopyButton({ value, className = '' }) {
   const [copied, setCopied] = useState(false);
@@ -77,8 +58,7 @@ function CopyButton({ value, className = '' }) {
 }
 
 /** Insurer claims-desk contact with one-tap call / WhatsApp. */
-function InsurerCallCard({ insurerName, claimNumber }) {
-  const contact = insurerContact(insurerName);
+function InsurerCallCard({ insurerName, contact, claimNumber }) {
   const message = encodeURIComponent(`Hello, I am notifying a motor claim. My InsurShield claim number is ${claimNumber}.`);
   return (
     <section className="rounded-[1px] border border-line bg-white p-5">
@@ -108,7 +88,7 @@ function InsurerCallCard({ insurerName, claimNumber }) {
 }
 
 /** Shown right after a claim is submitted: the claim number and the hand-off to the insurer. */
-function ClaimHandoff({ claim, onDone }) {
+function ClaimHandoff({ claim, contact, onDone }) {
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="mx-auto w-full max-w-3xl px-5 py-10 pb-24 sm:px-8">
       <div className="text-center">
@@ -125,7 +105,7 @@ function ClaimHandoff({ claim, onDone }) {
       </div>
 
       <div className="mt-5 grid gap-5 md:grid-cols-[1fr_1fr]">
-        <InsurerCallCard insurerName={claim.insurer} claimNumber={claim.claimNumber} />
+        <InsurerCallCard insurerName={claim.insurer} contact={contact} claimNumber={claim.claimNumber} />
         <section className="rounded-[1px] border border-line bg-white p-5">
           <p className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">Have ready when you call</p>
           <ul className="mt-3 space-y-2 text-[14px] text-ink">
@@ -168,7 +148,15 @@ function SuccessBanner({ refNumber, onDone }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ClaimsPage() {
   const navigate = useNavigate();
-  const { claims, addClaim, vehicleDetails, ncdApplications, addNcdApplication, customer, policies } = useStore();
+  const { claims, vehicleDetails, ncdApplications, customer, policies } = useStore();
+  const insurers = useActiveInsurers();
+
+  // Claims, NCD applications and the insurer list come from the server when
+  // one is configured; in mock mode these calls are no-ops.
+  useEffect(() => { void hydrateDirectory(); void hydrateCustomer(); }, []);
+
+  const insurerName = (id) => insurers.find((insurer) => insurer.id === id)?.name ?? '';
+  const insurerContact = (name) => insurers.find((insurer) => insurer.name === name)?.contact ?? null;
 
   // Main tab
   const [mainTab, setMainTab] = useState('claims');
@@ -187,8 +175,9 @@ export default function ClaimsPage() {
   const [plateScanning, setPlateScanning] = useState(false);
   const [plateLookupResult, setPlateLookupResult] = useState(null); // { insurer, coverage, plate } | null
   const [coverageMismatch, setCoverageMismatch] = useState(null); // error string | null
+  const [claimError, setClaimError] = useState('');
   const [claimForm, setClaimForm] = useState({
-    insurer: '', type: '', incidentDate: '', location: '',
+    insurer: '', insurerId: '', type: '', incidentDate: '', location: '',
     description: '', policeReport: false, policeReportNumber: '',
     estimatedLoss: '', phone: customer?.phone || '', fullName: customer?.fullName || '', lateReason: '',
     plateNumber: '', coverageType: '',
@@ -197,8 +186,9 @@ export default function ClaimsPage() {
   // NCD form state
   const [ncdSubmitting, setNcdSubmitting] = useState(false);
   const [ncdDeclarationError, setNcdDeclarationError] = useState('');
+  const [ncdError, setNcdError] = useState('');
   const [ncdForm, setNcdForm] = useState({
-    insurer: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false,
+    insurer: '', insurerId: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false,
   });
 
   const setClaimField = (k, v) => setClaimForm(prev => ({ ...prev, [k]: v }));
@@ -217,48 +207,78 @@ export default function ClaimsPage() {
   const isLate = daysSinceIncident !== null && daysSinceIncident > 14;
   const isSubmitBlocked = isLate && !claimForm.lateReason.trim();
 
-  const allClaims = [...claims, ...SEED_CLAIMS];
-  const allNcdApps = [...ncdApplications, ...SEED_NCD];
+  const allClaims = claims;
+  const allNcdApps = ncdApplications;
   const mine = belongsToCustomer(customer);
 
   // ─── Handlers ───────────────────────────────────────────────
-  const handleSubmitClaim = (e) => {
+  const handleSubmitClaim = async (e) => {
     e.preventDefault();
     if (coverageMismatch) return;
     setClaimSubmitting(true);
-    setTimeout(() => {
-      const claimNumber = `CLM-${Math.floor(100000 + Math.random() * 900000)}`;
-      const claim = {
-        ...claimForm,
-        claimNumber,
-        vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your vehicle',
+    setClaimError('');
+    try {
+      // Supporting evidence is stored first, then referenced by the claim.
+      const supportingDocumentIds = (
+        await Promise.all(docItems.filter(item => item.file).map(item => api.documents.upload(item.file, 'CLAIM_ATTACHMENT')))
+      ).map(document => document.id);
+
+      const claim = await api.claims.notify({
+        insurerId: claimForm.insurerId,
+        policyNumber: claimForm.policyNumber || undefined,
+        fullName: claimForm.fullName,
+        phone: claimForm.phone,
+        email: customer?.email || undefined,
         plate: claimForm.plateNumber || vehicleDetails?.plateNumber || 'N/A',
-        supportingDocs: docItems.map(d => ({ name: d.name, fileName: d.file?.name || null })),
-      };
-      addClaim(claim);
-      setSubmittedClaim(claim);
-      setClaimSubmitting(false);
-      setClaimForm({ insurer: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: customer?.phone || '', fullName: customer?.fullName || '', lateReason: '', plateNumber: '', coverageType: '' });
+        vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your vehicle',
+        type: claimForm.type,
+        incidentDate: claimForm.incidentDate,
+        location: claimForm.location,
+        description: claimForm.description,
+        estimatedLoss: claimForm.estimatedLoss ? Number(claimForm.estimatedLoss) : undefined,
+        policeReport: claimForm.policeReport,
+        policeReportNumber: claimForm.policeReportNumber || undefined,
+        lateReason: claimForm.lateReason || undefined,
+        supportingDocumentIds,
+      });
+
+      await hydrateCustomer();
+      setSubmittedClaim({ ...claim, insurer: claim.insurer || claimForm.insurer });
+      setClaimForm({ insurer: '', insurerId: '', type: '', incidentDate: '', location: '', description: '', policeReport: false, policeReportNumber: '', estimatedLoss: '', phone: customer?.phone || '', fullName: customer?.fullName || '', lateReason: '', plateNumber: '', coverageType: '' });
       setDocItems([]);
       setPlateLookupResult(null);
       setCoverageMismatch(null);
       setClaimView('success');
-    }, 1400);
+    } catch (error) {
+      setClaimError(error.message || 'Your claim could not be submitted. Please try again.');
+    } finally {
+      setClaimSubmitting(false);
+    }
   };
 
-  const handleSubmitNcd = (e) => {
+  const handleSubmitNcd = async (e) => {
     e.preventDefault();
     if (!ncdForm.declaration) { setNcdDeclarationError('Please acknowledge the declaration before submitting.'); return; }
     setNcdDeclarationError('');
     setNcdSubmitting(true);
-    setTimeout(() => {
-      const refNumber = `NCDA-${Math.floor(100000 + Math.random() * 900000)}`;
-      addNcdApplication({ ...ncdForm, applicationNumber: refNumber, yearsClaimFree: parseInt(ncdForm.yearsClaimFree) });
-      setSubmittedRef(refNumber);
-      setNcdSubmitting(false);
-      setNcdForm({ insurer: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false });
+    setNcdError('');
+    try {
+      const application = await api.ncd.apply({
+        insurerId: ncdForm.insurerId,
+        policyNumber: ncdForm.policyNumber,
+        fullName: ncdForm.fullName,
+        phone: ncdForm.phone,
+        yearsClaimFree: parseInt(ncdForm.yearsClaimFree, 10),
+      });
+      await hydrateCustomer();
+      setSubmittedRef(application.applicationNumber);
+      setNcdForm({ insurer: '', insurerId: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false });
       setNcdView('success');
-    }, 1400);
+    } catch (error) {
+      setNcdError(error.message || 'Your application could not be submitted. Please try again.');
+    } finally {
+      setNcdSubmitting(false);
+    }
   };
 
 
@@ -268,7 +288,7 @@ export default function ClaimsPage() {
 
   // ── Success ──
   if (mainTab === 'claims' && claimView === 'success' && submittedClaim) {
-    return <ClaimHandoff claim={submittedClaim} onDone={() => setClaimView('list')} />;
+    return <ClaimHandoff claim={submittedClaim} contact={insurerContact(submittedClaim.insurer)} onDone={() => setClaimView('list')} />;
   }
 
   // ── New Claim Form ──
@@ -291,14 +311,14 @@ export default function ClaimsPage() {
         let result;
         if (ownPolicy) {
           const coverage = /third/i.test(ownPolicy.coverage || '') ? 'Third Party' : 'Comprehensive';
-          result = { insurer: ownPolicy.insurer, coverage, make: ownPolicy.vehicle, year: '', plate };
+          result = { insurer: ownPolicy.insurer, insurerId: insurers.find((item) => item.name === ownPolicy.insurer)?.id ?? '', coverage, make: ownPolicy.vehicle, year: '', plate };
         } else {
           const hash = plate.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-          const insurer = INSURER_RATES[hash % INSURER_RATES.length];
-          result = { insurer: insurer.name, coverage: hash % 3 === 0 ? 'Third Party' : 'Comprehensive', make: MAKES[hash % MAKES.length], year: YEARS[(hash + 3) % YEARS.length], plate };
+          const insurer = insurers[hash % insurers.length];
+          result = { insurer: insurer?.name ?? '', insurerId: insurer?.id ?? '', coverage: hash % 3 === 0 ? 'Third Party' : 'Comprehensive', make: MAKES[hash % MAKES.length], year: YEARS[(hash + 3) % YEARS.length], plate };
         }
         setPlateLookupResult(result);
-        setClaimField('insurer', result.insurer);
+        setClaimForm((prev) => ({ ...prev, insurer: result.insurer, insurerId: result.insurerId }));
       }, 1200);
     };
 
@@ -467,10 +487,10 @@ export default function ClaimsPage() {
             <div>
               <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
               <div className="relative">
-                <select required value={claimForm.insurer} onChange={e => setClaimField('insurer', e.target.value)}
+                <select required value={claimForm.insurerId} onChange={e => setClaimForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
                   className="w-full appearance-none bg-canvas-2 border-2 border-line-strong rounded-[1px] p-3.5 text-[15px] focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                   <option value="">Select the insurance company...</option>
-                  {INSURER_RATES.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+                  {insurers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                 </select>
                 <span className="material-symbols-outlined absolute right-3 top-3.5 text-ink-faint pointer-events-none">expand_more</span>
               </div>
@@ -718,6 +738,7 @@ export default function ClaimsPage() {
           </div>
 
           {/* Submit */}
+          {claimError && <p role="alert" className="mt-5 rounded-[1px] border border-primary/30 bg-primary/5 px-4 py-3 text-[14px] text-primary">{claimError}</p>}
           <button type="submit" disabled={claimSubmitting || isSubmitBlocked || !!coverageMismatch}
             className="w-full bg-primary text-white font-medium text-[16px] py-4 rounded-[1px] transition-colors duration-200 ease-out hover:bg-[#b91c1c] flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas">
             {claimSubmitting
@@ -747,7 +768,7 @@ export default function ClaimsPage() {
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="font-mono text-[24px] font-medium text-primary">{claimNumber}</h1>
               <CopyButton value={claimNumber} className="bg-primary/10 text-primary hover:bg-primary/15" />
-              <span className={`rounded-full px-3 py-1 text-[11px] font-medium ${CLAIM_STATUSES[claim.status] || 'bg-canvas-2 text-ink-muted'}`}>{claim.status}</span>
+              <Badge variant={CLAIM_STATUSES[claim.status] || 'muted'}>{claim.status}</Badge>
             </div>
             <p className="mt-1 text-[13px] text-ink-muted">{claim.type} · notified {formatDate(claim.submittedAt)}{received && claim.receivedAt ? ` · received by ${claim.insurer} ${formatDate(claim.receivedAt)}` : ''}</p>
           </div>
@@ -761,7 +782,7 @@ export default function ClaimsPage() {
         </p>
 
         <div className="mt-5 grid gap-5 md:grid-cols-2">
-          <InsurerCallCard insurerName={claim.insurer} claimNumber={claimNumber} />
+          <InsurerCallCard insurerName={claim.insurer} contact={insurerContact(claim.insurer)} claimNumber={claimNumber} />
           <section className="rounded-[1px] border border-line bg-white p-5">
             <p className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">What you reported</p>
             <dl className="mt-3 space-y-3">
@@ -846,10 +867,10 @@ export default function ClaimsPage() {
             <div>
               <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
               <div className="relative">
-                <select required value={ncdForm.insurer} onChange={e => setNcdField('insurer', e.target.value)}
+                <select required value={ncdForm.insurerId} onChange={e => setNcdForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
                   className="w-full appearance-none bg-canvas-2 border border-line-strong rounded-[1px] p-3.5 text-[15px] focus:ring-2 focus:ring-primary outline-none">
                   <option value="">Select insurer you have been using...</option>
-                  {INSURER_RATES.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+                  {insurers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                 </select>
                 <span className="material-symbols-outlined absolute right-3 top-3.5 text-ink-faint pointer-events-none">expand_more</span>
               </div>
@@ -898,6 +919,7 @@ export default function ClaimsPage() {
 
           {ncdDeclarationError && <p className="text-[12px] font-medium text-primary">{ncdDeclarationError}</p>}
 
+          {ncdError && <p role="alert" className="mt-5 rounded-[1px] border border-primary/30 bg-primary/5 px-4 py-3 text-[14px] text-primary">{ncdError}</p>}
           <button type="submit" disabled={ncdSubmitting || !ncdForm.yearsClaimFree || !ncdForm.declaration}
             className="w-full bg-primary text-white font-medium py-4 rounded-[1px] transition-colors duration-200 ease-out hover:bg-[#b91c1c] flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas">
             {ncdSubmitting
@@ -925,7 +947,7 @@ export default function ClaimsPage() {
           </button>
           <div className="flex-1">
             <h1 className="text-[22px] font-medium text-primary font-mono">{app.applicationNumber}</h1>
-            <span className={`text-[11px] font-medium px-3 py-0.5 rounded-full ${statusInfo?.color || 'bg-canvas-2 text-ink-muted'}`}>{app.status}</span>
+            <Badge variant={statusInfo?.variant || 'muted'}>{app.status}</Badge>
           </div>
         </div>
 
@@ -1004,22 +1026,22 @@ export default function ClaimsPage() {
           <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
           <Meta className="text-ink-muted">Claims &amp; no-claim discount</Meta>
         </span>
-        <h1 className="mt-6 max-w-2xl text-[36px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Claims &amp; NCD</h1>
+        <h1 className="mt-6 max-w-2xl text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Claims &amp; NCD</h1>
         <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">Notify your insurer of an incident, follow each claim's progress, and apply for a No Claim Discount — all linked to your account.</p>
       </header>
 
       {/* A rail rather than a pill group, matching the insurer portal. */}
-      <div role="tablist" aria-label="Claims and NCD" className="-mb-px flex overflow-x-auto border-b border-line">
+      <div role="tablist" aria-label="Claims and NCD" className="no-scrollbar -mb-px grid grid-cols-2 border-b border-line md:flex md:overflow-x-auto">
         {[
           { id: 'claims', label: 'Claims', icon: 'report_problem', count: myClaims.length },
-          { id: 'ncd', label: 'NCD applications', icon: 'sell', count: myNcdApps.length },
+          { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: 'sell', count: myNcdApps.length },
         ].map(tab => {
           const active = mainTab === tab.id;
           return (
-          <button key={tab.id} type="button" role="tab" aria-selected={active} onClick={() => setMainTab(tab.id)}
-            className={`flex shrink-0 items-center gap-2.5 border-b-2 px-5 py-4 font-mono text-[12px] uppercase tracking-[0.1em] transition-colors duration-200 ease-out ${active ? 'border-primary text-primary' : 'border-transparent text-ink-faint hover:text-ink'}`}>
+          <button key={tab.id} type="button" role="tab" aria-selected={active} aria-label={tab.label} onClick={() => setMainTab(tab.id)}
+            className={`flex min-h-14 items-center justify-center gap-2.5 border-b-2 px-3 py-3 font-mono text-[12px] uppercase tracking-[0.1em] transition-colors duration-200 ease-out md:min-h-0 md:shrink-0 md:justify-start md:px-5 md:py-4 ${active ? 'border-primary text-primary' : 'border-transparent text-ink-faint hover:text-ink'}`}>
             <span className="material-symbols-outlined text-[17px]" aria-hidden="true">{tab.icon}</span>
-            {tab.label}
+            {tab.shortLabel ? <><span className="md:hidden">{tab.shortLabel}</span><span className="hidden md:inline">{tab.label}</span></> : tab.label}
             {tab.count > 0 && <span className={`flex h-[18px] min-w-[18px] items-center justify-center rounded-[1px] px-1 text-[10px] leading-none ${active ? 'bg-primary text-white' : 'bg-primary/10 text-primary'}`}>{tab.count}</span>}
           </button>
           );
@@ -1050,9 +1072,9 @@ export default function ClaimsPage() {
                         <span className="min-w-0 flex-1">
                           <span className="block font-medium text-ink">{claim.type || 'Claim'} <span className="font-mono text-[13px] text-ink-muted">· {claim.claimNumber || claim.id}</span></span>
                           <span className="mt-0.5 block text-[12px] text-ink-muted">{claim.insurer} · incident {formatDate(claim.incidentDate)}</span>
-                          <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-medium sm:hidden ${CLAIM_STATUSES[claim.status] || 'bg-canvas-2 text-ink-muted'}`}>{claim.status}</span>
+                          <Badge variant={CLAIM_STATUSES[claim.status] || 'muted'} className="mt-1.5 sm:hidden">{claim.status}</Badge>
                         </span>
-                        <span className={`hidden shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium sm:inline-block ${CLAIM_STATUSES[claim.status] || 'bg-canvas-2 text-ink-muted'}`}>{claim.status}</span>
+                        <Badge variant={CLAIM_STATUSES[claim.status] || 'muted'} className="hidden shrink-0 sm:inline-flex">{claim.status}</Badge>
                         <span className="material-symbols-outlined shrink-0 text-ink-muted" aria-hidden="true">chevron_right</span>
                       </button>
                     </li>
@@ -1111,9 +1133,9 @@ export default function ClaimsPage() {
                           <span className="min-w-0 flex-1">
                             <span className="block font-medium text-ink">{app.yearsClaimFree} claim-free year{app.yearsClaimFree === 1 ? '' : 's'} <span className="font-mono text-[13px] text-ink-muted">· {app.applicationNumber}</span></span>
                             <span className="mt-0.5 block text-[12px] text-ink-muted">{app.insurer} · policy {app.policyNumber}{app.approvedCode ? ` · code ${app.approvedCode}` : ''}</span>
-                            <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-medium sm:hidden ${status?.color || 'bg-canvas-2 text-ink-muted'}`}>{app.status}</span>
+                            <Badge variant={status?.variant || 'muted'} className="mt-1.5 sm:hidden">{app.status}</Badge>
                           </span>
-                          <span className={`hidden shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium sm:inline-block ${status?.color || 'bg-canvas-2 text-ink-muted'}`}>{app.status}</span>
+                          <Badge variant={status?.variant || 'muted'} className="hidden shrink-0 sm:inline-flex">{app.status}</Badge>
                           <span className="material-symbols-outlined shrink-0 text-ink-muted" aria-hidden="true">chevron_right</span>
                         </button>
                       </li>

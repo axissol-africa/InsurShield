@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '@/store';
+import { hydrateCustomer } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
+import { coverPeriod } from '@/domain/coverPeriod';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocuments';
 import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
@@ -17,7 +19,10 @@ const openCertificate = (policy) =>
 
 export default function CustomerAccountPage() {
   const navigate = useNavigate();
-  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount, requoteFromRequest } = useStore();
+  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount, requoteFromRequest, resetJourney } = useStore();
+
+  // Your records come from the server when one is configured; a no-op otherwise.
+  useEffect(() => { void hydrateCustomer(); }, []);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
 
@@ -57,17 +62,21 @@ export default function CustomerAccountPage() {
             <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
             <Meta className="text-ink-muted">My InsurShield</Meta>
           </span>
-          <h1 className="mt-6 text-[36px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[46px]">
+          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">
             Welcome back, {customer?.fullName?.split(' ')[0] || 'there'}.
           </h1>
           <p className="mt-4 max-w-xl text-[16px] leading-[1.6] text-ink-muted">
             Your policies, quote requests, renewals and claims — all in one place.
           </p>
 
-          <div className="mt-8 flex flex-wrap gap-3">
+          {/* On a phone these are the app's home actions, so they form a tidy
+              block — the main one across the top, the other two side by side —
+              instead of wrapping into a ragged line. */}
+          <div className="mt-8 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap">
             <Link
               to="/insurance-type"
-              className="group relative inline-flex min-h-[48px] items-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]"
+              onClick={resetJourney}
+              className="group relative col-span-2 flex min-h-[48px] items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] sm:col-span-1 sm:inline-flex sm:justify-start"
             >
               <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
               <span className="relative">Get quotes</span>
@@ -77,7 +86,7 @@ export default function CustomerAccountPage() {
               <Link
                 key={to}
                 to={to}
-                className="inline-flex min-h-[48px] items-center rounded-[1px] border border-dashed border-line-strong px-6 text-[15px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary"
+                className="flex min-h-[48px] items-center justify-center rounded-[1px] border border-dashed border-line-strong px-4 text-center text-[15px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary sm:inline-flex sm:px-6"
               >
                 {label}
               </Link>
@@ -149,7 +158,7 @@ export default function CustomerAccountPage() {
                       {[
                         ['Cover', policy.coverage || 'Comprehensive'],
                         ['Premium', formatZMW(policy.premium || 0)],
-                        ['Valid until', policy.policyDates?.formattedEnd || '—'],
+                        ['Valid until', coverPeriod(policy.policyDates).end],
                         ['Issued', formatDate(policy.issuedAt)],
                       ].map(([label, value]) => (
                         <div key={label}>

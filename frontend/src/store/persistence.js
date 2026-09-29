@@ -9,7 +9,7 @@ import { EMPTY_DOCUMENTS, TODAY } from './shared';
  */
 
 export const STORAGE_KEY = 'insurshield-storage';
-export const STORAGE_VERSION = 5;
+export const STORAGE_VERSION = 6;
 
 /** Keys from the v1 "select up to five insurers" model plus support-ticket and chat state. */
 const LEGACY_KEYS = ['selectedInsurers', 'quoteStatus', 'quoteRulesAgreed', 'quoteRulesTimestamp', 'supportTickets', 'chatMessages', 'userPhone'];
@@ -18,9 +18,9 @@ const PERSISTED_KEYS = [
   'customer', 'isAuthenticated', 'authToken', 'registeredAccounts', 'staffSession',
   'consentAccepted', 'consentTimestamp', 'consentRecord',
   'vehicleDetails', 'vehicleValue', 'vehicleUsage', 'insuranceType', 'coverageDurationId', 'policyStartDate', 'matchRtsaAnniversary', 'rtsaRegistrationDate', 'policyDates',
-  'activeQuoteRequestId', 'requotedFromId', 'renewalOfPolicyNumber', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt', 'documents',
+  'activeQuoteRequestId', 'requotedFromId', 'renewalOfPolicyNumber', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt',
   'ncdCode', 'ncdCodeValidated', 'ncdCodeUsed', 'ncdApplications',
-  'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections',
+  'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections', 'insurerReviews',
 ];
 
 /** Only data is persisted, never actions. */
@@ -54,7 +54,11 @@ export const merge = (persisted, current) => ({
   quoteRequests: backfillValidity(persisted?.quoteRequests ?? current.quoteRequests, reconcileInsurers(persisted?.insurersList)),
   // A start date saved on an earlier day would fail the date input's minimum.
   policyStartDate: persisted?.policyStartDate >= TODAY() ? persisted.policyStartDate : TODAY(),
-  documents: { ...EMPTY_DOCUMENTS, ...Object.fromEntries(Object.entries(persisted?.documents || {}).filter(([key]) => key in EMPTY_DOCUMENTS)) },
+  // Inspection images are deliberately not persisted. Seven camera data URLs
+  // can exceed browser storage partway through a capture, leaving the phone
+  // and computer out of sync. They remain available during the active quote
+  // (and through the short-lived QR relay), then every new quote starts clean.
+  documents: { ...EMPTY_DOCUMENTS },
 });
 
 export const migrate = (persisted, version) => {
@@ -75,5 +79,8 @@ export const migrate = (persisted, version) => {
     state.ncdApplications = withSeed(state.ncdApplications, SEED_NCD_APPLICATIONS);
     state.policies = withSeed(state.policies, SEED_POLICIES, 'policyNumber');
   }
+  // v6: remove old persisted photos/White Books. Keeping them caused stale
+  // captures to appear in a new quote and could exhaust localStorage.
+  if (version < 6) state.documents = { ...EMPTY_DOCUMENTS };
   return state;
 };

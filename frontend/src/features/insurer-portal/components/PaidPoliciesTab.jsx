@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
+import { coverPeriodLabel } from '@/domain/coverPeriod';
 import { openDocument } from '@/lib/files';
 import { downloadPolicyCertificate } from '@/lib/policyDocuments';
 import { timeAgo } from '@/lib/time';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
 import Meta from '@/components/ui/Meta';
-import { BackButton, DocumentPicker, EmptyState, Fact, Icon, fieldLabelClass, inputClass, outlineButtonClass, primaryButtonClass } from './ui';
+import { BackButton, DocumentPicker, EmptyState, Fact, Icon, outlineButtonClass, primaryButtonClass } from './ui';
+import { fieldClass as inputClass, labelClass as fieldLabelClass } from '@/components/ui/field';
 
-const coverPeriod = (policy) => `${policy.policyDates?.formattedStart || '—'} – ${policy.policyDates?.formattedEnd || '—'}`;
+const coverPeriod = (policy) => coverPeriodLabel(policy.policyDates);
 
 /**
  * Paid quotes waiting for the insurer's official certificate, plus the

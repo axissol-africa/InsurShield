@@ -79,9 +79,75 @@
     color: var(--color-on-background);
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   button, input, select, textarea { font: inherit; }
+
+  /* Figures in the monospace captions — reference numbers, dates, counts,
+     plate numbers — line up column to column instead of shuffling as the
+     digits change. */
+  .font-mono { font-variant-numeric: tabular-nums; }
+
+  /* One focus ring for the whole product. `:where()` keeps it at zero
+     specificity, so a control with its own focus treatment still wins, and
+     fields keep the ring that comes with them. Without this, tabbing through
+     the app lands on controls with nothing to show for it. */
+  :where(a[href], button, [role='button'], [role='tab'], summary):focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  /* A tile whose control is a visually hidden input — the photo pickers and
+     the choice cards — shows the same ring when that input is focused. */
+  :where(label):has(input.sr-only:focus-visible) {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  /* Avoid iOS zooming a focused form field in the installed PWA. */
+  @media (max-width: 639px) {
+    input, select, textarea { font-size: 16px; }
+  }
+}
+
+/* Shared app-only mobile spacing. Home does not use this class, so its
+   approved landing layout remains untouched. */
+.pwa-main {
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 639px) {
+  .pwa-main { min-height: calc(100dvh - 4rem); }
+  .pwa-main :is(button, [role='button'], input, select) { touch-action: manipulation; }
+  /* A tapped control should look pressed, not flash the browser's grey box.
+     This is the single detail that most separates an installed app from a
+     web page on a phone; the pressed state below replaces it. */
+  .pwa-main :is(a, button, [role='button'], label, summary) {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pwa-main :is(button, [role='button'], a[href]):active {
+    transform: scale(0.99);
+  }
+}
+
+/* Horizontal strips — portal navigation, tab rails — scroll by finger and
+   keep their full height on desktop, where a scrollbar would otherwise eat
+   into the row. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* The mobile navigation sheet drops in from the header it belongs to. */
+@keyframes sheet-drop {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sheet-drop { animation: sheet-drop .18s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-drop { animation: none; }
+  .pwa-main :is(button, [role='button'], a[href]):active { transform: none; }
 }
 
 @keyframes partner-marquee {

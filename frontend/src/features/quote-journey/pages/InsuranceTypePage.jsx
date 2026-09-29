@@ -55,12 +55,7 @@ export default function InsuranceTypePage() {
 
         <div className="relative mx-auto w-full max-w-[1200px] px-4 py-6 pb-10 sm:px-6 sm:py-14 sm:pb-24 lg:px-10 lg:py-20">
           <header className="mx-auto max-w-2xl text-center">
-            <span className="hidden items-center gap-3 border border-dashed border-line-strong bg-canvas px-3 py-1.5 sm:inline-flex">
-              <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-              <Meta className="text-ink-muted">Step 01 · Coverage</Meta>
-            </span>
-
-            <h1 className="text-[28px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:mt-7 sm:text-[50px]">
+            <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">
               Choose your cover
             </h1>
             <p className="mt-2 text-[14px] leading-[1.5] text-ink-muted sm:mt-5 sm:text-[17px]">
@@ -85,6 +80,10 @@ export default function InsuranceTypePage() {
                   key={option.id}
                   type="button"
                   role="radio"
+                  // The card's own text is decorative markup, so the option
+                  // needs a name of its own for screen readers to tell the
+                  // two choices apart.
+                  aria-label={option.title}
                   aria-checked={active}
                   onClick={() => setSelected(option.id)}
                   className={`group relative flex flex-col overflow-hidden rounded-[1px] border bg-canvas p-3 text-left transition-colors duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:p-8 ${

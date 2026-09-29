@@ -13,6 +13,9 @@ import { DocumentsModule } from './documents/documents.module.js';
 import { InsurerPortalModule } from './insurer-portal/insurer-portal.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { CustomerModule } from './customer/customer.module.js';
+import { VehiclesModule } from './vehicles/vehicles.module.js';
+import { PaymentsModule } from './payments/payments.module.js';
+import { InspectionsModule } from './inspections/inspections.module.js';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter.js';
 import { AuthGuard } from './common/auth/auth.guard.js';
 
@@ -28,6 +31,9 @@ import { AuthGuard } from './common/auth/auth.guard.js';
     InsurerPortalModule,
     AdminModule,
     CustomerModule,
+    VehiclesModule,
+    PaymentsModule,
+    InspectionsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

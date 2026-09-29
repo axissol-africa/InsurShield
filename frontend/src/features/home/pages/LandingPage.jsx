@@ -38,7 +38,7 @@ const STEPS = [
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { isAuthenticated } = useStore();
+  const { isAuthenticated, resetJourney } = useStore();
   const activeInsurers = useActiveInsurers();
   const reduceMotion = useReducedMotion();
 
@@ -83,7 +83,7 @@ export default function LandingPage() {
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
-                onClick={() => navigate('/insurance-type')}
+                onClick={() => { resetJourney(); navigate('/insurance-type'); }}
                 className="group relative inline-flex min-h-[52px] items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-7 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]"
               >
                 {/* Beam sweeps once across the button on hover. */}

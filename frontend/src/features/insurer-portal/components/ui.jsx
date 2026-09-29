@@ -1,11 +1,8 @@
 /** Small presentational pieces shared by the insurer portal tabs. */
 import { formatBytes } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
+import SharedEmptyState from '@/components/ui/EmptyState';
 
-export const inputClass =
-  'w-full rounded-[1px] border border-line-strong bg-canvas p-3 text-[15px] text-ink outline-none transition-colors duration-200 ease-out focus:border-primary focus:ring-1 focus:ring-primary';
-export const fieldLabelClass =
-  'mb-2 block font-mono text-[12px] uppercase leading-none tracking-[0.12em] text-ink-muted';
 export const outlineButtonClass =
   'inline-flex min-h-10 items-center justify-center gap-2 rounded-[1px] border border-dashed border-line-strong px-4 text-[13px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary';
 export const primaryButtonClass =
@@ -38,14 +35,9 @@ export function Fact({ label, value, wide = false }) {
   );
 }
 
-export function EmptyState({ icon, title, hint }) {
-  return (
-    <div className="border border-dashed border-line-strong p-12 text-center">
-      <Icon name={icon} className="text-[32px] text-line-strong" />
-      <p className="mt-4 text-[16px] font-medium tracking-[-0.01em] text-ink">{title}</p>
-      {hint && <p className="mx-auto mt-2 max-w-md text-[13px] leading-[1.55] text-ink-muted">{hint}</p>}
-    </div>
-  );
+/** The product-wide empty state, under the name the portal already uses. */
+export function EmptyState(props) {
+  return <SharedEmptyState {...props} />;
 }
 
 /** Pager for a list sliced with `pageSlice`. Renders nothing for a single page. */

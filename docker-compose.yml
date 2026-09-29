@@ -28,8 +28,11 @@ services:
       timeout: 5s
       retries: 10
 
+  # MinIO's own images on quay.io now require authentication, so this uses
+  # Chainguard's build of the same binary; it ships `mc`, which the healthcheck
+  # and the bucket-init container below both use.
   minio:
-    image: quay.io/minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     container_name: insurshield-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -49,7 +52,7 @@ services:
 
   # Creates the private documents bucket on first boot, then exits.
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: cgr.dev/chainguard/minio:latest
     depends_on:
       minio:
         condition: service_healthy

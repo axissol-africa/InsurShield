@@ -4,9 +4,8 @@ import { cn } from '@/lib/cn';
 /**
  * The shared button.
  *
- * Square corners, no drop shadow, and a disabled state that reads as "not
- * yet" rather than a faded accent — a washed-out red fill looks broken rather
- * than inactive.
+ * A single high-contrast action treatment across the app. The large size is
+ * intentionally comfortable for thumb use in the installed mobile web app.
  */
 export const Button = React.forwardRef(({ className, variant = 'primary', size = 'default', asChild = false, ...props }, ref) => {
   const Comp = asChild ? React.Fragment : 'button';
@@ -22,8 +21,8 @@ export const Button = React.forwardRef(({ className, variant = 'primary', size =
           'border border-dashed border-line-strong bg-canvas text-ink hover:border-primary hover:text-primary': variant === 'outline',
           'text-primary hover:bg-primary/5': variant === 'ghost',
           'border border-primary/30 bg-primary/10 text-primary hover:bg-primary/15': variant === 'accent',
-          'h-10 px-4': size === 'default',
-          'h-9 px-3 text-[13px]': size === 'sm',
+          'min-h-11 px-4': size === 'default',
+          'min-h-10 px-3 text-[13px]': size === 'sm',
           'h-14 px-8 text-[15px]': size === 'lg',
           'h-10 w-10': size === 'icon',
         },

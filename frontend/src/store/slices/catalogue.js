@@ -1,3 +1,4 @@
+import { env } from '@/config/env';
 import { INSURER_RATES, PIA_CONFIG } from '@/domain/insurers';
 import { NOW, newReference, updateById, withTimestamp } from '../shared';
 
@@ -6,7 +7,11 @@ export const createCatalogueSlice = (set, get) => ({
   piaConfig: { ...PIA_CONFIG },
   setPiaConfig: (config) => set((state) => ({ piaConfig: { ...state.piaConfig, ...config } })),
 
-  insurersList: INSURER_RATES,
+  // With a backend the catalogue is loaded from it; the built-in list is the
+  // standalone demo's own.
+  insurersList: env.apiMode === 'mock' ? INSURER_RATES : [],
+  /** Replaces the catalogue with the backend's list. */
+  setInsurers: (insurersList) => set({ insurersList }),
   addInsurer: (insurer) => set((state) => ({ insurersList: [...state.insurersList, { ...insurer, id: newReference('INS') }] })),
   updateInsurer: (insurerId, updates) =>
     set((state) => ({ insurersList: updateById(state.insurersList, insurerId, (insurer) => withTimestamp({ ...insurer, ...updates })) })),
