@@ -14,7 +14,7 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
 
   return (
     <section className="mb-10">
-      <div className="mb-5 flex items-end justify-between gap-4">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div>
           <div className="flex items-center gap-4">
             <Meta className="text-primary">{title}</Meta>
@@ -104,7 +104,7 @@ function QuotedStatus({ reply, onExtend }) {
       </span>
       {validity.validUntil && (
         <span className="flex items-center gap-2.5">
-          <Meta className={validity.expired ? 'text-ink-faint' : validity.expiringSoon ? 'text-amber-700' : 'text-ink-faint'}>
+          <Meta className={!validity.expired && validity.expiringSoon ? 'text-primary' : 'text-ink-faint'}>
             {validity.label}
           </Meta>
           {!validity.expired && onExtend && (

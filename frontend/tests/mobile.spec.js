@@ -85,8 +85,8 @@ test('staff portal top bar and tabs work on a phone', async ({ page }) => {
   await seed(page, { staffSession: { role: 'admin', name: 'Super Admin' } });
   await page.goto('/admin');
   await expect(page.getByTestId('portal-role')).toHaveText(/Staff/);
-  await page.getByText('Manage Insurers', { exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Add Insurer' })).toBeInViewport();
+  await page.getByRole('button', { name: 'Insurers', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Add insurer' })).toBeInViewport();
   await expectNoHorizontalOverflow(page);
 
   await header.getByRole('button', { name: 'Sign out' }).click();

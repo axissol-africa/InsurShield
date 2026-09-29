@@ -3,7 +3,9 @@ import { motion } from 'framer-motion';
 import { calculatePremium, formatZMW } from '@/domain/premiumEngine';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
 import Meta from '@/components/ui/Meta';
-import { BackButton, DocumentPicker, Fact, Icon, fieldLabelClass, inputClass } from './ui';
+import { BackButton, DocumentPicker, Fact, Icon } from './ui';
+import { fieldClass as inputClass, labelClass as fieldLabelClass } from '@/components/ui/field';
+import { benefitsForCoverage } from '@/features/insurer-portal/portal';
 
 const SEND_DELAY_MS = 800;
 
@@ -24,7 +26,7 @@ const indicativePremium = (request, insurer, piaRatePercentage) => {
  * The insurer prepares its quotation in its own system, then records it here:
  * the document the customer will see, the premium on it, and how long it stays open.
  */
-export default function QuoteRequestForm({ request, insurer, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
+export default function QuoteRequestForm({ request, insurer, coverDocuments = {}, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
   const quotation = useDocumentUpload();
   const [premium, setPremium] = useState('');
   const [reference, setReference] = useState('');
@@ -33,6 +35,8 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
   const [sending, setSending] = useState(false);
 
   const estimate = indicativePremium(request, insurer, piaRatePercentage);
+  const coverageType = request.insuranceType || (request.coverage === 'Third Party Only' ? 'ThirdParty' : 'Comprehensive');
+  const coverDocument = coverDocuments[coverageType];
 
   const facts = [
     ['Vehicle', request.plate ? `${request.vehicle} · ${request.plate}` : request.vehicle],
@@ -50,6 +54,10 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
       quotation.setError('Attach the final quotation from your system before sending it.');
       return;
     }
+    if (!coverDocument) {
+      quotation.setError(`Add your ${coverageType === 'ThirdParty' ? 'third party only' : 'comprehensive'} cover guide in the Cover guides tab before sending this quote.`);
+      return;
+    }
     const amount = Number(premium);
     if (!(amount > 0)) {
       quotation.setError('Enter the premium exactly as it appears on your quotation.');
@@ -62,6 +70,13 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
       validityDays: Number(validityDays) || defaultValidityDays,
       insurerReference: reference.trim() || null,
       document: quotation.document,
+      coverGuide: {
+        coverageType,
+        document: coverDocument,
+        benefits: benefitsForCoverage(insurer, coverageType),
+        inspectionRules: insurer?.inspectionRules || 'May be requested',
+        claimsContact: insurer?.contact?.phone || insurer?.contact?.email || null,
+      },
     }), SEND_DELAY_MS);
   };
 
@@ -91,9 +106,18 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
           </div>
           <p className="mb-7 mt-5 text-[13px] leading-[1.6] text-ink-muted">
             Prepare and upload the final quotation from your own system. The customer sees the same
-            document on their comparison page and is charged the premium shown on it.
+            document on their comparison page and is charged the premium shown on it. The matching cover guide is attached automatically.
           </p>
           <form onSubmit={handleSubmit} className="space-y-6">
+            <div className={`border p-4 ${coverDocument ? 'border-primary/30 bg-primary/[0.03]' : 'border-primary/40 bg-primary/[0.06]'}`}>
+              <div className="flex items-start gap-3">
+                <Icon name={coverDocument ? 'task_alt' : 'description'} className="text-[21px] text-primary" />
+                <div>
+                  <span className="block text-[13px] font-medium text-ink">{coverageType === 'ThirdParty' ? 'Third party only' : 'Comprehensive'} cover guide</span>
+                  <span className="mt-1 block text-[12px] leading-[1.5] text-ink-muted">{coverDocument ? `${coverDocument.name} will be sent with this quote.` : 'Required before this quote can be sent. Go back and add it under Cover guides.'}</span>
+                </div>
+              </div>
+            </div>
             <div>
               <span className={fieldLabelClass}>Quotation document (PDF or image)</span>
               <DocumentPicker document={quotation.document} onPick={quotation.pick} onClear={quotation.clear} error={quotation.error} prompt="Attach quotation from your system" />

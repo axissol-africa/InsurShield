@@ -1,6 +1,7 @@
 import { cn } from '@/lib/cn';
 
-/** A hairline panel. Square corners, no shadow — the border does the work. */
+/** A panel: a hairline rule around content, no elevation. Depth here comes
+ * from the rule and the space around it, not from a shadow. */
 export function Card({ className, ...props }) {
   return <div className={cn('rounded-[1px] border border-line bg-canvas text-ink', className)} {...props} />;
 }

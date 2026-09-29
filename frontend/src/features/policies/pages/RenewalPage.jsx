@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { api, ApiError } from '@/api';
+import { hydrateCustomer } from '@/api/sync';
 import { useStore } from '@/store';
 import { formatZMW } from '@/domain/premiumEngine';
+import { coverPeriod } from '@/domain/coverPeriod';
 import { byRenewalUrgency, renewalLabel, renewalState } from '@/domain/renewal';
 import Meta from '@/components/ui/Meta';
 
@@ -17,6 +19,8 @@ const WINDOW = {
 export default function RenewalPage() {
   const navigate = useNavigate();
   const { customer, policies } = useStore();
+
+  useEffect(() => { void hydrateCustomer(); }, []);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState('');
 
@@ -63,7 +67,7 @@ export default function RenewalPage() {
             <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
             <Meta className="text-ink-muted">Renewals</Meta>
           </span>
-          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">Renew a policy</h1>
+          <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Renew a policy</h1>
           <p className="mt-4 max-w-[58ch] text-[16px] leading-[1.6] text-ink-muted">
             Renewing sends a fresh request to every insurer on InsurShield, so you compare the market again
             rather than rolling over last year's price. Your vehicle details carry forward.
@@ -137,7 +141,7 @@ function PolicyCard({ policy, index, busy, disabled, onRenew }) {
         <Fact label="Insurer" value={policy.insurer} />
         <Fact label="Cover" value={policy.plan || policy.coverage} />
         <Fact label="Premium paid" value={policy.premium ? formatZMW(policy.premium) : '—'} />
-        <Fact label="Cover ends" value={policy.policyDates?.formattedEnd || '—'} />
+        <Fact label="Cover ends" value={coverPeriod(policy.policyDates).end} />
       </dl>
 
       <div className={`mt-auto border-t p-5 ${style.emphasis ? 'border-primary/30 bg-primary/[0.04]' : 'border-line bg-canvas-2'}`}>

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Meta from '@/components/ui/Meta';
 import { useStore } from '@/store';
+import { hydrateDirectory } from '@/api/sync';
 
 // The directory is derived from the live insurer list so onboarding, edits and removals show immediately.
 const toContact = (insurer) => ({ id: insurer.id, name: insurer.tradingName || insurer.name, logo: insurer.icon, logoUrl: insurer.logoUrl, contactPerson: '', role: '', phone: '', mobile: '', whatsapp: '', email: '', address: '', hours: '', tagline: '', ...insurer.contact });
@@ -179,6 +180,9 @@ export default function SupportPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const insurersList = useStore((state) => state.insurersList);
+
+  // The directory is the public insurer list; load it when the page opens.
+  useEffect(() => { void hydrateDirectory(); }, []);
   const directory = insurersList.filter((insurer) => insurer.status !== 'Deleted').map(toContact);
 
   const filtered = directory.filter(ins =>
@@ -196,7 +200,7 @@ export default function SupportPage() {
           <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
           <Meta className="text-ink-muted">Insurer directory</Meta>
         </span>
-        <h1 className="mt-6 text-[36px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Contact your insurer</h1>
+        <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Contact your insurer</h1>
         <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">
           Reach your insurance company's claims desk directly for policy queries, claims assistance and more.
         </p>

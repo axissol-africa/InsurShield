@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
+import { api } from '@/api';
+import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import { AWAITING_CERTIFICATE, isOpenNcdApplication, toPortalRequest } from '@/features/insurer-portal/portal';
 import { Icon } from '@/features/insurer-portal/components/ui';
 import Meta from '@/components/ui/Meta';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
+import CoverGuideLibrary from '@/features/insurer-portal/components/CoverGuideLibrary';
 import PaidPoliciesTab, { PolicyIssuePanel } from '@/features/insurer-portal/components/PaidPoliciesTab';
 import ClaimsTab from '@/features/insurer-portal/components/ClaimsTab';
 import NcdTab from '@/features/insurer-portal/components/NcdTab';
@@ -24,7 +27,11 @@ const byNewest = (key) => (first, second) => new Date(second[key] || 0) - new Da
  * insurer's systems.
  */
 export default function InsurerDashboard() {
-  const { staffSession, claims, ncdApplications, quoteRequests, policies, insurersList, piaConfig, addInsurerQuote, extendInsurerQuote, issuePolicyCertificate } = useStore();
+  const { staffSession, claims, ncdApplications, quoteRequests, policies, insurersList, piaConfig, updateInsurer } = useStore();
+
+  // The queue is shared with customers and other staff, so it is loaded on
+  // open and again after every action rather than kept on the device.
+  useEffect(() => { void hydrateInsurerPortal(); }, []);
   const [activeTab, setActiveTab] = useState('overview');
   const [quotingRequest, setQuotingRequest] = useState(null);
   const [issuingPolicy, setIssuingPolicy] = useState(null);
@@ -57,7 +64,11 @@ export default function InsurerDashboard() {
       <PolicyIssuePanel
         policy={issuingPolicy}
         onBack={() => setIssuingPolicy(null)}
-        onIssued={(policyNumber, issuance) => { issuePolicyCertificate(policyNumber, issuance); setIssuingPolicy(null); }}
+        onIssued={async (policyNumber, issuance) => {
+          await api.policies.issueCertificate(policyNumber, issuance);
+          await hydrateInsurerPortal();
+          setIssuingPolicy(null);
+        }}
       />
     );
   }
@@ -67,17 +78,23 @@ export default function InsurerDashboard() {
       <QuoteRequestForm
         request={quotingRequest}
         insurer={insurer}
+        coverDocuments={insurer?.coverDocuments}
         piaRatePercentage={piaConfig?.piaRatePercentage}
         defaultValidityDays={defaultValidityDays}
         onBack={() => setQuotingRequest(null)}
-        onSubmit={(quote) => { addInsurerQuote(quotingRequest.id, insurerName, quote); setQuotingRequest(null); }}
+        onSubmit={async (quote) => {
+          await api.quotes.reply(quotingRequest.id, quote);
+          await hydrateInsurerPortal();
+          setQuotingRequest(null);
+        }}
       />
     );
   }
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: 'dashboard', badge: awaitingQuote.length },
-    { id: 'policies', label: 'Paid policies', icon: 'verified_user', badge: awaitingCertificate.length },
+    { id: 'guides', label: 'Cover documents', shortLabel: 'Documents', icon: 'description', badge: insurer?.coverDocuments?.Comprehensive && insurer?.coverDocuments?.ThirdParty ? 0 : 1 },
+    { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: 'verified_user', badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: 'report_problem', badge: newClaims.length },
     { id: 'ncd', label: 'NCD Applications', shortLabel: 'NCD', icon: 'sell', badge: openNcd.length },
   ];
@@ -131,25 +148,34 @@ export default function InsurerDashboard() {
       </section>
 
       {/* ── Sections ───────────────────────────────────────────── */}
-      <div role="tablist" className="-mb-px flex overflow-x-auto border-b border-line">
-        {tabs.map((tab) => {
+      {/* Every section stays reachable without scrolling a strip sideways, so
+          on a phone the tabs are a two-column rail of equal cells. An odd last
+          tab takes the full width rather than leaving a ragged gap. */}
+      <div role="tablist" className="no-scrollbar -mb-px grid grid-cols-2 border-b border-line md:flex md:overflow-x-auto">
+        {tabs.map((tab, index) => {
           const active = activeTab === tab.id;
+          const fullWidth = tabs.length % 2 === 1 && index === tabs.length - 1;
           return (
             <button
               key={tab.id}
               type="button"
               role="tab"
               aria-selected={active}
+              // A phone shows the short label to keep the rail one line per
+              // tab; the section is still announced by its full name.
+              aria-label={tab.label}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex shrink-0 items-center gap-2.5 border-b-2 px-5 py-4 font-mono text-[12px] uppercase tracking-[0.1em] transition-colors duration-200 ease-out ${
+              className={`flex min-h-14 items-center justify-center gap-2.5 border-b-2 px-3 py-3 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors duration-200 ease-out md:min-h-0 md:shrink-0 md:justify-start md:px-5 md:py-4 md:text-[12px] ${
+                fullWidth ? 'col-span-2 md:col-span-1' : ''
+              } ${
                 active ? 'border-primary text-primary' : 'border-transparent text-ink-faint hover:text-ink'
               }`}
             >
               <Icon name={tab.icon} className="text-[17px]" />
               {tab.shortLabel ? (
                 <>
-                  <span className="sm:hidden">{tab.shortLabel}</span>
-                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className="md:hidden">{tab.shortLabel}</span>
+                  <span className="hidden md:inline">{tab.label}</span>
                 </>
               ) : (
                 tab.label
@@ -171,9 +197,9 @@ export default function InsurerDashboard() {
             {kpis.map((kpi, index) => (
               <div
                 key={kpi.label}
-                className={`border-line py-7 pr-5 ${index % 2 === 1 ? 'border-l pl-5' : ''} ${index < 2 ? 'border-b lg:border-b-0' : ''} lg:border-l lg:pl-6 ${index === 0 ? 'lg:border-l-0 lg:pl-0' : ''}`}
+                className={`border-line py-7 pr-3 sm:pr-5 ${index % 2 === 1 ? 'border-l pl-3 sm:pl-5' : ''} ${index < 2 ? 'border-b lg:border-b-0' : ''} lg:border-l lg:pl-6 ${index === 0 ? 'lg:border-l-0 lg:pl-0' : ''}`}
               >
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <Icon name={kpi.icon} className="text-[19px] text-primary" />
                   {kpi.tag && (
                     <Meta className="rounded-[1px] border border-primary/30 bg-primary/10 px-2 py-1 text-primary">
@@ -200,9 +226,25 @@ export default function InsurerDashboard() {
             countLabel={`${quoted.length} sent`}
             requests={quoted}
             emptyMessage="No quotes have been sent yet."
-            onExtend={(request) => extendInsurerQuote(request.id, insurerName, EXTENSION_DAYS)}
+            onExtend={async (request) => {
+              await api.quotes.extend(request.id, EXTENSION_DAYS);
+              await hydrateInsurerPortal();
+            }}
           />
         </>
+      )}
+
+      {activeTab === 'guides' && (
+        <CoverGuideLibrary
+          insurer={insurer}
+          onSave={async (coverageType, document) => {
+            if (!insurer) throw new Error('Your insurer profile could not be found.');
+            const coverDocuments = { ...(insurer.coverDocuments || {}), [coverageType]: document };
+            await api.insurers.update(insurer.id, { coverDocuments });
+            updateInsurer(insurer.id, { coverDocuments });
+            await hydrateInsurerPortal();
+          }}
+        />
       )}
 
       {activeTab === 'policies' && <div className="pt-8"><PaidPoliciesTab policies={myPolicies} onIssue={setIssuingPolicy} /></div>}

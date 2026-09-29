@@ -33,11 +33,7 @@ export default function VehicleUsagePage() {
         <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
         <div className="relative mx-auto w-full max-w-[1120px] px-6 py-12 pb-24 lg:px-10">
           <header className="border-b border-line pb-8">
-            <span className="inline-flex items-center gap-3">
-              <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-              <Meta className="text-ink-muted">Step 03 · Vehicle use</Meta>
-            </span>
-            <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">How is the vehicle used?</h1>
+            <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">How is the vehicle used?</h1>
             <Meta className="mt-4 inline-flex rounded-[1px] border border-dashed border-line-strong px-3 py-2 text-ink-muted">For {vehicleName}</Meta>
           </header>
 

@@ -164,15 +164,6 @@ export const INSURER_RATES = [
   },
 ];
 
-// NCD Application Status workflow
-export const NCD_APPLICATION_STATUSES = [
-  { id: 'Submitted', label: 'Submitted', color: 'bg-blue-100 text-blue-800' },
-  { id: 'Under Review', label: 'Under Review', color: 'bg-amber-100 text-amber-800' },
-  { id: 'Verification Required', label: 'Verification Required', color: 'bg-orange-100 text-orange-800' },
-  { id: 'Approved', label: 'Approved', color: 'bg-primary/10 text-primary' },
-  { id: 'Rejected', label: 'Rejected', color: 'bg-red-100 text-red-800' },
-];
-
 const slug = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** Loose name match that tolerates "Global Guard" vs "Global Guard Insurance". */

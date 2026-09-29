@@ -6,6 +6,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
 const logoFile = { name: 'logo.png', mimeType: 'image/png', buffer: PNG };
 const quoteFile = { name: 'quote.pdf', mimeType: 'application/pdf', buffer: PDF };
+const guideFile = { name: 'cover-guide.pdf', mimeType: 'application/pdf', buffer: PDF };
 
 const seedStaff = (role, name) => async ({ page }) => {
   await page.goto('/');
@@ -20,8 +21,8 @@ const seedStaff = (role, name) => async ({ page }) => {
 test('admin onboards an insurer with an uploaded logo', async ({ page }) => {
   await seedStaff('admin', 'Admin')({ page });
   await page.goto('/admin');
-  await page.getByText('Manage Insurers', { exact: true }).click();
-  await page.getByRole('button', { name: 'Add Insurer' }).click();
+  await page.getByRole('button', { name: 'Insurers', exact: true }).click();
+  await page.getByRole('button', { name: 'Add insurer' }).click();
 
   await page.getByPlaceholder('e.g. Prestige Assurance Limited').fill('Zambezi General Insurance Limited');
   await page.getByPlaceholder('Name shown to customers').fill('Zambezi General');
@@ -34,7 +35,7 @@ test('admin onboards an insurer with an uploaded logo', async ({ page }) => {
   await expect(page.getByAltText('Company logo preview')).toBeVisible();
   await page.getByRole('button', { name: 'Onboard insurance company' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Manage Insurers' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add insurer' })).toBeVisible();
   await expect(page.getByText('Zambezi General Insurance Limited')).toBeVisible();
   await expect(page.getByText('PIA/GI/2026/031')).toBeVisible();
 
@@ -59,6 +60,14 @@ test('insurer uploads a quotation document and the customer can open it', async 
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   });
   await page.goto('/insurer');
+
+  // Every quotation is sent with the insurer's own cover guide, so the guide
+  // has to be published before a quote of that type can go out.
+  await page.getByRole('tab', { name: /Cover documents/ }).click();
+  await page.locator('input[type="file"]').first().setInputFiles(guideFile);
+  await expect(page.getByRole('button', { name: 'View customer guide' }).first()).toBeVisible();
+  await page.getByRole('tab', { name: /Overview/ }).click();
+
   await page.getByRole('button', { name: 'Send quote' }).first().click();
   await expect(page.getByText('7 live photos attached').or(page.getByText('1 live photos attached'))).toBeVisible();
   await page.locator('input[type="file"]').setInputFiles(quoteFile);
@@ -66,7 +75,7 @@ test('insurer uploads a quotation document and the customer can open it', async 
   await page.getByPlaceholder('e.g. PA-Q-2026-00412').fill('PA-Q-2026-00412');
   await page.getByPlaceholder('e.g. 21000').fill('10650');
   await page.getByRole('button', { name: 'Send quote to customer' }).click();
-  await expect(page.getByText('Quoted ZMW 10,650.00')).toBeVisible();
+  await expect(page.getByText('ZMW 10,650.00').first()).toBeVisible();
 
   await page.goto('/quotes-comparison');
   await expect(page.getByText('PA-Q-2026-00412').first()).toBeVisible();
@@ -85,16 +94,20 @@ test('admin can edit, deactivate and delete an insurer, and deactivated insurers
   });
   page.on('dialog', (dialog) => dialog.accept());
   await page.goto('/admin');
-  await page.getByText('Manage Insurers', { exact: true }).click();
+  await page.getByRole('button', { name: 'Insurers', exact: true }).click();
 
   const rows = page.locator('div.divide-y > div');
   await page.getByRole('button', { name: 'More actions for Metro Safe Assurance' }).click();
   await page.getByRole('menuitem', { name: /Deactivate/ }).click();
   await page.getByRole('button', { name: 'More actions for Metro Safe Assurance' }).click();
   await expect(page.getByRole('menuitem', { name: /Reactivate/ })).toBeVisible();
-  await page.getByRole('heading', { name: 'Manage Insurers' }).click(); // click outside closes the menu
+  await page.getByRole('button', { name: 'Add insurer' }).hover(); // moving away closes the menu
+  await page.mouse.click(4, 4);
   await page.getByRole('button', { name: 'More actions for Madison General' }).click();
-  await page.getByRole('menuitem', { name: /Delete/ }).click();
+  await page.getByRole('menuitem', { name: /Remove/ }).click();
+  // Removal is confirmed in the app's own dialog, which spells out what is kept.
+  await expect(page.getByRole('heading', { name: /Remove Madison General/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Remove insurer' }).click();
   await expect(rows.filter({ hasText: 'Madison General' }).getByText('Deleted')).toBeVisible();
 
   await rows.filter({ hasText: 'Prestige Assurance' }).getByRole('button', { name: 'Edit', exact: true }).click();
@@ -120,7 +133,7 @@ test('insurer can find a claim by its number and mark it received', async ({ pag
   });
   await page.goto('/insurer');
   await page.getByRole('tab', { name: /Claims/ }).click();
-  await page.getByPlaceholder('Find by claim number, name or plate').fill('654321');
+  await page.getByPlaceholder('Claim number, name or plate').fill('654321');
   await page.getByRole('button', { name: /CLM-654321/ }).click();
   await expect(page.getByText('ZP/2026/1')).toBeVisible();
   await expect(page.getByText('mwiza.banda@insurshield.zm').first()).toBeVisible();
@@ -138,7 +151,7 @@ test('a paid quote needs the insurer certificate before it becomes an active pol
 
   // The demo paid quote is waiting for its certificate and is not yet a policy for the customer.
   await page.goto('/account');
-  await expect(page.getByText('Policy certificate being prepared')).toBeVisible();
+  await expect(page.getByText('Certificate being prepared')).toBeVisible();
   await expect(page.getByText('Policies you buy through InsurShield will appear here.')).toBeVisible();
 
   await page.goto('/insurer');
@@ -156,7 +169,7 @@ test('a paid quote needs the insurer certificate before it becomes an active pol
   await expect(page.getByRole('button', { name: 'View certificate' })).toBeVisible();
 
   await page.goto('/account');
-  await expect(page.getByText('Policy certificate being prepared')).toHaveCount(0);
+  await expect(page.getByText('Certificate being prepared')).toHaveCount(0);
   await expect(page.getByText('PA-2026-011293')).toBeVisible();
   const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByRole('button', { name: /Policy certificate/ }).click()]);
   expect(popup).toBeTruthy();
@@ -176,5 +189,5 @@ test('an insurer quote needs the quotation document and a premium', async ({ pag
   await page.getByRole('button', { name: 'Use estimate' }).click();
   await expect(premium).not.toHaveValue('100');
   await page.getByRole('button', { name: 'Send quote to customer' }).click();
-  await expect(page.getByText(/Quoted ZMW/).first()).toBeVisible();
+  await expect(page.getByText(/^ZMW /).first()).toBeVisible();
 });

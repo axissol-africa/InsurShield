@@ -1,22 +1,26 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/cn';
 import { api } from '@/api';
 import { useStore } from '@/store';
 import { formatZMW } from '@/domain/premiumEngine';
+import { coverPeriodLabel } from '@/domain/coverPeriod';
 import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
 import { quoteValidity } from '@/domain/quoteValidity';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
+import { fieldClass } from '@/components/ui/field';
 import Meta from '@/components/ui/Meta';
 
 const NETWORKS = ['MTN Mobile Money', 'Airtel Money', 'Zamtel Kwacha'];
 
-const fieldClass = 'w-full rounded-[1px] border border-line-strong bg-canvas-2 p-3 text-[16px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30';
 const labelClass = 'mb-2 block text-[12px] font-medium uppercase tracking-[0.05em] text-ink-muted';
 
 export default function PaymentPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const captureCode = searchParams.get('capture');
+  const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
   const { selectedQuote, vehicleDetails, policyDates, customer, matchRtsaAnniversary, requoteFromRequest, recordPayment } = useStore();
   const [expiredAtPay, setExpiredAtPay] = useState(false);
   const [method, setMethod] = useState('momo');
@@ -38,7 +42,7 @@ export default function PaymentPage() {
               </span>
               <h1 className="mt-6 text-[28px] font-semibold tracking-[-0.03em] text-ink">Choose a quote first</h1>
               <p className="mt-3 text-[15px] leading-[1.6] text-ink-muted">Pick the insurer you want from your comparison and we'll bring you back here to pay.</p>
-              <Link to="/quotes-comparison" className="mt-8 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">Back to quotes</Link>
+              <Link to={continuation('/quotes-comparison')} className="mt-8 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">Back to quotes</Link>
             </section>
           </div>
         </main>
@@ -54,7 +58,7 @@ export default function PaymentPage() {
 
   const requote = () => {
     if (selectedQuote.requestId) requoteFromRequest(selectedQuote.requestId);
-    navigate('/quote-request');
+    navigate(continuation('/quote-request'));
   };
 
   if (quoteExpired) {
@@ -70,7 +74,7 @@ export default function PaymentPage() {
               <p className="mt-3 text-[15px] leading-[1.6] text-ink-muted">{selectedQuote.name}'s quote {validity.validUntil ? `was valid until ${validity.label.replace('Expired on ', '')}` : 'is no longer valid'}. Insurers need to quote again before you can pay — your vehicle details are carried over.</p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <button type="button" onClick={requote} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">refresh</span>Get fresh quotes</button>
-                <Link to="/quotes-comparison" className="inline-flex min-h-12 items-center justify-center rounded-[1px] border border-dashed border-line-strong px-6 text-[15px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">See other quotes</Link>
+                <Link to={continuation('/quotes-comparison')} className="inline-flex min-h-12 items-center justify-center rounded-[1px] border border-dashed border-line-strong px-6 text-[15px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">See other quotes</Link>
               </div>
             </section>
           </div>
@@ -94,7 +98,7 @@ export default function PaymentPage() {
         mobileNumber: method === 'momo' ? mobileNumber : undefined,
       });
       recordPayment(receipt);
-      navigate('/confirmation', { replace: true });
+      navigate(continuation('/confirmation'), { replace: true });
     } catch (caught) {
       setPaymentError(caught.message || 'The payment could not be completed. Please try again.');
       setProcessing(false);
@@ -108,11 +112,7 @@ export default function PaymentPage() {
         <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
         <div className="relative mx-auto w-full max-w-[1120px] px-6 py-12 pb-24 lg:px-10">
           <header className="border-b border-line pb-8">
-            <span className="inline-flex items-center gap-3">
-              <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-              <Meta className="text-ink-muted">Step 06 · Payment</Meta>
-            </span>
-            <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">Confirm and pay</h1>
+            <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Confirm and pay</h1>
             <p className="mt-4 max-w-[46ch] text-[16px] leading-[1.6] text-ink-muted">Once payment is confirmed, {selectedQuote.name} prepares your official policy certificate; it appears in My account when issued.</p>
           </header>
 
@@ -127,13 +127,13 @@ export default function PaymentPage() {
               <Summary label="Plan" value={selectedQuote.coverage} />
               <Summary label="Vehicle" value={vehicleDetails ? `${vehicleDetails.year || ''} ${vehicleDetails.make} ${vehicleDetails.model}`.trim() : '—'} />
               <Summary label="Plate" value={vehicleDetails?.plateNumber || '—'} />
-              <Summary label="Cover period" value={policyDates ? `${policyDates.formattedStart} – ${policyDates.formattedEnd}` : selectedQuote.breakdown?.coverageDuration || '—'} />
+              <Summary label="Cover period" value={policyDates ? coverPeriodLabel(policyDates) : selectedQuote.breakdown?.coverageDuration || '—'} />
               <Summary label="Premium basis" value={selectedQuote.isFinal ? 'Final quote from insurer' : 'Indicative estimate · confirmed by insurer on issue'} />
               {validity.validUntil && <Summary label="Quote validity" value={validity.label} highlight={validity.expiringSoon} />}
             </dl>
 
             <div className="border-t border-dashed border-line px-6 py-5 md:px-8">
-              <Link to="/quotes-comparison" className="inline-flex items-center gap-2 text-[14px] font-medium text-primary transition-colors duration-200 ease-out hover:text-[#b91c1c]">
+              <Link to={continuation('/quotes-comparison')} className="inline-flex items-center gap-2 text-[14px] font-medium text-primary transition-colors duration-200 ease-out hover:text-[#b91c1c]">
                 <span className="material-symbols-outlined text-[18px]" aria-hidden="true">arrow_back</span>Choose a different insurer
               </Link>
             </div>

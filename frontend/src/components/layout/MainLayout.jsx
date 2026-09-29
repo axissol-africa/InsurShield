@@ -25,6 +25,9 @@ export default function MainLayout() {
   useEffect(() => { window.scrollTo({ top: 0 }); }, [location.pathname]);
 
   const isPortal = PORTAL_ROUTES.some((route) => location.pathname === route || location.pathname.startsWith(`${route}/`));
+  // Home is the approved marketing landing page. Keep its chrome independent
+  // while application routes use the compact mobile/PWA shell below.
+  const isHome = location.pathname === '/';
   // The phone capture page needs no identity, and its Keycloak host is not
   // reachable from the phone — so it shows the brand alone, with nothing to
   // tap that would strand someone half way through their photos.
@@ -46,8 +49,8 @@ export default function MainLayout() {
   const links = [...CUSTOMER_LINKS, { to: '/admin-login', label: 'Staff portal' }];
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-on-background selection:bg-primary/20">
-      <header className="fixed top-0 z-50 flex h-20 w-full items-center border-b border-slate-200 bg-white px-5 lg:px-[5.5vw]">
+    <div className={`flex min-h-screen flex-col text-on-background selection:bg-primary/20 ${isHome ? 'bg-background' : 'bg-canvas-2'}`}>
+      <header className={`fixed top-0 z-50 flex w-full items-center border-b border-slate-200 bg-white ${isHome ? 'h-20 px-5 lg:px-[5.5vw]' : 'h-16 bg-white/95 px-4 shadow-[0_1px_0_rgba(10,10,10,0.03)] backdrop-blur-sm sm:h-20 sm:px-6 lg:px-[5.5vw]'}`}>
         <div className="flex min-w-0 items-center gap-4">
           {/* The staff portal has no customer navigation, so no hamburger. */}
           {!isPortal && !isCapture && (
@@ -69,11 +72,11 @@ export default function MainLayout() {
         </div>
 
         {isCapture ? null : isPortal ? (
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
+          <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
             {staffSession && (
               <>
                 {/* Who is signed in: full name and portal on wider screens, a short role badge on phones. */}
-                <span data-testid="portal-role" className="inline-flex items-center gap-1.5 rounded-[1px] border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-primary sm:hidden">
+                <span data-testid="portal-role" className="inline-flex items-center gap-1.5 rounded-[1px] border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.08em] text-primary max-[359px]:hidden sm:hidden">
                   <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{staffSession.role === 'insurer' ? 'business' : 'admin_panel_settings'}</span>
                   {staffSession.role === 'insurer' ? 'Insurer' : 'Staff'}
                 </span>
@@ -115,22 +118,24 @@ export default function MainLayout() {
       </header>
 
       {menuOpen && !isPortal && !isCapture && (
-        <div className="fixed inset-0 top-20 z-40 md:hidden">
+        <div className={`fixed inset-x-0 bottom-0 z-40 md:hidden ${isHome ? 'top-20' : 'top-16'}`}>
           {/* Tapping outside the sheet closes it. */}
           <div className="absolute inset-0 bg-black/30" onClick={() => setMenuOpen(false)} aria-hidden="true" />
-          <nav aria-label="Mobile" className="relative grid gap-1 border-b border-slate-200 bg-white p-4 shadow-lg">
+          {/* Sized to its own contents and scrollable if a phone is short, so
+              the sheet never runs under the home indicator. */}
+          <nav aria-label="Mobile" className="sheet-drop relative grid max-h-[calc(100dvh-4rem)] gap-1 overflow-y-auto overscroll-contain border-b border-slate-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg">
             {isAuthenticated && <p className="px-4 pb-2 pt-1 text-[12px] font-bold uppercase tracking-wider text-secondary">Signed in as {customer?.fullName}</p>}
             {links.map((link) => (
-              <NavLink key={link.to} to={link.to} end={link.to === '/'} onClick={() => setMenuOpen(false)} className={({ isActive }) => `rounded-lg px-4 py-3 text-[15px] font-semibold ${isActive ? 'bg-primary/10 text-primary' : 'text-secondary'}`}>
+              <NavLink key={link.to} to={link.to} end={link.to === '/'} onClick={() => setMenuOpen(false)} className={({ isActive }) => `flex min-h-12 items-center rounded-lg px-4 text-[15px] font-semibold ${isActive ? 'bg-primary/10 text-primary' : 'text-secondary'}`}>
                 {link.label}
               </NavLink>
             ))}
-            {isAuthenticated && <button type="button" onClick={handleSignOut} className="rounded-lg px-4 py-3 text-left text-[15px] font-semibold text-secondary">Sign out</button>}
+            {isAuthenticated && <button type="button" onClick={handleSignOut} className="flex min-h-12 items-center rounded-lg px-4 text-left text-[15px] font-semibold text-secondary">Sign out</button>}
           </nav>
         </div>
       )}
 
-      <main className="flex-1 pt-20">
+      <main className={`flex-1 ${isHome ? 'pt-20' : 'pwa-main pt-16 sm:pt-20'}`}>
         {isPortal ? (
           <div className="relative min-h-[calc(100vh-80px)] bg-canvas">
             <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.35]" aria-hidden="true" />

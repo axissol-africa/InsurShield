@@ -1,18 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import Meta from '@/components/ui/Meta';
 import { api } from '@/api';
 import { useStore } from '@/store';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
+import { fieldClass } from '@/components/ui/field';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_OPTIONS = Array.from({ length: 40 }, (_, i) => CURRENT_YEAR - i);
 
-const fieldClass = 'w-full rounded-[1px] border border-line-strong bg-canvas-2 p-3 text-[16px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30';
 const labelClass = 'mb-1.5 block text-[12px] font-medium uppercase tracking-[0.05em] text-ink-muted';
 
 export default function VehicleIdentificationPage() {
@@ -85,11 +84,7 @@ export default function VehicleIdentificationPage() {
         <div className="relative mx-auto w-full max-w-[760px] px-6 py-12 pb-24 lg:px-10">
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <header className="border-b border-line pb-8">
-            <span className="inline-flex items-center gap-3">
-              <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-              <Meta className="text-ink-muted">Step 02 · Vehicle</Meta>
-            </span>
-            <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">Your vehicle</h1>
+            <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Your vehicle</h1>
             <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">Look it up on the RTSA register, or enter the details yourself.</p>
           </header>
 

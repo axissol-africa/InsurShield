@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { useStore } from '@/store';
+import { api } from '@/api';
+import { hydrateInsurerPortal } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { timeAgo } from '@/lib/time';
 import { statusStyle } from '@/features/insurer-portal/portal';
 import Meta from '@/components/ui/Meta';
-import { Fact, Icon, inputClass } from './ui';
+import { Fact, Icon } from './ui';
+import { fieldClass as inputClass } from '@/components/ui/field';
 
 const matchesQuery = (claim, query) =>
   [claim.claimNumber, claim.id, claim.fullName, claim.plate, claim.phone].some((value) => String(value || '').toLowerCase().includes(query));
@@ -111,14 +113,21 @@ function ClaimListItem({ claim, active, isFirst, onSelect }) {
 }
 
 function ClaimDetail({ claim, onBack }) {
-  const markClaimReceived = useStore((state) => state.markClaimReceived);
+
   const [saving, setSaving] = useState(false);
   const style = statusStyle(claim.status);
   const received = claim.status === 'Received by insurer';
 
   const handleReceived = () => {
     setSaving(true);
-    setTimeout(() => { markClaimReceived(claim.id); setSaving(false); }, 400);
+    void (async () => {
+      try {
+        await api.claims.markReceived(claim.claimNumber || claim.id);
+        await hydrateInsurerPortal();
+      } finally {
+        setSaving(false);
+      }
+    })();
   };
 
   const facts = [
