@@ -14,10 +14,19 @@ export const requestStatusOf = (request) => requestStatus(request);
 export const selectActiveQuoteRequest = (state) =>
   state.quoteRequests.find((request) => request.id === state.activeQuoteRequestId) || null;
 
-/** Records that belong to the signed-in customer. */
+/**
+ * Records that belong to the signed-in customer.
+ *
+ * Records name their customer in more than one shape — a nested `customer` on
+ * a quote request, flat `customerEmail` on a policy, the contact details the
+ * person typed on a claim — so every one of them is checked. A phone is only
+ * matched when the account actually has one, otherwise two accounts without a
+ * number would match each other.
+ */
 export const belongsToCustomer = (customer) => (item) => {
   if (!customer) return false;
-  const emails = [item.customer?.email, item.customerEmail];
+  const emails = [item.customer?.email, item.customerEmail, item.email];
+  if (customer.email && emails.includes(customer.email)) return true;
   const phones = [item.customer?.phone, item.customerPhone, item.phone];
-  return emails.includes(customer.email) || phones.includes(customer.phone);
+  return Boolean(customer.phone) && phones.includes(customer.phone);
 };

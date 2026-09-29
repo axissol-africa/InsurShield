@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isOpenNcdApplication, pageSlice, statusStyle, toPortalRequest } from './portal';
+import { benefitsForCoverage, isOpenNcdApplication, pageSlice, statusStyle, toPortalRequest } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -23,6 +23,12 @@ describe('toPortalRequest', () => {
 });
 
 describe('portal helpers', () => {
+  it('does not send comprehensive-only benefits in a third-party guide', () => {
+    const insurer = { benefits: ['Third Party Property Damage', 'Own Damage', 'Theft & Fire Coverage', 'Medical Expenses up to ZMW 20,000'] };
+    expect(benefitsForCoverage(insurer, 'ThirdParty')).toEqual(['Third Party Property Damage', 'Medical Expenses up to ZMW 20,000']);
+    expect(benefitsForCoverage(insurer, 'Comprehensive')).toHaveLength(4);
+  });
+
   it('treats submitted and under-review NCD applications as open', () => {
     expect(isOpenNcdApplication({ status: 'Submitted' })).toBe(true);
     expect(isOpenNcdApplication({ status: 'Under Review' })).toBe(true);

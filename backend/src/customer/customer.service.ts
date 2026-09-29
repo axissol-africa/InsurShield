@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { fromContract, toContract } from '../common/contract.js';
 import {
   CoverageDuration,
   DeliveryStatus,
@@ -10,9 +11,26 @@ import {
   PolicyStatus,
   QuoteRequestStatus,
 } from '../generated/prisma/enums.js';
+import type {
+  ApplyForNcdDto,
+  NotifyClaimDto,
+  SubmitQuoteRequestDto,
+  ValidateNcdCodeDto,
+  VehicleDetailsDto,
+} from './dto/customer.dto.js';
 
 /** How long a new request stays open for insurers to reply. */
 const REQUEST_VALIDITY_DAYS = 7;
+
+/** Quarters of cover per `CoverageDuration`, used to derive the end date. */
+const QUARTERS: Record<CoverageDuration, number> = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 };
+
+/** Plates are compared without spacing or case so "BAA1234" finds "BAA 1234". */
+const comparablePlate = (plate: string) => plate.replace(/\s+/g, '').toUpperCase();
+
+/** Human-readable, collision-resistant reference: prefix + time + random suffix. */
+const newReference = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
 
 /**
  * How early a policy is treated as due for renewal. The customer is reminded
@@ -61,6 +79,7 @@ export class CustomerService {
   // ── Quote requests ──────────────────────────────────────────────
 
   private readonly requestInclude = {
+    customer: { select: { fullName: true, email: true, phone: true } },
     vehicle: true,
     recipients: { include: { insurer: { select: { id: true, name: true } } } },
     quotes: { include: { insurer: { select: { id: true, name: true } }, document: true } },
@@ -108,9 +127,14 @@ export class CustomerService {
 
     return {
       id: request.id,
-      status: request.status,
+      status: toContract.quoteRequestStatus(request.status),
       submittedAt: request.submittedAt.toISOString(),
       expiresAt: request.expiresAt.toISOString(),
+      customer: {
+        fullName: request.customer.fullName,
+        email: request.customer.email,
+        phone: request.customer.phone,
+      },
       vehicle: `${request.vehicle.year} ${request.vehicle.make} ${request.vehicle.model}`.trim(),
       vehicleDetails: {
         plateNumber: request.vehicle.plateNumber,
@@ -125,8 +149,8 @@ export class CustomerService {
       },
       vehicleValue: request.vehicleValue.toNumber(),
       vehicleUsage: request.vehicleUsage,
-      insuranceType: request.insuranceType,
-      coverageDurationId: request.coverageDuration,
+      insuranceType: toContract.insuranceType(request.insuranceType),
+      coverageDurationId: toContract.coverageDuration(request.coverageDuration),
       matchRtsaAnniversary: request.matchRtsaAnniversary,
       policyDates:
         request.policyStartDate && request.policyEndDate
@@ -151,6 +175,131 @@ export class CustomerService {
       where: { id, customerId },
       include: this.requestInclude,
     });
+  }
+
+  /**
+   * The customer's request, sent to every active insurer at once.
+   *
+   * One request, one distribution: each insurer gets an identical copy at the
+   * same moment (DEC-016), which is what makes the comparison fair and is why
+   * recipients are written in the same transaction as the request itself.
+   */
+  async submitQuoteRequest(customerId: string, dto: SubmitQuoteRequestDto) {
+    const insurers = await this.prisma.insurer.findMany({
+      where: { status: InsurerStatus.ACTIVE },
+      select: { id: true },
+    });
+    if (insurers.length === 0) {
+      throw ApiException.conflict(
+        'NO_ACTIVE_INSURERS',
+        'No insurers are currently accepting requests. Please try again later.',
+      );
+    }
+
+    // Every attached photo must exist before the request is created; a request
+    // referencing a document that was never uploaded is not worth distributing.
+    const shots = dto.inspectionShots ?? [];
+    await Promise.all(shots.map((shot) => this.documents.requireExists(shot.documentId)));
+
+    const vehicle = await this.upsertVehicle(dto.vehicleDetails);
+    const insuranceType = fromContract.insuranceType(dto.insuranceType)!;
+    const coverageDuration = fromContract.coverageDuration(dto.coverageDurationId)!;
+    const ncd = await this.resolveNcdCode(dto.ncdCode);
+
+    const submittedAt = new Date();
+    const dates = this.coverPeriod(dto, coverageDuration);
+
+    const created = await this.prisma.quoteRequest.create({
+      data: {
+        id: newReference('QR'),
+        status: QuoteRequestStatus.SUBMITTED,
+        submittedAt,
+        expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
+        customerId,
+        vehicleId: vehicle.id,
+        vehicleValue: dto.vehicleValue,
+        vehicleUsage: dto.vehicleUsage,
+        insuranceType,
+        coverageDuration,
+        matchRtsaAnniversary: dto.matchRtsaAnniversary ?? false,
+        rtsaRegistrationDate: dto.rtsaRegistrationDate ? new Date(dto.rtsaRegistrationDate) : null,
+        policyStartDate: dates.startDate,
+        policyEndDate: dates.endDate,
+        coverageDays: dates.days,
+        ncdCode: ncd?.code ?? null,
+        ncdPercentage: ncd?.percentage ?? null,
+        photosCapturedAt: dto.photosCapturedAt ? new Date(dto.photosCapturedAt) : null,
+        recipients: {
+          create: insurers.map((insurer) => ({
+            insurerId: insurer.id,
+            status: DeliveryStatus.PENDING,
+          })),
+        },
+        inspectionShots: {
+          create: shots.map((shot) => ({ shotKey: shot.shotKey, documentId: shot.documentId })),
+        },
+      },
+      include: this.requestInclude,
+    });
+
+    this.logger.log(
+      `Quote request ${created.id} distributed to ${insurers.length} insurers with ${shots.length} photos`,
+    );
+    return this.serialiseRequest(created);
+  }
+
+  /**
+   * One row per plate, so a returning customer's vehicle keeps its history
+   * instead of accumulating near-duplicates. The details the customer just
+   * confirmed win, because they have seen them and the stored copy may predate
+   * a respray or a re-registration.
+   */
+  private async upsertVehicle(details: VehicleDetailsDto) {
+    const data = {
+      plateNumber: details.plateNumber.trim(),
+      make: details.make.trim(),
+      model: details.model.trim(),
+      year: details.year.trim(),
+      color: details.color?.trim() ?? null,
+      chassisNumber: details.chassisNumber?.trim() ?? null,
+      engineNumber: details.engineNumber?.trim() ?? null,
+      registrationDate: details.registrationDate ? new Date(details.registrationDate) : null,
+      rtsaAnniversaryDate: details.rtsaAnniversaryDate ? new Date(details.rtsaAnniversaryDate) : null,
+    };
+
+    const candidates = await this.prisma.vehicle.findMany({
+      where: { plateNumber: { contains: comparablePlate(data.plateNumber).slice(0, 3), mode: 'insensitive' } },
+      take: 50,
+    });
+    const existing = candidates.find(
+      (vehicle) => comparablePlate(vehicle.plateNumber) === comparablePlate(data.plateNumber),
+    );
+
+    return existing
+      ? this.prisma.vehicle.update({ where: { id: existing.id }, data })
+      : this.prisma.vehicle.create({ data });
+  }
+
+  /**
+   * Cover dates. The client sends what it showed the customer; anything it
+   * leaves out is derived here, so a request always carries the period the
+   * quotes will be priced against rather than an open end.
+   */
+  private coverPeriod(dto: SubmitQuoteRequestDto, duration: CoverageDuration) {
+    const startDate = dto.policyDates ? new Date(dto.policyDates.startDate) : new Date();
+    const endDate = dto.policyDates
+      ? new Date(dto.policyDates.endDate)
+      : (() => {
+          const end = new Date(startDate);
+          end.setMonth(end.getMonth() + QUARTERS[duration] * 3);
+          return end;
+        })();
+
+    return {
+      startDate,
+      endDate,
+      days: Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / MS_PER_DAY)),
+    };
   }
 
   /**
@@ -220,6 +369,7 @@ export class CustomerService {
       where: { customerId },
       orderBy: { receivedAt: 'desc' },
       include: {
+        customer: { select: { fullName: true, email: true, phone: true } },
         insurer: { select: { name: true } },
         vehicle: true,
         payment: true,
@@ -233,6 +383,7 @@ export class CustomerService {
     const policy = await this.prisma.policy.findFirst({
       where: { policyNumber, customerId },
       include: {
+        customer: { select: { fullName: true, email: true, phone: true } },
         insurer: { select: { name: true } },
         vehicle: true,
         payment: true,
@@ -321,7 +472,10 @@ export class CustomerService {
     return {
       policyNumber: policy.policyNumber,
       insurerPolicyNumber: policy.insurerPolicyNumber,
-      status: policy.status,
+      status: toContract.policyStatus(policy.status),
+      customerName: policy.customer.fullName,
+      customerEmail: policy.customer.email,
+      customerPhone: policy.customer.phone,
       insurer: policy.insurer.name,
       coverage: policy.coverage,
       plan: policy.plan,
@@ -353,8 +507,8 @@ export class CustomerService {
         : null,
       paymentProof: {
         transactionId: policy.payment.transactionId,
-        status: policy.payment.status,
-        method: policy.payment.method,
+        status: toContract.paymentStatus(policy.payment.status),
+        method: toContract.paymentMethod(policy.payment.method),
         amount: policy.payment.amount.toNumber(),
         currency: policy.payment.currency,
         confirmedAt: policy.payment.confirmedAt?.toISOString() ?? null,
@@ -397,6 +551,7 @@ export class CustomerService {
     return this.prisma.policy.findFirstOrThrow({
       where: { policyNumber, customerId },
       include: {
+        customer: { select: { fullName: true, email: true, phone: true } },
         insurer: { select: { name: true } },
         vehicle: true,
         payment: true,
@@ -411,14 +566,19 @@ export class CustomerService {
     const claims = await this.prisma.claimNotification.findMany({
       where: { customerId },
       orderBy: { submittedAt: 'desc' },
-      include: { insurer: { select: { name: true } }, attachments: { select: { documentId: true } } },
+      include: {
+        insurer: { select: { name: true } },
+        customer: { select: { email: true } },
+        attachments: { select: { documentId: true } },
+      },
     });
 
     return Promise.all(
       claims.map(async (claim) => ({
         claimNumber: claim.claimNumber,
-        status: claim.status,
+        status: toContract.claimStatus(claim.status),
         insurer: claim.insurer.name,
+        customerEmail: claim.customer?.email ?? null,
         fullName: claim.fullName,
         phone: claim.phone,
         email: claim.email,
@@ -442,6 +602,87 @@ export class CustomerService {
     );
   }
 
+  /**
+   * First notification of a claim.
+   *
+   * InsurShield's role ends here (FR-CLM-006): we record the notification,
+   * issue the claim number the customer quotes on the phone, and make it
+   * visible to the insurer. Assessment and settlement happen in the insurer's
+   * own system, which is why there is no status beyond "received".
+   */
+  async notifyClaim(customerId: string, dto: NotifyClaimDto) {
+    const insurer = await this.prisma.insurer.findFirst({
+      where: { id: dto.insurerId, status: { not: InsurerStatus.DELETED } },
+      select: { id: true, name: true },
+    });
+    if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
+
+    const attachments = dto.supportingDocumentIds ?? [];
+    await Promise.all(attachments.map((id) => this.documents.requireExists(id)));
+
+    // A claim may name a policy the customer holds; one that is not theirs is
+    // dropped rather than refused, so a typo cannot block a genuine claim.
+    const policyNumber = dto.policyNumber
+      ? (
+          await this.prisma.policy.findFirst({
+            where: { policyNumber: dto.policyNumber, customerId },
+            select: { policyNumber: true },
+          })
+        )?.policyNumber ?? null
+      : null;
+
+    const claim = await this.prisma.claimNotification.create({
+      data: {
+        claimNumber: newReference('CLM'),
+        insurerId: insurer.id,
+        customerId,
+        policyNumber,
+        fullName: dto.fullName.trim(),
+        phone: dto.phone.trim(),
+        email: dto.email?.trim() ?? null,
+        plate: dto.plate.trim(),
+        vehicleLabel: dto.vehicle.trim(),
+        type: dto.type,
+        incidentDate: new Date(dto.incidentDate),
+        location: dto.location.trim(),
+        description: dto.description.trim(),
+        estimatedLoss: dto.estimatedLoss ?? null,
+        policeReport: dto.policeReport ?? false,
+        policeReportNumber: dto.policeReportNumber?.trim() ?? null,
+        lateReason: dto.lateReason?.trim() ?? null,
+        attachments: { create: attachments.map((documentId) => ({ documentId })) },
+      },
+      include: { insurer: { select: { name: true } }, attachments: { select: { documentId: true } } },
+    });
+
+    this.logger.log(`Claim ${claim.claimNumber} notified to ${insurer.name}`);
+
+    return {
+      claimNumber: claim.claimNumber,
+      status: toContract.claimStatus(claim.status),
+      insurer: claim.insurer.name,
+      fullName: claim.fullName,
+      phone: claim.phone,
+      email: claim.email,
+      plate: claim.plate,
+      vehicle: claim.vehicleLabel,
+      type: claim.type,
+      incidentDate: claim.incidentDate.toISOString(),
+      location: claim.location,
+      description: claim.description,
+      estimatedLoss: claim.estimatedLoss?.toNumber() ?? null,
+      policeReport: claim.policeReport,
+      policeReportNumber: claim.policeReportNumber,
+      lateReason: claim.lateReason,
+      policyNumber: claim.policyNumber,
+      submittedAt: claim.submittedAt.toISOString(),
+      receivedAt: null,
+      supportingDocs: await Promise.all(
+        claim.attachments.map((attachment) => this.documents.record(attachment.documentId)),
+      ),
+    };
+  }
+
   async listNcdApplications(customerId: string) {
     const applications = await this.prisma.ncdApplication.findMany({
       where: { customerId },
@@ -457,10 +698,93 @@ export class CustomerService {
       fullName: application.fullName,
       phone: application.phone,
       yearsClaimFree: application.yearsClaimFree,
-      status: application.status,
+      status: toContract.ncdStatus(application.status),
       approvedCode: application.approvedCode?.code ?? null,
       submittedAt: application.submittedAt.toISOString(),
     }));
+  }
+
+  /**
+   * Applies for a no-claim discount. The insurer that held the claim-free
+   * policy decides it, because only they hold the claims history the
+   * application rests on.
+   */
+  async applyForNcd(customerId: string, dto: ApplyForNcdDto) {
+    const insurer = await this.prisma.insurer.findFirst({
+      where: { id: dto.insurerId, status: InsurerStatus.ACTIVE },
+      select: { id: true, name: true },
+    });
+    if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
+
+    const application = await this.prisma.ncdApplication.create({
+      data: {
+        applicationNumber: newReference('NCDA'),
+        insurerId: insurer.id,
+        customerId,
+        policyNumber: dto.policyNumber.trim(),
+        fullName: dto.fullName.trim(),
+        phone: dto.phone.trim(),
+        yearsClaimFree: dto.yearsClaimFree,
+      },
+      include: { insurer: { select: { name: true } } },
+    });
+
+    this.logger.log(`NCD application ${application.applicationNumber} sent to ${insurer.name}`);
+
+    return {
+      id: application.id,
+      applicationNumber: application.applicationNumber,
+      insurer: application.insurer.name,
+      policyNumber: application.policyNumber,
+      fullName: application.fullName,
+      phone: application.phone,
+      yearsClaimFree: application.yearsClaimFree,
+      status: toContract.ncdStatus(application.status),
+      approvedCode: null,
+      submittedAt: application.submittedAt.toISOString(),
+    };
+  }
+
+  /**
+   * Checks a discount code the customer holds.
+   *
+   * The reply names the insurer, because a code only discounts that insurer's
+   * quote — a customer applying it to anyone else's is the common mistake this
+   * endpoint exists to catch before payment.
+   */
+  async validateNcdCode(dto: ValidateNcdCodeDto) {
+    const code = await this.prisma.ncdCode.findUnique({
+      where: { code: dto.code.trim().toUpperCase() },
+      include: { insurer: { select: { id: true, name: true } } },
+    });
+
+    if (!code) return { valid: false, reason: 'NOT_FOUND' as const };
+    if (code.redeemedAt) return { valid: false, reason: 'ALREADY_USED' as const };
+    if (code.expiresAt && code.expiresAt <= new Date()) {
+      return { valid: false, reason: 'EXPIRED' as const };
+    }
+
+    return {
+      valid: true as const,
+      code: code.code,
+      insurerId: code.insurer.id,
+      insurer: code.insurer.name,
+      percentage: code.percentage,
+      yearsClaimFree: code.yearsClaimFree,
+      expiresAt: code.expiresAt?.toISOString() ?? null,
+    };
+  }
+
+  /** The stored code behind `ncdCode` on a request, if it is still usable. */
+  private async resolveNcdCode(code?: string) {
+    if (!code?.trim()) return null;
+    const found = await this.prisma.ncdCode.findUnique({
+      where: { code: code.trim().toUpperCase() },
+      select: { code: true, percentage: true, redeemedAt: true, expiresAt: true },
+    });
+    if (!found || found.redeemedAt) return null;
+    if (found.expiresAt && found.expiresAt <= new Date()) return null;
+    return found;
   }
 
   // ── Closing the account ─────────────────────────────────────────

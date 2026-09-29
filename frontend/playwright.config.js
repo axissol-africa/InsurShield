@@ -76,6 +76,10 @@ export default defineConfig({
     command: 'npm run dev -- --port 5180 --strictPort',
     url: 'http://localhost:5180',
     reuseExistingServer: !process.env.CI,
+    // These specs seed browser storage and assert on what the app does with
+    // it, so they run against the mock adapter whatever a developer happens to
+    // have in .env.local. The backend has its own tests.
+    env: { VITE_API_MODE: 'mock' },
   },
 });
 

@@ -87,6 +87,16 @@ export const SEED_POLICIES = [
   },
 ];
 
+/** Ratings left by customers after completing a policy purchase in the demo. */
+export const SEED_INSURER_REVIEWS = [
+  { id: 'REV-001', insurer: 'Prestige Assurance', policyNumber: 'PA-2025-001', customerEmail: 'customer1@example.zm', rating: 5, comment: 'Clear quotation and quick policy issue.', createdAt: daysAgo(28) },
+  { id: 'REV-002', insurer: 'Prestige Assurance', policyNumber: 'PA-2025-002', customerEmail: 'customer2@example.zm', rating: 4, comment: 'Easy process and helpful updates.', createdAt: daysAgo(18) },
+  { id: 'REV-003', insurer: 'Global Guard Insurance', policyNumber: 'GG-2025-001', customerEmail: 'customer3@example.zm', rating: 5, comment: 'Good value and straightforward documents.', createdAt: daysAgo(21) },
+  { id: 'REV-004', insurer: 'Global Guard Insurance', policyNumber: 'GG-2025-002', customerEmail: 'customer4@example.zm', rating: 4, comment: 'The quote was easy to understand.', createdAt: daysAgo(12) },
+  { id: 'REV-005', insurer: 'ValueDirect Insurance', policyNumber: 'VD-2025-001', customerEmail: 'customer5@example.zm', rating: 4, comment: 'A smooth buying experience.', createdAt: daysAgo(15) },
+  { id: 'REV-006', insurer: 'Metro Safe Assurance', policyNumber: 'MS-2025-001', customerEmail: 'customer6@example.zm', rating: 4, comment: 'Clear information before payment.', createdAt: daysAgo(8) },
+];
+
 /** Append any seed record the stored list does not already hold (matched on `key`). */
 export const withSeed = (records, seeds, key = 'id') => {
   const existing = Array.isArray(records) ? records : [];

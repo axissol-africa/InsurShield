@@ -9,9 +9,12 @@
 import { env } from '@/config/env';
 import { useStore, belongsToCustomer } from '@/store';
 import { wait } from '../shared';
+import { documentToRecord } from '@/lib/files';
 
 const state = () => useStore.getState();
 const call = async (fn) => { await wait(env.mockLatencyMs); return fn(state()); };
+const newReference = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+const insurerNameById = (id) => state().insurersList.find((insurer) => insurer.id === id)?.name ?? '';
 const mine = (records) => records.filter(belongsToCustomer(state().customer));
 const insurerName = () => state().staffSession?.name;
 
@@ -33,6 +36,16 @@ export const auth = {
   me: () => call((s) => ({ customer: s.customer, staffSession: s.staffSession })),
 };
 
+/**
+ * In mock mode a document never leaves the browser: the file is read into a
+ * data URL and handed back with the same shape the backend returns, so pages
+ * can attach it by `id` either way.
+ */
+export const documents = {
+  upload: (file) => call(async () => ({ ...(await documentToRecord(file)), id: newReference('DOC') })),
+  get: (id) => call(() => ({ id })),
+};
+
 export const vehicles = {
   /** Prototype stand-in for the RTSA vehicle registry. */
   lookupPlate: (plate) => call(() => ({
@@ -44,6 +57,9 @@ export const vehicles = {
 };
 
 export const quotes = {
+  // The journey state already holds the vehicle, value and photos, so the
+  // payload's extra fields are redundant here — the store builds the same
+  // record the backend would return.
   submitRequest: ({ customer, policyDates }) => call((s) => { const id = s.submitQuoteRequest({ customer, policyDates }); return state().quoteRequests.find((r) => r.id === id); }),
   listMine: () => call((s) => mine(s.quoteRequests)),
   get: (id) => call((s) => s.quoteRequests.find((r) => r.id === id) || null),
@@ -82,7 +98,12 @@ export const policies = {
 };
 
 export const claims = {
-  notify: (claim) => call((s) => { s.addClaim(claim); return state().claims[0]; }),
+  // The backend issues the claim number; in mock mode it is minted here so a
+  // page gets the same record either way.
+  notify: (claim) => call((s) => {
+    s.addClaim({ ...claim, claimNumber: claim.claimNumber ?? newReference('CLM'), insurer: claim.insurer ?? insurerNameById(claim.insurerId) });
+    return state().claims[0];
+  }),
   listMine: () => call((s) => mine(s.claims)),
   listForInsurer: () => call((s) => s.claims.filter((c) => c.insurer === insurerName())),
   markReceived: (claimNumber) => call((s) => { s.markClaimReceived(claimNumber); return state().claims.find((c) => c.id === claimNumber); }),
@@ -106,7 +127,7 @@ export const ncd = {
 export const inspections = {
   request: (inspection) => call((s) => { s.addInspection(inspection); return state().inspections[0]; }),
   list: () => call((s) => mine(s.inspections)),
-  update: (id, status, data) => call((s) => { s.updateInspectionStatus(id, status, data); return state().inspections.find((i) => i.id === id); }),
+  update: (id, changes) => call((s) => { s.updateInspectionStatus(id, 'Requested', changes); return state().inspections.find((i) => i.id === id); }),
 };
 
 export const config = {

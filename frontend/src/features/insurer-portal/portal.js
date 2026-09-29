@@ -1,5 +1,6 @@
 /** Data helpers and constants shared by the insurer portal modules. */
 import { formatZMW } from '@/domain/premiumEngine';
+import { coverPeriodLabel } from '@/domain/coverPeriod';
 import { COVERAGE_DURATION_OPTIONS } from '@/domain/insurers';
 import { timeAgo } from '@/lib/time';
 
@@ -26,6 +27,17 @@ export const statusStyle = (status) =>
 
 export const pageSlice = (items, page, pageSize) => items.slice((page - 1) * pageSize, page * pageSize);
 
+/** Benefits that only apply when the customer has selected comprehensive cover. */
+const COMPREHENSIVE_ONLY_BENEFITS = /own damage|theft|fire|natural disaster|windscreen|accessor/i;
+
+/**
+ * Snapshot the benefits that belong to the cover type being quoted. This is
+ * stored with the insurer's reply so a later catalogue edit cannot alter what
+ * the customer was shown before paying.
+ */
+export const benefitsForCoverage = (insurer, insuranceType) =>
+  (insurer?.benefits || []).filter((benefit) => insuranceType !== 'ThirdParty' || !COMPREHENSIVE_ONLY_BENEFITS.test(benefit));
+
 /** Shape a stored quote request for the portal: display strings plus this insurer's reply, if any. */
 export const toPortalRequest = (request, insurerName) => ({
   ...request,
@@ -36,7 +48,7 @@ export const toPortalRequest = (request, insurerName) => ({
   client: request.customer?.fullName || 'Customer',
   contact: [request.customer?.phone, request.customer?.email].filter(Boolean).join(' · '),
   period: COVERAGE_DURATION_OPTIONS.find((option) => option.id === request.coverageDurationId)?.label || '—',
-  dates: request.policyDates ? `${request.policyDates.formattedStart} – ${request.policyDates.formattedEnd}` : 'From payment date',
+  dates: request.policyDates ? coverPeriodLabel(request.policyDates) : 'From payment date',
   plate: request.vehicleDetails?.plateNumber || '',
   photos: request.inspectionShots?.length || 0,
   time: timeAgo(request.submittedAt),

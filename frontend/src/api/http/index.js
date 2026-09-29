@@ -15,6 +15,20 @@ export const auth = {
   me: () => apiClient.get('/auth/me'),
 };
 
+/**
+ * Uploads land here first and are referenced by id afterwards: a quotation,
+ * certificate or photo is attached to a record only once its bytes are stored.
+ */
+export const documents = {
+  upload: (file, kind) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('kind', kind);
+    return apiClient.post('/documents', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  get: (id) => apiClient.get(`/documents/${id}`),
+};
+
 export const vehicles = {
   lookupPlate: (plate) => apiClient.get('/vehicles/lookup', { params: { plate } }),
 };
@@ -70,7 +84,7 @@ export const ncd = {
 export const inspections = {
   request: (inspection) => apiClient.post('/inspections', inspection),
   list: () => apiClient.get('/inspections'),
-  update: (id, status, data) => apiClient.patch(`/inspections/${id}`, { status, ...data }),
+  update: (id, changes) => apiClient.patch(`/inspections/${id}`, changes),
 };
 
 export const config = {

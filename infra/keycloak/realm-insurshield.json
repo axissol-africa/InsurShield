@@ -108,13 +108,5 @@
         ]
       }
     }
-  ],
-  "_productionNotes": [
-    "sslRequired must be 'all' once this is not on localhost.",
-    "insurshield-web: set directAccessGrantsEnabled to false. It exists only so local scripts can fetch a token with a password; the browser uses Authorization Code + PKCE.",
-    "Replace the insurshield-api secret with a generated value held in Secrets Manager.",
-    "Set redirectUris and webOrigins to the deployed frontend origin; never leave a wildcard host.",
-    "Configure smtpServer so password reset and email verification can actually send.",
-    "Phone/SMS verification is parked. Keycloak has no SMS OTP; when it returns, either handle it in the API (OtpChallenge) or deploy an SMS SPI here."
   ]
 }

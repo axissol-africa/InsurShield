@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEMO_CUSTOMER_ACCOUNT, belongsToCustomer, selectActiveQuoteRequest, useStore } from './index';
 import { SEED_CLAIMS, SEED_POLICIES, SEED_QUOTE_REQUESTS } from './demoSeed';
 import { INSPECTION_KEYS } from '@/domain/inspection';
+import { partialize } from './persistence';
 
 const initial = useStore.getInitialState();
 // Start every test from an empty platform: no demo records, only the demo account.
@@ -60,6 +61,12 @@ describe('customer accounts', () => {
 });
 
 describe('quote requests', () => {
+  it('keeps live inspection images out of browser persistence', () => {
+    seedVehicle();
+    const saved = partialize(state());
+    expect(saved.documents).toBeUndefined();
+  });
+
   it('sends a request to every active insurer and records the captured shots', () => {
     signInDemo();
     seedVehicle();
@@ -113,6 +120,18 @@ describe('quote requests', () => {
     state().addPolicy({ policyNumber: 'POL-1' });
     expect(state().policies).toHaveLength(1);
     expect(state().policies[0].status).toBe('Active');
+  });
+});
+
+describe('insurer reviews', () => {
+  it('allows one customer review per paid policy and lets that customer amend it', () => {
+    const review = { insurer: 'Prestige Assurance', policyNumber: 'POL-REVIEW-1', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, rating: 4, comment: 'Clear quote.' };
+    state().submitInsurerReview(review);
+    state().submitInsurerReview({ ...review, rating: 5, comment: 'Clear quote and payment.' });
+
+    const mine = state().insurerReviews.filter((entry) => entry.policyNumber === review.policyNumber && entry.customerEmail === review.customerEmail);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ rating: 5, comment: 'Clear quote and payment.' });
   });
 });
 
@@ -321,5 +340,23 @@ describe('demo records', () => {
     expect(SEED_QUOTE_REQUESTS.some(mine)).toBe(false);
     expect(SEED_POLICIES.filter(mine)).toHaveLength(1);
     expect(SEED_CLAIMS.filter(mine).map((claim) => claim.id)).toEqual(['CLM-882031']);
+  });
+});
+
+describe('records in backend mode', () => {
+  it('starts empty, so no demo record is ever shown as a real one', async () => {
+    vi.resetModules();
+    vi.stubEnv('VITE_API_MODE', 'http');
+    const { useStore: backendStore } = await import('./index.js');
+    const initialState = backendStore.getInitialState();
+
+    expect(initialState.quoteRequests).toEqual([]);
+    expect(initialState.policies).toEqual([]);
+    expect(initialState.claims).toEqual([]);
+    expect(initialState.ncdApplications).toEqual([]);
+    expect(initialState.insurersList).toEqual([]);
+
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 });

@@ -14,14 +14,17 @@ import os from 'node:os';
  * This is the development implementation. The same endpoints belong in the
  * production API:
  *   GET  /api/capture/host              → { origin }  address phones can reach
- *   POST /api/capture                   → { code }    body: { plate, shots }
+ *   POST /api/capture                   → { code }    body: { plate, shots, journey }
  *   GET  /api/capture/:code             → session
  *   GET  /api/capture/:code/events      → SSE stream of session/photo/complete
  *   PUT  /api/capture/:code/photos/:key → session     body: { dataUrl }
  *   POST /api/capture/:code/complete    → session
  */
 const SESSION_TTL_MS = 30 * 60 * 1000;
-const MAX_BODY_BYTES = 6 * 1024 * 1024;
+// Captured photos are compressed in the browser, but a detailed chassis photo
+// can still be larger than an ordinary vehicle view. Keep room for one image,
+// never for an unbounded request.
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
 /** Proxies drop an idle connection; a comment frame keeps the stream open. */
 const HEARTBEAT_MS = 25 * 1000;
 
@@ -57,7 +60,7 @@ const send = (res, status, body) => {
 };
 
 const publicSession = (session) => ({
-  code: session.code, plate: session.plate, shots: session.shots, status: session.status,
+  code: session.code, plate: session.plate, shots: session.shots, journey: session.journey, status: session.status,
   photos: session.photos, createdAt: session.createdAt, updatedAt: session.updatedAt,
 });
 
@@ -119,9 +122,9 @@ export default function captureRelay() {
             return send(res, 200, { origin: `${server.config.server.https ? 'https' : 'http'}://${lanAddress()}:${port}` });
           }
           if (req.method === 'POST' && parts.length === 0) {
-            const { plate = '', shots = [] } = await readJson(req);
+            const { plate = '', shots = [], journey = null } = await readJson(req);
             const code = newCode();
-            const session = { code, plate, shots, status: 'open', photos: {}, clients: new Set(), createdAt: Date.now(), updatedAt: Date.now() };
+            const session = { code, plate, shots, journey, status: 'open', photos: {}, clients: new Set(), createdAt: Date.now(), updatedAt: Date.now() };
             sessions.set(code, session);
             return send(res, 201, publicSession(session));
           }

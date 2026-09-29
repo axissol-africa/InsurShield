@@ -1,7 +1,14 @@
-import { Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import { CustomerService } from './customer.service.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
+import { Public } from '../common/auth/auth.guard.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import {
+  ApplyForNcdDto,
+  NotifyClaimDto,
+  SubmitQuoteRequestDto,
+  ValidateNcdCodeDto,
+} from './dto/customer.dto.js';
 import type { Principal } from '../common/auth/auth.types.js';
 
 /**
@@ -27,6 +34,13 @@ export class CustomerController {
   @Get('quote-requests')
   listQuoteRequests(@CurrentUser() principal: Principal) {
     return this.customer.listQuoteRequests(this.scope(principal));
+  }
+
+  /** Sends one request to every active insurer at once. */
+  @Post('quote-requests')
+  @HttpCode(HttpStatus.CREATED)
+  submitQuoteRequest(@Body() dto: SubmitQuoteRequestDto, @CurrentUser() principal: Principal) {
+    return this.customer.submitQuoteRequest(this.scope(principal), dto);
   }
 
   @Get('quote-requests/:id')
@@ -66,9 +80,33 @@ export class CustomerController {
     return this.customer.listClaims(this.scope(principal));
   }
 
+  /** First notification: issues the claim number the customer quotes by phone. */
+  @Post('claims')
+  @HttpCode(HttpStatus.CREATED)
+  notifyClaim(@Body() dto: NotifyClaimDto, @CurrentUser() principal: Principal) {
+    return this.customer.notifyClaim(this.scope(principal), dto);
+  }
+
   @Get('ncd/applications')
   listNcdApplications(@CurrentUser() principal: Principal) {
     return this.customer.listNcdApplications(this.scope(principal));
+  }
+
+  @Post('ncd/applications')
+  @HttpCode(HttpStatus.CREATED)
+  applyForNcd(@Body() dto: ApplyForNcdDto, @CurrentUser() principal: Principal) {
+    return this.customer.applyForNcd(this.scope(principal), dto);
+  }
+
+  /**
+   * Checks a discount code before it is applied to a quote. Public: the code
+   * is the secret, and a customer may check one before signing in.
+   */
+  @Public()
+  @Post('ncd/codes/validate')
+  @HttpCode(HttpStatus.OK)
+  validateNcdCode(@Body() dto: ValidateNcdCodeDto) {
+    return this.customer.validateNcdCode(dto);
   }
 
   // ── Account ─────────────────────────────────────────────────────

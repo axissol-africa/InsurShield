@@ -23,6 +23,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // The suite exercises the app's own logic, so it runs against the mock
+    // adapter whatever a developer has in .env.local. A case that needs the
+    // other mode stubs it itself.
+    env: { VITE_API_MODE: 'mock' },
     include: ['src/**/*.{test,spec}.{js,jsx}', 'tools/**/*.test.js'],
     globals: true,
     setupFiles: './src/test/setup.js',
