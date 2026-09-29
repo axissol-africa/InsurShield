@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { calculatePremium, formatZMW } from '@/domain/premiumEngine';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
+import Meta from '@/components/ui/Meta';
 import { BackButton, DocumentPicker, Fact, Icon, fieldLabelClass, inputClass } from './ui';
 
 const SEND_DELAY_MS = 800;
@@ -66,20 +67,32 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-8">
-      <div className="mb-6 flex items-center gap-4">
+      <div className="mb-8 flex items-center gap-4 border-b border-line pb-7">
         <BackButton onClick={onBack} />
-        <h2 className="text-[22px] font-bold text-primary">Process Quotation: {request.id}</h2>
+        <div>
+          <Meta className="text-ink-muted">Process quotation</Meta>
+          <h2 className="mt-3 font-mono text-[24px] tracking-[0.02em] text-primary">{request.id}</h2>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-        <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-          <h3 className="mb-4 border-b pb-2 text-[16px] font-bold text-primary">Client & Vehicle Information</h3>
-          <dl className="space-y-4">{facts.map(([label, value]) => <Fact key={label} label={label} value={value} />)}</dl>
+        <section className="border border-line p-6">
+          <div className="border-b border-dashed border-line pb-4">
+            <Meta className="text-primary">Client &amp; vehicle</Meta>
+          </div>
+          <dl className="mt-6 space-y-5">
+            {facts.map(([label, value]) => <Fact key={label} label={label} value={value} />)}
+          </dl>
         </section>
 
-        <section className="rounded-2xl border border-primary/20 bg-white p-6 shadow-sm">
-          <h3 className="mb-4 border-b pb-2 text-[16px] font-bold text-primary">Upload your quotation</h3>
-          <p className="mb-5 text-[13px] text-secondary">Prepare and upload the final quotation from your own system. The customer sees the same document on their comparison page and is charged the premium shown on it.</p>
+        <section className="ticked border border-primary p-6">
+          <div className="border-b border-dashed border-line pb-4">
+            <Meta className="text-primary">Upload your quotation</Meta>
+          </div>
+          <p className="mb-7 mt-5 text-[13px] leading-[1.6] text-ink-muted">
+            Prepare and upload the final quotation from your own system. The customer sees the same
+            document on their comparison page and is charged the premium shown on it.
+          </p>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <span className={fieldLabelClass}>Quotation document (PDF or image)</span>
@@ -88,17 +101,17 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
             <label className="block">
               <span className={fieldLabelClass}>Your internal quote reference</span>
               <input value={reference} onChange={(event) => setReference(event.target.value)} className={inputClass} placeholder="e.g. PA-Q-2026-00412" />
-              <span className="mt-1 block text-[11px] text-secondary">Shown to the customer so they can quote it when they call you.</span>
+              <span className="mt-2 block text-[12px] leading-[1.5] text-ink-muted">Shown to the customer so they can quote it when they call you.</span>
             </label>
             <div>
               <label className="block">
                 <span className={fieldLabelClass}>Premium on your quotation (ZMW) *</span>
                 <div className="flex gap-2">
                   <input required type="number" min="1" step="0.01" value={premium} onChange={(event) => setPremium(event.target.value)} className={inputClass} placeholder="e.g. 21000" />
-                  {estimate > 0 && <button type="button" onClick={() => setPremium(estimate.toFixed(2))} className="shrink-0 rounded-lg border border-primary/30 px-3 text-[12px] font-bold text-primary hover:bg-primary/5">Use estimate</button>}
+                  {estimate > 0 && <button type="button" onClick={() => setPremium(estimate.toFixed(2))} className="shrink-0 rounded-[1px] border border-dashed border-line-strong px-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">Use estimate</button>}
                 </div>
               </label>
-              <p className="mt-1 text-[11px] text-secondary">
+              <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
                 Must match the figure on the uploaded quotation — the customer pays this amount.
                 {estimate > 0 && <> InsurShield's indicative estimate is {formatZMW(estimate)}.</>} With a direct system integration this is read from your quote automatically.
               </p>
@@ -106,14 +119,20 @@ export default function QuoteRequestForm({ request, insurer, piaRatePercentage, 
             <label className="block">
               <span className={fieldLabelClass}>Quote valid for (days)</span>
               <input type="number" min="1" max="30" value={validityDays} onChange={(event) => setValidityDays(event.target.value)} className={inputClass} placeholder={`Default ${defaultValidityDays} days`} />
-              <span className="mt-1 block text-[11px] text-secondary">After this the customer cannot pay on this quote and must request new quotes. You can extend an open quote from the list.</span>
+              <span className="mt-2 block text-[12px] leading-[1.5] text-ink-muted">After this the customer cannot pay on this quote and must request new quotes. You can extend an open quote from the list.</span>
             </label>
             <label className="block">
               <span className={fieldLabelClass}>Special conditions / notes</span>
               <textarea rows="3" value={notes} onChange={(event) => setNotes(event.target.value)} className={inputClass} placeholder="e.g. Requires tracking device installation…" />
             </label>
-            <button type="submit" disabled={sending} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-[16px] font-semibold text-white shadow-lg transition-all hover:bg-primary-container active:scale-[0.98] disabled:opacity-60">
-              <Icon name={sending ? 'sync' : 'send'} className={sending ? 'animate-spin' : ''} />{sending ? 'Sending…' : 'Send quote to customer'}
+            <button
+              type="submit"
+              disabled={sending}
+              className="group relative flex min-h-[52px] w-full items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            >
+              <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
+              <Icon name={sending ? 'sync' : 'send'} className={`relative text-[18px] ${sending ? 'animate-spin' : ''}`} />
+              <span className="relative">{sending ? 'Sending…' : 'Send quote to customer'}</span>
             </button>
           </form>
         </section>

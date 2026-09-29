@@ -15,4 +15,6 @@ export const captureApi = {
   get: (code) => request(`/${code}`),
   putPhoto: (code, key, dataUrl) => request(`/${code}/photos/${key}`, { method: 'PUT', body: JSON.stringify({ dataUrl }) }),
   complete: (code) => request(`/${code}/complete`, { method: 'POST' }),
+  /** Live event stream for a session; the caller closes it. */
+  events: (code) => new EventSource(`${BASE}/${code}/events`),
 };

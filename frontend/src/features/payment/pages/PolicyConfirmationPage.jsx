@@ -6,6 +6,7 @@ import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
 import { JOURNEY_COMPLETE } from '@/features/quote-journey/journeySteps';
+import Meta from '@/components/ui/Meta';
 
 const ISSUE_DELAY_MS = 1500;
 
@@ -56,12 +57,16 @@ export default function PolicyConfirmationPage() {
 
   if (!selectedQuote) {
     return (
-      <main className="mx-auto flex min-h-[60vh] max-w-xl items-center px-5">
-        <section className="w-full rounded-2xl border border-slate-200 bg-white p-8 text-center">
-          <h1 className="text-2xl font-extrabold">Nothing to confirm yet</h1>
-          <p className="mt-2 text-secondary">Your issued policies are always available in your account.</p>
-          <Link to="/account" className="mt-6 inline-flex min-h-12 items-center rounded-lg bg-primary px-6 font-bold text-white hover:bg-primary-container">Go to my account</Link>
-        </section>
+      <main className="relative overflow-hidden">
+        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
+        <div className="relative mx-auto flex min-h-[60vh] w-full max-w-[560px] items-center px-6 py-12">
+          <section className="w-full border border-line bg-canvas p-8">
+            <Meta className="text-ink-muted">Confirmation</Meta>
+            <h1 className="mt-5 text-[28px] font-semibold tracking-[-0.03em] text-ink">Nothing to confirm yet</h1>
+            <p className="mt-3 text-[15px] leading-[1.6] text-ink-muted">Your issued policies are always available in your account.</p>
+            <Link to="/account" className="mt-8 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">Go to my account</Link>
+          </section>
+        </div>
       </main>
     );
   }
@@ -74,35 +79,47 @@ export default function PolicyConfirmationPage() {
   return (
     <>
       <JourneyProgress current={JOURNEY_COMPLETE} />
-      <main className="flex min-h-[calc(100vh-80px)] flex-col items-center bg-slate-50 px-5 py-12">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-lg space-y-5">
+      <main className="relative overflow-hidden">
+        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
+        <div className="relative mx-auto w-full max-w-[1120px] px-6 py-12 pb-24 lg:px-10">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full">
           {issuing ? (
-            <div className="rounded-2xl border border-gray-100 bg-white py-16 text-center shadow-sm" role="status" aria-live="polite">
-              <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }} className="mx-auto h-14 w-14 rounded-full border-4 border-primary border-t-transparent" />
-              <h1 className="mt-6 text-[24px] font-bold text-primary">Payment received</h1>
-              <p className="mt-2 px-6 text-[14px] text-on-surface-variant">Sending your paid quote to {selectedQuote.name} for policy issue…</p>
+            <div className="mx-auto flex min-h-[50vh] max-w-[560px] flex-col items-center justify-center border border-line bg-canvas p-12 text-center" role="status" aria-live="polite">
+              <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }} className="h-14 w-14 rounded-full border-2 border-primary border-t-transparent" />
+              <Meta className="mt-8 text-primary">Payment received</Meta>
+              <p className="mt-4 text-[15px] leading-[1.6] text-ink-muted">Sending your paid quote to {selectedQuote.name} for policy issue…</p>
             </div>
           ) : (
             <>
-              <div className="text-center">
-                <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300, damping: 20 }} className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-primary/5">
-                  <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">verified</span>
-                </motion.div>
-                <h1 className="text-[40px] font-extrabold tracking-[-.045em] text-primary">Payment received</h1>
-                <p className="mt-2 text-[16px] text-secondary">{selectedQuote.name} is preparing your official policy certificate.</p>
-              </div>
-
-              <article className="relative overflow-hidden rounded-2xl border-x border-b border-t-4 border-slate-200 border-t-primary bg-white shadow-sm">
-                <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 z-0 -translate-x-1/2 -translate-y-1/2 -rotate-12 select-none text-[6rem] font-black text-gray-50/60">INSURSHIELD</div>
-                <header className="relative z-10 flex items-center justify-between border-b border-gray-100 bg-surface-container-low p-5">
+              <header className="border-b border-line pb-8">
+                <span className="inline-flex items-center gap-3">
+                  <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
+                  <Meta className="text-ink-muted">Journey complete · Confirmation</Meta>
+                </span>
+                <div className="mt-6 flex items-start gap-5">
+                  <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300, damping: 20 }} className="mt-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/[0.06]">
+                    <span className="material-symbols-outlined text-[26px] text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">verified</span>
+                  </motion.span>
                   <div>
-                    <h2 className="text-[17px] font-bold text-primary">Paid quote confirmation</h2>
-                    <p className="mt-0.5 text-[12px] font-bold tracking-[0.05em] text-secondary">Quote request: {selectedQuote.requestId}</p>
+                    <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[42px]">Payment received</h1>
+                    <p className="mt-4 max-w-[52ch] text-[16px] leading-[1.6] text-ink-muted">{selectedQuote.name} is preparing your official policy certificate.</p>
                   </div>
-                  <span className="rounded-full bg-slate-200 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">Awaiting certificate</span>
+                </div>
+              </header>
+
+              <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_360px] lg:items-start">
+
+              <article className="relative overflow-hidden border-x border-b border-t-2 border-line border-t-primary bg-canvas">
+                <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 z-0 -translate-x-1/2 -translate-y-1/2 -rotate-12 select-none whitespace-nowrap font-mono text-[5rem] font-semibold tracking-[-0.03em] text-ink/[0.035]">INSURSHIELD</div>
+                <header className="relative z-10 flex items-center justify-between border-b border-line bg-canvas-2 p-5">
+                  <div>
+                    <Meta className="text-primary">Paid quote confirmation</Meta>
+                    <p className="mt-2.5 font-mono text-[13px] tracking-[0.02em] text-ink-muted">{selectedQuote.requestId}</p>
+                  </div>
+                  <Meta className="rounded-[1px] border border-dashed border-line-strong px-2.5 py-1.5 text-ink-muted">Awaiting certificate</Meta>
                 </header>
 
-                <dl className="relative z-10 grid grid-cols-2 gap-4 p-5">
+                <dl className="relative z-10 grid grid-cols-2 gap-x-8 gap-y-6 p-6 sm:grid-cols-3">
                   <Field label="Insurer" value={selectedQuote.name} highlight />
                   <Field label="Plan" value={`${selectedQuote.coverage} · ${coverLabel(insuranceType)}`} />
                   <Field label="Policyholder" value={customer?.fullName || '—'} />
@@ -115,46 +132,53 @@ export default function PolicyConfirmationPage() {
                   <Field label="Valid until" value={validUntil} />
                 </dl>
 
-                <div className="relative z-10 mx-5 mb-5 rounded-xl bg-surface-container-low p-4 text-[13px]">
-                  <div className="flex justify-between"><span className="text-on-surface-variant">Insurance premium ({premiumBreakdown?.coverageDuration || 'policy term'})</span><span className="font-semibold">{formatZMW(insurancePremium)}</span></div>
+                <div className="relative z-10 mx-6 mb-6 border border-dashed border-line-strong bg-canvas-2 p-5 text-[13px]">
+                  <div className="flex justify-between"><span className="text-ink-muted">Insurance premium ({premiumBreakdown?.coverageDuration || 'policy term'})</span><span className="font-semibold">{formatZMW(insurancePremium)}</span></div>
                   {premiumBreakdown?.ncdDiscount > 0 && <div className="mt-1 flex justify-between text-primary"><span>NCD discount ({premiumBreakdown.appliedNcdPercentage}%)</span><span className="font-semibold">− {formatZMW(premiumBreakdown.ncdDiscount)}</span></div>}
                   {rtsaFee > 0 && <div className="mt-1 flex justify-between text-primary"><span>RTSA anniversary fee</span><span className="font-semibold">{formatZMW(rtsaFee)}</span></div>}
-                  <div className="mt-2 flex justify-between border-t border-gray-200 pt-2 text-[15px]"><span className="font-bold text-primary">Total paid</span><span className="font-extrabold text-primary">{formatZMW(premium)}</span></div>
+                  <div className="mt-2 flex justify-between border-t border-line pt-2 text-[15px]"><span className="font-medium text-primary">Total paid</span><span className="font-semibold text-primary">{formatZMW(premium)}</span></div>
                 </div>
 
-                <footer className="relative z-10 border-t border-gray-100 bg-gray-50 p-4 text-[13px] text-secondary"><span className="material-symbols-outlined mr-2 align-middle text-primary" aria-hidden="true">pending_actions</span>Your insurer will upload the official certificate. It will then be available in My account.</footer>
+                <footer className="relative z-10 border-t border-line bg-canvas-2 p-5 text-[13px] leading-[1.55] text-ink-muted"><span className="material-symbols-outlined mr-2 align-middle text-primary" aria-hidden="true">pending_actions</span>Your insurer will upload the official certificate. It will then be available in My account.</footer>
               </article>
 
-              {rtsaFee > 0 && (
-                <section className="rounded-2xl border border-primary/20 bg-white p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="text-[17px] font-bold text-primary">RTSA Road Tax Disc</h2>
-                      <p className="mt-1 text-sm text-secondary">Your RTSA anniversary is included with this payment.</p>
+              <aside className="space-y-6 lg:sticky lg:top-24">
+                {rtsaFee > 0 && (
+                  <section className="ticked border border-primary bg-canvas p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <Meta className="text-primary">RTSA road tax disc</Meta>
+                      <Meta className="shrink-0 rounded-[1px] border border-dashed border-line-strong px-2.5 py-1.5 text-ink-muted">With certificate</Meta>
                     </div>
-                    <span className="rounded-full bg-slate-200 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-700">With certificate</span>
+                    <p className="mt-4 text-[13px] leading-[1.55] text-ink-muted">Your RTSA anniversary is included with this payment. The disc becomes available once your insurer issues the policy certificate.</p>
+                  </section>
+                )}
+
+                <section className="border border-line bg-canvas">
+                  <div className="border-b border-dashed border-line px-5 py-4">
+                    <Meta className="text-primary">What happens next</Meta>
                   </div>
-                  <p className="mt-3 text-sm text-secondary">The RTSA disc will be available after your insurer issues the policy certificate.</p>
+                  <ul className="space-y-4 p-5 text-[13px] leading-[1.55] text-ink-muted">
+                    <Next icon="shield">Your certificate and policy documents are in <strong className="font-medium text-ink">My account</strong> whenever you need them.</Next>
+                    <Next icon="mail">{selectedQuote.name} will also send the official policy document to {customer?.email || 'your email'}.</Next>
+                    {selectedQuote.inspectionRules === 'REQUIRED' && <Next icon="photo_camera">{selectedQuote.name} requires a vehicle inspection — they will contact you on {customer?.phone || 'your number'} to arrange it.</Next>}
+                    <Next icon="event_repeat">We'll remind you to renew on {policyDates?.formattedReminder || '30 days before expiry'}.</Next>
+                  </ul>
                 </section>
-              )}
 
-              <section className="rounded-2xl border border-gray-100 bg-white p-5">
-                <h2 className="mb-3 text-[15px] font-bold text-primary">What happens next</h2>
-                <ul className="space-y-3 text-[13px] text-on-surface-variant">
-                  <Next icon="shield">Your certificate and policy documents are in <strong>My account</strong> whenever you need them.</Next>
-                  <Next icon="mail">{selectedQuote.name} will also send the official policy document to {customer?.email || 'your email'}.</Next>
-                  {selectedQuote.inspectionRules === 'REQUIRED' && <Next icon="photo_camera">{selectedQuote.name} requires a vehicle inspection — they will contact you on {customer?.phone || 'your number'} to arrange it.</Next>}
-                  <Next icon="event_repeat">We'll remind you to renew on {policyDates?.formattedReminder || '30 days before expiry'}.</Next>
-                </ul>
-              </section>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button type="button" onClick={() => navigate('/')} className="flex items-center justify-center gap-2 rounded-xl border border-outline-variant bg-surface-container-low py-3 font-semibold text-primary hover:bg-gray-100">Back to home</button>
-                <button type="button" onClick={finish} className="flex items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-white hover:bg-primary-container"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">account_circle</span>My account</button>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button type="button" onClick={() => navigate('/')} className="inline-flex min-h-12 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-[14px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">Back to home</button>
+                  <button type="button" onClick={finish} className="group relative inline-flex min-h-12 items-center justify-center gap-2 overflow-hidden rounded-[1px] bg-primary text-[14px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">
+                    <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
+                    <span className="material-symbols-outlined relative text-[18px]" aria-hidden="true">account_circle</span>
+                    <span className="relative">My account</span>
+                  </button>
+                </div>
+              </aside>
               </div>
             </>
           )}
         </motion.div>
+        </div>
       </main>
     </>
   );
@@ -162,9 +186,9 @@ export default function PolicyConfirmationPage() {
 
 function Field({ label, value, highlight = false, mono = false }) {
   return (
-    <div>
-      <dt className="mb-1 text-[11px] font-bold uppercase tracking-[0.05em] text-on-surface-variant">{label}</dt>
-      <dd className={`text-[14px] font-semibold ${highlight ? 'text-primary' : 'text-on-surface'} ${mono ? 'font-mono tracking-wider' : ''}`}>{value}</dd>
+    <div className="min-w-0">
+      <dt><Meta className="text-ink-faint">{label}</Meta></dt>
+      <dd className={`mt-2 break-words text-[14px] font-medium leading-[1.45] tracking-[-0.01em] ${highlight ? 'text-primary' : 'text-ink'} ${mono ? 'font-mono tracking-[0.04em]' : ''}`}>{value}</dd>
     </div>
   );
 }

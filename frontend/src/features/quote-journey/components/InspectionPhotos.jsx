@@ -40,19 +40,19 @@ export default function InspectionPhotos({ photos = {}, plate = '', onPhoto, hig
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {INSPECTION_SHOTS.map((shot) => {
           const photo = photos[shot.key];
-          const tileClass = `group relative flex min-h-32 flex-col items-center justify-center overflow-hidden rounded-xl border-2 p-3 text-center transition-colors ${photo ? 'border-primary/40 bg-primary/5' : highlightMissing ? 'border-dashed border-red-300 bg-red-50/40 text-red-900' : 'border-dashed border-primary/30 bg-white text-on-surface hover:border-primary/60'}`;
+          const tileClass = `group relative flex min-h-32 flex-col items-center justify-center overflow-hidden rounded-[1px] border-2 p-3 text-center transition-colors ${photo ? 'border-primary/40 bg-primary/5' : highlightMissing ? 'border-dashed border-primary/30 bg-primary/[0.06]/40 text-primary' : 'border-dashed border-primary/30 bg-white text-ink hover:border-primary/60'}`;
           const content = photo ? (
             <>
               <img src={photo} alt={shot.label} className="absolute inset-0 h-full w-full object-cover" />
-              <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-2 pb-2 pt-6 text-left text-[11px] font-bold text-white">{shot.label}</span>
+              <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-2 pb-2 pt-6 text-left text-[11px] font-medium text-white">{shot.label}</span>
               <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white"><span className="material-symbols-outlined text-[16px]" aria-hidden="true">check</span></span>
-              <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-[12px] font-bold text-white opacity-0 transition-opacity group-hover:opacity-100">{uploadOnly ? 'Replace photo' : 'Retake'}</span>
+              <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-[12px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">{uploadOnly ? 'Replace photo' : 'Retake'}</span>
             </>
           ) : (
             <>
               <span className="material-symbols-outlined text-2xl" aria-hidden="true">{shot.icon}</span>
-              <span className="mt-1 text-[12px] font-bold">{shot.label}</span>
-              <span className="mt-0.5 text-[10px] text-secondary">{uploadOnly ? 'Tap to upload' : 'Tap to capture'}</span>
+              <span className="mt-1 text-[12px] font-medium">{shot.label}</span>
+              <span className="mt-0.5 text-[10px] text-ink-muted">{uploadOnly ? 'Tap to upload' : 'Tap to capture'}</span>
             </>
           );
           return (
@@ -72,13 +72,13 @@ export default function InspectionPhotos({ photos = {}, plate = '', onPhoto, hig
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         {!uploadOnly && missing.length > 0 && (
-          <button type="button" onClick={startSequence} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 text-[14px] font-bold text-white hover:bg-primary-container">
+          <button type="button" onClick={startSequence} className="inline-flex min-h-11 items-center gap-2 rounded-[1px] bg-primary px-4 text-[14px] font-medium text-white hover:bg-[#b91c1c]">
             <span className="material-symbols-outlined text-[18px]" aria-hidden="true">photo_camera</span>
             {captureAllLabel || (missing.length === INSPECTION_SHOTS.length ? 'Capture all 7 photos' : `Capture remaining ${missing.length}`)}
           </button>
         )}
         {footer}
-        <span className="text-[12px] text-secondary">{INSPECTION_SHOTS.length - missing.length} of {INSPECTION_SHOTS.length} captured</span>
+        <span className="text-[12px] text-ink-muted">{INSPECTION_SHOTS.length - missing.length} of {INSPECTION_SHOTS.length} captured</span>
       </div>
 
       {activeShot && (

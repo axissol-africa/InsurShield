@@ -1,0 +1,12 @@
+<!doctype html>
+<!--
+  Loaded in a hidden iframe by keycloak-js to check for an existing session
+  without a full page redirect. It only forwards the result to the opener.
+-->
+<html lang="en">
+  <body>
+    <script>
+      parent.postMessage(location.href, location.origin);
+    </script>
+  </body>
+</html>

@@ -153,7 +153,7 @@ export default function InspectionWorkflowPage() {
             </div>
           </div>
 
-          <button type="submit" disabled={submitting} className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg hover:bg-primary-container active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+          <button type="submit" disabled={submitting} className="w-full bg-primary text-white font-bold py-4 rounded-xl shadow-lg hover:bg-[#b91c1c] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
             {submitting ? <><span className="material-symbols-outlined animate-spin">sync</span> Submitting...</> : <><span className="material-symbols-outlined">calendar_add_on</span> Request Inspection</>}
           </button>
         </form>
@@ -260,7 +260,7 @@ export default function InspectionWorkflowPage() {
           <h1 className="text-[28px] font-bold text-primary">Vehicle Inspections</h1>
           <p className="text-[14px] text-on-surface-variant">PICZ-aligned inspection management</p>
         </div>
-        <button onClick={() => setView('request')} className="bg-primary text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 hover:bg-primary-container transition-colors shadow-lg">
+        <button onClick={() => setView('request')} className="bg-primary text-white font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 hover:bg-[#b91c1c] transition-colors shadow-lg">
           <span className="material-symbols-outlined text-[18px]">add</span> Request Inspection
         </button>
       </div>
@@ -295,7 +295,7 @@ export default function InspectionWorkflowPage() {
             <span className="material-symbols-outlined text-gray-300 text-[60px]">fact_check</span>
             <h3 className="text-[18px] font-bold text-primary mt-3">No Inspections</h3>
             <p className="text-[14px] text-on-surface-variant mt-1">Request a vehicle inspection for PICZ compliance.</p>
-            <button onClick={() => setView('request')} className="mt-4 bg-primary text-white font-semibold px-6 py-3 rounded-xl hover:bg-primary-container transition-colors">Request Inspection</button>
+            <button onClick={() => setView('request')} className="mt-4 bg-primary text-white font-semibold px-6 py-3 rounded-xl hover:bg-[#b91c1c] transition-colors">Request Inspection</button>
           </div>
         )}
       </div>

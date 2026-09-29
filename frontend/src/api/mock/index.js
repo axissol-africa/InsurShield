@@ -76,6 +76,7 @@ export const payments = {
 export const policies = {
   listMine: () => call((s) => mine(s.policies)),
   get: (policyNumber) => call((s) => s.policies.find((p) => p.policyNumber === policyNumber) || null),
+  renew: (policyNumber) => call((s) => ({ ok: s.renewFromPolicy(policyNumber) })),
   listForInsurer: () => call((s) => s.policies.filter((p) => p.insurer === insurerName())),
   issueCertificate: (policyNumber, issuance) => call((s) => { s.issuePolicyCertificate(policyNumber, issuance); return state().policies.find((p) => p.policyNumber === policyNumber); }),
 };

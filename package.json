@@ -1,0 +1,44 @@
+{
+  "name": "insurshield",
+  "private": true,
+  "version": "0.0.0",
+  "description": "InsurShield monorepo \u2014 Zambian motor-insurance marketplace.",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11.13.0",
+      "onFail": "error"
+    }
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:web": "turbo run dev --filter=frontend",
+    "dev:api": "turbo run dev --filter=backend",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f",
+    "db:migrate": "npm run db:migrate -w backend",
+    "db:seed": "npm run db:seed -w backend",
+    "db:studio": "npm run db:studio -w backend",
+    "setup": "npm install && npm run infra:up && npm run db:migrate && npm run db:seed",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "format": "turbo run format",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "test:cov": "turbo run test:cov"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.3"
+  }
+}

@@ -33,6 +33,12 @@ describe('portal helpers', () => {
     expect(pageSlice([1, 2, 3, 4, 5], 2, 2)).toEqual([3, 4]);
     expect(pageSlice([1, 2], 3, 2)).toEqual([]);
     expect(statusStyle('Notified').dot).toBe('bg-primary');
-    expect(statusStyle('Whatever').badge).toContain('bg-gray-100');
+    // Neutral means "not the accent": an unrecognised status must never look
+    // like open work. Asserting the intent rather than a literal class keeps
+    // this test useful across restyles.
+    const unknown = statusStyle('Whatever');
+    expect(unknown.badge).not.toContain('primary');
+    expect(unknown.badge).toBeTruthy();
+    expect(unknown.dot).not.toContain('primary');
   });
 });

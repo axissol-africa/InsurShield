@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "clean": "rm -rf dist coverage .turbo"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.4",
@@ -18,6 +19,7 @@
     "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
+    "keycloak-js": "^26.2.4",
     "lucide-react": "^1.14.0",
     "postcss": "^8.5.14",
     "qrcode": "^1.5.4",
@@ -47,5 +49,6 @@
     "jsdom": "^30.0.1",
     "vite": "^8.0.10",
     "vitest": "^5.0.0"
-  }
+  },
+  "description": "InsurShield web app (React 19 + Vite PWA)."
 }

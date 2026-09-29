@@ -11,8 +11,16 @@ export default defineConfig({
     // `@/` points at src/ so features import each other by stable absolute paths.
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
-  // Listen on the LAN so a phone can open the capture link shown in the QR code.
-  server: { host: true },
+  server: {
+    // Listen on the LAN so a phone can open the capture link shown in the QR code.
+    host: true,
+    proxy: {
+      // The API runs on its own port in development. Proxying keeps the
+      // browser on a single origin, so the default `/api/v1` base URL works
+      // and there is no CORS round trip.
+      '/api': { target: 'http://localhost:4000', changeOrigin: true },
+    },
+  },
   test: {
     environment: 'jsdom',
     include: ['src/**/*.{test,spec}.{js,jsx}', 'tools/**/*.test.js'],
