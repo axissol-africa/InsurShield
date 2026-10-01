@@ -21,9 +21,9 @@ const ROLES = [
 ];
 
 /**
- * Prototype credentials. Authentication still runs against these constants
- * rather than Keycloak, so they are shown on screen deliberately — hiding them
- * would suggest this screen is doing more than it is.
+ * Prototype credentials, checked against these constants in the browser. They
+ * are shown on screen deliberately: hiding them would suggest this screen is
+ * doing more than it is.
  */
 const CREDENTIALS = {
   admin: { email: 'admin@insurshield.zm', password: 'admin123' },
@@ -211,8 +211,8 @@ export default function AdminLogin() {
           </button>
         </form>
 
-        {/* This screen does not authenticate against Keycloak yet, so the
-            credentials are stated plainly rather than implied. */}
+        {/* Nothing is verified off the device, so the credentials are
+            stated plainly rather than implied. */}
         <div className="mt-8 border border-dashed border-line-strong p-4">
           <div className="flex items-center gap-2.5">
             <span className="material-symbols-outlined text-[16px] text-primary" aria-hidden="true">info</span>
@@ -229,8 +229,8 @@ export default function AdminLogin() {
             Fill them in
           </button>
           <p className="mt-4 border-t border-dashed border-line pt-3 text-[12px] leading-[1.5] text-ink-faint">
-            Staff sign-in does not yet run through Keycloak. These accounts exist only in this
-            browser and grant no access to real data.
+            These accounts exist only in this browser and grant no access to real data.
+            Staff sign-in moves behind the backend before anyone outside the team uses it.
           </p>
         </div>
       </main>

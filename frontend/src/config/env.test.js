@@ -33,11 +33,7 @@ describe('env', () => {
     const env = await loadEnv({
       VITE_API_MODE: 'http',
       VITE_API_BASE_URL: 'https://api.insurshield.zm/v1',
-      VITE_KEYCLOAK_URL: 'https://id.insurshield.zm',
-      VITE_KEYCLOAK_REALM: 'insurshield',
     });
     expect(env.apiBaseUrl).toBe('https://api.insurshield.zm/v1');
-    expect(env.keycloakUrl).toBe('https://id.insurshield.zm');
-    expect(env.keycloakRealm).toBe('insurshield');
   });
 });

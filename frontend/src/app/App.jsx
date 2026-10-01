@@ -1,6 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
-import AuthProvider from './AuthProvider';
 import { CustomerRoute, StaffRoute } from './guards';
 import LandingPage from '@/features/home/pages/LandingPage';
 import CreateAccountPage from '@/features/auth/pages/CreateAccountPage';
@@ -26,7 +25,6 @@ const customerOnly = (page) => <CustomerRoute>{page}</CustomerRoute>;
 export default function App() {
   return (
     <Router>
-      <AuthProvider>
       <Routes>
         <Route path="/" element={<MainLayout />}>
           {/* Public: guests can explore and prepare a quote */}
@@ -57,7 +55,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
-      </AuthProvider>
     </Router>
   );
 }

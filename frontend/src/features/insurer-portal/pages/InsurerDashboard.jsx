@@ -39,8 +39,8 @@ export default function InsurerDashboard() {
   // Sub-views (quote form, certificate upload) replace the dashboard; start them at the top on phones.
   useEffect(() => { window.scrollTo({ top: 0 }); }, [quotingRequest, issuingPolicy, activeTab]);
 
-  // A Keycloak-backed session names the insurer separately from the staff
-  // member; the prototype session puts the insurer in `name`.
+  // A session may name the insurer separately from the staff member; the
+  // prototype session puts the insurer in `name`.
   const insurerName =
     (staffSession?.role === 'insurer' && (staffSession.insurerName || staffSession.name)) ||
     DEFAULT_PORTAL_INSURER;

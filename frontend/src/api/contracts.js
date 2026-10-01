@@ -13,7 +13,7 @@
  *  - Documents (quotations, certificates, photos): uploaded as multipart and referenced by `DocumentRecord`.
  *
  * Endpoints
- *  auth        GET  /auth/me · POST /auth/consent   (sign-in and sign-up happen on Keycloak's own pages)
+ *  auth        GET  /auth/me · POST /auth/consent
  *  account     DELETE /account
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote

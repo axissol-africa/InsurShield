@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
-import { signOutOfKeycloak } from '@/lib/keycloak';
 
 const CUSTOMER_LINKS = [
   { to: '/', label: 'Home' },
@@ -18,7 +17,7 @@ const navClass = ({ isActive }) =>
 export default function MainLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAuthenticated, customer, staffSession, endStaffSession } = useStore();
+  const { isAuthenticated, customer, staffSession, endStaffSession, signOut } = useStore();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Each journey step is a new page; start it at the top.
@@ -28,18 +27,17 @@ export default function MainLayout() {
   // Home is the approved marketing landing page. Keep its chrome independent
   // while application routes use the compact mobile/PWA shell below.
   const isHome = location.pathname === '/';
-  // The phone capture page needs no identity, and its Keycloak host is not
-  // reachable from the phone — so it shows the brand alone, with nothing to
-  // tap that would strand someone half way through their photos.
+  // The phone capture page needs no identity — so it shows the brand alone,
+  // with nothing to tap that would strand someone half way through their
+  // photos.
   const isCapture = location.pathname.startsWith('/capture/');
   const currentHref = `${location.pathname}${location.search}`;
   const loginHref = location.pathname === '/create-account' ? currentHref : `/create-account?next=${encodeURIComponent(currentHref)}`;
 
-  // Ends the Keycloak session too, otherwise the next visit is silently
-  // signed straight back in.
   const handleSignOut = () => {
     setMenuOpen(false);
-    signOutOfKeycloak();
+    signOut();
+    navigate('/');
   };
   const handleStaffSignOut = () => {
     endStaffSession();

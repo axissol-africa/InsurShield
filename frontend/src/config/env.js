@@ -14,12 +14,5 @@ export const env = Object.freeze({
   /** Milliseconds a mock call takes, so loading states are visible in demos. */
   mockLatencyMs: Number(read(import.meta.env.VITE_MOCK_LATENCY_MS, 600)),
 
-  /**
-   * Keycloak handles sign-in and sign-up regardless of `apiMode`: identity is
-   * always real, even while quote data is still served from browser storage.
-   */
-  keycloakUrl: read(import.meta.env.VITE_KEYCLOAK_URL, 'http://localhost:8080'),
-  keycloakRealm: read(import.meta.env.VITE_KEYCLOAK_REALM, 'insurshield'),
-  keycloakClientId: read(import.meta.env.VITE_KEYCLOAK_CLIENT_ID, 'insurshield-web'),
   isProduction: import.meta.env.PROD,
 });

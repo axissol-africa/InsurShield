@@ -19,7 +19,6 @@
     "axios": "^1.16.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
-    "keycloak-js": "^26.2.4",
     "lucide-react": "^1.14.0",
     "postcss": "^8.5.14",
     "qrcode": "^1.5.4",
