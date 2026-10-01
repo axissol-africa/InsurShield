@@ -3,9 +3,9 @@ import { DEMO_CUSTOMER_ACCOUNT } from '../demoSeed';
 /**
  * Customer accounts, the staff/insurer portal session and data-protection consent.
  *
- * Prototype only: identities live in browser storage. Production authenticates
- * against the backend (`api/auth`) and never keeps passwords, OTPs or consent
- * audit records on the device.
+ * Prototype only: identities live in browser storage, passwords included.
+ * Production authenticates against the backend and keeps no password, code or
+ * consent audit record on the device.
  */
 
 const toCustomerProfile = (account) => ({ fullName: account.fullName, email: account.email, phone: account.phone });
@@ -70,11 +70,10 @@ export const createSessionSlice = (set, get) => ({
   authToken: null,
   setAuthToken: (authToken) => set({ authToken }),
 
-  // ─── Keycloak-backed session ─────────────────────────────
   /**
-   * Adopts the signed-in customer resolved from Keycloak, together with the
-   * consent the backend holds for them. Consent belongs to the account rather
-   * than the browser, so signing out and back in does not ask for it again.
+   * Adopts a customer resolved elsewhere — a backend session, or an identity
+   * service if one is reintroduced — with the consent held against that
+   * account rather than against this browser.
    */
   applyCustomerSession: (customer, consent = null) =>
     set({
