@@ -8,6 +8,10 @@ import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
 import { JOURNEY_COMPLETE } from '@/features/quote-journey/journeySteps';
 import Meta from '@/components/ui/Meta';
+import { isForeignRegistered } from '@/domain/countries';
+import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
+import { openDocument } from '@/lib/files';
+import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
 
 const ISSUE_DELAY_MS = 1500;
 
@@ -23,6 +27,7 @@ export default function PolicyConfirmationPage() {
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
   const [reviewed, setReviewed] = useState(false);
+  const [readingGuide, setReadingGuide] = useState(false);
 
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
   const policyNumber = `POL-${reference}`;
@@ -54,6 +59,9 @@ export default function PolicyConfirmationPage() {
         quoteRequestId: selectedQuote.requestId || null,
         insurerQuoteReference: selectedQuote.reply?.insurerReference || null,
         quoteDocument: selectedQuote.reply?.document || null,
+        // The guide explains what was bought, so it belongs to the policy
+        // rather than only to the quote the customer chose it from.
+        coverGuide: selectedQuote.reply?.coverGuide || null,
         paymentStatus: 'Paid',
         paymentProof: paymentReceipt || { transactionId: `TXN-${selectedQuote.requestId?.slice(-6) || 'PENDING'}`, status: 'Confirmed', amount: premium, currency: 'ZMW', confirmedAt: new Date().toISOString() },
         status: 'Awaiting insurer certificate',
@@ -143,6 +151,9 @@ export default function PolicyConfirmationPage() {
                   <Field label="Plate" value={vehicleDetails?.plateNumber || '—'} highlight mono />
                   <Field label="Insured value" value={vehicleValue > 0 ? formatZMW(vehicleValue) : '—'} />
                   <Field label="Chassis number" value={vehicleDetails?.chassisNumber || '—'} mono />
+                  {isForeignRegistered(vehicleDetails?.registrationCountry) && (
+                    <Field label="Registered in" value={vehicleDetails.registrationCountry} />
+                  )}
                   <Field label="Valid from" value={validFrom} />
                   <Field label="Valid until" value={validUntil} />
                 </dl>
@@ -153,6 +164,23 @@ export default function PolicyConfirmationPage() {
                   {rtsaFee > 0 && <div className="mt-1 flex justify-between text-primary"><span>RTSA anniversary fee</span><span className="font-semibold">{formatZMW(rtsaFee)}</span></div>}
                   <div className="mt-2 flex justify-between border-t border-line pt-2 text-[15px]"><span className="font-medium text-primary">Total paid</span><span className="font-semibold text-primary">{formatZMW(premium)}</span></div>
                 </div>
+
+                {/* Both halves of what the insurer sent: the quotation they
+                    uploaded, and the guide stating what the cover does. */}
+                {(selectedQuote.reply?.coverGuide?.planName || selectedQuote.reply?.document) && (
+                  <div className="relative z-10 mx-6 mb-6 flex flex-wrap gap-2">
+                    {selectedQuote.reply?.coverGuide?.planName && (
+                      <button type="button" onClick={() => setReadingGuide(true)} className={documentButton}>
+                        <span className="material-symbols-outlined text-[16px]" aria-hidden="true">description</span>Cover guide
+                      </button>
+                    )}
+                    {selectedQuote.reply?.document && (
+                      <button type="button" onClick={() => openDocument(selectedQuote.reply.document)} className={documentButton}>
+                        <span className="material-symbols-outlined text-[16px]" aria-hidden="true">open_in_new</span>Quotation
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <footer className="relative z-10 border-t border-line bg-canvas-2 p-5 text-[13px] leading-[1.55] text-ink-muted"><span className="material-symbols-outlined mr-2 align-middle text-primary" aria-hidden="true">pending_actions</span>Your insurer will upload the official certificate. It will then be available in My account.</footer>
               </article>
@@ -222,6 +250,14 @@ export default function PolicyConfirmationPage() {
         </motion.div>
         </div>
       </main>
+
+      {readingGuide && (
+        <CoverGuideReader
+          guide={selectedQuote.reply.coverGuide}
+          insurerName={selectedQuote.name}
+          onClose={() => setReadingGuide(false)}
+        />
+      )}
     </>
   );
 }

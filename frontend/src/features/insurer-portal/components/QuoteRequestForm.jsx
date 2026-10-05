@@ -4,8 +4,9 @@ import { calculatePremium, formatZMW } from '@/domain/premiumEngine';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
 import Meta from '@/components/ui/Meta';
 import { BackButton, DocumentPicker, Fact, Icon } from './ui';
+import { isForeignRegistered } from '@/domain/countries';
 import { fieldClass as inputClass, labelClass as fieldLabelClass } from '@/components/ui/field';
-import { benefitsForCoverage } from '@/features/insurer-portal/portal';
+import { COVER_TYPE_LABELS, isCoverGuideComplete } from '@/domain/coverGuide';
 
 const SEND_DELAY_MS = 800;
 
@@ -26,7 +27,7 @@ const indicativePremium = (request, insurer, piaRatePercentage) => {
  * The insurer prepares its quotation in its own system, then records it here:
  * the document the customer will see, the premium on it, and how long it stays open.
  */
-export default function QuoteRequestForm({ request, insurer, coverDocuments = {}, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
+export default function QuoteRequestForm({ request, insurer, coverGuides = {}, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
   const quotation = useDocumentUpload();
   const [premium, setPremium] = useState('');
   const [reference, setReference] = useState('');
@@ -36,10 +37,16 @@ export default function QuoteRequestForm({ request, insurer, coverDocuments = {}
 
   const estimate = indicativePremium(request, insurer, piaRatePercentage);
   const coverageType = request.insuranceType || (request.coverage === 'Third Party Only' ? 'ThirdParty' : 'Comprehensive');
-  const coverDocument = coverDocuments[coverageType];
+  const coverGuide = coverGuides[coverageType];
+  const guidePublished = isCoverGuideComplete(coverGuide);
 
   const facts = [
     ['Vehicle', request.plate ? `${request.vehicle} · ${request.plate}` : request.vehicle],
+    // Only worth a line when it is not the home market; on a Zambian
+    // vehicle it would be a row saying nothing.
+    ...(isForeignRegistered(request.registrationCountry)
+      ? [['Registered in', `${request.registrationCountry} — not on the RTSA register`]]
+      : []),
     ['Declared value', request.value],
     ['Declared usage', request.usage],
     ['Requested coverage', request.coverage],
@@ -54,8 +61,8 @@ export default function QuoteRequestForm({ request, insurer, coverDocuments = {}
       quotation.setError('Attach the final quotation from your system before sending it.');
       return;
     }
-    if (!coverDocument) {
-      quotation.setError(`Add your ${coverageType === 'ThirdParty' ? 'third party only' : 'comprehensive'} cover guide in the Cover guides tab before sending this quote.`);
+    if (!guidePublished) {
+      quotation.setError(`Publish your ${COVER_TYPE_LABELS[coverageType].toLowerCase()} cover guide under Cover guides before sending this quote.`);
       return;
     }
     const amount = Number(premium);
@@ -70,13 +77,9 @@ export default function QuoteRequestForm({ request, insurer, coverDocuments = {}
       validityDays: Number(validityDays) || defaultValidityDays,
       insurerReference: reference.trim() || null,
       document: quotation.document,
-      coverGuide: {
-        coverageType,
-        document: coverDocument,
-        benefits: benefitsForCoverage(insurer, coverageType),
-        inspectionRules: insurer?.inspectionRules || 'May be requested',
-        claimsContact: insurer?.contact?.phone || insurer?.contact?.email || null,
-      },
+      // The guide travels with the quote, so what the customer compares is
+       // what this insurer had published at the moment they quoted.
+      coverGuide: { ...coverGuide, coverageType },
     }), SEND_DELAY_MS);
   };
 
@@ -109,12 +112,12 @@ export default function QuoteRequestForm({ request, insurer, coverDocuments = {}
             document on their comparison page and is charged the premium shown on it. The matching cover guide is attached automatically.
           </p>
           <form onSubmit={handleSubmit} className="space-y-6">
-            <div className={`border p-4 ${coverDocument ? 'border-primary/30 bg-primary/[0.03]' : 'border-primary/40 bg-primary/[0.06]'}`}>
+            <div className={`border p-4 ${guidePublished ? 'border-primary/30 bg-primary/[0.03]' : 'border-primary/40 bg-primary/[0.06]'}`}>
               <div className="flex items-start gap-3">
-                <Icon name={coverDocument ? 'task_alt' : 'description'} className="text-[21px] text-primary" />
+                <Icon name={guidePublished ? 'task_alt' : 'description'} className="text-[21px] text-primary" />
                 <div>
-                  <span className="block text-[13px] font-medium text-ink">{coverageType === 'ThirdParty' ? 'Third party only' : 'Comprehensive'} cover guide</span>
-                  <span className="mt-1 block text-[12px] leading-[1.5] text-ink-muted">{coverDocument ? `${coverDocument.name} will be sent with this quote.` : 'Required before this quote can be sent. Go back and add it under Cover guides.'}</span>
+                  <span className="block text-[13px] font-medium text-ink">{COVER_TYPE_LABELS[coverageType]} cover guide</span>
+                  <span className="mt-1 block text-[12px] leading-[1.5] text-ink-muted">{guidePublished ? `“${coverGuide.planName}” goes with this quote.` : 'Required before this quote can be sent. Publish it under Cover guides.'}</span>
                 </div>
               </div>
             </div>

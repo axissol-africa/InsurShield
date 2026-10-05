@@ -6,6 +6,7 @@ import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import { AWAITING_CERTIFICATE, isOpenNcdApplication, toPortalRequest } from '@/features/insurer-portal/portal';
 import { Icon } from '@/features/insurer-portal/components/ui';
+import { COVER_TYPES, isCoverGuideComplete } from '@/domain/coverGuide';
 import Meta from '@/components/ui/Meta';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
@@ -78,7 +79,7 @@ export default function InsurerDashboard() {
       <QuoteRequestForm
         request={quotingRequest}
         insurer={insurer}
-        coverDocuments={insurer?.coverDocuments}
+        coverGuides={insurer?.coverGuides}
         piaRatePercentage={piaConfig?.piaRatePercentage}
         defaultValidityDays={defaultValidityDays}
         onBack={() => setQuotingRequest(null)}
@@ -93,7 +94,7 @@ export default function InsurerDashboard() {
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: 'dashboard', badge: awaitingQuote.length },
-    { id: 'guides', label: 'Cover documents', shortLabel: 'Documents', icon: 'description', badge: insurer?.coverDocuments?.Comprehensive && insurer?.coverDocuments?.ThirdParty ? 0 : 1 },
+    { id: 'guides', label: 'Cover guides', shortLabel: 'Guides', icon: 'description', badge: COVER_TYPES.filter((type) => !isCoverGuideComplete(insurer?.coverGuides?.[type])).length },
     { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: 'verified_user', badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: 'report_problem', badge: newClaims.length },
     { id: 'ncd', label: 'NCD Applications', shortLabel: 'NCD', icon: 'sell', badge: openNcd.length },
@@ -237,11 +238,11 @@ export default function InsurerDashboard() {
       {activeTab === 'guides' && (
         <CoverGuideLibrary
           insurer={insurer}
-          onSave={async (coverageType, document) => {
+          onSave={async (coverageType, guide) => {
             if (!insurer) throw new Error('Your insurer profile could not be found.');
-            const coverDocuments = { ...(insurer.coverDocuments || {}), [coverageType]: document };
-            await api.insurers.update(insurer.id, { coverDocuments });
-            updateInsurer(insurer.id, { coverDocuments });
+            const coverGuides = { ...(insurer.coverGuides || {}), [coverageType]: guide };
+            await api.insurers.update(insurer.id, { coverGuides });
+            updateInsurer(insurer.id, { coverGuides });
             await hydrateInsurerPortal();
           }}
         />
