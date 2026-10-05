@@ -6,7 +6,6 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
 const logoFile = { name: 'logo.png', mimeType: 'image/png', buffer: PNG };
 const quoteFile = { name: 'quote.pdf', mimeType: 'application/pdf', buffer: PDF };
-const guideFile = { name: 'cover-guide.pdf', mimeType: 'application/pdf', buffer: PDF };
 
 const seedStaff = (role, name) => async ({ page }) => {
   await page.goto('/');
@@ -60,13 +59,6 @@ test('insurer uploads a quotation document and the customer can open it', async 
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   });
   await page.goto('/insurer');
-
-  // Every quotation is sent with the insurer's own cover guide, so the guide
-  // has to be published before a quote of that type can go out.
-  await page.getByRole('tab', { name: /Cover documents/ }).click();
-  await page.locator('input[type="file"]').first().setInputFiles(guideFile);
-  await expect(page.getByRole('button', { name: 'View customer guide' }).first()).toBeVisible();
-  await page.getByRole('tab', { name: /Overview/ }).click();
 
   await page.getByRole('button', { name: 'Send quote' }).first().click();
   await expect(page.getByText('7 live photos attached').or(page.getByText('1 live photos attached'))).toBeVisible();
@@ -190,4 +182,88 @@ test('an insurer quote needs the quotation document and a premium', async ({ pag
   await expect(premium).not.toHaveValue('100');
   await page.getByRole('button', { name: 'Send quote to customer' }).click();
   await expect(page.getByText(/^ZMW /).first()).toBeVisible();
+});
+
+test('an insurer states its cover in the shared form, and the customer reads that same document', async ({ page }) => {
+  await seedStaff('insurer', 'Prestige Assurance')({ page });
+  await page.goto('/insurer');
+  await page.getByRole('tab', { name: /Cover guides/ }).click();
+
+  // Catalogue insurers arrive published, so the form opens complete.
+  await expect(page.getByText('11 of 11 answered')).toBeVisible();
+
+  // Change one answer and watch it reach the customer's document.
+  await page.getByLabel('Plan name *').fill('Comprehensive Platinum');
+  await page.getByRole('button', { name: 'Preview as a customer' }).click();
+  await expect(page.getByRole('heading', { name: 'Comprehensive Platinum' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Back to the form' }).click();
+  await page.getByRole('button', { name: /Update the guide/ }).click();
+  await expect(page.getByText(/Published\. Customers comparing/)).toBeVisible();
+
+  // Third party answers the same questions, so the two documents line up.
+  await page.getByRole('tab', { name: /Third party only/ }).click();
+  await expect(page.getByLabel('Plan name *')).toBeVisible();
+  await expect(page.getByLabel('Claims contact *')).toBeVisible();
+});
+
+test('a guide must be complete before that cover type can be quoted', async ({ page }) => {
+  await seedStaff('insurer', 'Prestige Assurance')({ page });
+  await page.goto('/insurer');
+  await page.getByRole('tab', { name: /Cover guides/ }).click();
+
+  // Empty one required answer: the guide stops being publishable, and says why.
+  await page.getByLabel('Claims contact *').fill('');
+  await page.getByRole('button', { name: /Update the guide/ }).click();
+  // Both the summary and the field itself say so, which is what makes a long
+  // form navigable.
+  await expect(page.getByText('Answer the highlighted questions before publishing this guide.')).toBeVisible();
+  await expect(page.getByText('“Claims contact” is needed.')).toBeVisible();
+});
+
+test('a guide published before benefits became plain lines opens as readable text', async ({ page }) => {
+  await seedStaff('insurer', 'Prestige Assurance')({ page });
+  // The shape guides were saved in when a benefit and its limit were two
+  // separate boxes. Loaded carelessly these reach a text input as
+  // "[object Object]".
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
+    store.state.insurersList = [{
+      id: '1',
+      name: 'Prestige Assurance',
+      ratePercentage: 4.5,
+      quoteValidityDays: 7,
+      coverage: 'Comprehensive Gold Plan',
+      coverGuides: {
+        Comprehensive: {
+          coverType: 'Comprehensive',
+          planName: 'Comprehensive Gold Plan',
+          summary: 'Full cover for your vehicle and for damage you cause to others.',
+          coveredItems: [{ item: 'Own damage', limit: 'Market value' }, { item: 'Theft and fire', limit: '' }],
+          exclusions: ['Driving without a valid licence'],
+          notifyWithinDays: '7',
+          howToNotify: 'Call the claims line.',
+          documentsRequired: ['Police report'],
+          claimsContact: '+260 211 255 100',
+          settlementTime: '14 working days',
+          territorialLimit: 'Zambia',
+          ncdAccepted: true,
+          quoteValidityDays: '7',
+        },
+      },
+    }];
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+
+  await page.goto('/insurer');
+  await page.getByRole('tab', { name: /Cover guides/ }).click();
+
+  const benefits = page.getByRole('textbox', { name: /Covered benefits/ }).or(page.locator('input[placeholder^="e.g. Medical expenses"]'));
+  await expect(benefits.first()).toHaveValue('Own damage — Market value');
+  await expect(benefits.nth(1)).toHaveValue('Theft and fire');
+  await expect(page.locator('input[value="[object Object]"]')).toHaveCount(0);
+
+  // And it reads correctly as a customer document too.
+  await page.getByRole('button', { name: 'Preview as a customer' }).click();
+  await expect(page.getByText('Own damage — Market value')).toBeVisible();
 });

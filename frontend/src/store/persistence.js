@@ -1,6 +1,7 @@
 import { reconcileInsurers } from '@/domain/insurers';
 import { DEFAULT_QUOTE_VALIDITY_DAYS, REQUEST_VALIDITY_DAYS, addDays } from '@/domain/quoteValidity';
-import { DEMO_CUSTOMER_ACCOUNT, SEED_CLAIMS, SEED_NCD_APPLICATIONS, SEED_POLICIES, SEED_QUOTE_REQUESTS, withSeed } from './demoSeed';
+import { DEMO_CUSTOMER_ACCOUNT, SEED_CLAIMS, SEED_NCD_APPLICATIONS, SEED_POLICIES, SEED_QUOTE_REQUESTS, answeredByInsurers, withSeed } from './demoSeed';
+import { env } from '@/config/env';
 import { EMPTY_DOCUMENTS, TODAY } from './shared';
 
 /**
@@ -9,7 +10,7 @@ import { EMPTY_DOCUMENTS, TODAY } from './shared';
  */
 
 export const STORAGE_KEY = 'insurshield-storage';
-export const STORAGE_VERSION = 6;
+export const STORAGE_VERSION = 7;
 
 /** Keys from the v1 "select up to five insurers" model plus support-ticket and chat state. */
 const LEGACY_KEYS = ['selectedInsurers', 'quoteStatus', 'quoteRulesAgreed', 'quoteRulesTimestamp', 'supportTickets', 'chatMessages', 'userPhone'];
@@ -82,5 +83,13 @@ export const migrate = (persisted, version) => {
   // v6: remove old persisted photos/White Books. Keeping them caused stale
   // captures to appear in a new quote and could exhaust localStorage.
   if (version < 6) state.documents = { ...EMPTY_DOCUMENTS };
+  // v7: insurers answer the demo customer's own open requests, so a browser
+  // that already holds a request from an earlier session shows the quotation
+  // and cover guide a customer receives — rather than sitting on "0 of 5
+  // insurers have replied" with nobody able to reply. Requests from the other
+  // demo customers are left open, or the insurer's own queue would be empty.
+  if (version < 7 && env.apiMode === 'mock') {
+    state.quoteRequests = withSeed(state.quoteRequests, SEED_QUOTE_REQUESTS).map(answeredByInsurers);
+  }
   return state;
 };

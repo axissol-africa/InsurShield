@@ -213,3 +213,117 @@ test('expired quotes cannot be paid and re-requesting carries the details over',
   expect(state.vehicleUsage).toBe('Commercial (Taxis & Yangos)');
   expect(state.vehicleValue).toBe(250000);
 });
+
+test('a vehicle the RTSA register cannot answer for is entered by hand, with the country it is registered in', async ({ page }) => {
+  await page.goto('/vehicle-identification');
+  await page.getByRole('tab', { name: 'Manual entry' }).click();
+
+  // The home market is the default, so a Zambian vehicle costs nobody a click.
+  const country = page.getByRole('combobox', { name: /Country of registration/ });
+  await expect(country).toHaveValue('Zambia');
+
+  await page.getByLabel(/Chassis number/).fill('JTEH1234560099999');
+  await page.getByLabel('Make *').fill('Toyota');
+  await page.getByLabel('Model *').fill('Land Cruiser');
+  await page.getByPlaceholder('e.g. 200000').fill('180000');
+  await page.getByRole('checkbox').check();
+
+  // A country that is not on the list is typed instead.
+  await country.selectOption('Other');
+  const typed = page.getByLabel(/Type the country/);
+  await expect(typed).toBeVisible();
+
+  // Spaces alone are not a country.
+  await typed.fill('   ');
+  await page.getByRole('button', { name: 'Save & continue' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Type the country the vehicle is registered in.');
+  await expect(page).toHaveURL(/vehicle-identification/);
+
+  await typed.fill('  Western   Sahara ');
+  await page.getByRole('button', { name: 'Save & continue' }).click();
+  await expect(page).toHaveURL(/vehicle-usage/);
+
+  const vehicle = await page.evaluate(() => JSON.parse(localStorage.getItem('insurshield-storage')).state.vehicleDetails);
+  expect(vehicle.registrationCountry).toBe('Western Sahara'); // stored tidied, not as typed
+  expect(vehicle.model).toBe('Land Cruiser');
+});
+
+test('choosing a listed country again drops whatever was typed under Other', async ({ page }) => {
+  await page.goto('/vehicle-identification');
+  await page.getByRole('tab', { name: 'Manual entry' }).click();
+
+  const country = page.getByRole('combobox', { name: /Country of registration/ });
+  await country.selectOption('Other');
+  await page.getByLabel(/Type the country/).fill('Narnia');
+  await country.selectOption('Botswana');
+  await expect(page.getByLabel(/Type the country/)).toHaveCount(0);
+
+  await page.getByLabel(/Chassis number/).fill('JTEH1234560088888');
+  await page.getByLabel('Make *').fill('Isuzu');
+  await page.getByLabel('Model *').fill('D-Max');
+  await page.getByPlaceholder('e.g. 200000').fill('150000');
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Save & continue' }).click();
+
+  await expect(page).toHaveURL(/vehicle-usage/);
+  const vehicle = await page.evaluate(() => JSON.parse(localStorage.getItem('insurshield-storage')).state.vehicleDetails);
+  expect(vehicle.registrationCountry).toBe('Botswana');
+});
+
+test('the cover guide stays with the policy after it is paid for', async ({ page }) => {
+  await page.goto('/');
+  const guide = {
+    coverageType: 'Comprehensive',
+    planName: 'Comprehensive Gold Plan',
+    summary: 'Full cover for your vehicle and for damage you cause to others.',
+    coveredItems: ['Own damage — market value', 'Theft and fire'],
+    exclusions: ['Driving without a valid licence'],
+    notifyWithinDays: '7',
+    howToNotify: 'Call the claims line.',
+    documentsRequired: ['Police report'],
+    claimsContact: '+260 211 255 100',
+    settlementTime: '14 working days',
+    territorialLimit: 'Zambia',
+    ncdAccepted: true,
+    quoteValidityDays: '7',
+  };
+  await page.evaluate((coverGuide) => {
+    const customer = { fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm', phone: '0970123456' };
+    const reply = { premium: 11250, validityDays: 7, sentAt: new Date().toISOString(), insurerReference: 'PA-Q-2026-00412', coverGuide };
+    localStorage.setItem('insurshield-storage', JSON.stringify({
+      state: {
+        customer, isAuthenticated: true, consentAccepted: true,
+        quoteRequests: [{
+          id: 'QR-PAID', status: 'Submitted', submittedAt: new Date().toISOString(), customer,
+          insurers: ['Prestige Assurance'], insurerIds: ['1'], insurerQuotes: { 'Prestige Assurance': reply },
+          vehicle: '2020 Toyota Hilux', vehicleDetails: { plateNumber: 'BAA 1234' }, vehicleValue: 250000,
+          vehicleUsage: 'Individual', insuranceType: 'Comprehensive', coverageDurationId: '4q', policyDates: null,
+          inspectionShots: ['insp_front'],
+        }],
+        activeQuoteRequestId: 'QR-PAID',
+      },
+      version: 5,
+    }));
+  }, guide);
+
+  // Choose the quote and pay for it.
+  await page.goto('/quotes-comparison');
+  await page.getByRole('button', { name: /^Choose Prestige/ }).first().click();
+  await expect(page).toHaveURL(/payment/);
+  await page.getByRole('button', { name: /^Pay ZMW/ }).click();
+  await expect(page).toHaveURL(/confirmation/, { timeout: 15000 });
+
+  // It is offered the moment the policy exists.
+  await page.getByRole('button', { name: 'Cover guide' }).click();
+  await expect(page.getByRole('heading', { name: 'Comprehensive Gold Plan' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).click();
+
+  // And it is still there later, attached to the policy itself.
+  await page.goto('/account');
+  await page.getByRole('button', { name: 'Cover guide' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Comprehensive Gold Plan' })).toBeVisible();
+  await expect(page.getByText('Own damage — market value')).toBeVisible();
+
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('insurshield-storage')).state.policies[0]);
+  expect(stored.coverGuide.planName).toBe('Comprehensive Gold Plan');
+});
