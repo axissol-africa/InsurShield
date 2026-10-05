@@ -353,6 +353,8 @@ model Vehicle {
   model               String
   year                String
   color               String?
+  /// Where the plate was issued; null on vehicles recorded before this was asked for.
+  registrationCountry String?
   chassisNumber       String?
   engineNumber        String?
   registrationDate    DateTime?

@@ -51,6 +51,7 @@ export async function submitQuoteRequest({ customer, policyDates }) {
         chassisNumber: vehicleDetails.chassisNumber || undefined,
         engineNumber: vehicleDetails.engineNumber || undefined,
         registrationDate: vehicleDetails.registrationDate || undefined,
+        registrationCountry: vehicleDetails.registrationCountry || undefined,
         rtsaAnniversaryDate: vehicleDetails.rtsaAnniversaryDate || undefined,
       },
       vehicleValue: state.vehicleValue,

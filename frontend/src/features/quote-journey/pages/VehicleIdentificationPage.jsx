@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { fieldClass } from '@/components/ui/field';
+import { COUNTRY_GROUPS, DEFAULT_COUNTRY, MAX_COUNTRY_LENGTH, OTHER, resolveCountry } from '@/domain/countries';
 import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
 
 const CURRENT_YEAR = new Date().getFullYear();
@@ -23,7 +24,11 @@ export default function VehicleIdentificationPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [retrievedVehicle, setRetrievedVehicle] = useState(null);
-  const [manual, setManual] = useState({ plateNumber: '', chassisNumber: '', engineNumber: '', make: '', model: '', year: String(CURRENT_YEAR), color: '', registrationDate: '' });
+  const [manual, setManual] = useState({
+    plateNumber: '', chassisNumber: '', engineNumber: '', make: '', model: '',
+    year: String(CURRENT_YEAR), color: '', registrationDate: '',
+    registrationCountry: DEFAULT_COUNTRY, otherCountry: '',
+  });
   const [valuation, setValuation] = useState({ value: '', acknowledged: false });
 
   const declaredValue = parseFloat(valuation.value) || 0;
@@ -60,18 +65,36 @@ export default function VehicleIdentificationPage() {
     navigate('/vehicle-usage');
   };
 
-  const handleConfirmRtsa = () => saveAndContinue(retrievedVehicle);
+  const handleConfirmRtsa = () =>
+    saveAndContinue({ ...retrievedVehicle, registrationCountry: retrievedVehicle?.registrationCountry || DEFAULT_COUNTRY });
 
   const handleManualSubmit = (event) => {
     event.preventDefault();
     if (!manual.chassisNumber || !manual.make || !manual.model) { setError('Chassis number, make and model are required.'); return; }
+    const { country, error: countryError } = resolveCountry(manual.registrationCountry, manual.otherCountry);
+    if (countryError) { setError(countryError); return; }
     saveAndContinue({
       plateNumber: manual.plateNumber.toUpperCase(),
       chassisNumber: manual.chassisNumber.toUpperCase(),
       engineNumber: manual.engineNumber.toUpperCase(),
       make: manual.make, model: manual.model, year: manual.year, color: manual.color,
       registrationDate: manual.registrationDate,
+      registrationCountry: country,
     });
+  };
+
+  /**
+   * Leaving "Other" drops whatever was typed there, so a country abandoned
+   * half way through cannot be submitted behind a listed one.
+   */
+  const setCountry = (event) => {
+    const registrationCountry = event.target.value;
+    setManual((previous) => ({
+      ...previous,
+      registrationCountry,
+      otherCountry: registrationCountry === OTHER ? previous.otherCountry : '',
+    }));
+    setError('');
   };
 
   const setManualField = (field) => (event) => setManual((previous) => ({ ...previous, [field]: event.target.value }));
@@ -184,10 +207,43 @@ export default function VehicleIdentificationPage() {
                         <label className="block"><span className={labelClass}>Year of manufacture</span><select value={manual.year} onChange={setManualField('year')} className={fieldClass}>{YEAR_OPTIONS.map((year) => <option key={year}>{year}</option>)}</select></label>
                         <label className="block"><span className={labelClass}>Colour</span><input value={manual.color} onChange={setManualField('color')} className={fieldClass} placeholder="e.g. White" /></label>
                       </div>
+                      <div className="space-y-4 border-t border-dashed border-line pt-5">
+                        <label className="block">
+                          <span className={labelClass} id="registration-country-label">Country of registration <span className="text-primary">*</span></span>
+                          <select
+                            aria-labelledby="registration-country-label"
+                            value={manual.registrationCountry}
+                            onChange={setCountry}
+                            className={fieldClass}
+                          >
+                            {COUNTRY_GROUPS.map((group) => (
+                              <optgroup key={group.label} label={group.label}>
+                                {group.countries.map((country) => <option key={country} value={country}>{country}</option>)}
+                              </optgroup>
+                            ))}
+                            <option value={OTHER}>Other — not listed</option>
+                          </select>
+                        </label>
+
+                        {manual.registrationCountry === OTHER && (
+                          <label className="block">
+                            <span className={labelClass}>Type the country <span className="text-primary">*</span></span>
+                            <input
+                              required
+                              autoFocus
+                              value={manual.otherCountry}
+                              onChange={setManualField('otherCountry')}
+                              maxLength={MAX_COUNTRY_LENGTH}
+                              className={fieldClass}
+                              placeholder="e.g. Western Sahara"
+                            />
+                          </label>
+                        )}
+                      </div>
+
                       <label className="block">
                         <span className={labelClass}>RTSA registration date</span>
                         <input type="date" max={new Date().toISOString().split('T')[0]} value={manual.registrationDate} onChange={setManualField('registrationDate')} className={fieldClass} />
-                        <span className="mt-1 block text-[11px] text-ink-muted">Optional — lets you align your cover with the road-tax anniversary when requesting quotes.</span>
                       </label>
                       <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} />
                       <ErrorText text={error} />
