@@ -50,6 +50,7 @@ export const toPortalRequest = (request, insurerName) => ({
   period: COVERAGE_DURATION_OPTIONS.find((option) => option.id === request.coverageDurationId)?.label || '—',
   dates: request.policyDates ? coverPeriodLabel(request.policyDates) : 'From payment date',
   plate: request.vehicleDetails?.plateNumber || '',
+  registrationCountry: request.vehicleDetails?.registrationCountry || '',
   photos: request.inspectionShots?.length || 0,
   time: timeAgo(request.submittedAt),
   reply: request.insurerQuotes?.[insurerName] || null,

@@ -1,4 +1,6 @@
 import { INSPECTION_KEYS } from '@/domain/inspection';
+import { env } from '@/config/env';
+import { SEED_ACTIVE_REQUEST_ID } from '../demoSeed';
 import { REQUEST_VALIDITY_DAYS, addDays, photosReusable } from '@/domain/quoteValidity';
 import { EMPTY_DOCUMENTS, NOW, TODAY, insurerReceivesRequests, newReference, updateById } from '../shared';
 
@@ -19,7 +21,10 @@ export const JOURNEY_DEFAULTS = {
   matchRtsaAnniversary: false,
   rtsaRegistrationDate: '',
   policyDates: null,
-  activeQuoteRequestId: null,
+  // The demo customer lands on their own answered request, so the comparison
+  // page shows quotations and cover guides rather than an empty state. With a
+  // backend there is nothing seeded to point at.
+  activeQuoteRequestId: env.apiMode === 'mock' ? SEED_ACTIVE_REQUEST_ID : null,
   requotedFromId: null,
   renewalOfPolicyNumber: null,
   photosCapturedAt: null,
@@ -153,5 +158,5 @@ export const createJourneySlice = (set, get) => ({
   clearNcdCode: () => set({ ncdCode: '', ncdCodeValidated: null, ncdCodeUsed: false }),
   markNcdCodeUsed: () => set({ ncdCodeUsed: true }),
 
-  resetJourney: () => set({ ...JOURNEY_DEFAULTS, policyStartDate: TODAY() }),
+  resetJourney: () => set({ ...JOURNEY_DEFAULTS, policyStartDate: TODAY(), activeQuoteRequestId: null }),
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { INSURER_RATES, reconcileInsurers, sameInsurerName } from './insurers';
+import { INSURER_RATES, demoCoverGuides, reconcileInsurers, sameInsurerName } from './insurers';
+import { COVER_TYPES, isCoverGuideComplete } from './coverGuide';
 
 describe('sameInsurerName', () => {
   it('matches exact, prefix and punctuation-insensitive names', () => {
@@ -12,8 +13,31 @@ describe('sameInsurerName', () => {
 
 describe('reconcileInsurers', () => {
   it('returns the catalogue when nothing is stored', () => {
-    expect(reconcileInsurers(undefined)).toEqual(INSURER_RATES);
-    expect(reconcileInsurers([])).toEqual(INSURER_RATES);
+    for (const stored of [undefined, []]) {
+      const insurers = reconcileInsurers(stored);
+      expect(insurers.map((insurer) => insurer.name)).toEqual(INSURER_RATES.map((insurer) => insurer.name));
+      // The catalogue entry itself, plus the guides every insurer needs
+      // before it is allowed to quote.
+      expect(insurers[0]).toMatchObject(INSURER_RATES[0]);
+    }
+  });
+
+  // An insurer cannot send a quote without a published guide, so a catalogue
+  // that generated incomplete ones would leave the prototype unable to quote.
+  it('publishes a complete cover guide for every catalogue insurer and cover type', () => {
+    for (const insurer of reconcileInsurers(undefined)) {
+      for (const coverType of COVER_TYPES) {
+        expect(isCoverGuideComplete(insurer.coverGuides?.[coverType])).toBe(true);
+      }
+    }
+  });
+
+  it('leaves own-vehicle benefits out of a third party guide', () => {
+    const guides = demoCoverGuides(INSURER_RATES[0]);
+    const items = guides.ThirdParty.coveredItems.join(' ');
+    expect(items).not.toMatch(/own damage|theft|windscreen/i);
+    expect(guides.ThirdParty.exclusions).toContain('Any damage to your own vehicle');
+    expect(guides.Comprehensive.coveredItems.length).toBeGreaterThan(guides.ThirdParty.coveredItems.length);
   });
 
   it('repairs partial stored entries from the catalogue', () => {

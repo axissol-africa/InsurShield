@@ -1,3 +1,5 @@
+import { INSURER_RATES, demoCoverGuides } from '@/domain/insurers';
+
 /**
  * Demo records: the demo customer account and the insurer-portal records.
  *
@@ -19,6 +21,9 @@ export const DEMO_CUSTOMER_ACCOUNT = {
 
 const DEMO_INSURER = 'Prestige Assurance';
 const DEMO_CUSTOMER = { fullName: DEMO_CUSTOMER_ACCOUNT.fullName, phone: DEMO_CUSTOMER_ACCOUNT.phone, email: DEMO_CUSTOMER_ACCOUNT.email };
+
+/** Old enough that nobody is mid-flow on it. */
+const SETTLED_REQUEST_MS = 10 * 60_000;
 
 const daysAgo = (days) => new Date(Date.now() - days * 86_400_000).toISOString();
 const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOString();
@@ -68,8 +73,110 @@ const quoteRequest = ({ id, minutesOld, customer, vehicle, plate, value, usage, 
   };
 };
 
+/**
+ * A one-page PDF, inline, so a seeded quote carries a real quotation the
+ * customer can actually open rather than a dead link.
+ */
+const samplePdf = (insurer) => {
+  const body = `%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF ${insurer}`;
+  return {
+    name: `${insurer.split(' ')[0]}-Quotation.pdf`,
+    type: 'application/pdf',
+    size: body.length,
+    dataUrl: `data:application/pdf;base64,${btoa(body)}`,
+  };
+};
+
+/**
+ * The demo customer's own request, already answered.
+ *
+ * Without this the comparison page opens empty on a fresh install, and the
+ * thing it exists to show — a quotation and a cover guide arriving together
+ * from each insurer — cannot be seen without first playing both sides of the
+ * marketplace by hand.
+ */
+export const SEED_ACTIVE_REQUEST_ID = 'QR-7741';
+
+const quotedReply = ({ insurer, premium, reference, minutesOld, coverType = 'Comprehensive' }) => {
+  const entry = INSURER_RATES.find((rate) => rate.name === insurer);
+  return {
+    premium,
+    validityDays: entry?.quoteValidityDays || 7,
+    sentAt: minutesAgo(minutesOld),
+    insurerReference: reference,
+    notes: null,
+    document: samplePdf(insurer),
+    coverGuide: { ...demoCoverGuides(entry)[coverType], coverageType: coverType },
+  };
+};
+
+/**
+ * Insurers answer a request that nobody has replied to yet, exactly as they
+ * would from the portal: a quotation from their own system, and the cover
+ * guide they have published for the cover asked for.
+ *
+ * Demo only. It exists because a prototype whose comparison page says "0 of 5
+ * insurers have replied" shows none of what the page is for, and a customer
+ * cannot answer on the insurers' behalf.
+ */
+export function answeredByInsurers(request, { replies = 2 } = {}) {
+  if (!request || Object.keys(request.insurerQuotes || {}).length > 0) return request;
+  // Only the demo customer's own requests. The others fill the insurer's
+  // queue, and answering them would leave the portal with nothing to do.
+  if (request.customer?.email !== DEMO_CUSTOMER_ACCOUNT.email) return request;
+  // And only one left sitting from an earlier session. A request sent moments
+  // ago is one somebody is working through — answering that in front of them,
+  // or in front of a test about to answer it from the portal, is a conjuring
+  // trick rather than a demo.
+  const age = Date.now() - new Date(request.submittedAt || 0).getTime();
+  if (!(age > SETTLED_REQUEST_MS)) return request;
+  const coverType = request.insuranceType === 'ThirdParty' ? 'ThirdParty' : 'Comprehensive';
+  const answering = (request.insurers || []).slice(0, replies);
+
+  const insurerQuotes = {};
+  answering.forEach((name, index) => {
+    const entry = INSURER_RATES.find((rate) => rate.name === name);
+    if (!entry) return;
+    // Priced off this insurer's own published rate, so the figure agrees with
+    // the estimate the customer was shown before anyone replied.
+    const premium = Math.round(((request.vehicleValue || 0) * entry.ratePercentage) / 100);
+    insurerQuotes[name] = quotedReply({
+      insurer: name,
+      premium,
+      reference: `${name.split(' ')[0].slice(0, 2).toUpperCase()}-Q-${String(request.id || '').replace(/\D/g, '').slice(-4) || '0001'}-${index + 1}`,
+      minutesOld: 30 + index * 14,
+      coverType,
+    });
+  });
+  return Object.keys(insurerQuotes).length ? { ...request, insurerQuotes } : request;
+}
+
+export const SEED_ACTIVE_REQUEST = {
+  id: SEED_ACTIVE_REQUEST_ID,
+  status: 'Submitted',
+  submittedAt: minutesAgo(90),
+  expiresAt: new Date(Date.now() + 13 * 86_400_000).toISOString(),
+  customer: DEMO_CUSTOMER,
+  insurers: ['Prestige Assurance', 'Global Guard Insurance', 'ValueDirect Insurance'],
+  insurerIds: ['1', '2', '3'],
+  insurerQuotes: {
+    'Prestige Assurance': quotedReply({ insurer: 'Prestige Assurance', premium: 11250, reference: 'PA-Q-2026-00771', minutesOld: 62 }),
+    'Global Guard Insurance': quotedReply({ insurer: 'Global Guard Insurance', premium: 10400, reference: 'GG-2026-5512', minutesOld: 48 }),
+  },
+  vehicle: '2020 Toyota Hilux',
+  vehicleDetails: { plateNumber: 'BAA 1234', make: 'Toyota', model: 'Hilux', year: '2020', registrationCountry: 'Zambia' },
+  vehicleValue: 250000,
+  vehicleUsage: 'Individual',
+  insuranceType: 'Comprehensive',
+  coverageDurationId: '4q',
+  policyDates: null,
+  inspectionShots: ['insp_front', 'insp_back', 'insp_left', 'insp_right', 'insp_dashboard', 'insp_chassis', 'insp_stereo'],
+  photosCapturedAt: minutesAgo(95),
+};
+
 /** Open requests from other customers so the insurer queue is never empty in a demo. */
 export const SEED_QUOTE_REQUESTS = [
+  SEED_ACTIVE_REQUEST,
   quoteRequest({ id: 'QR-9901', minutesOld: 2, customer: { fullName: 'Bwalya Mutale', phone: '0966123456', email: 'bwalya.mutale@example.zm' }, vehicle: '2024 Toyota Hilux', plate: 'BAZ 9901', value: 520000, usage: 'Individual', insuranceType: 'Comprehensive' }),
   quoteRequest({ id: 'QR-9895', minutesOld: 15, customer: { fullName: 'Natasha Mwansa', phone: '0955998877', email: 'natasha.mwansa@example.zm' }, vehicle: '2022 BMW X5', plate: 'ALX 4471', value: 685000, usage: 'Commercial (Cars for Hire)', insuranceType: 'Comprehensive' }),
   quoteRequest({ id: 'QR-9890', minutesOld: 60, customer: { fullName: 'Kondwani Tembo', phone: '0977554433', email: 'k.tembo@example.zm' }, vehicle: '2019 Toyota Hilux', plate: 'ABJ 2210', value: 250000, usage: 'Commercial (Trucks, Horses & Trailers)', insuranceType: 'ThirdParty' }),

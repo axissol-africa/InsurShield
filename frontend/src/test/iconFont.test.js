@@ -11,10 +11,24 @@ const files = (dir) => readdirSync(dir).flatMap((name) => {
   return /\.jsx?$/.test(name) && !name.includes('.test.') ? [path] : [];
 });
 
-/** Icon names written directly inside a Material Symbols span or an <Icon name="…"> element. */
+/**
+ * Quoted names inside a JSX expression, e.g. `{busy ? 'sync' : 'publish'}`.
+ * What a condition is tested against — `role === 'insurer'` — is not an icon,
+ * so comparisons are dropped before the names are read out.
+ */
+const quotedNames = (expression) =>
+  [...expression.replace(/[=!]==?\s*'[^']*'/g, '').matchAll(/'([a-z][a-z0-9_]{2,})'/g)].map((match) => match[1]);
+
+/**
+ * Icon names this file renders: written as the span's text, passed to
+ * `<Icon name="…">`, or chosen in an expression in either place. The last of
+ * those is how a missing icon once reached a button and printed its own name.
+ */
 const explicitIcons = (source) => [
-  ...[...source.matchAll(/material-symbols-outlined[^>]*>\s*([a-z][a-z0-9_]*)\s*</g)].map((m) => m[1]),
-  ...[...source.matchAll(/<Icon\s+name="([a-z][a-z0-9_]*)"/g)].map((m) => m[1]),
+  ...[...source.matchAll(/material-symbols-outlined[^>]*>\s*([a-z][a-z0-9_]*)\s*</g)].map((match) => match[1]),
+  ...[...source.matchAll(/<Icon\s+name="([a-z][a-z0-9_]*)"/g)].map((match) => match[1]),
+  ...[...source.matchAll(/material-symbols-outlined[^>]*>\s*\{([^}]*)\}/g)].flatMap((match) => quotedNames(match[1])),
+  ...[...source.matchAll(/<Icon\s+name=\{([^}]*)\}/g)].flatMap((match) => quotedNames(match[1])),
 ];
 
 describe('self-hosted icon font', () => {

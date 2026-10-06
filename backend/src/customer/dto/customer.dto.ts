@@ -26,6 +26,8 @@ export class VehicleDetailsDto {
   @IsString() @MinLength(4) @MaxLength(4) year!: string;
 
   @IsOptional() @IsString() @MaxLength(40) color?: string;
+  /** Where the plate was issued. Absent on vehicles recorded before this was asked for. */
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(60) registrationCountry?: string;
   @IsOptional() @IsString() @MaxLength(40) chassisNumber?: string;
   @IsOptional() @IsString() @MaxLength(40) engineNumber?: string;
   @IsOptional() @IsDateString() registrationDate?: string;

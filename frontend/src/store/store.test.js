@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { isCoverGuideComplete } from '@/domain/coverGuide';
 import { DEMO_CUSTOMER_ACCOUNT, belongsToCustomer, selectActiveQuoteRequest, useStore } from './index';
-import { SEED_CLAIMS, SEED_POLICIES, SEED_QUOTE_REQUESTS } from './demoSeed';
+import { SEED_ACTIVE_REQUEST_ID, SEED_CLAIMS, SEED_POLICIES, SEED_QUOTE_REQUESTS, answeredByInsurers } from './demoSeed';
 import { INSPECTION_KEYS } from '@/domain/inspection';
 import { partialize } from './persistence';
 
@@ -337,9 +338,22 @@ describe('demo records', () => {
 
   it('are invisible to the demo customer unless addressed to them', () => {
     const mine = belongsToCustomer({ email: DEMO_CUSTOMER_ACCOUNT.email, phone: DEMO_CUSTOMER_ACCOUNT.phone });
-    expect(SEED_QUOTE_REQUESTS.some(mine)).toBe(false);
+    // The queue-filling requests belong to other people; exactly one is the
+    // demo customer's own, so their comparison page is not empty.
+    expect(SEED_QUOTE_REQUESTS.filter(mine).map((request) => request.id)).toEqual([SEED_ACTIVE_REQUEST_ID]);
     expect(SEED_POLICIES.filter(mine)).toHaveLength(1);
     expect(SEED_CLAIMS.filter(mine).map((claim) => claim.id)).toEqual(['CLM-882031']);
+  });
+
+  // The page exists to show a quotation and a cover guide arriving together;
+  // seeded with neither it demonstrates nothing.
+  it('answer the demo customer with a quotation and a cover guide', () => {
+    const replies = Object.values(SEED_QUOTE_REQUESTS.find((request) => request.id === SEED_ACTIVE_REQUEST_ID).insurerQuotes);
+    expect(replies.length).toBeGreaterThan(1);
+    for (const reply of replies) {
+      expect(reply.document.type).toBe('application/pdf');
+      expect(isCoverGuideComplete(reply.coverGuide)).toBe(true);
+    }
   });
 });
 
@@ -358,5 +372,64 @@ describe('records in backend mode', () => {
 
     vi.unstubAllEnvs();
     vi.resetModules();
+  });
+});
+
+describe('a browser that already holds an unanswered request', () => {
+  // The comparison page exists to show a quotation and a cover guide arriving
+  // from each insurer. An install carrying a request nobody has replied to saw
+  // none of that, and a customer cannot reply on the insurers' behalf.
+  it('is answered by the insurers it was sent to', () => {
+    const mine = {
+      id: 'QR-MINE', customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, insurerQuotes: {}, submittedAt: new Date(Date.now() - 86_400_000).toISOString(),
+      insurers: ['Global Guard Insurance', 'ValueDirect Insurance', 'Prestige Assurance'],
+      vehicleValue: 700000, insuranceType: 'Comprehensive',
+    };
+    const answered = answeredByInsurers(mine);
+    const replies = Object.values(answered.insurerQuotes);
+
+    expect(Object.keys(answered.insurerQuotes)).toEqual(['Global Guard Insurance', 'ValueDirect Insurance']);
+    for (const reply of replies) {
+      expect(reply.document.type).toBe('application/pdf');
+      expect(isCoverGuideComplete(reply.coverGuide)).toBe(true);
+      expect(reply.premium).toBeGreaterThan(0);
+    }
+  });
+
+  it('prices each reply off that insurer\'s own published rate', () => {
+    const answered = answeredByInsurers({
+      id: 'QR-RATE', customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, insurerQuotes: {}, submittedAt: new Date(Date.now() - 86_400_000).toISOString(),
+      insurers: ['Prestige Assurance'], vehicleValue: 250000, insuranceType: 'Comprehensive',
+    });
+    // Prestige quotes 4.5% of declared value.
+    expect(answered.insurerQuotes['Prestige Assurance'].premium).toBe(11250);
+  });
+
+  it('answers a third party request with the third party guide', () => {
+    const answered = answeredByInsurers({
+      id: 'QR-TP', customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, insurerQuotes: {}, submittedAt: new Date(Date.now() - 86_400_000).toISOString(),
+      insurers: ['Prestige Assurance'], vehicleValue: 250000, insuranceType: 'ThirdParty',
+    });
+    expect(answered.insurerQuotes['Prestige Assurance'].coverGuide.coverageType).toBe('ThirdParty');
+  });
+
+  // Replying for them would empty the insurer's own queue.
+  it('leaves requests from other customers open', () => {
+    const theirs = { id: 'QR-9901', customer: { email: 'bwalya.mutale@example.zm' }, insurerQuotes: {}, insurers: ['Prestige Assurance'], vehicleValue: 520000 };
+    expect(answeredByInsurers(theirs).insurerQuotes).toEqual({});
+  });
+
+  // Someone mid-flow must not watch their own request answer itself.
+  it('leaves a request sent moments ago alone', () => {
+    const justSent = {
+      id: 'QR-NEW', customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, insurerQuotes: {},
+      insurers: ['Prestige Assurance'], vehicleValue: 250000, submittedAt: new Date().toISOString(),
+    };
+    expect(answeredByInsurers(justSent).insurerQuotes).toEqual({});
+  });
+
+  it('never overwrites a reply an insurer actually sent', () => {
+    const already = { id: 'QR-DONE', customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, insurerQuotes: { 'Prestige Assurance': { premium: 1 } }, insurers: ['Prestige Assurance'], vehicleValue: 250000 };
+    expect(answeredByInsurers(already)).toBe(already);
   });
 });

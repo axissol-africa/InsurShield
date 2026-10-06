@@ -10,6 +10,8 @@ import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocumen
 import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
+import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
 
 const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
 
@@ -24,6 +26,7 @@ export default function CustomerAccountPage() {
   // Your records come from the server when one is configured; a no-op otherwise.
   useEffect(() => { void hydrateCustomer(); }, []);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [readingGuide, setReadingGuide] = useState(null); // the policy whose cover guide is open
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
 
   const mine = belongsToCustomer(customer);
@@ -114,11 +117,31 @@ export default function CustomerAccountPage() {
             <div>
               <Meta className="text-ink-muted">Certificate being prepared</Meta>
               {pendingPolicies.map((policy) => (
-                <p key={policy.policyNumber} className="mt-3 text-[13px] leading-[1.55] text-ink-muted">
-                  {policy.insurer} is preparing the certificate for paid quote{' '}
-                  <span className="font-mono text-ink">{policy.quoteRequestId}</span>. It appears
-                  under Policies once issued.
-                </p>
+                <div key={policy.policyNumber} className="mt-3">
+                  <p className="text-[13px] leading-[1.55] text-ink-muted">
+                    {policy.insurer} is preparing the certificate for paid quote{' '}
+                    <span className="font-mono text-ink">{policy.quoteRequestId}</span>. It appears
+                    under Policies once issued.
+                  </p>
+                  {/* The certificate can take days; what the customer has
+                      already paid for is readable in the meantime. */}
+                  {(policy.coverGuide?.planName || policy.quoteDocument) && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {policy.coverGuide?.planName && (
+                        <button type="button" onClick={() => setReadingGuide(policy)} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">description</span>
+                          Cover guide
+                        </button>
+                      )}
+                      {policy.quoteDocument && (
+                        <button type="button" onClick={() => openDocument(policy.quoteDocument)} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">open_in_new</span>
+                          Quotation
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           </section>
@@ -179,6 +202,20 @@ export default function CustomerAccountPage() {
                         <button type="button" onClick={() => downloadRtsaDisc(policy)} className={documentButton}>
                           <span className="material-symbols-outlined text-[16px]" aria-hidden="true">download</span>
                           RTSA disc
+                        </button>
+                      )}
+                      {/* What the policy actually covers, as it read when it
+                          was bought — not as the insurer words it today. */}
+                      {policy.coverGuide?.planName && (
+                        <button type="button" onClick={() => setReadingGuide(policy)} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">description</span>
+                          Cover guide
+                        </button>
+                      )}
+                      {policy.quoteDocument && (
+                        <button type="button" onClick={() => openDocument(policy.quoteDocument)} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">open_in_new</span>
+                          Quotation
                         </button>
                       )}
                     </div>
@@ -289,6 +326,14 @@ export default function CustomerAccountPage() {
         )}
       </div>
 
+      {readingGuide && (
+        <CoverGuideReader
+          guide={readingGuide.coverGuide}
+          insurerName={readingGuide.insurer}
+          onClose={() => setReadingGuide(null)}
+        />
+      )}
+
       <ConfirmDialog
         open={confirmingRemoval}
         destructive
@@ -308,8 +353,6 @@ export default function CustomerAccountPage() {
   );
 }
 
-const documentButton =
-  'inline-flex min-h-10 items-center gap-2 rounded-[1px] border border-dashed border-line-strong px-3.5 text-[13px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary';
 
 function Empty({ text, action }) {
   return (

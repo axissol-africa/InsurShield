@@ -187,13 +187,64 @@ const toRate = (insurer) => {
  * insurers added through the admin portal are preserved. Anything without a
  * usable rate is dropped so it can never produce a blank quote.
  */
+/**
+ * A cover guide for a catalogue insurer, built from what the catalogue already
+ * says about them.
+ *
+ * Demo insurers arrive with their guides published, because an insurer cannot
+ * quote without one — without this the prototype would show five insurers who
+ * are all unable to send a quote, which looks like a broken marketplace rather
+ * than an unfinished profile.
+ */
+const COMPREHENSIVE_ONLY = /own damage|theft|natural disaster|windscreen|roadside|towing/i;
+
+function demoCoverGuide(insurer, coverType) {
+  const comprehensive = coverType === 'Comprehensive';
+  const benefits = (insurer.benefits || []).filter((benefit) => comprehensive || !COMPREHENSIVE_ONLY.test(benefit));
+  return {
+    coverType,
+    planName: comprehensive ? insurer.coverage : `${insurer.name.split(' ')[0]} Third Party`,
+    summary: comprehensive
+      ? 'Covers damage to your own vehicle as well as damage and injury you cause to others.'
+      : 'Covers damage and injury you cause to others. Your own vehicle is not covered.',
+    coveredItems: benefits,
+    exclusions: [
+      'Driving without a valid licence',
+      'Driving under the influence of alcohol or drugs',
+      'Racing, speed testing or track use',
+      'Use outside the stated territorial limit',
+      ...(comprehensive ? [] : ['Any damage to your own vehicle']),
+    ],
+    notifyWithinDays: '7',
+    howToNotify: `Call ${insurer.contact?.phone || 'the claims line'} as soon as it is safe to do so, then send the completed claim form and supporting documents.`,
+    documentsRequired: ['Completed claim form', 'Police report', "Driver's licence", 'Vehicle registration (White Book)'],
+    claimsContact: [insurer.contact?.phone, insurer.contact?.email].filter(Boolean).join(' · ') || 'See policy schedule',
+    settlementTime: '14 working days from complete documents',
+    territorialLimit: 'Zambia',
+    ncdAccepted: Boolean(insurer.ncdAccepted),
+    quoteValidityDays: String(insurer.quoteValidityDays || 7),
+  };
+}
+
+/** Both guides for a catalogue insurer. */
+export const demoCoverGuides = (insurer) => ({
+  Comprehensive: demoCoverGuide(insurer, 'Comprehensive'),
+  ThirdParty: demoCoverGuide(insurer, 'ThirdParty'),
+});
+
+/**
+ * @see reconcileInsurers
+ */
 export function reconcileInsurers(stored) {
   const list = Array.isArray(stored) ? stored.filter((insurer) => insurer && insurer.name) : [];
   const merged = list.map((insurer) => {
     const base = findCatalogueEntry(insurer);
     const combined = base ? { ...base, ...insurer, id: base.id, name: base.name, contact: base.contact, benefits: insurer.benefits?.length ? insurer.benefits : base.benefits } : { ...insurer };
-    return { ...combined, ratePercentage: toRate(insurer) ?? toRate(base), benefits: Array.isArray(combined.benefits) ? combined.benefits : [] };
+    const benefits = Array.isArray(combined.benefits) ? combined.benefits : [];
+    const coverGuides = insurer.coverGuides || (base ? demoCoverGuides({ ...base, ...insurer, benefits }) : undefined);
+    return { ...combined, ratePercentage: toRate(insurer) ?? toRate(base), benefits, ...(coverGuides ? { coverGuides } : {}) };
   });
-  const missing = INSURER_RATES.filter((entry) => !merged.some((insurer) => insurer.id === entry.id));
+  const missing = INSURER_RATES.filter((entry) => !merged.some((insurer) => insurer.id === entry.id))
+    .map((entry) => ({ ...entry, coverGuides: demoCoverGuides(entry) }));
   return [...merged, ...missing].filter((insurer) => Number.isFinite(insurer.ratePercentage));
 }

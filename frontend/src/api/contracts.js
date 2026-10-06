@@ -52,6 +52,7 @@
  * @property {string} model
  * @property {string} year
  * @property {string} [color]
+ * @property {string} [registrationCountry] where the plate was issued
  * @property {string} [chassisNumber]
  * @property {string} [engineNumber]
  * @property {string} [registrationDate]      ISO date
