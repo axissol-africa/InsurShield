@@ -118,7 +118,7 @@ enum DocumentKind {
   NCD_EVIDENCE
 }
 
-// PARKED — SMS phone verification. Keycloak provides TOTP but not SMS, so this
+// PARKED — SMS phone verification. This needs an SMS provider, so
 // would live here rather than in the realm. Uncomment this enum together with
 // the OtpChallenge model and Customer.phoneVerifiedAt below, then migrate.
 // enum OtpPurpose {
@@ -150,14 +150,17 @@ enum ActorType {
 
 model Customer {
   id           String    @id @default(uuid()) @db.Uuid
-  /// The `sub` claim from Keycloak. Credentials live there, never here.
-  keycloakId   String    @unique
+  /// scrypt hash of the password. Never the password itself, and never logged.
+  passwordHash String
   fullName     String
   email        String    @unique
   phone        String    @unique
   // PARKED with the OTP flow above — set once SMS verification completes.
   // phoneVerifiedAt DateTime?
   emailVerifiedAt DateTime?
+  /// Set by an administrator to bar sign-in without destroying the records.
+  suspendedAt  DateTime?
+  lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
@@ -210,8 +213,10 @@ model ConsentRecord {
 
 model StaffUser {
   id           String    @id @default(uuid()) @db.Uuid
-  /// The `sub` claim from Keycloak. Credentials live there, never here.
-  keycloakId   String    @unique
+  /// scrypt hash of the password. Never the password itself, and never logged.
+  passwordHash String
+  /// Forces a change at next sign-in, after an administrator sets the password.
+  mustChangePassword Boolean @default(false)
   email        String    @unique
   fullName     String
   role         StaffRole

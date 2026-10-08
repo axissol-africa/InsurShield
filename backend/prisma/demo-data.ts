@@ -6,6 +6,7 @@
  * when SEED_DEMO_DATA=false, and never intended for production.
  */
 import type { PrismaClient } from '../src/generated/prisma/client.js';
+import { hashPassword } from '../src/common/auth/password.js';
 import {
   ClaimStatus,
   CoverageDuration,
@@ -23,11 +24,13 @@ const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000
 const daysAhead = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
 const CUSTOMER = {
-  keycloakId: 'demo-customer-bwalya',
   fullName: 'Bwalya Mutale',
   email: 'bwalya.mutale@example.zm',
   phone: '+260 97 612 3456',
 };
+
+/** Signs in with the same password as the seeded staff accounts. */
+const DEMO_PASSWORD = process.env.SEED_STAFF_PASSWORD ?? 'insurshield-dev';
 
 const VEHICLES = [
   { key: 'demo-hilux', plateNumber: 'BAZ 9901', make: 'Toyota', model: 'Hilux', year: '2024', chassisNumber: 'JTEH1234560012345' },
@@ -53,14 +56,20 @@ export async function resetDemoData(prisma: PrismaClient): Promise<void> {
 }
 
 export async function seedDemoData(prisma: PrismaClient): Promise<void> {
-  // Keyed on email, not keycloakId: once this demo customer is linked to a
-  // real Keycloak user its `sub` changes, and an upsert on keycloakId would
-  // then try to insert and collide on the unique email.
+  // The password is written only on create, so re-seeding never resets one that
+  // has since been changed. SEED_RESET_PASSWORDS=true forces it back, which is
+  // also what gives a demo row carried over from Keycloak a usable password.
+  const passwordHash = await hashPassword(DEMO_PASSWORD);
+  const resetPasswords = process.env.SEED_RESET_PASSWORDS === 'true';
   const customer = await prisma.customer.upsert({
     where: { email: CUSTOMER.email },
-    create: CUSTOMER,
-    // keycloakId is deliberately not updated, so a real linkage survives.
-    update: { fullName: CUSTOMER.fullName, deletedAt: null },
+    create: { ...CUSTOMER, passwordHash },
+    update: {
+      fullName: CUSTOMER.fullName,
+      deletedAt: null,
+      suspendedAt: null,
+      ...(resetPasswords ? { passwordHash } : {}),
+    },
   });
 
   const vehicles = new Map<string, string>();

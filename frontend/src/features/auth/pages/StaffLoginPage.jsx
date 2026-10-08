@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { api, ApiError } from '@/api';
 import { useStore } from '@/store';
 import { fieldClass as inputClass } from '@/components/ui/field';
 import Meta from '@/components/ui/Meta';
@@ -21,14 +22,13 @@ const ROLES = [
 ];
 
 /**
- * Prototype credentials, checked against these constants in the browser. They
- * are shown on screen deliberately: hiding them would suggest this screen is
- * doing more than it is.
+ * Where each role lands, and an example address so the field is not blank.
+ * The role shown is only a signpost — the account itself decides what the
+ * holder can reach, which is why signing in as an insurer with an
+ * administrator's details takes you to the console regardless.
  */
-const CREDENTIALS = {
-  admin: { email: 'admin@insurshield.zm', password: 'admin123' },
-  insurer: { email: 'insurer@insurshield.zm', password: 'insurer123' },
-};
+const HOME = { admin: '/admin', support: '/admin', insurer: '/insurer' };
+const EXAMPLE_EMAIL = { admin: 'admin@insurshield.zm', insurer: 'insurer@prestigeassurance.zm' };
 
 
 export default function AdminLogin() {
@@ -39,30 +39,27 @@ export default function AdminLogin() {
   const [error, setError] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const navigate = useNavigate();
-  const startStaffSession = useStore((state) => state.startStaffSession);
+  const { startStaffSession, setAuthToken } = useStore();
 
   const handleRoleSelect = (next) => {
     setRole(next);
     setError('');
-    setEmail(CREDENTIALS[next].email);
-    setPassword(CREDENTIALS[next].password);
   };
 
-  const handleLogin = (event) => {
+  const handleLogin = async (event) => {
     event.preventDefault();
     setError('');
-    const expected = CREDENTIALS[role];
-    if (email.trim() !== expected.email || password !== expected.password) {
-      setError('Those details do not match. Use the prototype credentials shown below.');
-      return;
-    }
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const { session, token } = await api.auth.staffLogin(email.trim(), password);
+      setAuthToken(token ?? null);
+      startStaffSession(session);
+      // The account decides where this goes, not the role selected above.
+      navigate(HOME[session.role] ?? '/admin', { replace: true });
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Those details do not match an account.');
       setLoading(false);
-      const name = role === 'insurer' ? 'Prestige Assurance' : 'Admin';
-      startStaffSession({ role, name });
-      navigate(role === 'insurer' ? '/insurer' : '/admin', { replace: true });
-    }, 900);
+    }
   };
 
   const selectedRole = ROLES.find((item) => item.id === role);
@@ -158,7 +155,7 @@ export default function AdminLogin() {
             <input
               type="email"
               autoComplete="username"
-              placeholder={CREDENTIALS[role].email}
+              placeholder={EXAMPLE_EMAIL[role]}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               required
@@ -211,26 +208,17 @@ export default function AdminLogin() {
           </button>
         </form>
 
-        {/* Nothing is verified off the device, so the credentials are
-            stated plainly rather than implied. */}
+        {/* Accounts are provisioned in the admin console, so there is nothing
+            to hand out here — only where to ask. */}
         <div className="mt-8 border border-dashed border-line-strong p-4">
           <div className="flex items-center gap-2.5">
             <span className="material-symbols-outlined text-[16px] text-primary" aria-hidden="true">info</span>
-            <Meta className="text-ink-muted">Prototype credentials</Meta>
+            <Meta className="text-ink-muted">No account yet?</Meta>
           </div>
-          <p className="mt-3 font-mono text-[12px] text-ink">
-            {CREDENTIALS[role].email} · {CREDENTIALS[role].password}
-          </p>
-          <button
-            type="button"
-            onClick={() => handleRoleSelect(role)}
-            className="mt-3 font-mono text-[11px] uppercase tracking-[0.1em] text-primary underline-offset-4 hover:underline"
-          >
-            Fill them in
-          </button>
-          <p className="mt-4 border-t border-dashed border-line pt-3 text-[12px] leading-[1.5] text-ink-faint">
-            These accounts exist only in this browser and grant no access to real data.
-            Staff sign-in moves behind the backend before anyone outside the team uses it.
+          <p className="mt-3 text-[13px] leading-[1.55] text-ink-muted">
+            Portal accounts are created by an InsurShield administrator under
+            <span className="text-ink"> Users</span> in the admin console. Ask them to add you, or to
+            issue a new password if you have been locked out.
           </p>
         </div>
       </main>

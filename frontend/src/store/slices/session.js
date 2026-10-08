@@ -87,6 +87,53 @@ export const createSessionSlice = (set, get) => ({
   /** Clears everything tied to the person, leaving prototype catalogue data. */
   clearCustomerSession: () => set(SIGNED_OUT),
 
+  // ─── Staff accounts (mock mode only) ─────────────────────
+  // In http mode these live in the API. They are modelled here so the admin
+  // Users page can be worked on without the backend running.
+  mockStaffUsers: [
+    {
+      id: 'mock-admin',
+      email: 'admin@insurshield.zm',
+      fullName: 'InsurShield Administrator',
+      role: 'SUPER_ADMIN',
+      insurerId: null,
+      insurerName: null,
+      isActive: true,
+      mustChangePassword: false,
+      lastLoginAt: null,
+      createdAt: new Date().toISOString(),
+    },
+  ],
+
+  addMockStaffUser: (staff) => {
+    const created = {
+      id: `mock-${Date.now().toString(36)}`,
+      insurerId: null,
+      insurerName: null,
+      isActive: true,
+      mustChangePassword: true,
+      lastLoginAt: null,
+      createdAt: new Date().toISOString(),
+      ...staff,
+    };
+    set((state) => ({ mockStaffUsers: [...state.mockStaffUsers, created] }));
+    return created;
+  },
+
+  updateMockStaffUser: (id, changes) => {
+    set((state) => ({
+      mockStaffUsers: state.mockStaffUsers.map((user) => (user.id === id ? { ...user, ...changes } : user)),
+    }));
+    return get().mockStaffUsers.find((user) => user.id === id);
+  },
+
+  setMockCustomerSuspended: (email, suspended) =>
+    set((state) => ({
+      registeredAccounts: state.registeredAccounts.map((account) =>
+        account.email === email ? { ...account, suspended } : account,
+      ),
+    })),
+
   // ─── Staff / insurer portal session ──────────────────────
   staffSession: null, // { role: 'admin' | 'support' | 'insurer', name }
   startStaffSession: (session) => set({ staffSession: session }),

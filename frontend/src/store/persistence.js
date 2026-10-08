@@ -21,7 +21,7 @@ const PERSISTED_KEYS = [
   'vehicleDetails', 'vehicleValue', 'vehicleUsage', 'insuranceType', 'coverageDurationId', 'policyStartDate', 'matchRtsaAnniversary', 'rtsaRegistrationDate', 'policyDates',
   'activeQuoteRequestId', 'requotedFromId', 'renewalOfPolicyNumber', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt',
   'ncdCode', 'ncdCodeValidated', 'ncdCodeUsed', 'ncdApplications',
-  'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections', 'insurerReviews',
+  'piaConfig', 'insurersList', 'mockStaffUsers', 'quoteRequests', 'policies', 'claims', 'inspections', 'insurerReviews',
 ];
 
 /** Only data is persisted, never actions. */

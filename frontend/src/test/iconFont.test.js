@@ -21,14 +21,19 @@ const quotedNames = (expression) =>
 
 /**
  * Icon names this file renders: written as the span's text, passed to
- * `<Icon name="…">`, or chosen in an expression in either place. The last of
- * those is how a missing icon once reached a button and printed its own name.
+ * `<Icon name="…">`, chosen in an expression in either place, or declared as
+ * data on a nav item.
+ *
+ * Both of the indirect forms have let a missing icon through before — once to
+ * a button and once to the sidebar — where it printed its own name in letters
+ * instead of drawing a glyph.
  */
 const explicitIcons = (source) => [
   ...[...source.matchAll(/material-symbols-outlined[^>]*>\s*([a-z][a-z0-9_]*)\s*</g)].map((match) => match[1]),
   ...[...source.matchAll(/<Icon\s+name="([a-z][a-z0-9_]*)"/g)].map((match) => match[1]),
   ...[...source.matchAll(/material-symbols-outlined[^>]*>\s*\{([^}]*)\}/g)].flatMap((match) => quotedNames(match[1])),
   ...[...source.matchAll(/<Icon\s+name=\{([^}]*)\}/g)].flatMap((match) => quotedNames(match[1])),
+  ...[...source.matchAll(/\bicon:\s*'([a-z][a-z0-9_]*)'/g)].map((match) => match[1]),
 ];
 
 describe('self-hosted icon font', () => {

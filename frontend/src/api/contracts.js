@@ -25,6 +25,10 @@
  *  claims      POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
+ *  admin       GET  /admin/overview · GET /admin/premium-by-month · GET /admin/policies · GET /admin/customers/find
+ *              GET  /admin/staff · POST /admin/staff · PATCH /admin/staff/:id
+ *              POST /admin/staff/:id/password · DELETE /admin/staff/:id
+ *              GET  /admin/customers · PATCH /admin/customers/:id/suspension
  *  config      GET  /config/pia · PUT /config/pia
  *  capture     see `api/capture.js` (photo hand-off relay)
  */

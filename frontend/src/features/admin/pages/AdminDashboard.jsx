@@ -9,6 +9,7 @@ import Badge from '@/components/ui/Badge';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
 import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
+import UserManagement from '@/features/admin/components/UserManagement';
 import InsurerTable from '@/features/admin/components/InsurerTable';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -232,6 +233,7 @@ export default function AdminDashboard() {
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
+    { id: 'users', label: 'Users', icon: 'person', hint: 'Staff and customers', matches: ['users'] },
   ];
 
   const selectSection = (id) => {
@@ -298,6 +300,13 @@ export default function AdminDashboard() {
     );
   } else if (view === 'find_account') {
     content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} onBack={() => setView('dashboard')} />;
+  } else if (view === 'users') {
+    content = (
+      <Page>
+        <SubPageHeader title="Users" onBack={() => setView('dashboard')} />
+        <UserManagement insurers={insurersList} />
+      </Page>
+    );
   } else if (view === 'pia_config') {
     content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => { await api.config.setPia({ piaRatePercentage: rate }); await hydrateAdmin(); }} onBack={() => setView('dashboard')} />;
   } else {

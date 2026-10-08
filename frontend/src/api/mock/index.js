@@ -19,28 +19,41 @@ const mine = (records) => records.filter(belongsToCustomer(state().customer));
 const insurerName = () => state().staffSession?.name;
 
 export const auth = {
-  register: (account) => call((s) => { s.registerCustomerAccount(account); return { customer: s.customer, token: null }; }),
-  login: (identifier, password) => call((s) => {
-    if (!s.authenticateCustomer(identifier, password)) throw new Error('Incorrect email/phone or password.');
-    return { customer: state().customer, token: null };
-  }),
-  requestOtp: (phone) => call(() => ({ phone, sent: true, expiresInSeconds: 300 })),
-  verifyOtp: (phone, code) => call(() => ({ phone, verified: /^\d{4,6}$/.test(code) })),
-  resetPassword: (identifier, password) => call((s) => { s.resetCustomerPassword(identifier, password); return { ok: true }; }),
-  staffLogin: (email) => call((s) => {
-    const role = email.startsWith('insurer') ? 'insurer' : 'admin';
-    const session = { role, name: role === 'insurer' ? 'Prestige Assurance' : 'Admin' };
-    s.startStaffSession(session);
-    return { session, token: null };
-  }),
+  register: (account) =>
+    call((s) => {
+      s.registerCustomerAccount({ ...account, consentTimestamp: null });
+      // Read back after the write: `s` is the snapshot from before it.
+      return { customer: state().customer, consent: { accepted: false }, token: null };
+    }),
+  login: (identifier, password) =>
+    call((s) => {
+      if (!s.authenticateCustomer(identifier, password)) {
+        throw new Error('Incorrect email/phone or password.');
+      }
+      return {
+        customer: state().customer,
+        consent: { accepted: state().consentAccepted, acceptedAt: state().consentTimestamp },
+        token: null,
+      };
+    }),
+  staffLogin: (email) =>
+    call((s) => {
+      // Matches the seeded accounts: an address at an insurer's domain is a
+      // portal login, anything else is the console.
+      const insurer = /^insurer@/i.test(email) ? state().insurersList[0] : null;
+      const session = insurer
+        ? { id: 'mock-insurer', name: `${insurer.name} portal`, email, role: 'insurer', insurerId: insurer.id, insurerName: insurer.name }
+        : { id: 'mock-admin', name: 'InsurShield Administrator', email, role: 'admin', insurerId: null, insurerName: null };
+      s.startStaffSession(session);
+      return { session, token: null };
+    }),
+  changePassword: () => call(() => ({ ok: true })),
   me: () => call((s) => ({ customer: s.customer, staffSession: s.staffSession })),
+  acceptConsent: (noticeVersion) =>
+    call(() => ({ accepted: true, noticeVersion, acceptedAt: new Date().toISOString() })),
+  closeAccount: () => call((s) => { s.deleteCurrentAccount(); return { ok: true }; }),
 };
 
-/**
- * In mock mode a document never leaves the browser: the file is read into a
- * data URL and handed back with the same shape the backend returns, so pages
- * can attach it by `id` either way.
- */
 export const documents = {
   upload: (file) => call(async () => ({ ...(await documentToRecord(file)), id: newReference('DOC') })),
   get: (id) => call(() => ({ id })),
@@ -128,6 +141,69 @@ export const inspections = {
   request: (inspection) => call((s) => { s.addInspection(inspection); return state().inspections[0]; }),
   list: () => call((s) => mine(s.inspections)),
   update: (id, changes) => call((s) => { s.updateInspectionStatus(id, 'Requested', changes); return state().inspections.find((i) => i.id === id); }),
+};
+
+export const insurerPortal = {
+  profile: () =>
+    call((s) => {
+      const name = s.staffSession?.insurerName ?? s.staffSession?.name;
+      return s.insurersList.find((insurer) => insurer.name === name) ?? null;
+    }),
+};
+
+/**
+ * The console, served from the store. Staff accounts have no browser-storage
+ * equivalent, so they are kept in `mockStaffUsers` purely so the page can be
+ * worked on without the API running.
+ */
+export const admin = {
+  overview: () =>
+    call((s) => ({
+      insurers: s.insurersList.length,
+      customers: s.registeredAccounts.length,
+      quoteRequests: s.quoteRequests.length,
+      policies: s.policies.length,
+      claims: s.claims.length,
+    })),
+  premiumByMonth: () => call(() => []),
+  recentPolicies: (limit = 8) => call((s) => s.policies.slice(0, limit)),
+  findCustomer: (query) =>
+    call((s) => s.registeredAccounts.filter((account) => account.email.includes(String(query).toLowerCase()))),
+
+  listStaff: () => call((s) => s.mockStaffUsers),
+  createStaff: (staff) =>
+    call((s) => {
+      const created = s.addMockStaffUser(staff);
+      return { staff: created, temporaryPassword: 'mock-only-aa-12' };
+    }),
+  updateStaff: (id, changes) => call((s) => s.updateMockStaffUser(id, changes)),
+  resetStaffPassword: () => call(() => ({ temporaryPassword: 'mock-only-aa-12' })),
+  deactivateStaff: (id) => call((s) => s.updateMockStaffUser(id, { isActive: false })),
+
+  listCustomers: (query = '') =>
+    call((s) =>
+      s.registeredAccounts
+        .filter((account) =>
+          !query ||
+          [account.fullName, account.email, account.phone].some((field) =>
+            String(field).toLowerCase().includes(String(query).toLowerCase()),
+          ),
+        )
+        .map((account) => ({
+          id: account.email,
+          fullName: account.fullName,
+          email: account.email,
+          phone: account.phone,
+          status: account.suspended ? 'Suspended' : 'Active',
+          policies: s.policies.filter((policy) => policy.customerEmail === account.email).length,
+          quoteRequests: s.quoteRequests.filter((request) => request.customer?.email === account.email).length,
+          claims: s.claims.filter((claim) => claim.email === account.email).length,
+          lastLoginAt: null,
+          createdAt: account.createdAt ?? null,
+        })),
+    ),
+  setCustomerSuspended: (id, suspended) =>
+    call((s) => { s.setMockCustomerSuspended(id, suspended); return { id, status: suspended ? 'Suspended' : 'Active' }; }),
 };
 
 export const config = {

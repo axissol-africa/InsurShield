@@ -4,8 +4,7 @@ import { validateEnv } from './env.js';
 const valid = {
   DATABASE_URL: 'postgresql://user:pass@localhost:5432/insurshield?schema=public',
   S3_BUCKET: 'insurshield-documents',
-  KEYCLOAK_ISSUER: 'http://localhost:8080/realms/insurshield',
-  KEYCLOAK_CLIENT_SECRET: 'a-test-client-secret',
+  AUTH_JWT_SECRET: 'a-test-signing-secret-long-enough-to-pass',
 };
 
 describe('validateEnv', () => {
@@ -20,24 +19,18 @@ describe('validateEnv', () => {
     expect(env.MAX_UPLOAD_BYTES).toBe(3 * 1024 * 1024);
     // Unset locally so MinIO does not reject the upload with 501.
     expect(env.S3_SSE).toBeUndefined();
-    expect(env.KEYCLOAK_AUDIENCE).toBe('insurshield-api');
-    expect(env.KEYCLOAK_CLIENT_ID).toBe('insurshield-api');
+    expect(env.AUTH_TOKEN_TTL).toBe('12h');
   });
 
-  it('rejects an issuer that is not a URL, since tokens are pinned to it', () => {
-    expect(() => validateEnv({ ...valid, KEYCLOAK_ISSUER: 'not-a-url' })).toThrow(
-      /KEYCLOAK_ISSUER/,
+  it('refuses a signing secret short enough to be guessed', () => {
+    expect(() => validateEnv({ ...valid, AUTH_JWT_SECRET: 'too-short' })).toThrow(
+      /AUTH_JWT_SECRET/,
     );
   });
 
-  it('rejects a missing issuer rather than accepting unverifiable tokens', () => {
-    const { KEYCLOAK_ISSUER: _omitted, ...withoutIssuer } = valid;
-    expect(() => validateEnv(withoutIssuer)).toThrow(/KEYCLOAK_ISSUER/);
-  });
-
-  it('requires the service-account secret used to provision staff', () => {
-    const { KEYCLOAK_CLIENT_SECRET: _omitted, ...withoutSecret } = valid;
-    expect(() => validateEnv(withoutSecret)).toThrow(/KEYCLOAK_CLIENT_SECRET/);
+  it('refuses to start with no signing secret, rather than inventing one', () => {
+    const { AUTH_JWT_SECRET: _omitted, ...withoutSecret } = valid;
+    expect(() => validateEnv(withoutSecret)).toThrow(/AUTH_JWT_SECRET/);
   });
 
   it('splits CORS_ORIGINS into a list', () => {
@@ -74,7 +67,7 @@ describe('validateEnv', () => {
 
   it('reports every problem at once so a misconfigured deploy is fixed in one pass', () => {
     expect(() => validateEnv({ NODE_ENV: 'staging', PORT: 'abc' })).toThrow(
-      /NODE_ENV[\s\S]*PORT[\s\S]*DATABASE_URL[\s\S]*KEYCLOAK_ISSUER[\s\S]*S3_BUCKET/,
+      /NODE_ENV[\s\S]*PORT[\s\S]*DATABASE_URL[\s\S]*AUTH_JWT_SECRET[\s\S]*S3_BUCKET/,
     );
   });
 });
