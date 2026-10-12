@@ -1,6 +1,7 @@
 /** Small presentational pieces shared by the insurer portal sections. */
 import { ArrowLeft, Check, FileImage, FileText, Mail, Phone, Upload, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { mailtoHref, telHref } from '@/lib/contactLinks';
 import { formatBytes } from '@/lib/files';
 import { CASE_STAGES, statusTone } from '@/features/insurer-portal/portal';
 import { Badge } from '@/components/ui/primitives/badge';
@@ -76,15 +77,28 @@ export function FactGroup({ title, columns = 2, children }) {
   );
 }
 
-/** The customer's phone and email as links, so reaching them is one tap from wherever their name appears. */
+/**
+ * The customer's phone and email, as links wherever their name appears so
+ * reaching them is one tap. The customer typed both, so each becomes a link
+ * only when it is a plain number or address; otherwise it is shown as text.
+ */
 export function ContactLinks({ phone, email, className }) {
   if (!phone && !email) return null;
-  const link = 'inline-flex min-w-0 items-center gap-1.5 text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground';
   return (
     <span className={cn('flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-sm', className)}>
-      {phone && <a href={`tel:${phone}`} className={link}><Phone className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />{phone}</a>}
-      {email && <a href={`mailto:${email}`} className={link}><Mail className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" /><span className="break-all">{email}</span></a>}
+      {phone && <Contact href={telHref(phone)} icon={Phone}>{phone}</Contact>}
+      {email && <Contact href={mailtoHref(email)} icon={Mail}><span className="break-all">{email}</span></Contact>}
     </span>
+  );
+}
+
+function Contact({ href, icon: ContactIcon, children }) {
+  const Element = href ? 'a' : 'span';
+  return (
+    <Element href={href || undefined} className={cn('inline-flex min-w-0 items-center gap-1.5 text-foreground', href && 'underline decoration-border underline-offset-4 hover:decoration-foreground')}>
+      <ContactIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      {children}
+    </Element>
   );
 }
 

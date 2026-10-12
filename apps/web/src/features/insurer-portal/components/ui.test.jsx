@@ -111,6 +111,14 @@ describe('ContactLinks', () => {
     expect(screen.getByRole('link', { name: 'mwiza.banda@insurshield.zm' })).toHaveAttribute('href', 'mailto:mwiza.banda@insurshield.zm');
   });
 
+  it('shows a detail it cannot safely link as plain text', () => {
+    // Customers type these themselves; a link is only made from a plain number or address.
+    render(<ContactLinks phone="*21*0970000000#" email="a@b.zm?cc=x@evil.zm" />);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByText('*21*0970000000#')).toBeVisible();
+    expect(screen.getByText('a@b.zm?cc=x@evil.zm')).toBeVisible();
+  });
+
   it('shows only the details the customer gave', () => {
     const { container, rerender } = render(<ContactLinks phone="0970123456" />);
     expect(screen.getAllByRole('link')).toHaveLength(1);
