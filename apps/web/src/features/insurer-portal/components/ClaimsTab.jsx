@@ -47,6 +47,7 @@ export default function ClaimsTab({ claims }) {
   const [filterId, setFilterId] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
   const lastOpenedId = useRef(null);
+  const search = useRef(null);
 
   const trimmed = query.trim().toLowerCase();
   const filter = FILTERS.find((candidate) => candidate.id === filterId);
@@ -55,9 +56,11 @@ export default function ClaimsTab({ claims }) {
   const notReceived = claims.filter((claim) => claim.status === NEW).length;
 
   // On a phone the claim replaces the list, so coming back has to put the
-  // person where they were rather than at the top of the page.
+  // person where they were rather than at the top of the page. A claim marked
+  // received under "New" is no longer listed; the search is the next thing to use.
   useEffect(() => {
-    if (selectedId === null && lastOpenedId.current) document.getElementById(lastOpenedId.current)?.focus();
+    if (selectedId !== null || !lastOpenedId.current) return;
+    (document.getElementById(lastOpenedId.current) ?? search.current)?.focus();
   }, [selectedId]);
 
   const select = (claim) => {
@@ -86,6 +89,7 @@ export default function ClaimsTab({ claims }) {
               <InputGroup>
                 <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
                 <InputGroupInput
+                  ref={search}
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}

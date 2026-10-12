@@ -163,6 +163,22 @@ describe('ClaimsTab', () => {
     expect(within(list()).getByRole('button', { name: /CLM-654321/ })).toHaveFocus();
   });
 
+  it('puts focus on the search when the claim that was open has left the list', async () => {
+    const user = userEvent.setup();
+    api.claims.markReceived.mockResolvedValue(undefined);
+    const { rerender } = render(<ClaimsTab claims={[theft, collision]} />);
+    await user.click(screen.getByRole('radio', { name: /New/ }));
+    await open(user, 'CLM-654321');
+
+    await user.click(screen.getByRole('button', { name: 'Mark as received' }));
+    rerender(<ClaimsTab claims={[{ ...theft, status: 'Received by insurer', receivedAt: new Date().toISOString() }, collision]} />);
+    await user.click(screen.getByRole('button', { name: 'Back to notifications' }));
+
+    // Under "New" the claim is no longer listed, so there is no row to go back to.
+    expect(screen.queryByRole('button', { name: /CLM-654321/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Find by claim number, name or plate' })).toHaveFocus();
+  });
+
   it('says so when there are no claims', () => {
     render(<ClaimsTab claims={[]} />);
     expect(screen.getByText('No claims yet')).toBeVisible();
