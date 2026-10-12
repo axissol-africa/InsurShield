@@ -48,6 +48,14 @@ describe('PolicyIssuePanel', () => {
     expect(onBack).toHaveBeenCalledOnce();
   });
 
+  it('says the cover period is missing rather than promising when cover starts', () => {
+    show({ policy: { ...policy, policyDates: null } });
+
+    const bought = screen.getByRole('region', { name: 'What the customer bought' });
+    expect(within(bought).getByText('Cover period').nextElementSibling).toHaveTextContent('Not supplied with this policy');
+    expect(screen.queryByText(/Starts when the policy is issued/)).not.toBeInTheDocument();
+  });
+
   it('places the certificate as the last step of the policy’s journey', () => {
     show();
     const steps = within(screen.getByRole('list', { name: 'Where this policy stands' })).getAllByRole('listitem');

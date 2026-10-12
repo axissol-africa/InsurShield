@@ -63,7 +63,7 @@ export default function PolicyIssuePanel({ policy, onBack, onIssued }) {
             <FactGroup title="Cover">
               <Fact label="Vehicle" value={<>{policy.vehicle} {policy.vehicleDetails?.plateNumber && <Badge variant="outline" className="ml-1 font-mono">{policy.vehicleDetails.plateNumber}</Badge>}</>} />
               <Fact label="Cover type" value={policy.coverage || '—'} />
-              <Fact label="Cover period" value={period.known ? `${period.start} – ${period.end}` : 'Starts when the policy is issued'} />
+              <Fact label="Cover period" value={period.known ? `${period.start} – ${period.end}` : 'Not supplied with this policy'} />
               {policy.insurerQuoteReference && <Fact label="Your quote reference" value={<Reference>{policy.insurerQuoteReference}</Reference>} />}
             </FactGroup>
             {policy.quoteDocument && (
