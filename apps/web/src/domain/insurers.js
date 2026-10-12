@@ -21,6 +21,10 @@ export const NCD_TIERS = [
   { years: 5, percentage: 50, label: '5+ Years Claim-Free (50%)' },
 ];
 
+/** The discount the published tiers give for this many claim-free years; the top tier covers every year beyond it. */
+export const ncdDiscountForYears = (yearsClaimFree) =>
+  NCD_TIERS.reduce((percentage, tier) => (yearsClaimFree >= tier.years ? tier.percentage : percentage), 0);
+
 export const COVERAGE_DURATION_OPTIONS = [
   { id: '1q',  label: '1 Quarter (3 Months)',   months: 3,   days: 91  },
   { id: '2q',  label: '2 Quarters (6 Months)',  months: 6,   days: 182 },

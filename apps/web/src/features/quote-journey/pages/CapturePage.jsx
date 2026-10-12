@@ -3,7 +3,10 @@ import { Link, useParams } from 'react-router-dom';
 import { captureApi } from '@/api/capture';
 import { INSPECTION_SHOTS } from '@/domain/inspection';
 import GuidedCapture from '@/features/quote-journey/components/GuidedCapture';
-import Meta from '@/components/ui/Meta';
+import { ArrowRight, CheckCircle2, Link2Off, LoaderCircle, RotateCcw } from 'lucide-react';
+import { Button } from '@/components/ui/primitives/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/primitives/card';
+import { Alert, AlertDescription } from '@/components/ui/primitives/alert';
 
 /**
  * Phone side of the hand-off. Opened from the QR code on a laptop; no account
@@ -76,83 +79,76 @@ export default function CapturePage() {
   if (error && !session) {
     return (
       <Shell>
-        <section className="w-full border border-line bg-canvas p-8">
-          <span className="material-symbols-outlined text-[40px] text-primary" aria-hidden="true">link_off</span>
-          <h1 className="mt-4 text-[24px] font-semibold tracking-[-0.03em] text-ink">This link has expired</h1>
-          <p className="mt-3 text-[14px] leading-[1.6] text-ink-muted">{error}</p>
-          <p className="mt-4 text-[14px] leading-[1.6] text-ink-muted">
-            Go back to your computer and choose <strong className="font-medium text-ink">Continue on my phone</strong> again for a fresh link.
-          </p>
-        </section>
+        <Card>
+          <CardHeader>
+            <Link2Off className="mb-2 size-6 text-primary" aria-hidden="true" />
+            <CardTitle><h1 className="text-xl">Photo session unavailable</h1></CardTitle>
+            <CardDescription>{error}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm leading-relaxed text-muted-foreground">Go back to your computer and choose <strong className="font-medium text-foreground">Continue on my phone</strong> again for a fresh link.</p>
+          </CardContent>
+        </Card>
       </Shell>
     );
   }
 
   if (!session) {
-    return <Shell><Meta className="text-ink-muted">Loading…</Meta></Shell>;
+    return (
+      <Shell>
+        <Card><CardContent className="flex items-center justify-center gap-3 py-8" role="status">
+          <LoaderCircle className="size-5 animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" />
+          <span className="text-sm text-muted-foreground">Loading photo session…</span>
+        </CardContent></Card>
+      </Shell>
+    );
   }
 
   if (session.status === 'complete') {
     return (
       <Shell>
-        <section className="w-full border border-primary/25 bg-white p-8 text-center">
-          <span className="material-symbols-outlined text-[40px] text-primary" aria-hidden="true">task_alt</span>
-          <h1 className="mt-4 text-[24px] font-semibold tracking-[-0.03em] text-ink">Photos sent</h1>
-          <p className="mt-3 text-[14px] leading-[1.6] text-ink-muted">All {session.shots?.length || INSPECTION_SHOTS.length} live vehicle photos have been sent to your quote request. Return to your computer to continue.</p>
-          {session.journey && <Link to={`/quote-request?capture=${encodeURIComponent(code)}`} className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-[1px] bg-primary px-5 text-[15px] font-medium text-white hover:bg-[#b91c1c]">
-            Continue quote on this phone <span className="material-symbols-outlined text-[18px]" aria-hidden="true">arrow_forward</span>
-          </Link>}
-          {session.journey && <p className="mt-3 text-[12px] leading-[1.5] text-ink-faint">Sign in on this phone if asked. Your vehicle details and live photos will be restored.</p>}
-        </section>
+        <Card>
+          <CardHeader>
+            <CheckCircle2 className="mb-2 size-7 text-primary" aria-hidden="true" />
+            <CardTitle><h1 className="text-2xl">Photos sent</h1></CardTitle>
+            <CardDescription className="leading-relaxed">All {session.shots?.length || INSPECTION_SHOTS.length} live vehicle photos have been sent to your quote request. Return to your computer to continue.</CardDescription>
+          </CardHeader>
+          {session.journey && <CardContent className="space-y-3">
+            <Button asChild size="lg" className="min-h-11 w-full whitespace-normal">
+              <Link to={`/quote-request?capture=${encodeURIComponent(code)}`}>Continue quote on this phone<ArrowRight aria-hidden="true" /></Link>
+            </Button>
+            <p className="text-xs leading-relaxed text-muted-foreground">Sign in on this phone if asked. Your vehicle details and live photos will be restored.</p>
+          </CardContent>}
+        </Card>
       </Shell>
     );
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-canvas">
-      <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-      <div className="relative mx-auto w-full max-w-[520px] px-5 py-8 pb-16">
-        <header className="border-b border-line pb-5">
-          <Meta className="text-primary">Vehicle photos</Meta>
-          <h1 className="mt-3 text-[20px] font-semibold leading-[1.2] tracking-[-0.03em] text-ink">
-            {session.plate || 'Your vehicle'}
-          </h1>
-        </header>
-
-        <div className="mt-7">
-          {allPhotosCaptured ? (
-            <section className="border border-primary/25 bg-white p-6 text-center">
-              <span className={`material-symbols-outlined text-[40px] text-primary ${error ? '' : 'animate-spin'}`} aria-hidden="true">{error ? 'error' : 'sync'}</span>
-              <h2 className="mt-4 text-[22px] font-semibold tracking-[-0.03em] text-ink">
-                {error ? 'Almost done' : `Sending your ${requestedShots.length === 1 ? 'photo' : 'photos'}…`}
-              </h2>
-              {error ? (
-                <>
-                  <p role="alert" className="mt-3 text-[14px] leading-[1.6] text-primary">{error}</p>
-                  <button type="button" onClick={() => { setError(''); void finishCapture(); }} className="mt-6 flex min-h-14 w-full items-center justify-center gap-2 rounded-[1px] bg-primary text-[16px] font-medium text-white hover:bg-[#b91c1c]">
-                    <span className="material-symbols-outlined" aria-hidden="true">refresh</span>Try again
-                  </button>
-                </>
-              ) : (
-                <p className="mt-3 text-[14px] leading-[1.6] text-ink-muted">All {requestedShots.length} accepted, and already on your computer.</p>
-              )}
-            </section>
-          ) : (
-            <GuidedCapture photos={photos} plate={session.plate} onPhoto={savePhoto} shotKeys={requestedShotKeys} />
-          )}
-        </div>
-      </div>
-    </main>
+    <Shell>
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Vehicle photos</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{session.plate || 'Your vehicle'}</p>
+      </header>
+      {allPhotosCaptured ? (
+        <Card>
+          <CardHeader>
+            {!error && <LoaderCircle className="mb-2 size-6 animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" />}
+            <CardTitle><h2 className="text-xl">{error ? 'Almost done' : `Sending your ${requestedShots.length === 1 ? 'photo' : 'photos'}…`}</h2></CardTitle>
+            {!error && <CardDescription role="status">All {requestedShots.length} accepted, and already on your computer.</CardDescription>}
+          </CardHeader>
+          {error && <CardContent className="space-y-4">
+            <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
+            <Button type="button" size="lg" onClick={() => { setError(''); void finishCapture(); }} className="min-h-11 w-full"><RotateCcw aria-hidden="true" />Try again</Button>
+          </CardContent>}
+        </Card>
+      ) : (
+        <GuidedCapture photos={photos} plate={session.plate} onPhoto={savePhoto} shotKeys={requestedShotKeys} />
+      )}
+    </Shell>
   );
 }
 
 function Shell({ children }) {
-  return (
-    <main className="relative min-h-screen overflow-hidden bg-canvas">
-      <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-      <div className="relative mx-auto flex min-h-[70vh] w-full max-w-[420px] items-center justify-center px-6 py-12">
-        {children}
-      </div>
-    </main>
-  );
+  return <section className="mx-auto w-full max-w-xl px-4 py-8 pb-16 sm:px-6">{children}</section>;
 }

@@ -1,23 +1,34 @@
-import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useRef } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { BadgePercent, BookOpen, CheckCheck, FileCheck2, FileText, LayoutDashboard, MessageSquareWarning } from 'lucide-react';
+import { toast } from 'sonner';
+import InsurerShell from '@/features/insurer-portal/components/InsurerShell';
 import { useStore } from '@/store';
 import { api } from '@/api';
 import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
-import { AWAITING_CERTIFICATE, isOpenNcdApplication, toPortalRequest } from '@/features/insurer-portal/portal';
-import { Icon } from '@/features/insurer-portal/components/ui';
+import {
+  AWAITING_CERTIFICATE, CLAIM_NOTIFIED, CLAIM_RECEIVED, EXTENSION_DAYS, PORTAL_CONTENT_ID,
+  isOpenNcdApplication, policyPaidAt, portalPath, toPortalRequest, waitingLongestFirst,
+} from '@/features/insurer-portal/portal';
+import { thenReloadPortal } from '@/features/insurer-portal/reload';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { COVER_TYPES, isCoverGuideComplete } from '@/domain/coverGuide';
-import Meta from '@/components/ui/Meta';
+import { PageHeader, StatusBadge } from '@/features/insurer-portal/components/ui';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
 import CoverGuideLibrary from '@/features/insurer-portal/components/CoverGuideLibrary';
-import PaidPoliciesTab, { PolicyIssuePanel } from '@/features/insurer-portal/components/PaidPoliciesTab';
+import PaidPoliciesTab from '@/features/insurer-portal/components/PaidPoliciesTab';
+import PolicyIssuePanel from '@/features/insurer-portal/components/PolicyIssuePanel';
 import ClaimsTab from '@/features/insurer-portal/components/ClaimsTab';
 import NcdTab from '@/features/insurer-portal/components/NcdTab';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const EXTENSION_DAYS = 7;
+const SECTION_IDS = ['overview', 'guides', 'policies', 'claims', 'ncd'];
+const QUOTE_QUEUE_ID = 'quote-requests';
+/** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
+const NEXT_OFFER_MS = 20_000;
 
 const byNewest = (key) => (first, second) => new Date(second[key] || 0) - new Date(first[key] || 0);
 
@@ -33,12 +44,10 @@ export default function InsurerDashboard() {
   // The queue is shared with customers and other staff, so it is loaded on
   // open and again after every action rather than kept on the device.
   useEffect(() => { void hydrateInsurerPortal(); }, []);
-  const [activeTab, setActiveTab] = useState('overview');
-  const [quotingRequest, setQuotingRequest] = useState(null);
-  const [issuingPolicy, setIssuingPolicy] = useState(null);
-
-  // Sub-views (quote form, certificate upload) replace the dashboard; start them at the top on phones.
-  useEffect(() => { window.scrollTo({ top: 0 }); }, [quotingRequest, issuingPolicy, activeTab]);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('view');
+  const activeTab = SECTION_IDS.includes(requestedTab) ? requestedTab : 'overview';
 
   // A session may name the insurer separately from the staff member; the
   // prototype session puts the insurer in `name`.
@@ -55,203 +64,200 @@ export default function InsurerDashboard() {
 
   const awaitingQuote = myRequests.filter((request) => !request.reply);
   const quoted = myRequests.filter((request) => request.reply);
-  const newClaims = myClaims.filter((claim) => claim.status === 'Notified');
-  const receivedClaims = myClaims.filter((claim) => claim.status === 'Received by insurer');
+  const newClaims = myClaims.filter((claim) => claim.status === CLAIM_NOTIFIED);
+  const receivedClaims = myClaims.filter((claim) => claim.status === CLAIM_RECEIVED);
   const openNcd = myNcd.filter(isOpenNcdApplication);
   const awaitingCertificate = myPolicies.filter((policy) => policy.status === AWAITING_CERTIFICATE);
 
+  // The quote and certificate screens are addressed by the record they act
+  // on, so the browser's Back button and a refresh both keep the person's
+  // place. An address for a record that is no longer waiting shows its section.
+  const quotingRequest = activeTab === 'overview' ? awaitingQuote.find((request) => request.id === searchParams.get('quote')) : undefined;
+  const issuingPolicy = activeTab === 'policies' ? awaitingCertificate.find((policy) => policy.policyNumber === searchParams.get('issue')) : undefined;
+
+  // Each screen replaces the one before it; start it at the top on phones.
+  // The control that opened it went with the last screen, so the keyboard and
+  // screen-reader position is put at the new screen's content rather than
+  // left to fall to the top of the document.
+  const screen = quotingRequest?.id || issuingPolicy?.policyNumber || activeTab;
+  const shownScreen = useRef(screen);
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    if (shownScreen.current === screen) return;
+    shownScreen.current = screen;
+    document.getElementById(PORTAL_CONTENT_ID)?.focus({ preventScroll: true });
+  }, [screen]);
+
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard, badge: awaitingQuote.length },
+    { id: 'guides', label: 'Cover guides', shortLabel: 'Guides', icon: BookOpen, badge: COVER_TYPES.filter((type) => !isCoverGuideComplete(insurer?.coverGuides?.[type])).length },
+    { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: FileCheck2, badge: awaitingCertificate.length },
+    { id: 'claims', label: 'Claims', icon: MessageSquareWarning, badge: newClaims.length },
+    { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: BadgePercent, badge: openNcd.length },
+  ];
+  // Each number is the way into the work it counts.
+  const kpis = [
+    { label: 'Awaiting quotes', value: awaitingQuote.length, icon: FileText, detail: 'Requests ready for a response', to: `#${QUOTE_QUEUE_ID}` },
+    { label: 'Certificates to issue', value: awaitingCertificate.length, icon: FileCheck2, detail: 'Paid policies awaiting documents', to: portalPath.section('policies') },
+    { label: 'New claims', value: newClaims.length, icon: MessageSquareWarning, detail: 'Waiting for acknowledgement', to: portalPath.section('claims') },
+    { label: 'Claims received', value: receivedClaims.length, icon: CheckCheck, detail: 'Acknowledged by your team', to: portalPath.section('claims') },
+  ];
+  const attentionCount = awaitingQuote.length + awaitingCertificate.length + newClaims.length + openNcd.length;
+
+  const section = tabs.find((tab) => tab.id === activeTab);
+  const sectionPath = portalPath.section(activeTab);
+  const openScreen = issuingPolicy ? 'Issue policy certificate' : quotingRequest ? 'Prepare quotation' : null;
+  const backToSection = () => navigate(sectionPath);
+
+  // Finishing one item offers the next, so clearing a queue is not a round
+  // trip through the list each time.
+  const nextRequest = quotingRequest && awaitingQuote.find((request) => request.id !== quotingRequest.id);
+  const nextPolicy = issuingPolicy && awaitingCertificate
+    .filter((policy) => policy.policyNumber !== issuingPolicy.policyNumber)
+    .sort(waitingLongestFirst(policyPaidAt))[0];
+
+  // The offer outlives the screen that made it, and a colleague may take the
+  // item first; it is checked against the queues as they are when it is used.
+  const waiting = useRef({ awaitingQuote, awaitingCertificate });
+  useEffect(() => { waiting.current = { awaitingQuote, awaitingCertificate }; });
+  const nextOffer = (label, path, stillWaiting, taken) => ({
+    duration: NEXT_OFFER_MS,
+    action: { label, onClick: () => (stillWaiting(waiting.current) ? navigate(path) : toast.info(taken)) },
+  });
+
+  let content;
   if (issuingPolicy) {
-    return (
+    content = (
       <PolicyIssuePanel
+        // A different policy is a different task: nothing typed or uploaded for one may carry into the next.
+        key={issuingPolicy.policyNumber}
         policy={issuingPolicy}
-        onBack={() => setIssuingPolicy(null)}
+        onBack={backToSection}
         onIssued={async (policyNumber, issuance) => {
-          await api.policies.issueCertificate(policyNumber, issuance);
-          await hydrateInsurerPortal();
-          setIssuingPolicy(null);
+          await thenReloadPortal(() => api.policies.issueCertificate(policyNumber, issuance));
+          toast.success('Official policy issued', {
+            description: `${policyNumber} is active. The customer can open the certificate from their account.`,
+            ...(nextPolicy && nextOffer(
+              'Next policy',
+              portalPath.issue(nextPolicy.policyNumber),
+              (queues) => queues.awaitingCertificate.some((policy) => policy.policyNumber === nextPolicy.policyNumber),
+              'That policy has already been issued.',
+            )),
+          });
+          navigate(sectionPath, { replace: true });
         }}
       />
     );
-  }
-
-  if (quotingRequest) {
-    return (
+  } else if (quotingRequest) {
+    content = (
       <QuoteRequestForm
+        key={quotingRequest.id}
         request={quotingRequest}
         insurer={insurer}
         coverGuides={insurer?.coverGuides}
         piaRatePercentage={piaConfig?.piaRatePercentage}
         defaultValidityDays={defaultValidityDays}
-        onBack={() => setQuotingRequest(null)}
+        onBack={backToSection}
         onSubmit={async (quote) => {
-          await api.quotes.reply(quotingRequest.id, quote);
-          await hydrateInsurerPortal();
-          setQuotingRequest(null);
+          await thenReloadPortal(() => api.quotes.reply(quotingRequest.id, quote));
+          toast.success('Quote sent', {
+            description: `The customer can now see your quotation for ${quotingRequest.vehicle}.`,
+            ...(nextRequest && nextOffer(
+              'Next request',
+              portalPath.quote(nextRequest.id),
+              (queues) => queues.awaitingQuote.some((request) => request.id === nextRequest.id),
+              'That request has already been answered.',
+            )),
+          });
+          navigate(sectionPath, { replace: true });
         }}
       />
     );
-  }
-
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: 'dashboard', badge: awaitingQuote.length },
-    { id: 'guides', label: 'Cover guides', shortLabel: 'Guides', icon: 'description', badge: COVER_TYPES.filter((type) => !isCoverGuideComplete(insurer?.coverGuides?.[type])).length },
-    { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: 'verified_user', badge: awaitingCertificate.length },
-    { id: 'claims', label: 'Claims', icon: 'report_problem', badge: newClaims.length },
-    { id: 'ncd', label: 'NCD Applications', shortLabel: 'NCD', icon: 'sell', badge: openNcd.length },
-  ];
-  const kpis = [
-    { label: 'Requests awaiting a quote', value: awaitingQuote.length, icon: 'request_quote', tag: 'Respond' },
-    { label: 'Paid policies to issue', value: awaitingCertificate.length, icon: 'verified_user', tag: awaitingCertificate.length ? 'Certificate due' : null },
-    { label: 'New claim notices', value: newClaims.length, icon: 'report_problem', tag: newClaims.length ? 'Needs review' : null },
-    { label: 'Claims acknowledged', value: receivedClaims.length, icon: 'task_alt', tag: null },
-  ];
-  const attentionCount = awaitingQuote.length + awaitingCertificate.length + newClaims.length + openNcd.length;
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-10">
-      {/* ── Who is signed in, and what is waiting ──────────────── */}
-      <section className="flex flex-wrap items-end justify-between gap-6 border-b border-line pb-7">
-        <div>
-          <span className="inline-flex items-center gap-3">
-            <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-            <Meta className="text-ink-muted">Insurer portal</Meta>
-          </span>
-          <h2 className="mt-5 text-[32px] font-semibold leading-[1.05] tracking-[-0.035em] text-ink sm:text-[40px]">
-            {insurerName}
-          </h2>
-          <p className="mt-3 text-[14px] text-ink-muted">
-            {plural(newClaims.length, 'new claim')} · {plural(openNcd.length, 'NCD application')} pending
-          </p>
+  } else if (activeTab === 'overview') {
+    content = (
+      <>
+        <div className="mb-6">
+          <PageHeader title="Overview" description="Review quote requests, policy issuance and claims.">
+            <div className="space-y-2 sm:text-right">
+              <StatusBadge tone="open" className="px-3 py-1">{attentionCount} {attentionCount === 1 ? 'item needs' : 'items need'} attention</StatusBadge>
+              <p className="text-xs text-muted-foreground">{plural(openNcd.length, 'NCD application')} pending</p>
+            </div>
+          </PageHeader>
         </div>
 
-        {/* A readout rather than a bell: the number is the useful part. */}
-        <div
-          className={`flex items-center gap-4 rounded-[1px] border px-5 py-3 ${attentionCount > 0 ? 'border-primary bg-primary/[0.03]' : 'border-dashed border-line-strong'}`}
-        >
-          <div>
-            <Meta className={attentionCount > 0 ? 'text-primary' : 'text-ink-faint'}>Needs attention</Meta>
-            <p className={`mt-2 text-[26px] font-semibold leading-none tracking-[-0.02em] ${attentionCount > 0 ? 'text-primary' : 'text-ink-faint'}`}>
-              {attentionCount}
-            </p>
-          </div>
-          {attentionCount > 0 && (
-            <span aria-hidden="true" className="flex items-center gap-1.5">
-              {Array.from({ length: 6 }, (_, index) => (
-                <span
-                  key={index}
-                  className="dot-pulse block h-[3px] w-[3px] rounded-full bg-primary"
-                  style={{ animationDelay: `${index * 0.12}s` }}
-                />
-              ))}
-            </span>
-          )}
-        </div>
-      </section>
+        <section aria-label="Operational summary" className="mb-6 grid min-w-0 grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          {kpis.map(({ label, value, icon: MetricIcon, detail, to }) => {
+            const card = (
+              <Card className="h-full gap-3 border-border shadow-none transition-colors [--card-spacing:--spacing(4)] group-hover:bg-muted/50 sm:gap-4 sm:[--card-spacing:--spacing(6)]">
+                <CardHeader className="grid-cols-[1fr_auto] items-center gap-3">
+                  <CardTitle className="min-h-8 text-xs font-medium leading-4 text-muted-foreground sm:min-h-0 sm:text-sm">{label}</CardTitle>
+                  <MetricIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                </CardHeader>
+                <CardContent>
+                  <p className="text-3xl font-semibold leading-none tracking-tight tabular-nums">{value}</p>
+                  <p className="mt-3 hidden text-xs leading-relaxed text-muted-foreground sm:block">{detail}</p>
+                </CardContent>
+              </Card>
+            );
+            const linkClass = 'group rounded-2xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50';
+            // The quote queue is on this page, so its number is a jump down rather than a route.
+            return to.startsWith('#')
+              ? <a key={label} href={to} className={linkClass}>{card}</a>
+              : <Link key={label} to={to} className={linkClass}>{card}</Link>;
+          })}
+        </section>
 
-      {/* ── Sections ───────────────────────────────────────────── */}
-      {/* Every section stays reachable without scrolling a strip sideways, so
-          on a phone the tabs are a two-column rail of equal cells. An odd last
-          tab takes the full width rather than leaving a ragged gap. */}
-      <div role="tablist" className="no-scrollbar -mb-px grid grid-cols-2 border-b border-line md:flex md:overflow-x-auto">
-        {tabs.map((tab, index) => {
-          const active = activeTab === tab.id;
-          const fullWidth = tabs.length % 2 === 1 && index === tabs.length - 1;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              // A phone shows the short label to keep the rail one line per
-              // tab; the section is still announced by its full name.
-              aria-label={tab.label}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex min-h-14 items-center justify-center gap-2.5 border-b-2 px-3 py-3 font-mono text-[11px] uppercase tracking-[0.1em] transition-colors duration-200 ease-out md:min-h-0 md:shrink-0 md:justify-start md:px-5 md:py-4 md:text-[12px] ${
-                fullWidth ? 'col-span-2 md:col-span-1' : ''
-              } ${
-                active ? 'border-primary text-primary' : 'border-transparent text-ink-faint hover:text-ink'
-              }`}
-            >
-              <Icon name={tab.icon} className="text-[17px]" />
-              {tab.shortLabel ? (
-                <>
-                  <span className="md:hidden">{tab.shortLabel}</span>
-                  <span className="hidden md:inline">{tab.label}</span>
-                </>
-              ) : (
-                tab.label
-              )}
-              {tab.badge > 0 && (
-                <span className={`flex h-[18px] min-w-[18px] items-center justify-center rounded-[1px] px-1 text-[10px] leading-none ${active ? 'bg-primary text-white' : 'bg-primary/10 text-primary'}`}>
-                  {tab.badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {activeTab === 'overview' && (
-        <>
-          {/* Counts read as one instrument panel rather than four cards. */}
-          <section className="mb-10 grid grid-cols-2 border-b border-line lg:grid-cols-4">
-            {kpis.map((kpi, index) => (
-              <div
-                key={kpi.label}
-                className={`border-line py-7 pr-3 sm:pr-5 ${index % 2 === 1 ? 'border-l pl-3 sm:pl-5' : ''} ${index < 2 ? 'border-b lg:border-b-0' : ''} lg:border-l lg:pl-6 ${index === 0 ? 'lg:border-l-0 lg:pl-0' : ''}`}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <Icon name={kpi.icon} className="text-[19px] text-primary" />
-                  {kpi.tag && (
-                    <Meta className="rounded-[1px] border border-primary/30 bg-primary/10 px-2 py-1 text-primary">
-                      {kpi.tag}
-                    </Meta>
-                  )}
-                </div>
-                <p className="mt-5 text-[34px] font-semibold leading-none tracking-[-0.03em] text-ink">{kpi.value}</p>
-                <p className="mt-3 max-w-[170px] text-[13px] leading-[1.4] text-ink-muted">{kpi.label}</p>
-              </div>
-            ))}
-          </section>
-
+        <div id={QUOTE_QUEUE_ID} className="scroll-mt-20">
           <RequestQueue
             title="Quote requests"
             countLabel={`${awaitingQuote.length} awaiting a quote`}
             requests={awaitingQuote}
             emptyMessage="Every request has been quoted. Sent quotes are listed below."
-            onQuote={setQuotingRequest}
+            onQuote={(request) => navigate(portalPath.quote(request.id))}
           />
-          <RequestQueue
-            title="Quotes sent"
-            hint="Each quote stays open until its validity date; extend one if the customer needs more time."
-            countLabel={`${quoted.length} sent`}
-            requests={quoted}
-            emptyMessage="No quotes have been sent yet."
-            onExtend={async (request) => {
-              await api.quotes.extend(request.id, EXTENSION_DAYS);
-              await hydrateInsurerPortal();
-            }}
-          />
-        </>
-      )}
-
-      {activeTab === 'guides' && (
-        <CoverGuideLibrary
-          insurer={insurer}
-          onSave={async (coverageType, guide) => {
-            if (!insurer) throw new Error('Your insurer profile could not be found.');
-            const coverGuides = { ...(insurer.coverGuides || {}), [coverageType]: guide };
+        </div>
+        <RequestQueue
+          title="Quotes sent"
+          hint="Each quote stays open until its validity date; extend one if the customer needs more time."
+          countLabel={`${quoted.length} sent`}
+          requests={quoted}
+          emptyMessage="No quotes have been sent yet."
+          onExtend={(request) => thenReloadPortal(() => api.quotes.extend(request.id, EXTENSION_DAYS))}
+        />
+      </>
+    );
+  } else if (activeTab === 'guides') {
+    content = (
+      <CoverGuideLibrary
+        insurer={insurer}
+        onSave={async (coverageType, guide) => {
+          if (!insurer) throw new Error('Your insurer profile could not be found.');
+          const coverGuides = { ...(insurer.coverGuides || {}), [coverageType]: guide };
+          await thenReloadPortal(async () => {
             await api.insurers.update(insurer.id, { coverGuides });
             updateInsurer(insurer.id, { coverGuides });
-            await hydrateInsurerPortal();
-          }}
-        />
-      )}
+          });
+        }}
+      />
+    );
+  } else if (activeTab === 'policies') {
+    content = <PaidPoliciesTab policies={myPolicies} onIssue={(policy) => navigate(portalPath.issue(policy.policyNumber))} />;
+  } else if (activeTab === 'claims') {
+    content = <ClaimsTab claims={myClaims} />;
+  } else {
+    content = <NcdTab applications={myNcd} />;
+  }
 
-      {activeTab === 'policies' && <div className="pt-8"><PaidPoliciesTab policies={myPolicies} onIssue={setIssuingPolicy} /></div>}
-      {activeTab === 'claims' && <div className="pt-8"><ClaimsTab claims={myClaims} /></div>}
-      {activeTab === 'ncd' && <div className="pt-8"><NcdTab applications={myNcd} /></div>}
-    </motion.div>
+  return (
+    <InsurerShell
+      insurerName={insurerName}
+      insurerLogo={insurer?.logoUrl}
+      sections={tabs}
+      activeSection={activeTab}
+      trail={openScreen ? [{ label: section.label, to: sectionPath }, { label: openScreen }] : [{ label: section.label }]}
+    >
+      <div className="w-full pb-10">{content}</div>
+    </InsurerShell>
   );
 }
 

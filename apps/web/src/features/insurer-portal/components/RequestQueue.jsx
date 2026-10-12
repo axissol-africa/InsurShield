@@ -1,123 +1,126 @@
-import { useState } from 'react';
 import { formatZMW } from '@/domain/premiumEngine';
 import { quoteValidity } from '@/domain/quoteValidity';
-import { pageSlice } from '@/features/insurer-portal/portal';
-import Meta from '@/components/ui/Meta';
-import { Icon, Pagination } from './ui';
+import { Badge } from '@/components/ui/primitives/badge';
+import { Button } from '@/components/ui/primitives/button';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/primitives/card';
+import { DataTable } from '@/components/ui/data-table';
+import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { EXTENSION_DAYS, days, replyDeadline } from '@/features/insurer-portal/portal';
 
 const PAGE_SIZE = 4;
 
-/** A paged list of quote requests, either still awaiting this insurer's quote or already quoted. */
 export default function RequestQueue({ title, hint, countLabel, requests, emptyMessage, onQuote, onExtend }) {
-  const [page, setPage] = useState(1);
-  const visible = pageSlice(requests, Math.min(page, Math.max(1, Math.ceil(requests.length / PAGE_SIZE))), PAGE_SIZE);
-
-  return (
-    <section className="mb-10">
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-        <div>
-          <div className="flex items-center gap-4">
-            <Meta className="text-primary">{title}</Meta>
-            <span className="h-px w-12 bg-line" aria-hidden="true" />
-          </div>
-          {hint && <p className="mt-3 max-w-xl text-[13px] leading-[1.55] text-ink-muted">{hint}</p>}
-        </div>
-        <Meta className="shrink-0 text-ink-faint">{countLabel}</Meta>
-      </div>
-
-      <div className="border border-line">
-        {visible.length === 0 ? (
-          <p className="p-10 text-center text-[13px] text-ink-muted">{emptyMessage}</p>
-        ) : (
-          visible.map((request, index) => (
-            <RequestRow
-              key={request.id}
-              request={request}
-              isFirst={index === 0}
-              onQuote={onQuote && (() => onQuote(request))}
-              onExtend={onExtend && (() => onExtend(request))}
-            />
-          ))
-        )}
-        <Pagination page={page} total={requests.length} pageSize={PAGE_SIZE} onChange={setPage} />
-      </div>
-    </section>
+  // Held by the queue, not the row: paging away and back makes a new row, and
+  // an extension still in flight must not be offered a second time.
+  const extending = useKeyedPortalAction(onExtend, 'Could not extend this quote. Please try again.');
+  const quoteCell = (request, className) => request.reply ? (
+    <QuotedStatus
+      reply={request.reply}
+      onExtend={onExtend && (() => extending.run(request.id, request))}
+      extending={extending.pending(request.id)}
+      error={extending.error(request.id)}
+    />
+  ) : (
+    <Button type="button" onClick={onQuote && (() => onQuote(request))} className={className}>Send quote</Button>
   );
-}
 
-function RequestRow({ request, isFirst, onQuote, onExtend }) {
-  return (
-    <div
-      className={`group relative flex flex-col justify-between gap-4 p-5 transition-colors duration-200 ease-out hover:bg-canvas-2 md:flex-row md:items-center ${isFirst ? '' : 'border-t border-dashed border-line'}`}
-    >
-      <span className="beam pointer-events-none absolute left-0 top-0 h-px w-1/4 bg-primary" aria-hidden="true" />
-
-      <div className="flex min-w-0 items-center gap-4">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-primary transition-colors duration-200 ease-out group-hover:border-primary">
-          <Icon name="directions_car" className="text-[19px]" />
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-[16px] font-medium tracking-[-0.015em] text-ink">{request.vehicle}</p>
-          {/* The reference is the thing an insurer reconciles against, so it
-              is set in mono alongside the figures. */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <Meta className="text-primary">{request.id}</Meta>
-            <span className="h-2.5 w-px bg-line-strong" aria-hidden="true" />
-            <Meta className="text-ink-faint">{request.value}</Meta>
-            <span className="h-2.5 w-px bg-line-strong" aria-hidden="true" />
-            <Meta className="text-ink-faint">{request.usage}</Meta>
-          </div>
+  const columns = [
+    {
+      accessorKey: 'vehicle',
+      header: 'Vehicle / reference',
+      cell: ({ row }) => (
+        <div className="min-w-40 max-w-60 whitespace-normal">
+          <p className="font-medium text-foreground">{row.original.vehicle}</p>
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{row.original.id}</p>
         </div>
-      </div>
+      ),
+    },
+    {
+      accessorKey: 'vehicleValue',
+      header: 'Cover / value',
+      cell: ({ row }) => (
+        <div className="min-w-36 max-w-56 whitespace-normal">
+          <p className="font-medium">{row.original.coverage}</p>
+          <p className="mt-1 text-muted-foreground"><span className="tabular-nums">{row.original.value}</span> · {row.original.usage}</p>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'submittedAt',
+      header: 'Received',
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <span className="text-muted-foreground">{row.original.time}</span>
+          <ReplyBy request={row.original} />
+        </div>
+      ),
+    },
+    {
+      id: 'quote',
+      header: 'Quote',
+      cell: ({ row }) => quoteCell(row.original),
+    },
+  ];
 
-      <div className="flex w-full items-center justify-between gap-5 md:w-auto md:justify-end">
-        <Meta className="shrink-0 text-ink-faint">{request.time}</Meta>
-        {request.reply ? (
-          <QuotedStatus reply={request.reply} onExtend={onExtend} />
-        ) : (
-          <button
-            type="button"
-            onClick={onQuote}
-            className="group/btn relative inline-flex min-h-[44px] shrink-0 items-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-5 text-[14px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
-            <Icon name="edit_document" className="relative text-[17px]" />
-            <span className="relative">Send quote</span>
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** A sent quote with its validity window and an extend action while it is still open. */
-function QuotedStatus({ reply, onExtend }) {
-  const validity = quoteValidity(reply);
   return (
-    <div className="flex flex-col items-end gap-2">
-      <span
-        className={`inline-flex items-center gap-2 rounded-[1px] border px-3 py-2 text-[14px] font-medium ${
-          validity.expired ? 'border-line-strong text-ink-faint' : 'border-primary/30 bg-primary/[0.06] text-primary'
-        }`}
-      >
-        <Icon name={validity.expired ? 'event_busy' : 'task_alt'} className="text-[17px]" />
-        {formatZMW(reply.premium)}
-      </span>
-      {validity.validUntil && (
-        <span className="flex items-center gap-2.5">
-          <Meta className={!validity.expired && validity.expiringSoon ? 'text-primary' : 'text-ink-faint'}>
-            {validity.label}
-          </Meta>
-          {!validity.expired && onExtend && (
-            <button
-              type="button"
-              onClick={onExtend}
-              className="font-mono text-[11px] uppercase tracking-[0.1em] text-primary underline-offset-4 hover:underline"
-            >
-              Extend 7 days
-            </button>
+    <Card className="mb-6 min-w-0 gap-0 py-0">
+      <CardHeader className="gap-2 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle><h2>{title}</h2></CardTitle>
+          <Badge variant="secondary">{countLabel}</Badge>
+        </div>
+        {hint && <CardDescription className="max-w-2xl leading-relaxed">{hint}</CardDescription>}
+      </CardHeader>
+      <CardContent className="min-w-0 px-0">
+        <DataTable
+          columns={columns}
+          data={requests}
+          label={title}
+          emptyMessage={emptyMessage}
+          pageSize={PAGE_SIZE}
+          renderCard={(request) => (
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground">{request.vehicle}</p>
+                  <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{request.id}</p>
+                </div>
+                <span className="shrink-0 text-sm text-muted-foreground">{request.time}</span>
+              </div>
+              <p className="text-sm">
+                <span className="font-medium">{request.coverage}</span>
+                <span className="text-muted-foreground"> · <span className="tabular-nums">{request.value}</span> · {request.usage}</span>
+              </p>
+              <ReplyBy request={request} />
+              {quoteCell(request, 'w-full')}
+            </div>
           )}
-        </span>
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** While a request still needs a reply, how long is left to send one. */
+function ReplyBy({ request }) {
+  const deadline = request.reply ? null : replyDeadline(request);
+  if (!deadline) return null;
+  return <span className={`block text-xs ${deadline.urgent ? 'font-medium text-primary' : 'text-muted-foreground'}`}>{deadline.label}</span>;
+}
+
+function QuotedStatus({ reply, onExtend, extending, error }) {
+  const validity = quoteValidity(reply);
+
+  return (
+    <div className="flex min-w-32 max-w-48 flex-col items-start gap-1 whitespace-normal">
+      <p className="font-medium tabular-nums">{formatZMW(reply.premium)}</p>
+      {validity.validUntil && <p className={`text-xs ${validity.expired || validity.expiringSoon ? 'text-primary' : 'text-muted-foreground'}`}>{validity.label}</p>}
+      {validity.validUntil && !validity.expired && onExtend && (
+        <Button type="button" variant="link" size="sm" onClick={onExtend} disabled={extending} aria-busy={extending} className="h-8 px-0">
+          {extending ? 'Extending…' : `Extend ${days(EXTENSION_DAYS)}`}
+        </Button>
       )}
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }

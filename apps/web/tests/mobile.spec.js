@@ -61,7 +61,7 @@ test('customer pages fit a phone screen and the menu opens with a backdrop', asy
   await expect(menu).toHaveCount(0);
 });
 
-test('staff portal top bar and tabs work on a phone', async ({ page }) => {
+test('staff portal navigation and actions work on a phone', async ({ page }) => {
   await page.goto('/');
   await seed(page, { staffSession: { role: 'insurer', name: 'Prestige Assurance' } });
   await page.goto('/insurer');
@@ -71,12 +71,17 @@ test('staff portal top bar and tabs work on a phone', async ({ page }) => {
   const header = page.locator('header');
   await expect(page.getByTestId('portal-role')).toHaveText(/Insurer/);
   await expect(header.getByRole('button', { name: 'Sign out' })).toBeVisible();
-  await expect(header.getByRole('link', { name: 'Customer site' })).toBeVisible();
-  await expect(header.getByRole('button', { name: 'Open navigation' })).toHaveCount(0);
-
-  // All four tabs are on screen without scrolling the tab strip.
-  for (const name of ['Overview', 'Paid policies', 'Claims', 'NCD']) await expect(page.getByRole('tab', { name: new RegExp(name) })).toBeInViewport();
-  await page.getByRole('tab', { name: /Claims/ }).click();
+  const navigation = page.getByRole('navigation', { name: 'Insurer navigation' });
+  await expect(navigation).not.toBeVisible();
+  await header.getByRole('button', { name: 'Toggle navigation' }).click();
+  await expect(navigation).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Customer site', exact: true })).toBeVisible();
+  for (const name of ['Overview', 'Cover guides', 'Paid policies', 'Claims', 'NCD applications']) {
+    await expect(navigation.getByRole('link', { name, exact: true })).toBeInViewport();
+  }
+  await navigation.getByRole('link', { name: 'Claims', exact: true }).click();
+  await expect(page).toHaveURL(/\/insurer\?view=claims$/);
+  await expect(navigation).not.toBeVisible();
   await page.getByRole('button', { name: /CLM-774510/ }).click();
   await expect(page.getByRole('button', { name: 'Mark as received' })).toBeVisible();
   await expectNoHorizontalOverflow(page);

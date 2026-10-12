@@ -1,14 +1,23 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Camera, Send, TriangleAlert } from 'lucide-react';
 import { calculatePremium, formatZMW } from '@/domain/premiumEngine';
-import { useDocumentUpload } from '@/hooks/useDocumentUpload';
-import Meta from '@/components/ui/Meta';
-import { BackButton, DocumentPicker, Fact, Icon } from './ui';
 import { isForeignRegistered } from '@/domain/countries';
-import { fieldClass as inputClass, labelClass as fieldLabelClass } from '@/components/ui/field';
 import { COVER_TYPE_LABELS, isCoverGuideComplete } from '@/domain/coverGuide';
-
-const SEND_DELAY_MS = 800;
+import { useDocumentUpload } from '@/hooks/useDocumentUpload';
+import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { coverTypeOf, days, portalPath, premiumCheck, quoteOpenUntil, replyDeadline } from '@/features/insurer-portal/portal';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
+import { Badge } from '@/components/ui/primitives/badge';
+import { Button } from '@/components/ui/primitives/button';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from '@/components/ui/primitives/field';
+import { Input } from '@/components/ui/primitives/input';
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/primitives/input-group';
+import { Separator } from '@/components/ui/primitives/separator';
+import { Spinner } from '@/components/ui/primitives/spinner';
+import { Textarea } from '@/components/ui/primitives/textarea';
+import { ContactLinks, DocumentPicker, Fact, FactGroup, StatusBadge } from './ui';
+import { TaskOutcome, TaskPanel, TaskScreen } from './TaskScreen';
 
 /** InsurShield's own indicative figure for this request, shown beside the insurer's premium field. */
 const indicativePremium = (request, insurer, piaRatePercentage) => {
@@ -23,147 +32,271 @@ const indicativePremium = (request, insurer, piaRatePercentage) => {
   }).finalPremium;
 };
 
+const PREMIUM_QUESTIONS = { low: 'less than half', high: 'more than double' };
+const MAX_VALIDITY_DAYS = 30;
+
+/** The days a quote stays open: what was typed if it is usable, the insurer's usual when nothing was. */
+const validityFrom = (typed, usual) => {
+  if (typed.trim() === '') return { days: usual, problem: '' };
+  const days = Number(typed);
+  return Number.isInteger(days) && days >= 1 && days <= MAX_VALIDITY_DAYS
+    ? { days, problem: '' }
+    : { days: null, problem: `Enter a whole number of days from 1 to ${MAX_VALIDITY_DAYS}.` };
+};
+
 /**
- * The insurer prepares its quotation in its own system, then records it here:
- * the document the customer will see, the premium on it, and how long it stays open.
+ * The insurer prices the request in its own system, then records the result
+ * here in the order it was worked out: the price, the terms, the document.
+ * What the customer will see builds up beside the Send button, so the figure
+ * that will be charged is read back before it goes.
  */
 export default function QuoteRequestForm({ request, insurer, coverGuides = {}, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
   const quotation = useDocumentUpload();
+  const quotationInput = useRef(null);
+  const validityInput = useRef(null);
+  const premiumInput = useRef(null);
   const [premium, setPremium] = useState('');
   const [reference, setReference] = useState('');
   const [validityDays, setValidityDays] = useState('');
   const [notes, setNotes] = useState('');
-  const [sending, setSending] = useState(false);
+  const sending = usePortalAction(onSubmit, 'This quote could not be sent. Check your connection and try again.');
 
   const estimate = indicativePremium(request, insurer, piaRatePercentage);
-  const coverageType = request.insuranceType || (request.coverage === 'Third Party Only' ? 'ThirdParty' : 'Comprehensive');
+  const coverageType = coverTypeOf(request);
+  const coverLabel = COVER_TYPE_LABELS[coverageType];
   const coverGuide = coverGuides[coverageType];
   const guidePublished = isCoverGuideComplete(coverGuide);
-
-  const facts = [
-    ['Vehicle', request.plate ? `${request.vehicle} · ${request.plate}` : request.vehicle],
-    // Only worth a line when it is not the home market; on a Zambian
-    // vehicle it would be a row saying nothing.
-    ...(isForeignRegistered(request.registrationCountry)
-      ? [['Registered in', `${request.registrationCountry} — not on the RTSA register`]]
-      : []),
-    ['Declared value', request.value],
-    ['Declared usage', request.usage],
-    ['Requested coverage', request.coverage],
-    ['Cover period', `${request.period} · ${request.dates}`],
-    ['Customer', request.contact ? `${request.client} · ${request.contact}` : request.client],
-    ['Inspection photos', request.photos ? `${request.photos} live photos attached` : 'Not captured'],
-  ];
+  const deadline = replyDeadline(request);
+  const { days: openDays, problem: validityProblem } = validityFrom(validityDays, defaultValidityDays);
+  const premiumQuestion = PREMIUM_QUESTIONS[premiumCheck(Number(premium), estimate)];
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    if (!guidePublished) return;
+    // The browser already refuses an empty or zero premium; this holds if that check is ever bypassed.
+    if (!(Number(premium) > 0)) {
+      premiumInput.current?.focus();
+      return;
+    }
+    if (validityProblem) {
+      validityInput.current?.focus();
+      return;
+    }
     if (!quotation.document) {
       quotation.setError('Attach the final quotation from your system before sending it.');
+      quotationInput.current?.focus();
       return;
     }
-    if (!guidePublished) {
-      quotation.setError(`Publish your ${COVER_TYPE_LABELS[coverageType].toLowerCase()} cover guide under Cover guides before sending this quote.`);
-      return;
-    }
-    const amount = Number(premium);
-    if (!(amount > 0)) {
-      quotation.setError('Enter the premium exactly as it appears on your quotation.');
-      return;
-    }
-    setSending(true);
-    setTimeout(() => onSubmit({
-      premium: amount,
+    void sending.run({
+      premium: Number(premium),
       notes: notes.trim(),
-      validityDays: Number(validityDays) || defaultValidityDays,
+      validityDays: openDays,
       insurerReference: reference.trim() || null,
       document: quotation.document,
       // The guide travels with the quote, so what the customer compares is
-       // what this insurer had published at the moment they quoted.
+      // what this insurer had published at the moment they quoted.
       coverGuide: { ...coverGuide, coverageType },
-    }), SEND_DELAY_MS);
+    });
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full pb-8">
-      <div className="mb-8 flex items-center gap-4 border-b border-line pb-7">
-        <BackButton onClick={onBack} />
-        <div>
-          <Meta className="text-ink-muted">Process quotation</Meta>
-          <h2 className="mt-3 font-mono text-[24px] tracking-[0.02em] text-primary">{request.id}</h2>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-        <section className="border border-line p-6">
-          <div className="border-b border-dashed border-line pb-4">
-            <Meta className="text-primary">Client &amp; vehicle</Meta>
-          </div>
-          <dl className="mt-6 space-y-5">
-            {facts.map(([label, value]) => <Fact key={label} label={label} value={value} />)}
-          </dl>
-        </section>
-
-        <section className="ticked border border-primary p-6">
-          <div className="border-b border-dashed border-line pb-4">
-            <Meta className="text-primary">Upload your quotation</Meta>
-          </div>
-          <p className="mb-7 mt-5 text-[13px] leading-[1.6] text-ink-muted">
-            Prepare and upload the final quotation from your own system. The customer sees the same
-            document on their comparison page and is charged the premium shown on it. The matching cover guide is attached automatically.
-          </p>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className={`border p-4 ${guidePublished ? 'border-primary/30 bg-primary/[0.03]' : 'border-primary/40 bg-primary/[0.06]'}`}>
-              <div className="flex items-start gap-3">
-                <Icon name={guidePublished ? 'task_alt' : 'description'} className="text-[21px] text-primary" />
-                <div>
-                  <span className="block text-[13px] font-medium text-ink">{COVER_TYPE_LABELS[coverageType]} cover guide</span>
-                  <span className="mt-1 block text-[12px] leading-[1.5] text-ink-muted">{guidePublished ? `“${coverGuide.planName}” goes with this quote.` : 'Required before this quote can be sent. Publish it under Cover guides.'}</span>
-                </div>
-              </div>
+    <TaskScreen
+      title="Prepare quotation"
+      description={<>Request <span className="font-mono text-foreground">{request.id}</span>{request.time ? ` · received ${request.time}` : ''}</>}
+      onBack={onBack}
+      backLabel="Back to overview"
+      status={deadline && (deadline.urgent
+        ? <StatusBadge tone="open" className="px-3 py-1">{deadline.label}</StatusBadge>
+        : <Badge variant="outline" className="px-3 py-1">{deadline.label}</Badge>)}
+      stage="quoted"
+      stageNotes={{ requested: request.time }}
+      reference={(
+        <TaskPanel title="What the customer asked for" description="Price this in your own system exactly as declared.">
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h3 className="text-lg font-semibold tracking-tight">{request.vehicle}</h3>
+              {request.plate && <Badge variant="outline" className="font-mono">{request.plate}</Badge>}
             </div>
-            <div>
-              <span className={fieldLabelClass}>Quotation document (PDF or image)</span>
-              <DocumentPicker document={quotation.document} onPick={quotation.pick} onClear={quotation.clear} error={quotation.error} prompt="Attach quotation from your system" />
-            </div>
-            <label className="block">
-              <span className={fieldLabelClass}>Your internal quote reference</span>
-              <input value={reference} onChange={(event) => setReference(event.target.value)} className={inputClass} placeholder="e.g. PA-Q-2026-00412" />
-              <span className="mt-2 block text-[12px] leading-[1.5] text-ink-muted">Shown to the customer so they can quote it when they call you.</span>
-            </label>
-            <div>
-              <label className="block">
-                <span className={fieldLabelClass}>Premium on your quotation (ZMW) *</span>
+            <FactGroup title="Vehicle">
+              <Fact label="Declared value" value={<span className="text-base font-semibold tabular-nums">{request.value}</span>} />
+              <Fact label="Declared usage" value={request.usage} />
+              {/* Only worth a line when it is not the home market; on a Zambian vehicle it would say nothing. */}
+              {isForeignRegistered(request.registrationCountry) && <Fact wide label="Registered in" value={`${request.registrationCountry} — not on the RTSA register`} />}
+            </FactGroup>
+            <Separator />
+            <FactGroup title="Cover requested">
+              <Fact label="Cover type" value={request.coverage} />
+              <Fact label="Cover period" value={`${request.period} · ${request.dates}`} />
+            </FactGroup>
+            <Separator />
+            <FactGroup title="Customer" columns={1}>
+              <Fact label="Name" value={request.client} />
+              {(request.customer?.phone || request.customer?.email) && (
+                <Fact label="Contact" value={<ContactLinks phone={request.customer.phone} email={request.customer.email} />} />
+              )}
+            </FactGroup>
+            <Separator />
+            <p className="flex items-center gap-2 text-sm">
+              <Camera className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              {request.photos ? `${request.photos} live photos attached` : 'No inspection photos were captured'}
+            </p>
+          </div>
+        </TaskPanel>
+      )}
+    >
+      <TaskPanel title="Your quotation" description="Record the quotation you prepared in your own system. The customer compares it with other insurers and pays the premium you enter.">
+        <form onSubmit={handleSubmit}>
+          <FieldGroup>
+            {/* The one thing that blocks a quote comes before any typing. */}
+            {!guidePublished && (
+              <Alert variant="destructive" id="cover-guide-needed">
+                <TriangleAlert aria-hidden="true" />
+                <AlertTitle>Publish your {coverLabel.toLowerCase()} cover guide before sending this quote.</AlertTitle>
+                <AlertDescription>
+                  <p>Customers compare every insurer on the same guide, so a quote cannot go out without one.</p>
+                  <Button asChild variant="outline" size="sm" className="w-fit text-foreground no-underline!">
+                    <Link to={portalPath.section('guides')}>Open cover guides</Link>
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <FieldSet>
+              <FieldLegend>1. Price</FieldLegend>
+              <Field>
+                <FieldLabel htmlFor="quote-premium">Premium on your quotation (ZMW) *</FieldLabel>
                 <div className="flex gap-2">
-                  <input required type="number" min="1" step="0.01" value={premium} onChange={(event) => setPremium(event.target.value)} className={inputClass} placeholder="e.g. 21000" />
-                  {estimate > 0 && <button type="button" onClick={() => setPremium(estimate.toFixed(2))} className="shrink-0 rounded-[1px] border border-dashed border-line-strong px-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">Use estimate</button>}
+                  <InputGroup>
+                    <InputGroupAddon><InputGroupText>ZMW</InputGroupText></InputGroupAddon>
+                    <InputGroupInput
+                      ref={premiumInput}
+                      id="quote-premium"
+                      required
+                      type="number"
+                      inputMode="decimal"
+                      min="1"
+                      step="0.01"
+                      value={premium}
+                      onChange={(event) => setPremium(event.target.value)}
+                      placeholder="e.g. 21000"
+                      aria-describedby="quote-premium-hint"
+                    />
+                  </InputGroup>
+                  {estimate > 0 && (
+                    <Button type="button" variant="outline" onClick={() => setPremium(estimate.toFixed(2))} className="shrink-0">Use estimate</Button>
+                  )}
                 </div>
-              </label>
-              <p className="mt-2 text-[12px] leading-[1.5] text-ink-muted">
-                Must match the figure on the uploaded quotation — the customer pays this amount.
-                {estimate > 0 && <> InsurShield's indicative estimate is {formatZMW(estimate)}.</>} With a direct system integration this is read from your quote automatically.
-              </p>
-            </div>
-            <label className="block">
-              <span className={fieldLabelClass}>Quote valid for (days)</span>
-              <input type="number" min="1" max="30" value={validityDays} onChange={(event) => setValidityDays(event.target.value)} className={inputClass} placeholder={`Default ${defaultValidityDays} days`} />
-              <span className="mt-2 block text-[12px] leading-[1.5] text-ink-muted">After this the customer cannot pay on this quote and must request new quotes. You can extend an open quote from the list.</span>
-            </label>
-            <label className="block">
-              <span className={fieldLabelClass}>Special conditions / notes</span>
-              <textarea rows="3" value={notes} onChange={(event) => setNotes(event.target.value)} className={inputClass} placeholder="e.g. Requires tracking device installation…" />
-            </label>
-            <button
+                <FieldDescription id="quote-premium-hint">
+                  The customer pays exactly this amount, so it must match your quotation.
+                  {estimate > 0 && <> InsurShield’s indicative estimate is {formatZMW(estimate)}.</>}
+                </FieldDescription>
+                <p aria-live="polite" className={premiumQuestion ? 'flex items-start gap-2 rounded-xl bg-primary/5 px-3 py-2 text-sm leading-relaxed text-foreground' : 'sr-only'}>
+                  {premiumQuestion && (
+                    <>
+                      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                      <span>This is {premiumQuestion} InsurShield’s estimate of {formatZMW(estimate)}. Check it against your quotation before sending.</span>
+                    </>
+                  )}
+                </p>
+              </Field>
+            </FieldSet>
+
+            <FieldSeparator />
+
+            <FieldSet>
+              <FieldLegend>2. Terms</FieldLegend>
+              <FieldGroup>
+                <Field data-invalid={validityProblem ? true : undefined}>
+                  <FieldLabel htmlFor="quote-validity">Quote valid for (days)</FieldLabel>
+                  <InputGroup className="sm:max-w-48">
+                    <InputGroupInput
+                      ref={validityInput}
+                      id="quote-validity"
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max={MAX_VALIDITY_DAYS}
+                      value={validityDays}
+                      onChange={(event) => setValidityDays(event.target.value)}
+                      placeholder={String(defaultValidityDays)}
+                      aria-invalid={validityProblem ? true : undefined}
+                      aria-describedby={validityProblem ? 'quote-validity-error quote-validity-hint' : 'quote-validity-hint'}
+                    />
+                    <InputGroupAddon align="inline-end"><InputGroupText>days</InputGroupText></InputGroupAddon>
+                  </InputGroup>
+                  {validityProblem && <FieldError id="quote-validity-error">{validityProblem}</FieldError>}
+                  <FieldDescription id="quote-validity-hint">
+                    Leave empty for your usual {days(defaultValidityDays)}. Once it lapses the customer has to ask for new quotes; you can extend an open quote from the overview.
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="quote-notes">Special conditions / notes</FieldLabel>
+                  <Textarea id="quote-notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. Requires tracking device installation…" aria-describedby="quote-notes-hint" />
+                  <FieldDescription id="quote-notes-hint">Shown to the customer with your quote.</FieldDescription>
+                </Field>
+              </FieldGroup>
+            </FieldSet>
+
+            <FieldSeparator />
+
+            <FieldSet>
+              <FieldLegend>3. Quotation document</FieldLegend>
+              <FieldGroup>
+                <Field data-invalid={quotation.error ? true : undefined}>
+                  <FieldLabel htmlFor="quotation-document">Quotation document (PDF or image) *</FieldLabel>
+                  <DocumentPicker
+                    id="quotation-document"
+                    inputRef={quotationInput}
+                    document={quotation.document}
+                    onPick={quotation.pick}
+                    onClear={quotation.clear}
+                    error={quotation.error}
+                    prompt="Attach quotation from your system"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="quote-reference">Your internal quote reference</FieldLabel>
+                  <Input id="quote-reference" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="e.g. PA-Q-2026-00412" aria-describedby="quote-reference-hint" />
+                  <FieldDescription id="quote-reference-hint">Shown to the customer so they can quote it when they call you.</FieldDescription>
+                </Field>
+              </FieldGroup>
+            </FieldSet>
+
+            <TaskOutcome title="What the customer will see">
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                <Fact label="Plan" value={guidePublished ? coverGuide.planName : <Missing>No cover guide published</Missing>} />
+                <Fact label="Premium to pay" value={Number(premium) > 0 ? <span className="text-base font-semibold tabular-nums">{formatZMW(Number(premium))}</span> : <Missing>Not entered yet</Missing>} />
+                <Fact label="Open until" value={openDays ? `${quoteOpenUntil(openDays)} · ${days(openDays)}` : <Missing>Enter 1 to {MAX_VALIDITY_DAYS} days</Missing>} />
+                <Fact label="Quotation document" value={quotation.document ? 'Attached' : <Missing>Not attached yet</Missing>} />
+                <Fact wide label="Special conditions" value={notes.trim() || 'None'} />
+              </dl>
+            </TaskOutcome>
+
+            {sending.error && (
+              <Alert variant="destructive">
+                <TriangleAlert aria-hidden="true" />
+                <AlertTitle>{sending.error}</AlertTitle>
+                <AlertDescription>What you entered is still here.</AlertDescription>
+              </Alert>
+            )}
+
+            <Button
               type="submit"
-              disabled={sending}
-              className="group relative flex min-h-[52px] w-full items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              size="lg"
+              disabled={sending.pending || !guidePublished}
+              aria-busy={sending.pending}
+              aria-describedby={guidePublished ? undefined : 'cover-guide-needed'}
+              className="w-full"
             >
-              <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
-              <Icon name={sending ? 'sync' : 'send'} className={`relative text-[18px] ${sending ? 'animate-spin' : ''}`} />
-              <span className="relative">{sending ? 'Sending…' : 'Send quote to customer'}</span>
-            </button>
-          </form>
-        </section>
-      </div>
-    </motion.div>
+              {sending.pending ? <Spinner aria-hidden="true" /> : <Send aria-hidden="true" />}
+              {sending.pending ? 'Sending…' : 'Send quote to customer'}
+            </Button>
+          </FieldGroup>
+        </form>
+      </TaskPanel>
+    </TaskScreen>
   );
 }
+
+/** A part of the quote that is not there yet, said quietly: it is a reminder, not an error. */
+const Missing = ({ children }) => <span className="text-muted-foreground">{children}</span>;

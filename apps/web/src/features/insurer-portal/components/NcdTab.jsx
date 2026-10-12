@@ -1,120 +1,226 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { BadgePercent, ClipboardCheck } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/api';
-import { hydrateInsurerPortal } from '@/api/sync';
-import { isOpenNcdApplication, statusStyle } from '@/features/insurer-portal/portal';
-import Meta from '@/components/ui/Meta';
-import { EmptyState, Fact, Icon } from './ui';
+import { timeAgo } from '@/lib/time';
+import { ncdDiscountForYears } from '@/domain/insurers';
+import { isOpenNcdApplication, waitingLongestFirst } from '@/features/insurer-portal/portal';
+import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { useWorkList } from '@/features/insurer-portal/hooks/useWorkList';
+import { thenReloadPortal } from '@/features/insurer-portal/reload';
+import { Badge } from '@/components/ui/primitives/badge';
+import { Button } from '@/components/ui/primitives/button';
+import { Card } from '@/components/ui/primitives/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/primitives/tabs';
+import { DataTable } from '@/components/ui/data-table';
+import DecisionDialog from './DecisionDialog';
+import { ContactLinks, Detail, EmptyPanel, Fact, PageHeader, StatusBadge } from './ui';
 
-/** No-claim-discount applications: approve (issuing a code), hold for review, or reject. */
-export default function NcdTab({ applications }) {
-  const [busyId, setBusyId] = useState(null);
+const PAGE_SIZE = 8;
+const years = (count, unit = 'yr') => `${count} ${unit}${count === 1 ? '' : 's'}`;
+const applicationNumber = (application) => application.applicationNumber || application.id;
+const reviewButtonId = (application) => `ncd-review-${application.id}`;
+const applied = (application) => (application.submittedAt ? `Applied ${timeAgo(application.submittedAt)}` : null);
+/** The discount the claimed years would give; a rejected application carries none, so none is shown beside it. */
+const discountNote = (application) => (application.status === 'Rejected' ? null : `${ncdDiscountForYears(application.yearsClaimFree)}% discount`);
 
-  const decide = async (id, status) => {
-    setBusyId(id);
-    try {
-      await api.ncd.decide(id, status);
-      await hydrateInsurerPortal();
-    } finally {
-      setBusyId(null);
-    }
-  };
+/**
+ * What the insurer can decide, each with what it does. Approving and
+ * rejecting close the application for good; rejection is deliberately not
+ * styled as an emergency — it is a routine outcome. An application already
+ * under review is not offered that outcome again.
+ */
+const decisionsFor = (application) => [
+  {
+    value: 'Approved',
+    title: 'Approve',
+    description: `Issues a ${ncdDiscountForYears(application.yearsClaimFree)}% no-claim discount code to ${application.fullName}. This cannot be undone here.`,
+    confirm: 'Approve & issue code',
+    done: 'Application approved',
+    doneDetail: 'The discount code is listed under Decided.',
+  },
+  {
+    value: 'Under Review',
+    title: 'Keep under review',
+    description: 'Stays in your open list while you check your records. You can decide later.',
+    confirm: 'Mark under review',
+    done: 'Marked under review',
+    doneDetail: `${application.fullName}’s application stays in your open list.`,
+  },
+  {
+    value: 'Rejected',
+    title: 'Reject',
+    description: 'Closes the application without a discount code. This cannot be undone here.',
+    confirm: 'Reject application',
+    done: 'Application rejected',
+    doneDetail: 'It is listed under Decided.',
+  },
+].filter((decision) => decision.value !== application.status);
 
-  return (
-    <div>
-      <div className="mb-5 flex items-end justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <Meta className="text-primary">NCD applications</Meta>
-          <span className="h-px w-12 bg-line" aria-hidden="true" />
-        </div>
-        <Meta className="text-ink-faint">{applications.length} total</Meta>
+const applicationColumns = [
+  {
+    accessorKey: 'fullName',
+    header: 'Applicant',
+    cell: ({ row }) => (
+      <div className="min-w-40 max-w-60 whitespace-normal">
+        <p className="font-medium text-foreground">{row.original.fullName}</p>
+        <Detail className="break-all font-mono">{applicationNumber(row.original)}</Detail>
       </div>
+    ),
+  },
+  { accessorKey: 'policyNumber', header: 'Policy to check', cell: ({ row }) => <span className="font-mono">{row.original.policyNumber}</span> },
+  {
+    accessorKey: 'yearsClaimFree',
+    header: 'Claim-free',
+    cell: ({ row }) => (
+      <div className="min-w-28 whitespace-normal">
+        <p className="font-medium tabular-nums">{years(row.original.yearsClaimFree)}</p>
+        {discountNote(row.original) && <Detail>{discountNote(row.original)}</Detail>}
+      </div>
+    ),
+  },
+];
 
-      {applications.length === 0 ? (
-        <EmptyState icon="sell" title="No NCD applications yet." />
-      ) : (
-        <div className="border border-line">
-          {applications.map((application, index) => (
-            <NcdApplicationRow
-              key={application.id}
-              application={application}
-              isFirst={index === 0}
-              busy={busyId === application.id}
-              onDecide={(status) => decide(application.id, status)}
-            />
-          ))}
+const Outcome = ({ application }) => (
+  <div className="flex min-w-32 flex-col items-start whitespace-normal">
+    <StatusBadge status={application.status} />
+    {application.approvedCode
+      ? <Detail>Code issued: <span className="font-mono font-medium text-foreground">{application.approvedCode}</span></Detail>
+      : isOpenNcdApplication(application) && applied(application) && <Detail>{applied(application)}</Detail>}
+  </div>
+);
+
+/** One application on a phone: the same facts as a table row, stacked, with its action full width underneath. */
+function ApplicationCard({ application, children }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">{application.fullName}</p>
+          <Detail className="break-all font-mono">{applicationNumber(application)}</Detail>
         </div>
-      )}
+        <Outcome application={application} />
+      </div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <Fact label="Policy to check" value={<span className="font-mono">{application.policyNumber}</span>} />
+        <Fact label="Claim-free" value={[years(application.yearsClaimFree), discountNote(application)].filter(Boolean).join(' · ')} />
+      </dl>
+      {children}
     </div>
   );
 }
 
 /**
- * Approving issues a discount code, so it is the only filled action; the other
- * two are outlined. Rejection is deliberately not styled as an emergency — it
- * is a routine outcome.
+ * No-claim-discount applications. The open ones are a work queue, longest
+ * wait first; each is reviewed and decided on one surface, because the
+ * insurer has to check its own records before any outcome.
  */
-const DECISIONS = [
-  { status: 'Approved', label: 'Approve & issue code', icon: 'check', filled: true },
-  { status: 'Under Review', label: 'Mark under review', icon: 'pending', filled: false },
-  { status: 'Rejected', label: 'Reject', icon: 'close', filled: false },
-];
+export default function NcdTab({ applications }) {
+  const open = applications.filter(isOpenNcdApplication).sort(waitingLongestFirst((application) => application.submittedAt));
+  const decided = applications.filter((application) => !isOpenNcdApplication(application));
+  const [list, setList] = useWorkList('open', 'decided', open.length > 0);
+  const lists = useRef(null);
+  const [reviewingId, setReviewingId] = useState(null);
+  const reviewing = open.find((application) => application.id === reviewingId);
+  const deciding = usePortalAction(
+    (application, status) => thenReloadPortal(() => api.ncd.decide(application.id, status)),
+    'That decision could not be saved. Please try again.',
+  );
 
-function NcdApplicationRow({ application, isFirst, busy, onDecide }) {
-  const style = statusStyle(application.status);
+  const startReview = (application) => {
+    deciding.clearError();
+    setReviewingId(application.id);
+  };
+
+  const decide = async (decision) => {
+    if (!(await deciding.run(reviewing, decision.value))) return;
+    setReviewingId(null);
+    toast.success(decision.done, { description: decision.doneDetail });
+  };
+
+  const reviewAction = (application, className) => (
+    <Button type="button" id={reviewButtonId(application)} onClick={() => startReview(application)} aria-label={`Review & decide ${application.fullName}’s application`} className={className}>
+      <ClipboardCheck aria-hidden="true" />Review &amp; decide
+    </Button>
+  );
+
+  const openColumns = [
+    ...applicationColumns,
+    { id: 'status', header: 'Status', cell: ({ row }) => <Outcome application={row.original} /> },
+    { id: 'decision', header: 'Decision', cell: ({ row }) => reviewAction(row.original) },
+  ];
+  const decidedColumns = [
+    ...applicationColumns,
+    { id: 'outcome', header: 'Outcome', cell: ({ row }) => <Outcome application={row.original} /> },
+  ];
 
   return (
-    <div className={`group relative p-5 transition-colors duration-200 ease-out hover:bg-canvas-2 ${isFirst ? '' : 'border-t border-dashed border-line'}`}>
-      <span className="beam pointer-events-none absolute left-0 top-0 h-px w-1/4 bg-primary" aria-hidden="true" />
+    <div className="space-y-6">
+      <PageHeader
+        title="NCD applications"
+        description="Policyholders asking you to confirm their claim-free years. Check each against your own records; approving one issues the customer’s discount code. The longest wait is listed first."
+      >
+        {open.length > 0
+          ? <StatusBadge tone="open" className="px-3 py-1">{open.length} awaiting a decision</StatusBadge>
+          : applications.length > 0 && <StatusBadge tone="settled" className="px-3 py-1">All decided</StatusBadge>}
+      </PageHeader>
 
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[16px] font-medium tracking-[-0.015em] text-ink">{application.fullName}</span>
-            <Meta className={`rounded-[1px] border px-2 py-1 ${style.badge}`}>{application.status}</Meta>
-          </div>
-          <Meta className="mt-2 block text-primary">{application.applicationNumber || application.id}</Meta>
+      {applications.length === 0 ? (
+        <EmptyPanel icon={BadgePercent} title="No NCD applications yet" description="When a policyholder applies for a no-claim discount with you, the application appears here for your decision." />
+      ) : (
+        <Tabs value={list} onValueChange={setList} className="gap-4">
+          <TabsList ref={lists}>
+            <TabsTrigger value="open">Open <Badge variant="secondary">{open.length}</Badge></TabsTrigger>
+            <TabsTrigger value="decided">Decided <Badge variant="secondary">{decided.length}</Badge></TabsTrigger>
+          </TabsList>
+          <TabsContent value="open">
+            <Card className="min-w-0 gap-0 py-0">
+              <DataTable
+                columns={openColumns}
+                data={open}
+                label="Open NCD applications"
+                emptyMessage="Every application has a decision. New applications appear here."
+                pageSize={PAGE_SIZE}
+                renderCard={(application) => <ApplicationCard application={application}>{reviewAction(application, 'w-full')}</ApplicationCard>}
+              />
+            </Card>
+          </TabsContent>
+          <TabsContent value="decided">
+            <Card className="min-w-0 gap-0 py-0">
+              <DataTable
+                columns={decidedColumns}
+                data={decided}
+                label="Decided NCD applications"
+                emptyMessage="No application has been decided yet."
+                pageSize={PAGE_SIZE}
+                renderCard={(application) => <ApplicationCard application={application} />}
+              />
+            </Card>
+          </TabsContent>
+        </Tabs>
+      )}
 
-          <dl className="mt-5 grid max-w-xl grid-cols-3 gap-x-6 gap-y-4">
-            <Fact label="Policy no." value={<span className="font-mono">{application.policyNumber}</span>} />
-            <Fact label="Years claim-free" value={`${application.yearsClaimFree} yr${application.yearsClaimFree === 1 ? '' : 's'}`} />
-            <Fact
-              label="Expected discount"
-              value={<span className="text-primary">{application.yearsClaimFree * 10}%</span>}
-            />
+      {reviewing && (
+        <DecisionDialog
+          key={reviewing.id}
+          title={`Decide ${reviewing.fullName}’s application`}
+          description={<>Check policy <span className="font-mono text-foreground">{reviewing.policyNumber}</span> in your own system before you decide.</>}
+          options={decisionsFor(reviewing)}
+          pending={deciding.pending}
+          error={deciding.error}
+          onDecide={decide}
+          onClose={() => setReviewingId(null)}
+          // Back to the application's own button, or to the list when a decision has taken it out of the open list.
+          returnFocusTo={() => document.getElementById(reviewButtonId(reviewing)) ?? lists.current?.querySelector('[aria-selected="true"]')}
+        >
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-2xl border border-border bg-muted/40 p-4">
+            <Fact label="Applicant" value={<>{reviewing.fullName}<ContactLinks phone={reviewing.phone} email={reviewing.email} className="mt-1" /></>} />
+            <Fact label="Application" value={<><span className="font-mono">{applicationNumber(reviewing)}</span>{applied(reviewing) && <Detail>{applied(reviewing)}</Detail>}</>} />
+            <Fact label="Claim-free period claimed" value={years(reviewing.yearsClaimFree, 'year')} />
+            <Fact label="Discount if approved" value={`${ncdDiscountForYears(reviewing.yearsClaimFree)}%`} />
           </dl>
-
-          {application.approvedCode && (
-            <div className="mt-5 inline-flex items-center gap-3 rounded-[1px] border border-primary bg-primary/[0.03] px-4 py-3">
-              <Icon name="check_circle" className="text-[18px] text-primary" />
-              <div>
-                <Meta className="text-ink-muted">Code issued</Meta>
-                <p className="mt-1.5 font-mono text-[15px] tracking-[0.04em] text-primary">{application.approvedCode}</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {isOpenNcdApplication(application) && (
-          <div className="flex shrink-0 flex-col gap-2">
-            {DECISIONS.map((decision) => (
-              <button
-                key={decision.status}
-                type="button"
-                disabled={busy}
-                onClick={() => onDecide(decision.status)}
-                className={`inline-flex min-h-10 items-center gap-2 rounded-[1px] px-4 text-[13px] font-medium transition-colors duration-200 ease-out disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas ${
-                  decision.filled
-                    ? 'bg-primary text-white hover:bg-[#b91c1c]'
-                    : 'border border-dashed border-line-strong text-ink hover:border-primary hover:text-primary'
-                }`}
-              >
-                <Icon name={decision.icon} className="text-[16px]" />
-                {decision.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+        </DecisionDialog>
+      )}
     </div>
   );
 }

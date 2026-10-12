@@ -7,6 +7,7 @@ import Badge from '@/components/ui/Badge';
 import { api } from '@/api';
 import { hydrateCustomer, hydrateDirectory } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
+import { NCD_TIERS as PUBLISHED_NCD_TIERS, ncdDiscountForYears } from '@/domain/insurers';
 
 const CLAIM_TYPES = [
   'Accident / Collision', 'Theft', 'Fire Damage', 'Natural Disaster',
@@ -22,10 +23,8 @@ const CLAIM_STATUSES = {
   'Received by insurer': 'default',
 };
 
-const NCD_TIERS = [
-  { years: 1, percentage: 10 }, { years: 2, percentage: 20 },
-  { years: 3, percentage: 30 }, { years: 4, percentage: 40 },
-];
+// The application form offers the first four published tiers.
+const NCD_TIERS = PUBLISHED_NCD_TIERS.slice(0, 4);
 
 const NCD_APPLICATION_STATUSES = [
   { id: 'Submitted', variant: 'muted' },
@@ -937,7 +936,6 @@ export default function ClaimsPage() {
     const app = allNcdApps.find(a => a.id === selectedNcdApp.id) || selectedNcdApp;
     const statusInfo = NCD_APPLICATION_STATUSES.find(s => s.id === app.status);
     const currentStatusIdx = NCD_APPLICATION_STATUSES.findIndex(s => s.id === app.status);
-    const tier = NCD_TIERS.find(t => t.years === app.yearsClaimFree);
 
     return (
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto px-4 py-8">
@@ -955,7 +953,7 @@ export default function ClaimsPage() {
           <InfoRow label="Insurance Company" value={app.insurer} highlight />
           <InfoRow label="Policy Number" value={app.policyNumber} />
           <InfoRow label="Years Claim-Free" value={`${app.yearsClaimFree} year${app.yearsClaimFree > 1 ? 's' : ''}`} />
-          <InfoRow label="Potential Discount" value={`${tier?.percentage || app.yearsClaimFree * 10}%`} highlight />
+          <InfoRow label="Potential Discount" value={`${ncdDiscountForYears(app.yearsClaimFree)}%`} highlight />
           <InfoRow label="Submitted" value={formatDate(app.submittedAt)} />
         </dl>
 

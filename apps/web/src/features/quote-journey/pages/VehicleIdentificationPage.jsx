@@ -1,25 +1,31 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Info, Search, TriangleAlert } from 'lucide-react';
 import { api } from '@/api';
 import { useStore } from '@/store';
-import { Button } from '@/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
+import { Button } from '@/components/ui/primitives/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/primitives/card';
+import { Input } from '@/components/ui/primitives/input';
+import { Label } from '@/components/ui/primitives/label';
+import { Checkbox } from '@/components/ui/primitives/checkbox';
+import { NativeSelect, NativeSelectOption, NativeSelectOptGroup } from '@/components/ui/primitives/native-select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/primitives/tabs';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
-import { fieldClass } from '@/components/ui/field';
 import { COUNTRY_GROUPS, DEFAULT_COUNTRY, MAX_COUNTRY_LENGTH, OTHER, resolveCountry } from '@/domain/countries';
-import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
+import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
 
 const CURRENT_YEAR = new Date().getFullYear();
 const YEAR_OPTIONS = Array.from({ length: 40 }, (_, i) => CURRENT_YEAR - i);
-
-const labelClass = 'mb-1.5 block text-[12px] font-medium uppercase tracking-[0.05em] text-ink-muted';
 
 export default function VehicleIdentificationPage() {
   const navigate = useNavigate();
   const { setVehicleDetails, setVehicleValue } = useStore();
 
-  const [mode, setMode] = useState('search'); // 'search' | 'confirm' | 'manual'
+  const [mode, setMode] = useState('search');
+  const valueRef = useRef(null);
+  const acknowledgementRef = useRef(null);
+  const otherCountryRef = useRef(null);
   const [plateNumber, setPlateNumber] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -59,7 +65,11 @@ export default function VehicleIdentificationPage() {
 
   const saveAndContinue = (details) => {
     const validationError = validateValuation();
-    if (validationError) { setError(validationError); return; }
+    if (validationError) {
+      setError(validationError);
+      (declaredValue <= 0 ? valueRef : acknowledgementRef).current?.focus();
+      return;
+    }
     setVehicleDetails(details);
     setVehicleValue(declaredValue);
     navigate('/vehicle-usage');
@@ -72,7 +82,7 @@ export default function VehicleIdentificationPage() {
     event.preventDefault();
     if (!manual.chassisNumber || !manual.make || !manual.model) { setError('Chassis number, make and model are required.'); return; }
     const { country, error: countryError } = resolveCountry(manual.registrationCountry, manual.otherCountry);
-    if (countryError) { setError(countryError); return; }
+    if (countryError) { setError(countryError); otherCountryRef.current?.focus(); return; }
     saveAndContinue({
       plateNumber: manual.plateNumber.toUpperCase(),
       chassisNumber: manual.chassisNumber.toUpperCase(),
@@ -97,213 +107,180 @@ export default function VehicleIdentificationPage() {
     setError('');
   };
 
-  const setManualField = (field) => (event) => setManual((previous) => ({ ...previous, [field]: event.target.value }));
+  const setManualField = (field) => (event) => {
+    setManual((previous) => ({ ...previous, [field]: event.target.value }));
+    setError('');
+  };
 
   return (
-    <>
-      <JourneyProgress current={2} />
-      <main className="relative overflow-hidden">
-        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-        <div className="relative mx-auto w-full max-w-[760px] px-6 py-12 pb-24 lg:px-10">
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-          <header className="border-b border-line pb-8">
-            <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Your vehicle</h1>
-            <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">Look it up on the RTSA register, or enter the details yourself.</p>
-          </header>
+    <JourneyLayout step={2} title="Your vehicle" description="Look it up on the RTSA register, or enter the details yourself." className="max-w-3xl">
+      <Alert role="note" className="mb-6 bg-muted/40">
+        <Info aria-hidden="true" />
+        <AlertTitle>Have ready</AlertTitle>
+        <AlertDescription>Your White Book and the vehicle's current market value. You'll upload the White Book and seven vehicle photos when you request quotes.</AlertDescription>
+      </Alert>
 
-          {mode !== 'confirm' && (
-            <div role="tablist" aria-label="Vehicle entry method" className="mb-6 flex border-b border-line">
-              {[['search', 'search', 'RTSA lookup'], ['manual', 'edit', 'Manual entry']].map(([id, icon, label]) => (
-                <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => switchMode(id)} className={`flex flex-1 items-center justify-center gap-2 border-b-4 py-3 text-[14px] font-medium transition-all ${mode === id ? 'border-primary text-primary' : 'border-transparent text-ink-muted hover:text-primary'}`}>
-                  <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{icon}</span>{label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <AnimatePresence mode="wait">
-            {mode === 'search' && (
-              <motion.div key="search" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <Card className="border border-line">
-                  <CardContent className="p-6">
-                    <p className="mb-6 flex items-start gap-3 rounded-[1px] border border-primary/30 bg-primary/[0.06] p-4 text-[13px] text-primary">
-                      <span className="material-symbols-outlined mt-0.5 text-[20px] text-primary" aria-hidden="true">info</span>
-                      <span><strong>Have ready:</strong> your White Book and the vehicle's current market value. You'll upload the White Book and seven vehicle photos when you request quotes.</span>
-                    </p>
-                    <form onSubmit={handleSearch} className="space-y-4">
-                      <label className="block">
-                        <span className={labelClass}>Licence plate number</span>
-                        <input type="text" placeholder="e.g. BAA 1234" value={plateNumber} onChange={(e) => setPlateNumber(e.target.value.toUpperCase())} required autoComplete="off" className="w-full rounded-[1px] border border-line bg-white p-4 text-center text-2xl font-medium uppercase tracking-widest outline-none focus:ring-2 focus:ring-primary" />
-                      </label>
-                      <ErrorText text={error} />
-                      <Button type="submit" className="w-full" size="lg" disabled={!plateNumber || loading}>{loading ? 'Searching RTSA…' : 'Find vehicle'}</Button>
-                    </form>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
-
-            {mode === 'confirm' && retrievedVehicle && (
-              <motion.div key="confirm" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-5">
-                <Card className="border-2 border-primary">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">check_circle</span>
-                      <CardTitle className="text-[18px] text-primary">Vehicle found — check the details</CardTitle>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-5 p-6">
-                    <dl className="grid grid-cols-2 gap-4 rounded-[1px] border border-line bg-canvas-2 p-4">
-                      <Detail label="Plate" value={retrievedVehicle.plateNumber} className="text-xl tracking-widest text-primary" />
-                      <Detail label="Make & model" value={`${retrievedVehicle.make} ${retrievedVehicle.model}`} />
-                      <Detail label="Year" value={retrievedVehicle.year} />
-                      <Detail label="Colour" value={retrievedVehicle.color} />
-                      <Detail label="Chassis number (VIN)" value={retrievedVehicle.chassisNumber} className="font-mono text-sm" span />
-                      <Detail label="Engine number" value={retrievedVehicle.engineNumber} className="font-mono text-sm" span />
-                      <Detail label="RTSA registration date" value={formatDate(retrievedVehicle.registrationDate)} span />
-                    </dl>
-                    <div className="flex items-center justify-between gap-3 text-[13px]">
-                      <span className="font-medium uppercase text-ink-muted">RTSA anniversary</span>
-                      <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-primary">{formatDate(retrievedVehicle.rtsaAnniversaryDate)}</span>
-                    </div>
-                    <p className="text-[12px] text-ink-muted">Use this date to align the policy start date with the vehicle’s RTSA anniversary when requesting quotes.</p>
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-line">
-                  <CardContent className="space-y-4 p-6">
-                    <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} />
-                    <ErrorText text={error} />
-                    <div className="flex gap-3">
-                      <Button variant="outline" className="flex-1" onClick={() => { setMode('search'); setRetrievedVehicle(null); setError(''); }}>Wrong vehicle</Button>
-                      <Button className="flex-[2]" onClick={handleConfirmRtsa}>Confirm & continue</Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
-
-            {mode === 'manual' && (
-              <motion.div key="manual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <Card className="border-t-4 border-t-primary">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-[18px]">Enter vehicle details</CardTitle>
-                    <CardDescription>Fields marked * are required.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="p-6">
-                    <form onSubmit={handleManualSubmit} className="space-y-5">
-                      <label className="block"><span className={labelClass}>Registration number (plate)</span><input value={manual.plateNumber} onChange={setManualField('plateNumber')} className={`${fieldClass} font-medium uppercase tracking-widest`} placeholder="e.g. BAA 1234" /></label>
-                      <label className="block">
-                        <span className={labelClass}>Chassis number (VIN) <span className="text-primary">*</span></span>
-                        <input required value={manual.chassisNumber} onChange={setManualField('chassisNumber')} className={`${fieldClass} font-mono uppercase`} placeholder="17 characters" maxLength={17} />
-                        <span className="mt-1 block text-[11px] text-ink-muted">Found on the dashboard, door jamb or registration document.</span>
-                      </label>
-                      <label className="block"><span className={labelClass}>Engine number</span><input value={manual.engineNumber} onChange={setManualField('engineNumber')} className={`${fieldClass} font-mono uppercase`} placeholder="e.g. 2GD-FTV-12345" /></label>
-                      <div className="grid grid-cols-2 gap-4">
-                        <label className="block"><span className={labelClass}>Make <span className="text-primary">*</span></span><input required value={manual.make} onChange={setManualField('make')} className={fieldClass} placeholder="e.g. Toyota" /></label>
-                        <label className="block"><span className={labelClass}>Model <span className="text-primary">*</span></span><input required value={manual.model} onChange={setManualField('model')} className={fieldClass} placeholder="e.g. Hilux" /></label>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <label className="block"><span className={labelClass}>Year of manufacture</span><select value={manual.year} onChange={setManualField('year')} className={fieldClass}>{YEAR_OPTIONS.map((year) => <option key={year}>{year}</option>)}</select></label>
-                        <label className="block"><span className={labelClass}>Colour</span><input value={manual.color} onChange={setManualField('color')} className={fieldClass} placeholder="e.g. White" /></label>
-                      </div>
-                      <div className="space-y-4 border-t border-dashed border-line pt-5">
-                        <label className="block">
-                          <span className={labelClass} id="registration-country-label">Country of registration <span className="text-primary">*</span></span>
-                          <select
-                            aria-labelledby="registration-country-label"
-                            value={manual.registrationCountry}
-                            onChange={setCountry}
-                            className={fieldClass}
-                          >
-                            {COUNTRY_GROUPS.map((group) => (
-                              <optgroup key={group.label} label={group.label}>
-                                {group.countries.map((country) => <option key={country} value={country}>{country}</option>)}
-                              </optgroup>
-                            ))}
-                            <option value={OTHER}>Other — not listed</option>
-                          </select>
-                        </label>
-
-                        {manual.registrationCountry === OTHER && (
-                          <label className="block">
-                            <span className={labelClass}>Type the country <span className="text-primary">*</span></span>
-                            <input
-                              required
-                              autoFocus
-                              value={manual.otherCountry}
-                              onChange={setManualField('otherCountry')}
-                              maxLength={MAX_COUNTRY_LENGTH}
-                              className={fieldClass}
-                              placeholder="e.g. Western Sahara"
-                            />
-                          </label>
-                        )}
-                      </div>
-
-                      <label className="block">
-                        <span className={labelClass}>RTSA registration date</span>
-                        <input type="date" max={new Date().toISOString().split('T')[0]} value={manual.registrationDate} onChange={setManualField('registrationDate')} className={fieldClass} />
-                      </label>
-                      <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} />
-                      <ErrorText text={error} />
-                      <Button type="submit" className="w-full" size="lg">Save & continue</Button>
-                    </form>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
+      {mode === 'confirm' && retrievedVehicle ? (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle><h2>Vehicle found — check the details</h2></CardTitle>
+              <CardDescription>Make sure these details match your White Book.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <dl className="grid grid-cols-2 gap-x-5 gap-y-4">
+                <Detail label="Plate" value={retrievedVehicle.plateNumber} />
+                <Detail label="Make & model" value={`${retrievedVehicle.make} ${retrievedVehicle.model}`} />
+                <Detail label="Year" value={retrievedVehicle.year} />
+                <Detail label="Colour" value={retrievedVehicle.color} />
+                <Detail label="Chassis number (VIN)" value={retrievedVehicle.chassisNumber} span />
+                <Detail label="Engine number" value={retrievedVehicle.engineNumber} span />
+                <Detail label="RTSA registration date" value={formatDate(retrievedVehicle.registrationDate)} span />
+                <Detail label="RTSA anniversary" value={formatDate(retrievedVehicle.rtsaAnniversaryDate)} span />
+              </dl>
+              <p className="text-sm leading-relaxed text-muted-foreground">Use the RTSA anniversary to align the policy start date when requesting quotes.</p>
+              <Button variant="outline" className="min-h-11" onClick={() => { setMode('search'); setRetrievedVehicle(null); setError(''); }}>Wrong vehicle</Button>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent>
+              <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} valueRef={valueRef} acknowledgementRef={acknowledgementRef} />
+            </CardContent>
+          </Card>
+          <ErrorText text={error} />
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+            <Button asChild variant="ghost" className="min-h-11"><Link to="/insurance-type"><ArrowLeft aria-hidden="true" />Back</Link></Button>
+            <Button size="lg" className="min-h-11" onClick={handleConfirmRtsa}>Confirm & continue</Button>
+          </div>
         </div>
-      </main>
-    </>
+      ) : (
+        <Tabs value={mode} onValueChange={switchMode} className="flex-col gap-5">
+          <TabsList aria-label="Vehicle entry method" className="grid h-auto w-full grid-cols-2">
+            <TabsTrigger value="search" disabled={loading} className="min-h-11 data-[state=active]:bg-background data-[state=active]:text-foreground">RTSA lookup</TabsTrigger>
+            <TabsTrigger value="manual" disabled={loading} className="min-h-11 data-[state=active]:bg-background data-[state=active]:text-foreground">Manual entry</TabsTrigger>
+          </TabsList>
+          <TabsContent value="search">
+            <Card>
+              <CardHeader>
+                <CardTitle><h2>Find your vehicle</h2></CardTitle>
+                <CardDescription>Enter the registration number shown on your White Book.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSearch} className="space-y-5">
+                  <FormInput label="Licence plate number" id="lookup-plate" placeholder="e.g. BAA 1234" value={plateNumber} onChange={(event) => { setPlateNumber(event.target.value.toUpperCase()); setError(''); }} required autoComplete="off" className="uppercase tracking-wider" />
+                  <ErrorText text={error} />
+                  {error && <Button type="button" variant="outline" className="min-h-11 w-full" onClick={() => switchMode('manual')}>Enter details manually</Button>}
+                  <Button type="submit" className="min-h-11 w-full" size="lg" disabled={!plateNumber.trim() || loading}><Search aria-hidden="true" />{loading ? 'Searching RTSA…' : 'Find vehicle'}</Button>
+                </form>
+              </CardContent>
+            </Card>
+            <Button asChild variant="ghost" className="mt-5 min-h-11"><Link to="/insurance-type"><ArrowLeft aria-hidden="true" />Back</Link></Button>
+          </TabsContent>
+          <TabsContent value="manual">
+            <form onSubmit={handleManualSubmit} className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle><h2>Enter vehicle details</h2></CardTitle>
+                  <CardDescription>Fields marked * are required. Use the details on your White Book.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-7">
+                  <fieldset className="min-w-0 space-y-5">
+                    <legend className="mb-4 text-base font-semibold">Vehicle identity</legend>
+                    <FormInput label="Registration number (plate)" id="manual-plate" value={manual.plateNumber} onChange={setManualField('plateNumber')} placeholder="e.g. BAA 1234" className="uppercase" />
+                    <div className="space-y-2">
+                      <FormInput label="Chassis number (VIN) *" id="manual-chassis" required value={manual.chassisNumber} onChange={setManualField('chassisNumber')} placeholder="17 characters" maxLength={17} aria-describedby="chassis-help" className="font-mono uppercase" />
+                      <p id="chassis-help" className="text-xs text-muted-foreground">Found on the dashboard, door jamb or registration document.</p>
+                    </div>
+                    <FormInput label="Engine number" id="manual-engine" value={manual.engineNumber} onChange={setManualField('engineNumber')} placeholder="e.g. 2GD-FTV-12345" className="uppercase" />
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <FormInput label="Make *" id="manual-make" required value={manual.make} onChange={setManualField('make')} placeholder="e.g. Toyota" />
+                      <FormInput label="Model *" id="manual-model" required value={manual.model} onChange={setManualField('model')} placeholder="e.g. Hilux" />
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-year">Year of manufacture</Label>
+                        <NativeSelect id="manual-year" value={manual.year} onChange={setManualField('year')} className="w-full [&_select]:min-h-11 [&_select]:text-base md:[&_select]:text-sm">
+                          {YEAR_OPTIONS.map((year) => <NativeSelectOption key={year}>{year}</NativeSelectOption>)}
+                        </NativeSelect>
+                      </div>
+                      <FormInput label="Colour" id="manual-colour" value={manual.color} onChange={setManualField('color')} placeholder="e.g. White" />
+                    </div>
+                  </fieldset>
+                  <fieldset className="min-w-0 space-y-5 border-t border-border pt-5">
+                    <legend className="pr-2 text-base font-semibold">Registration</legend>
+                    <div className="space-y-2">
+                      <Label htmlFor="registration-country">Country of registration *</Label>
+                      <NativeSelect id="registration-country" required value={manual.registrationCountry} onChange={setCountry} className="w-full [&_select]:min-h-11 [&_select]:text-base md:[&_select]:text-sm">
+                        {COUNTRY_GROUPS.map((group) => (
+                          <NativeSelectOptGroup key={group.label} label={group.label}>
+                            {group.countries.map((country) => <NativeSelectOption key={country} value={country}>{country}</NativeSelectOption>)}
+                          </NativeSelectOptGroup>
+                        ))}
+                        <NativeSelectOption value={OTHER}>Other — not listed</NativeSelectOption>
+                      </NativeSelect>
+                    </div>
+                    {manual.registrationCountry === OTHER && (
+                      <FormInput label="Type the country *" id="other-country" ref={otherCountryRef} required autoFocus value={manual.otherCountry} onChange={setManualField('otherCountry')} maxLength={MAX_COUNTRY_LENGTH} placeholder="e.g. Western Sahara" />
+                    )}
+                    <FormInput label="RTSA registration date" id="registration-date" type="date" max={new Date().toISOString().split('T')[0]} value={manual.registrationDate} onChange={setManualField('registrationDate')} />
+                  </fieldset>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent>
+                  <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} valueRef={valueRef} acknowledgementRef={acknowledgementRef} />
+                </CardContent>
+              </Card>
+              <ErrorText text={error} />
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+                <Button asChild variant="ghost" className="min-h-11"><Link to="/insurance-type"><ArrowLeft aria-hidden="true" />Back</Link></Button>
+                <Button type="submit" size="lg" className="min-h-11">Save & continue</Button>
+              </div>
+            </form>
+          </TabsContent>
+        </Tabs>
+      )}
+    </JourneyLayout>
   );
 }
 
-/** Declared market value plus the accuracy acknowledgement, shared by both entry modes. */
-function Valuation({ valuation, onChange, declaredValue }) {
-  const [showGuidance, setShowGuidance] = useState(false);
+function FormInput({ label, id, className = '', ...props }) {
   return (
-    <div className="space-y-4">
-      <div>
-        <label className="block">
-          <span className="mb-2 flex items-center gap-2 text-[13px] font-semibold uppercase tracking-[0.05em] text-primary"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">payments</span>Current market value (ZMW) *</span>
-          <span className="relative block">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[14px] font-medium text-ink-muted" aria-hidden="true">ZMW</span>
-            <input type="text" inputMode="decimal" required placeholder="e.g. 200000" value={valuation.value} onChange={(e) => onChange({ ...valuation, value: e.target.value.replace(/[^0-9.]/g, '') })} className="w-full rounded-[1px] border-2 border-primary/30 bg-canvas-2 py-4 pl-16 pr-4 text-[18px] font-medium outline-none focus:ring-2 focus:ring-primary" />
-          </span>
-        </label>
-        <div className="mt-2 flex items-center justify-between gap-3 text-[12px]">
-          <span className="text-ink-muted">{declaredValue > 0 ? <>Declared: <strong className="text-primary">{formatZMW(declaredValue)}</strong></> : 'This sets your premium and the most a claim can pay out.'}</span>
-          <button type="button" onClick={() => setShowGuidance((open) => !open)} aria-expanded={showGuidance} className="shrink-0 font-medium text-primary hover:underline">{showGuidance ? 'Hide guidance' : 'Why this matters'}</button>
-        </div>
-        {showGuidance && (
-          <div className="mt-3 grid gap-3 rounded-[1px] border border-primary/15 bg-primary/5 p-4 text-[12px] text-ink sm:grid-cols-2">
-            <p><strong className="block text-primary">Under-valuing</strong>A lower value may reduce your premium, but any payout is capped at the declared value — you carry the difference.</p>
-            <p><strong className="block text-primary">Over-valuing</strong>Declaring more than the market value does not increase a payout and may be treated as fraud.</p>
-            <p className="sm:col-span-2 text-ink-muted">Tip: use recent market listings or a professional valuation.</p>
-          </div>
-        )}
-      </div>
-
-      <label className={`flex cursor-pointer items-start gap-3 rounded-[1px] border-2 p-4 transition-all ${valuation.acknowledged ? 'border-primary/40 bg-primary/5' : 'border-line bg-white hover:border-primary/40'}`}>
-        <input type="checkbox" checked={valuation.acknowledged} onChange={(e) => onChange({ ...valuation, acknowledged: e.target.checked })} className="mt-0.5 h-5 w-5 accent-red-600" />
-        <span className="text-[13px] leading-relaxed text-ink"><strong>I confirm</strong> this is the true current market value of the vehicle, and I understand that under- or over-valuing it affects any claim payout.</span>
-      </label>
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} className={`min-h-11 ${className}`} {...props} />
     </div>
   );
 }
 
-function Detail({ label, value, className = '', span = false }) {
+function Valuation({ valuation, onChange, declaredValue, valueRef, acknowledgementRef }) {
   return (
-    <div className={span ? 'col-span-2 border-t border-line pt-2' : ''}>
-      <dt className="text-[11px] font-medium uppercase text-ink-muted">{label}</dt>
-      <dd className={`font-semibold ${className}`}>{value}</dd>
+    <fieldset className="min-w-0 space-y-5">
+      <legend className="mb-4 text-base font-semibold">Vehicle value</legend>
+      <div className="space-y-2">
+        <FormInput label="Current market value (ZMW) *" id="vehicle-value" ref={valueRef} inputMode="decimal" required placeholder="e.g. 200000" value={valuation.value} onChange={(event) => onChange({ ...valuation, value: event.target.value.replace(/[^0-9.]/g, '') })} aria-describedby="valuation-help" />
+        <p id="valuation-help" className="text-sm text-muted-foreground">{declaredValue > 0 ? <>Declared: <strong className="text-foreground">{formatZMW(declaredValue)}</strong></> : 'This sets your premium and the most a claim can pay out.'}</p>
+      </div>
+      <div className="space-y-3 rounded-lg bg-muted/50 p-4 text-sm leading-relaxed text-muted-foreground">
+        <p><strong className="text-foreground">Under-valuing:</strong> A lower value may reduce your premium, but any payout is capped at the declared value. You carry the difference.</p>
+        <p><strong className="text-foreground">Over-valuing:</strong> Declaring more than the market value does not increase a payout and may be treated as fraud.</p>
+        <p>Use recent market listings or a professional valuation.</p>
+      </div>
+      <div className="flex items-start gap-3">
+        <Checkbox id="valuation-acknowledgement" ref={acknowledgementRef} checked={valuation.acknowledged} onCheckedChange={(checked) => onChange({ ...valuation, acknowledged: checked === true })} className="mt-1 size-5 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground" />
+        <Label htmlFor="valuation-acknowledgement" className="cursor-pointer text-sm font-normal leading-relaxed">I confirm this is the true current market value of the vehicle, and I understand that under- or over-valuing it affects any claim payout.</Label>
+      </div>
+    </fieldset>
+  );
+}
+
+function Detail({ label, value, span = false }) {
+  return (
+    <div className={span ? 'col-span-2 border-t border-border pt-3' : 'min-w-0'}>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1 break-words text-sm font-medium">{value}</dd>
     </div>
   );
 }
 
 function ErrorText({ text }) {
-  return text ? <p role="alert" className="rounded-[1px] bg-primary/[0.06] px-4 py-3 text-center text-sm font-medium text-primary">{text}</p> : null;
+  return text ? <Alert variant="destructive"><TriangleAlert aria-hidden="true" /><AlertDescription>{text}</AlertDescription></Alert> : null;
 }

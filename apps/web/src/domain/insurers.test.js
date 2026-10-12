@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INSURER_RATES, demoCoverGuides, reconcileInsurers, sameInsurerName } from './insurers';
+import { INSURER_RATES, demoCoverGuides, ncdDiscountForYears, reconcileInsurers, sameInsurerName } from './insurers';
 import { COVER_TYPES, isCoverGuideComplete } from './coverGuide';
 
 describe('sameInsurerName', () => {
@@ -76,5 +76,15 @@ describe('reconcileInsurers', () => {
     const [metro] = reconcileInsurers([{ name: 'Metro Safe', rate: '5' }]);
     expect(metro.id).toBe('4');
     expect(metro.ratePercentage).toBe(5);
+  });
+});
+
+describe('ncdDiscountForYears', () => {
+  it('reads the discount from the published tiers, and the top tier covers every year beyond it', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 12].map(ncdDiscountForYears)).toEqual([0, 10, 20, 30, 40, 50, 50, 50]);
+  });
+
+  it('gives no discount for a period that is not a number of years', () => {
+    expect([undefined, null, '', 'three'].map(ncdDiscountForYears)).toEqual([0, 0, 0, 0]);
   });
 });

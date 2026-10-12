@@ -1,8 +1,14 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import Meta from '@/components/ui/Meta';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, TriangleAlert } from 'lucide-react';
 import { useStore } from '@/store';
-import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
+import { cn } from '@/lib/cn';
+import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
+import { Alert, AlertDescription } from '@/components/ui/primitives/alert';
+import { Button } from '@/components/ui/primitives/button';
+import { Card, CardContent } from '@/components/ui/primitives/card';
+import { Label } from '@/components/ui/primitives/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/primitives/radio-group';
 
 const OPTIONS = [
   { id: 'Individual', icon: 'person', desc: 'Standard private car for personal use' },
@@ -18,64 +24,42 @@ export default function VehicleUsagePage() {
   const navigate = useNavigate();
   const { vehicleUsage, setVehicleUsage, vehicleDetails } = useStore();
   const [selected, setSelected] = useState(vehicleUsage || OPTIONS[0].id);
-
   const vehicleName = vehicleDetails ? `${vehicleDetails.make} ${vehicleDetails.model}${vehicleDetails.plateNumber ? ` (${vehicleDetails.plateNumber})` : ''}` : 'your vehicle';
 
-  const continueJourney = () => {
+  const continueJourney = (event) => {
+    event.preventDefault();
     setVehicleUsage(selected);
     navigate('/quote-request');
   };
 
   return (
-    <>
-      <JourneyProgress current={3} />
-      <main className="relative overflow-hidden">
-        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-        <div className="relative mx-auto w-full max-w-[1120px] px-6 py-12 pb-24 lg:px-10">
-          <header className="border-b border-line pb-8">
-            <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">How is the vehicle used?</h1>
-            <Meta className="mt-4 inline-flex rounded-[1px] border border-dashed border-line-strong px-3 py-2 text-ink-muted">For {vehicleName}</Meta>
-          </header>
-
-          <p className="mt-8 flex gap-3 rounded-[1px] border border-primary/30 bg-primary/[0.06] p-4 text-[14px] leading-6 text-primary">
-            <span className="material-symbols-outlined text-[24px] text-primary" aria-hidden="true">warning</span>
-            <span>Choose the vehicle's main use. Declaring private use for a taxi, ride-hailing, delivery or other commercial vehicle <strong className="text-primary">can invalidate your policy</strong>.</span>
-          </p>
-
-          <div role="radiogroup" aria-label="Vehicle use" className="mt-8 grid gap-4 md:grid-cols-2">
-            {OPTIONS.map((option) => {
-              const active = selected === option.id;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setSelected(option.id)}
-                  className={`flex min-h-[110px] items-center gap-4 rounded-[1px] border-2 bg-white p-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${active ? 'border-primary' : 'border-line hover:border-primary/50'}`}
-                >
-                  <span aria-hidden="true" className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${active ? 'bg-primary/10 text-primary' : 'bg-canvas-2 text-ink-muted'}`}>
-                    <span className="material-symbols-outlined">{option.icon}</span>
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[18px] font-semibold leading-tight">{option.id}</span>
-                    <span className="mt-1 block text-[14px] text-ink-muted">{option.desc}</span>
-                  </span>
-                  <span aria-hidden="true" className={`h-7 w-7 shrink-0 rounded-full border-[3px] ${active ? 'border-primary' : 'border-line'}`}>
-                    {active && <span className="m-1 block h-3.5 w-3.5 rounded-full bg-primary" />}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-10 flex justify-end">
-            <button type="button" onClick={continueJourney} className="inline-flex min-h-14 items-center gap-3 rounded-[1px] bg-primary px-10 text-[17px] font-medium text-white hover:bg-[#b91c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
-              Continue to quote request <span className="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-            </button>
-          </div>
+    <JourneyLayout step={3} title="How is the vehicle used?" description={`Choose the main use for ${vehicleName}.`}>
+      <Alert role="note" className="mb-6 border-primary/20 bg-primary/5">
+        <TriangleAlert aria-hidden="true" className="text-primary" />
+        <AlertDescription className="text-foreground">
+          Declaring private use for a taxi, ride-hailing, delivery or other commercial vehicle <strong>can invalidate your policy</strong>.
+        </AlertDescription>
+      </Alert>
+      <form onSubmit={continueJourney} className="space-y-6">
+        <RadioGroup value={selected} onValueChange={setSelected} aria-label="Vehicle use" className="gap-3 md:grid-cols-2">
+          {OPTIONS.map((option, index) => (
+            <Card key={option.id} size="sm" className={cn('relative has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring', selected === option.id ? 'bg-primary/5 ring-primary' : 'hover:ring-foreground/25')}>
+              <CardContent className="flex items-start gap-3">
+                <span className="material-symbols-outlined mt-0.5 text-primary" aria-hidden="true">{option.icon}</span>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Label htmlFor={`usage-${index}`} className="cursor-pointer text-base leading-snug after:absolute after:inset-0">{option.id}</Label>
+                  <p id={`usage-description-${index}`} className="text-sm leading-relaxed text-muted-foreground">{option.desc}</p>
+                </div>
+                <RadioGroupItem id={`usage-${index}`} value={option.id} aria-describedby={`usage-description-${index}`} className="relative z-10 mt-0.5 size-5 data-[state=checked]:border-primary data-[state=checked]:bg-primary" />
+              </CardContent>
+            </Card>
+          ))}
+        </RadioGroup>
+        <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">
+          <Button asChild variant="ghost" className="min-h-11"><Link to="/vehicle-identification"><ArrowLeft aria-hidden="true" />Back</Link></Button>
+          <Button type="submit" size="lg" className="min-h-11">Continue to quote request<ArrowRight aria-hidden="true" /></Button>
         </div>
-      </main>
-    </>
+      </form>
+    </JourneyLayout>
   );
 }
