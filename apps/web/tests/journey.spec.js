@@ -77,7 +77,7 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
 
   await expect(page).toHaveURL(/payment/);
   await expect(page.getByRole('heading', { name: 'Confirm and pay' })).toBeVisible();
-  await expect(page.getByText('Prestige Assurance prepares your official policy certificate')).toBeVisible();
+  await expect(page.getByText('After payment, Prestige Assurance prepares your official certificate. It will be available in My account once issued.')).toBeVisible();
   await page.getByRole('button', { name: /^Pay ZMW/ }).click();
 
   await expect(page).toHaveURL(/confirmation/);
@@ -96,7 +96,7 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   });
   await page.goto('/insurer');
-  await page.getByRole('tab', { name: /Paid policies/ }).click();
+  await page.getByRole('link', { name: 'Paid policies', exact: true }).click();
   await page.getByRole('button', { name: /Review & issue policy/ }).first().click();
   await page.locator('input[type="file"]').setInputFiles(tinyImage('certificate.png'));
   await page.getByRole('button', { name: /Issue active policy/ }).click();
