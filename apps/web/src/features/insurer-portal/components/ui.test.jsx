@@ -142,4 +142,13 @@ describe('StepTrack', () => {
     expect(steps[2]).toHaveTextContent('Next: Handled in your claims system');
     expect(steps[1]).toHaveAttribute('aria-current', 'step');
   });
+
+  it.each([2, 3, 4, 5])('gives each of %i steps its own equal column', (count) => {
+    const steps = Array.from({ length: count }, (_, index) => ({ id: `step-${index}`, label: `Step ${index + 1}`, state: 'next' }));
+    render(<StepTrack label="A process" steps={steps} />);
+
+    const track = screen.getByRole('list', { name: 'A process' });
+    expect(track.style.gridTemplateColumns).toBe(`repeat(${count}, minmax(0, 1fr))`);
+    expect(within(track).getAllByRole('listitem')).toHaveLength(count);
+  });
 });

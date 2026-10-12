@@ -107,7 +107,6 @@ const STEP_MARKERS = {
   current: 'bg-primary text-primary-foreground ring-4 ring-primary/15',
   next: 'border border-border bg-background text-muted-foreground',
 };
-const STEP_COLUMNS = { 3: 'grid-cols-3', 4: 'grid-cols-4' };
 const STEP_STATES_IN_WORDS = { done: 'Done: ', next: 'Next: ' };
 
 /**
@@ -117,7 +116,7 @@ const STEP_STATES_IN_WORDS = { done: 'Done: ', next: 'Next: ' };
  */
 export function StepTrack({ label, steps }) {
   return (
-    <ol aria-label={label} className={cn('grid', STEP_COLUMNS[steps.length])}>
+    <ol aria-label={label} className="grid" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
       {steps.map((step, index) => (
         <li key={step.id} aria-current={step.state === 'current' ? 'step' : undefined} className="min-w-0">
           <div className="flex items-center" aria-hidden="true">
