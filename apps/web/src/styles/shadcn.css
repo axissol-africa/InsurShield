@@ -1,0 +1,47 @@
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Existing product tokens own the palette. Avoid remapping primary,
+   secondary, and background back to themselves through @theme. */
+:root {
+  --background: var(--color-background);
+  --foreground: var(--color-ink);
+  --card: var(--color-canvas);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-canvas);
+  --popover-foreground: var(--color-ink);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-on-primary);
+  --secondary: var(--color-secondary);
+  --secondary-foreground: var(--color-on-secondary);
+  --muted: var(--color-canvas-2);
+  --muted-foreground: var(--color-ink-muted);
+  --accent: var(--color-canvas-2);
+  --accent-foreground: var(--color-ink);
+  --destructive: var(--color-error);
+  --destructive-foreground: var(--color-on-error);
+  --border: var(--color-line);
+  --input: var(--color-line-strong);
+  --ring: var(--color-primary);
+}
+
+@theme inline {
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}

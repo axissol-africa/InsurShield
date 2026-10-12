@@ -5,8 +5,7 @@
   "description": "InsurShield monorepo \u2014 Zambian motor-insurance marketplace.",
   "license": "UNLICENSED",
   "workspaces": [
-    "frontend",
-    "backend",
+    "apps/*",
     "packages/*"
   ],
   "engines": {
@@ -21,14 +20,14 @@
   },
   "scripts": {
     "dev": "turbo run dev",
-    "dev:web": "turbo run dev --filter=frontend",
-    "dev:api": "turbo run dev --filter=backend",
+    "dev:web": "turbo run dev --filter=@insurshield/web",
+    "dev:api": "turbo run dev --filter=@insurshield/api",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f",
-    "db:migrate": "npm run db:migrate -w backend",
-    "db:seed": "npm run db:seed -w backend",
-    "db:studio": "npm run db:studio -w backend",
+    "db:migrate": "npm run db:migrate -w @insurshield/api",
+    "db:seed": "npm run db:seed -w @insurshield/api",
+    "db:studio": "npm run db:studio -w @insurshield/api",
     "setup": "npm install && npm run infra:up && npm run db:migrate && npm run db:seed",
     "build": "turbo run build",
     "lint": "turbo run lint",
