@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useStore } from '@/store';
+import { COVER_TYPE_LABELS } from '@/domain/coverGuide';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { coverPeriod } from '@/domain/coverPeriod';
 import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
-import JourneyProgress from '@/features/quote-journey/components/JourneyProgress';
+import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
 import { JOURNEY_COMPLETE } from '@/features/quote-journey/journeySteps';
-import Meta from '@/components/ui/Meta';
 import { isForeignRegistered } from '@/domain/countries';
 import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
 import { openDocument } from '@/lib/files';
-import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/primitives/card';
+import { Button } from '@/components/ui/primitives/button';
+import { Badge } from '@/components/ui/primitives/badge';
+import { Textarea } from '@/components/ui/primitives/textarea';
+import { Label } from '@/components/ui/primitives/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/primitives/radio-group';
 
 const ISSUE_DELAY_MS = 1500;
 
@@ -22,13 +26,14 @@ export default function PolicyConfirmationPage() {
   const [searchParams] = useSearchParams();
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { customer, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
+  const { customer, quoteRequests, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
   const [issuing, setIssuing] = useState(true);
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
   const [reviewed, setReviewed] = useState(false);
   const [readingGuide, setReadingGuide] = useState(false);
 
+  const selectedCoverType = quoteRequests.find((request) => request.id === selectedQuote?.requestId)?.insuranceType || insuranceType;
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
   const policyNumber = `POL-${reference}`;
   const insurancePremium = premiumBreakdown?.finalPremium ?? selectedQuote?.price ?? 0;
@@ -72,21 +77,12 @@ export default function PolicyConfirmationPage() {
     return () => clearTimeout(timer);
   }, [addPolicy, customer, insurancePremium, insuranceType, markNcdCodeUsed, matchRtsaAnniversary, ncdCodeValidated, paymentReceipt, policyDates, policyNumber, premium, rtsaFee, selectedQuote, vehicleDetails, vehicleValue]);
 
-  if (!selectedQuote) {
-    return (
-      <main className="relative overflow-hidden">
-        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-        <div className="relative mx-auto flex min-h-[60vh] w-full max-w-[560px] items-center px-6 py-12">
-          <section className="w-full border border-line bg-canvas p-8">
-            <Meta className="text-ink-muted">Confirmation</Meta>
-            <h1 className="mt-5 text-[28px] font-semibold tracking-[-0.03em] text-ink">Nothing to confirm yet</h1>
-            <p className="mt-3 text-[15px] leading-[1.6] text-ink-muted">Your issued policies are always available in your account.</p>
-            <Link to={continuation('/account')} className="mt-8 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">Go to my account</Link>
-          </section>
-        </div>
-      </main>
-    );
-  }
+
+  if (!selectedQuote) return (
+    <JourneyLayout step={JOURNEY_COMPLETE} title="Nothing to confirm yet" description="Your issued policies are available in your account.">
+      <Button asChild><Link to={continuation('/account')}>Go to my account</Link></Button>
+    </JourneyLayout>
+  );
 
   const finish = () => {
     resetJourney();
@@ -101,181 +97,81 @@ export default function PolicyConfirmationPage() {
 
   return (
     <>
-      <JourneyProgress current={JOURNEY_COMPLETE} />
-      <main className="relative overflow-hidden">
-        <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-        <div className="relative mx-auto w-full max-w-[1120px] px-6 py-12 pb-24 lg:px-10">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full">
-          {issuing ? (
-            <div className="mx-auto flex min-h-[50vh] max-w-[560px] flex-col items-center justify-center border border-line bg-canvas p-12 text-center" role="status" aria-live="polite">
-              <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1.4, ease: 'linear' }} className="h-14 w-14 rounded-full border-2 border-primary border-t-transparent" />
-              <Meta className="mt-8 text-primary">Payment received</Meta>
-              <p className="mt-4 text-[15px] leading-[1.6] text-ink-muted">Sending your paid quote to {selectedQuote.name} for policy issue…</p>
-            </div>
-          ) : (
-            <>
-              <header className="border-b border-line pb-8">
-                <span className="inline-flex items-center gap-3">
-                  <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-                  <Meta className="text-ink-muted">Journey complete · Confirmation</Meta>
-                </span>
-                <div className="mt-6 flex items-start gap-5">
-                  <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 300, damping: 20 }} className="mt-1 flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/[0.06]">
-                    <span className="material-symbols-outlined text-[26px] text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">verified</span>
-                  </motion.span>
-                  <div>
-                    <h1 className="text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Payment received</h1>
-                    <p className="mt-4 max-w-[52ch] text-[16px] leading-[1.6] text-ink-muted">{selectedQuote.name} is preparing your official policy certificate.</p>
-                  </div>
-                </div>
-              </header>
-
-              <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_360px] lg:items-start">
-
-              <article className="relative overflow-hidden border-x border-b border-t-2 border-line border-t-primary bg-canvas">
-                <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 z-0 -translate-x-1/2 -translate-y-1/2 -rotate-12 select-none whitespace-nowrap font-mono text-[5rem] font-semibold tracking-[-0.03em] text-ink/[0.035]">INSURSHIELD</div>
-                <header className="relative z-10 flex items-center justify-between border-b border-line bg-canvas-2 p-5">
-                  <div>
-                    <Meta className="text-primary">Paid quote confirmation</Meta>
-                    <p className="mt-2.5 font-mono text-[13px] tracking-[0.02em] text-ink-muted">{selectedQuote.requestId}</p>
-                  </div>
-                  <Meta className="rounded-[1px] border border-dashed border-line-strong px-2.5 py-1.5 text-ink-muted">Awaiting certificate</Meta>
-                </header>
-
-                <dl className="relative z-10 grid grid-cols-2 gap-x-8 gap-y-6 p-6 sm:grid-cols-3">
-                  <Field label="Insurer" value={selectedQuote.name} highlight />
-                  <Field label="Plan" value={`${selectedQuote.coverage} · ${coverLabel(insuranceType)}`} />
+      <JourneyLayout step={JOURNEY_COMPLETE} title="Payment received" description={`${selectedQuote.name} will prepare your official policy certificate. Your payment confirmation is not a certificate of insurance.`}>
+        {issuing ? (
+          <Card role="status"><CardContent>Sending your paid quote to {selectedQuote.name} for policy issue…</CardContent></Card>
+        ) : (
+          <div className="grid items-start gap-6 lg:grid-cols-[1fr_340px]">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3"><CardTitle><h2>Paid quote confirmation</h2></CardTitle><Badge variant="secondary">Awaiting certificate</Badge></div>
+                <p className="break-all text-sm text-muted-foreground">Reference: {selectedQuote.requestId}</p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <dl className="grid gap-5 sm:grid-cols-2">
+                  <Field label="Insurer" value={selectedQuote.name} />
+                  <Field label="Cover type" value={COVER_TYPE_LABELS[selectedCoverType] || '—'} />
                   <Field label="Policyholder" value={customer?.fullName || '—'} />
                   <Field label="Contact" value={customer?.phone || customer?.email || '—'} />
                   <Field label="Vehicle" value={vehicleDetails ? `${vehicleDetails.year || ''} ${vehicleDetails.make} ${vehicleDetails.model}`.trim() : '—'} />
-                  <Field label="Plate" value={vehicleDetails?.plateNumber || '—'} highlight mono />
+                  <Field label="Plate" value={vehicleDetails?.plateNumber || '—'} />
                   <Field label="Insured value" value={vehicleValue > 0 ? formatZMW(vehicleValue) : '—'} />
-                  <Field label="Chassis number" value={vehicleDetails?.chassisNumber || '—'} mono />
-                  {isForeignRegistered(vehicleDetails?.registrationCountry) && (
-                    <Field label="Registered in" value={vehicleDetails.registrationCountry} />
-                  )}
+                  <Field label="Chassis number" value={vehicleDetails?.chassisNumber || '—'} />
+                  {isForeignRegistered(vehicleDetails?.registrationCountry) && <Field label="Registered in" value={vehicleDetails.registrationCountry} />}
                   <Field label="Valid from" value={validFrom} />
                   <Field label="Valid until" value={validUntil} />
                 </dl>
-
-                <div className="relative z-10 mx-6 mb-6 border border-dashed border-line-strong bg-canvas-2 p-5 text-[13px]">
-                  <div className="flex justify-between"><span className="text-ink-muted">Insurance premium ({premiumBreakdown?.coverageDuration || 'policy term'})</span><span className="font-semibold">{formatZMW(insurancePremium)}</span></div>
-                  {premiumBreakdown?.ncdDiscount > 0 && <div className="mt-1 flex justify-between text-primary"><span>NCD discount ({premiumBreakdown.appliedNcdPercentage}%)</span><span className="font-semibold">− {formatZMW(premiumBreakdown.ncdDiscount)}</span></div>}
-                  {rtsaFee > 0 && <div className="mt-1 flex justify-between text-primary"><span>RTSA anniversary fee</span><span className="font-semibold">{formatZMW(rtsaFee)}</span></div>}
-                  <div className="mt-2 flex justify-between border-t border-line pt-2 text-[15px]"><span className="font-medium text-primary">Total paid</span><span className="font-semibold text-primary">{formatZMW(premium)}</span></div>
-                </div>
-
-                {/* Both halves of what the insurer sent: the quotation they
-                    uploaded, and the guide stating what the cover does. */}
+                <dl className="space-y-3 border-t pt-5 text-sm">
+                  <div className="flex justify-between gap-4"><dt>Insurance premium ({premiumBreakdown?.coverageDuration || 'policy term'})</dt><dd className="shrink-0 font-medium">{formatZMW(insurancePremium)}</dd></div>
+                  {premiumBreakdown?.ncdDiscount > 0 && <div className="flex justify-between gap-4"><dt>NCD discount ({premiumBreakdown.appliedNcdPercentage}%)</dt><dd>− {formatZMW(premiumBreakdown.ncdDiscount)}</dd></div>}
+                  {rtsaFee > 0 && <div className="flex justify-between gap-4"><dt>RTSA anniversary fee</dt><dd>{formatZMW(rtsaFee)}</dd></div>}
+                  <div className="flex justify-between gap-4 border-t pt-4 text-lg font-semibold"><dt>Total paid</dt><dd>{formatZMW(premium)}</dd></div>
+                </dl>
                 {(selectedQuote.reply?.coverGuide?.planName || selectedQuote.reply?.document) && (
-                  <div className="relative z-10 mx-6 mb-6 flex flex-wrap gap-2">
-                    {selectedQuote.reply?.coverGuide?.planName && (
-                      <button type="button" onClick={() => setReadingGuide(true)} className={documentButton}>
-                        <span className="material-symbols-outlined text-[16px]" aria-hidden="true">description</span>Cover guide
-                      </button>
-                    )}
-                    {selectedQuote.reply?.document && (
-                      <button type="button" onClick={() => openDocument(selectedQuote.reply.document)} className={documentButton}>
-                        <span className="material-symbols-outlined text-[16px]" aria-hidden="true">open_in_new</span>Quotation
-                      </button>
-                    )}
+                  <div className="flex flex-wrap gap-2">
+                    {selectedQuote.reply?.coverGuide?.planName && <Button variant="outline" onClick={() => setReadingGuide(true)}>Cover guide</Button>}
+                    {selectedQuote.reply?.document && <Button variant="outline" onClick={() => openDocument(selectedQuote.reply.document)}>Quotation</Button>}
                   </div>
                 )}
-
-                <footer className="relative z-10 border-t border-line bg-canvas-2 p-5 text-[13px] leading-[1.55] text-ink-muted"><span className="material-symbols-outlined mr-2 align-middle text-primary" aria-hidden="true">pending_actions</span>Your insurer will upload the official certificate. It will then be available in My account.</footer>
-              </article>
-
-              <aside className="space-y-6 lg:sticky lg:top-24">
-                {rtsaFee > 0 && (
-                  <section className="ticked border border-primary bg-canvas p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <Meta className="text-primary">RTSA road tax disc</Meta>
-                      <Meta className="shrink-0 rounded-[1px] border border-dashed border-line-strong px-2.5 py-1.5 text-ink-muted">With certificate</Meta>
-                    </div>
-                    <p className="mt-4 text-[13px] leading-[1.55] text-ink-muted">Your RTSA anniversary is included with this payment. The disc becomes available once your insurer issues the policy certificate.</p>
-                  </section>
-                )}
-
-                <section className="border border-line bg-canvas">
-                  <div className="border-b border-dashed border-line px-5 py-4">
-                    <Meta className="text-primary">What happens next</Meta>
-                  </div>
-                  <ul className="space-y-4 p-5 text-[13px] leading-[1.55] text-ink-muted">
-                    <Next icon="shield">Your certificate and policy documents are in <strong className="font-medium text-ink">My account</strong> whenever you need them.</Next>
-                    <Next icon="mail">{selectedQuote.name} will also send the official policy document to {customer?.email || 'your email'}.</Next>
-                    {selectedQuote.inspectionRules === 'REQUIRED' && <Next icon="photo_camera">{selectedQuote.name} requires a vehicle inspection — they will contact you on {customer?.phone || 'your number'} to arrange it.</Next>}
-                    <Next icon="event_repeat">We'll remind you to renew on {policyDates?.formattedReminder || '30 days before expiry'}.</Next>
-                  </ul>
-                </section>
-
-                <section className="border border-line bg-white p-5" aria-labelledby="review-heading">
-                  <Meta className="text-primary">Customer review</Meta>
-                  <h2 id="review-heading" className="mt-3 text-[18px] font-semibold tracking-[-.02em] text-ink">How was {selectedQuote.name}?</h2>
-                  <p className="mt-2 text-[13px] leading-[1.55] text-ink-muted">Rate your quotation and purchase experience. Your rating helps other customers compare insurers.</p>
+              </CardContent>
+              <CardFooter className="border-t text-sm text-muted-foreground">Your insurer will upload the official certificate. It will then be available in My account.</CardFooter>
+            </Card>
+            <div className="space-y-6">
+              <Card>
+                <CardHeader><CardTitle><h2>What happens next</h2></CardTitle></CardHeader>
+                <CardContent className="space-y-4 text-sm leading-relaxed text-muted-foreground">
+                  <p>Track your policy in My account. Download your certificate after {selectedQuote.name} issues it.</p>
+                  {selectedQuote.inspectionRules === 'REQUIRED' && <p>{selectedQuote.name} requires a vehicle inspection. They will contact you on {customer?.phone || 'your number'} to arrange it.</p>}
+                  {rtsaFee > 0 && <p>Your RTSA anniversary fee is included. The road tax disc becomes available once your insurer issues the certificate.</p>}
+                </CardContent>
+                <CardFooter><Button className="w-full" onClick={finish}>My account</Button></CardFooter>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle><h2 id="review-heading">Rate your purchase experience</h2></CardTitle><p className="text-sm text-muted-foreground">Optional. Share your experience with {selectedQuote.name}.</p></CardHeader>
+                <CardContent>
                   {reviewed || existingReview ? (
-                    <p className="mt-4 flex items-center gap-2 border border-primary/25 bg-primary/5 px-3 py-3 text-[13px] text-ink">
-                      <span className="material-symbols-outlined text-primary" aria-hidden="true">task_alt</span>
-                      Thanks — your {existingReview?.rating || rating}-star rating has been recorded.
-                    </p>
+                    <p role="status" className="text-sm">Thanks — your {existingReview?.rating || rating}-star rating has been recorded.</p>
                   ) : (
-                    <>
-                      <div className="mt-4 flex gap-1" role="radiogroup" aria-label={`Rate ${selectedQuote.name} from one to five stars`}>
-                        {[1, 2, 3, 4, 5].map((value) => (
-                          <button key={value} type="button" role="radio" aria-checked={rating === value} onClick={() => setRating(value)} className={`p-1 ${value <= rating ? 'text-primary' : 'text-line-strong hover:text-primary'}`} aria-label={`${value} star${value === 1 ? '' : 's'}`}>
-                            <span className="text-[27px] leading-none" aria-hidden="true">★</span>
-                          </button>
-                        ))}
-                      </div>
-                      <label className="mt-4 block">
-                        <span className="sr-only">Optional review</span>
-                        <textarea value={reviewText} onChange={(event) => setReviewText(event.target.value)} maxLength={500} rows={3} placeholder="Optional: tell other customers what went well" className="w-full resize-none rounded-[1px] border border-line-strong bg-canvas-2 p-3 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30" />
-                      </label>
-                      <button type="button" disabled={!rating} onClick={submitReview} className="mt-3 inline-flex min-h-10 w-full items-center justify-center rounded-[1px] bg-primary px-4 text-[13px] font-medium text-white hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-45">Submit rating</button>
-                    </>
+                    <div className="space-y-4">
+                      <RadioGroup value={rating ? String(rating) : ''} onValueChange={(value) => setRating(Number(value))} aria-label={`Rate ${selectedQuote.name} from one to five stars`} className="grid grid-cols-5 gap-1">
+                        {[1, 2, 3, 4, 5].map((value) => <div key={value} className="relative min-w-0"><RadioGroupItem id={`review-${value}`} value={String(value)} className="peer sr-only" aria-label={`${value} star${value === 1 ? '' : 's'}`} /><Label htmlFor={`review-${value}`} className="flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-md border border-input text-sm peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 peer-data-[state=checked]:text-primary peer-focus-visible:ring-2 peer-focus-visible:ring-ring">{value}<span aria-hidden="true">★</span></Label></div>)}
+                      </RadioGroup>
+                      <div className="space-y-2"><Label htmlFor="purchase-review">Optional review</Label><Textarea id="purchase-review" value={reviewText} onChange={(event) => setReviewText(event.target.value)} maxLength={500} rows={3} placeholder="Tell other customers what went well" /></div>
+                      <Button variant="outline" disabled={!rating} onClick={submitReview}>Submit rating</Button>
+                    </div>
                   )}
-                </section>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button type="button" onClick={() => navigate('/')} className="inline-flex min-h-12 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-[14px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">Back to home</button>
-                  <button type="button" onClick={finish} className="group relative inline-flex min-h-12 items-center justify-center gap-2 overflow-hidden rounded-[1px] bg-primary text-[14px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">
-                    <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
-                    <span className="material-symbols-outlined relative text-[18px]" aria-hidden="true">account_circle</span>
-                    <span className="relative">My account</span>
-                  </button>
-                </div>
-              </aside>
-              </div>
-            </>
-          )}
-        </motion.div>
-        </div>
-      </main>
-
-      {readingGuide && (
-        <CoverGuideReader
-          guide={selectedQuote.reply.coverGuide}
-          insurerName={selectedQuote.name}
-          onClose={() => setReadingGuide(false)}
-        />
-      )}
+                </CardContent>
+              </Card>
+              <Button variant="ghost" onClick={() => navigate('/')}>Back to home</Button>
+            </div>
+          </div>
+        )}
+      </JourneyLayout>
+      {readingGuide && <CoverGuideReader guide={selectedQuote.reply.coverGuide} insurerName={selectedQuote.name} onClose={() => setReadingGuide(false)} />}
     </>
   );
 }
 
-function Field({ label, value, highlight = false, mono = false }) {
-  return (
-    <div className="min-w-0">
-      <dt><Meta className="text-ink-faint">{label}</Meta></dt>
-      <dd className={`mt-2 break-words text-[14px] font-medium leading-[1.45] tracking-[-0.01em] ${highlight ? 'text-primary' : 'text-ink'} ${mono ? 'font-mono tracking-[0.04em]' : ''}`}>{value}</dd>
-    </div>
-  );
-}
-
-function Next({ icon, children }) {
-  return (
-    <li className="flex items-start gap-3">
-      <span className="material-symbols-outlined mt-0.5 text-[18px] text-primary" aria-hidden="true">{icon}</span>
-      <span>{children}</span>
-    </li>
-  );
+function Field({ label, value }) {
+  return <div className="min-w-0"><dt className="text-sm text-muted-foreground">{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>;
 }
