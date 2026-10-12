@@ -103,6 +103,31 @@ describe('QuoteRequestForm', () => {
     expect(await within(customerView()).findByText('Attached')).toBeVisible();
   });
 
+  it('keeps the form and says what is wrong when the validity is not a usable number of days', async () => {
+    const user = userEvent.setup();
+    const { onSubmit, fileInput } = show();
+    const validity = screen.getByLabelText('Quote valid for (days)');
+
+    for (const days of ['999999999', '31', '0']) {
+      await user.clear(validity);
+      await user.type(validity, days);
+      expect(validity).toHaveAttribute('aria-invalid', 'true');
+      expect(validity).toHaveAccessibleDescription(/Enter a whole number of days from 1 to 30\./);
+      expect(within(customerView()).getByText('Enter 1 to 30 days')).toBeVisible();
+    }
+
+    await user.type(screen.getByLabelText(/Premium on your quotation/), '10650');
+    await user.upload(fileInput, quotation());
+    await screen.findByText('quote.pdf');
+    await user.click(send());
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.clear(validity);
+    await user.type(validity, '30');
+    expect(validity).not.toHaveAttribute('aria-invalid');
+    expect(within(customerView()).getByText(`${quoteOpenUntil(30)} · 30 days`)).toBeVisible();
+  });
+
   it('questions a premium far from the estimate without stopping the insurer', async () => {
     const user = userEvent.setup();
     const { onSubmit, fileInput } = show();

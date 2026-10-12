@@ -10,7 +10,7 @@ import { days, portalPath, premiumCheck, quoteOpenUntil, replyDeadline } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from '@/components/ui/primitives/field';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from '@/components/ui/primitives/field';
 import { Input } from '@/components/ui/primitives/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/primitives/input-group';
 import { Separator } from '@/components/ui/primitives/separator';
@@ -33,6 +33,16 @@ const indicativePremium = (request, insurer, piaRatePercentage) => {
 };
 
 const PREMIUM_QUESTIONS = { low: 'less than half', high: 'more than double' };
+const MAX_VALIDITY_DAYS = 30;
+
+/** The days a quote stays open: what was typed if it is usable, the insurer's usual when nothing was. */
+const validityFrom = (typed, usual) => {
+  if (typed.trim() === '') return { days: usual, problem: '' };
+  const days = Number(typed);
+  return Number.isInteger(days) && days >= 1 && days <= MAX_VALIDITY_DAYS
+    ? { days, problem: '' }
+    : { days: null, problem: `Enter a whole number of days from 1 to ${MAX_VALIDITY_DAYS}.` };
+};
 
 /**
  * The insurer prices the request in its own system, then records the result
@@ -43,6 +53,7 @@ const PREMIUM_QUESTIONS = { low: 'less than half', high: 'more than double' };
 export default function QuoteRequestForm({ request, insurer, coverGuides = {}, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
   const quotation = useDocumentUpload();
   const quotationInput = useRef(null);
+  const validityInput = useRef(null);
   const [premium, setPremium] = useState('');
   const [reference, setReference] = useState('');
   const [validityDays, setValidityDays] = useState('');
@@ -55,12 +66,16 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
   const coverGuide = coverGuides[coverageType];
   const guidePublished = isCoverGuideComplete(coverGuide);
   const deadline = replyDeadline(request);
-  const openDays = Number(validityDays) || defaultValidityDays;
+  const { days: openDays, problem: validityProblem } = validityFrom(validityDays, defaultValidityDays);
   const premiumQuestion = PREMIUM_QUESTIONS[premiumCheck(Number(premium), estimate)];
 
   const handleSubmit = (event) => {
     event.preventDefault();
     if (!guidePublished) return;
+    if (validityProblem) {
+      validityInput.current?.focus();
+      return;
+    }
     if (!quotation.document) {
       quotation.setError('Attach the final quotation from your system before sending it.');
       quotationInput.current?.focus();
@@ -184,22 +199,25 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
             <FieldSet>
               <FieldLegend>2. Terms</FieldLegend>
               <FieldGroup>
-                <Field>
+                <Field data-invalid={validityProblem ? true : undefined}>
                   <FieldLabel htmlFor="quote-validity">Quote valid for (days)</FieldLabel>
                   <InputGroup className="sm:max-w-48">
                     <InputGroupInput
+                      ref={validityInput}
                       id="quote-validity"
                       type="number"
                       inputMode="numeric"
                       min="1"
-                      max="30"
+                      max={MAX_VALIDITY_DAYS}
                       value={validityDays}
                       onChange={(event) => setValidityDays(event.target.value)}
                       placeholder={String(defaultValidityDays)}
-                      aria-describedby="quote-validity-hint"
+                      aria-invalid={validityProblem ? true : undefined}
+                      aria-describedby={validityProblem ? 'quote-validity-error quote-validity-hint' : 'quote-validity-hint'}
                     />
                     <InputGroupAddon align="inline-end"><InputGroupText>days</InputGroupText></InputGroupAddon>
                   </InputGroup>
+                  {validityProblem && <FieldError id="quote-validity-error">{validityProblem}</FieldError>}
                   <FieldDescription id="quote-validity-hint">
                     Leave empty for your usual {days(defaultValidityDays)}. Once it lapses the customer has to ask for new quotes; you can extend an open quote from the overview.
                   </FieldDescription>
@@ -241,7 +259,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <Fact label="Plan" value={guidePublished ? coverGuide.planName : <Missing>No cover guide published</Missing>} />
                 <Fact label="Premium to pay" value={Number(premium) > 0 ? <span className="text-base font-semibold tabular-nums">{formatZMW(Number(premium))}</span> : <Missing>Not entered yet</Missing>} />
-                <Fact label="Open until" value={`${quoteOpenUntil(openDays)} · ${days(openDays)}`} />
+                <Fact label="Open until" value={openDays ? `${quoteOpenUntil(openDays)} · ${days(openDays)}` : <Missing>Enter 1 to {MAX_VALIDITY_DAYS} days</Missing>} />
                 <Fact label="Quotation document" value={quotation.document ? 'Attached' : <Missing>Not attached yet</Missing>} />
                 <Fact wide label="Special conditions" value={notes.trim() || 'None'} />
               </dl>
