@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { BadgePercent, BookOpen, CheckCheck, FileCheck2, FileText, LayoutDashboard, MessageSquareWarning } from 'lucide-react';
 import { toast } from 'sonner';
@@ -7,7 +7,11 @@ import { useStore } from '@/store';
 import { api } from '@/api';
 import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
-import { AWAITING_CERTIFICATE, isOpenNcdApplication, policyPaidAt, portalPath, toPortalRequest, waitingLongestFirst } from '@/features/insurer-portal/portal';
+import {
+  AWAITING_CERTIFICATE, CLAIM_NOTIFIED, CLAIM_RECEIVED, EXTENSION_DAYS, PORTAL_CONTENT_ID,
+  isOpenNcdApplication, policyPaidAt, portalPath, toPortalRequest, waitingLongestFirst,
+} from '@/features/insurer-portal/portal';
+import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { COVER_TYPES, isCoverGuideComplete } from '@/domain/coverGuide';
 import { PageHeader, StatusBadge } from '@/features/insurer-portal/components/ui';
@@ -21,9 +25,10 @@ import NcdTab from '@/features/insurer-portal/components/NcdTab';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const EXTENSION_DAYS = 7;
 const SECTION_IDS = ['overview', 'guides', 'policies', 'claims', 'ncd'];
 const QUOTE_QUEUE_ID = 'quote-requests';
+/** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
+const NEXT_OFFER_MS = 20_000;
 
 const byNewest = (key) => (first, second) => new Date(second[key] || 0) - new Date(first[key] || 0);
 
@@ -59,8 +64,8 @@ export default function InsurerDashboard() {
 
   const awaitingQuote = myRequests.filter((request) => !request.reply);
   const quoted = myRequests.filter((request) => request.reply);
-  const newClaims = myClaims.filter((claim) => claim.status === 'Notified');
-  const receivedClaims = myClaims.filter((claim) => claim.status === 'Received by insurer');
+  const newClaims = myClaims.filter((claim) => claim.status === CLAIM_NOTIFIED);
+  const receivedClaims = myClaims.filter((claim) => claim.status === CLAIM_RECEIVED);
   const openNcd = myNcd.filter(isOpenNcdApplication);
   const awaitingCertificate = myPolicies.filter((policy) => policy.status === AWAITING_CERTIFICATE);
 
@@ -71,8 +76,17 @@ export default function InsurerDashboard() {
   const issuingPolicy = activeTab === 'policies' ? awaitingCertificate.find((policy) => policy.policyNumber === searchParams.get('issue')) : undefined;
 
   // Each screen replaces the one before it; start it at the top on phones.
+  // The control that opened it went with the last screen, so the keyboard and
+  // screen-reader position is put at the new screen's content rather than
+  // left to fall to the top of the document.
   const screen = quotingRequest?.id || issuingPolicy?.policyNumber || activeTab;
-  useEffect(() => { window.scrollTo({ top: 0 }); }, [screen]);
+  const shownScreen = useRef(screen);
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    if (shownScreen.current === screen) return;
+    shownScreen.current = screen;
+    document.getElementById(PORTAL_CONTENT_ID)?.focus({ preventScroll: true });
+  }, [screen]);
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, badge: awaitingQuote.length },
@@ -102,6 +116,15 @@ export default function InsurerDashboard() {
     .filter((policy) => policy.policyNumber !== issuingPolicy.policyNumber)
     .sort(waitingLongestFirst(policyPaidAt))[0];
 
+  // The offer outlives the screen that made it, and a colleague may take the
+  // item first; it is checked against the queues as they are when it is used.
+  const waiting = useRef({ awaitingQuote, awaitingCertificate });
+  useEffect(() => { waiting.current = { awaitingQuote, awaitingCertificate }; });
+  const nextOffer = (label, path, stillWaiting, taken) => ({
+    duration: NEXT_OFFER_MS,
+    action: { label, onClick: () => (stillWaiting(waiting.current) ? navigate(path) : toast.info(taken)) },
+  });
+
   let content;
   if (issuingPolicy) {
     content = (
@@ -111,11 +134,15 @@ export default function InsurerDashboard() {
         policy={issuingPolicy}
         onBack={backToSection}
         onIssued={async (policyNumber, issuance) => {
-          await api.policies.issueCertificate(policyNumber, issuance);
-          await hydrateInsurerPortal();
+          await thenReloadPortal(() => api.policies.issueCertificate(policyNumber, issuance));
           toast.success('Official policy issued', {
             description: `${policyNumber} is active. The customer can open the certificate from their account.`,
-            action: nextPolicy && { label: 'Next policy', onClick: () => navigate(portalPath.issue(nextPolicy.policyNumber)) },
+            ...(nextPolicy && nextOffer(
+              'Next policy',
+              portalPath.issue(nextPolicy.policyNumber),
+              (queues) => queues.awaitingCertificate.some((policy) => policy.policyNumber === nextPolicy.policyNumber),
+              'That policy has already been issued.',
+            )),
           });
           navigate(sectionPath, { replace: true });
         }}
@@ -132,11 +159,15 @@ export default function InsurerDashboard() {
         defaultValidityDays={defaultValidityDays}
         onBack={backToSection}
         onSubmit={async (quote) => {
-          await api.quotes.reply(quotingRequest.id, quote);
-          await hydrateInsurerPortal();
+          await thenReloadPortal(() => api.quotes.reply(quotingRequest.id, quote));
           toast.success('Quote sent', {
             description: `The customer can now see your quotation for ${quotingRequest.vehicle}.`,
-            action: nextRequest && { label: 'Next request', onClick: () => navigate(portalPath.quote(nextRequest.id)) },
+            ...(nextRequest && nextOffer(
+              'Next request',
+              portalPath.quote(nextRequest.id),
+              (queues) => queues.awaitingQuote.some((request) => request.id === nextRequest.id),
+              'That request has already been answered.',
+            )),
           });
           navigate(sectionPath, { replace: true });
         }}
@@ -191,10 +222,7 @@ export default function InsurerDashboard() {
           countLabel={`${quoted.length} sent`}
           requests={quoted}
           emptyMessage="No quotes have been sent yet."
-          onExtend={async (request) => {
-            await api.quotes.extend(request.id, EXTENSION_DAYS);
-            await hydrateInsurerPortal();
-          }}
+          onExtend={(request) => thenReloadPortal(() => api.quotes.extend(request.id, EXTENSION_DAYS))}
         />
       </>
     );
@@ -205,9 +233,10 @@ export default function InsurerDashboard() {
         onSave={async (coverageType, guide) => {
           if (!insurer) throw new Error('Your insurer profile could not be found.');
           const coverGuides = { ...(insurer.coverGuides || {}), [coverageType]: guide };
-          await api.insurers.update(insurer.id, { coverGuides });
-          updateInsurer(insurer.id, { coverGuides });
-          await hydrateInsurerPortal();
+          await thenReloadPortal(async () => {
+            await api.insurers.update(insurer.id, { coverGuides });
+            updateInsurer(insurer.id, { coverGuides });
+          });
         }}
       />
     );

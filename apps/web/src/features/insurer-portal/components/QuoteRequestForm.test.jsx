@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import QuoteRequestForm from './QuoteRequestForm';
@@ -101,6 +101,26 @@ describe('QuoteRequestForm', () => {
     expect(within(customerView()).getByText('Tracker required')).toBeVisible();
     // The file's name means nothing to the customer; what matters is that the document is there.
     expect(await within(customerView()).findByText('Attached')).toBeVisible();
+  });
+
+  it('never sends a quote without a premium, even if the browser’s own check is bypassed', async () => {
+    const user = userEvent.setup();
+    const { onSubmit, fileInput } = show();
+    await user.upload(fileInput, quotation());
+    await screen.findByText('quote.pdf');
+
+    const premium = screen.getByLabelText(/Premium on your quotation/);
+    for (const amount of ['', '0']) {
+      if (amount) await user.type(premium, amount);
+      fireEvent.submit(premium.closest('form'));
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(premium).toHaveFocus();
+    }
+  });
+
+  it('still opens for a request whose cover type it does not recognise, priced as comprehensive', () => {
+    show({ request: { ...request, insuranceType: 'Fleet' }, coverGuides: {} });
+    expect(screen.getByText('Publish your comprehensive cover guide before sending this quote.')).toBeVisible();
   });
 
   it('keeps the form and says what is wrong when the validity is not a usable number of days', async () => {
@@ -215,7 +235,11 @@ describe('QuoteRequestForm', () => {
     expect(sending).toHaveAttribute('aria-busy', 'true');
 
     await act(async () => { fail(new Error('ECONNRESET')); });
-    expect(await screen.findByRole('alert')).toHaveTextContent('This quote could not be sent. Check your connection and try again.');
+    const failure = await screen.findByRole('alert');
+    expect(failure).toHaveTextContent('This quote could not be sent. Check your connection and try again.');
+    // A lost reply looks the same as a refused one, so the screen does not say what the customer did or did not receive.
+    expect(failure).toHaveTextContent('What you entered is still here.');
+    expect(failure).not.toHaveTextContent(/Nothing was sent/);
     expect(screen.getByLabelText(/Premium on your quotation/)).toHaveValue(10650);
     expect(screen.getByText('quote.pdf')).toBeVisible();
 

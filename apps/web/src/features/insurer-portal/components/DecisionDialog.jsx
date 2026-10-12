@@ -16,15 +16,24 @@ import { Spinner } from '@/components/ui/primitives/spinner';
  * `options` are `{ value, title, description, confirm }`; `confirm` is the
  * wording of the button once that outcome is chosen. Mount it for the record
  * under review and unmount it on close, so every review starts undecided.
+ *
+ * The dialog is opened by mounting it, so it has no trigger to give focus
+ * back to; `returnFocusTo()` names the element that gets it on close.
  */
-export default function DecisionDialog({ title, description, options, pending, error, onDecide, onClose, children }) {
+export default function DecisionDialog({ title, description, options, pending, error, onDecide, onClose, returnFocusTo, children }) {
   const id = useId();
   const [choice, setChoice] = useState('');
   const chosen = options.find((option) => option.value === choice);
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !pending) onClose(); }}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent
+        className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusTo?.()?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}

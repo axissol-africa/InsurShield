@@ -6,6 +6,12 @@ import { COVERAGE_DURATION_OPTIONS } from '@/domain/insurers';
 import { timeAgo } from '@/lib/time';
 
 export const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
+export const CLAIM_NOTIFIED = 'Notified';
+export const CLAIM_RECEIVED = 'Received by insurer';
+/** How far one "extend" pushes a sent quote's validity. */
+export const EXTENSION_DAYS = 7;
+/** The element every portal screen renders into; the skip link and screen changes move focus to it. */
+export const PORTAL_CONTENT_ID = 'insurer-content';
 
 const OPEN_NCD_STATUSES = ['Submitted', 'Under Review'];
 export const isOpenNcdApplication = (application) => OPEN_NCD_STATUSES.includes(application.status);
@@ -16,10 +22,7 @@ export const isOpenNcdApplication = (application) => OPEN_NCD_STATUSES.includes(
  * An unrecognised status is settled, so it can never read as open work.
  */
 const STATUS_TONES = {
-  Notified: 'open',
-  Submitted: 'open',
-  'Under Review': 'open',
-  [AWAITING_CERTIFICATE]: 'open',
+  ...Object.fromEntries([CLAIM_NOTIFIED, AWAITING_CERTIFICATE, ...OPEN_NCD_STATUSES].map((status) => [status, 'open'])),
   Rejected: 'declined',
 };
 export const statusTone = (status) => STATUS_TONES[status] || 'settled';
@@ -38,14 +41,16 @@ export const CASE_STAGES = [
 export const days = (count) => `${count} day${count === 1 ? '' : 's'}`;
 
 /**
- * When the customer's request stops taking quotes, worded for the insurer who
- * still has to reply. `urgent` when little or no time is left.
+ * The date the customer's request expects its quotes by, worded for the
+ * insurer who still has to reply. `urgent` when little or no time is left.
+ * Past that date the reply is overdue, not refused: nothing stops a late
+ * quote being sent, so the label does not say the request is closed.
  */
 export const replyDeadline = (request, now = new Date()) => {
   const { validUntil, daysLeft, expired, expiringSoon } = quoteValidity({ validUntil: request.expiresAt }, now);
-  if (!validUntil) return null;
+  if (!validUntil || Number.isNaN(daysLeft)) return null;
   return {
-    label: expired ? `Closed for quotes on ${formatDate(validUntil)}` : `Reply by ${formatDate(validUntil)} · ${days(daysLeft)} left`,
+    label: expired ? `Reply was due ${formatDate(validUntil)}` : `Reply by ${formatDate(validUntil)} · ${days(daysLeft)} left`,
     urgent: expired || expiringSoon,
   };
 };
@@ -69,8 +74,13 @@ export const premiumCheck = (premium, estimate) => {
 /** When the customer's payment was confirmed: the start of their wait for a certificate. */
 export const policyPaidAt = (policy) => policy.paymentProof?.confirmedAt || policy.receivedAt;
 
-/** Sort comparator for a work queue: whoever has waited longest is served first. */
-export const waitingLongestFirst = (since) => (first, second) => new Date(since(first) || 0) - new Date(since(second) || 0);
+/**
+ * Sort comparator for a work queue: whoever has waited longest is served
+ * first. A record with no usable date is put first too, where it will be
+ * seen, rather than wherever an unsortable value happens to land.
+ */
+const waitStart = (value) => new Date(value || 0).getTime() || 0;
+export const waitingLongestFirst = (since) => (first, second) => waitStart(since(first)) - waitStart(since(second));
 
 /** Addresses of the portal's screens. The section is a query parameter so the staff route stays one path. */
 const PORTAL_ROOT = '/insurer';
@@ -91,15 +101,18 @@ const COMPREHENSIVE_ONLY_BENEFITS = /own damage|theft|fire|natural disaster|wind
 export const benefitsForCoverage = (insurer, insuranceType) =>
   (insurer?.benefits || []).filter((benefit) => insuranceType !== 'ThirdParty' || !COMPREHENSIVE_ONLY_BENEFITS.test(benefit));
 
+/** The cover type a request asks for. Anything that is not third party is quoted as comprehensive. */
+export const coverTypeOf = (request) =>
+  (request.insuranceType === 'ThirdParty' || (!request.insuranceType && request.coverage === 'Third Party Only') ? 'ThirdParty' : 'Comprehensive');
+
 /** Shape a stored quote request for the portal: display strings plus this insurer's reply, if any. */
 export const toPortalRequest = (request, insurerName) => ({
   ...request,
   vehicle: request.vehicle || 'Vehicle pending',
   value: formatZMW(request.vehicleValue || 0),
   usage: request.vehicleUsage || 'Private',
-  coverage: request.insuranceType === 'ThirdParty' ? 'Third Party Only' : 'Comprehensive',
+  coverage: coverTypeOf(request) === 'ThirdParty' ? 'Third Party Only' : 'Comprehensive',
   client: request.customer?.fullName || 'Customer',
-  contact: [request.customer?.phone, request.customer?.email].filter(Boolean).join(' · '),
   period: COVERAGE_DURATION_OPTIONS.find((option) => option.id === request.coverageDurationId)?.label || '—',
   dates: request.policyDates ? coverPeriodLabel(request.policyDates) : 'From payment date',
   plate: request.vehicleDetails?.plateNumber || '',

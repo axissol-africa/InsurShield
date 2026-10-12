@@ -18,7 +18,7 @@ vi.mock('@/api', () => ({
   },
 }));
 vi.mock('@/api/sync', () => ({ hydrateInsurerPortal: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('sonner', async (original) => ({ ...(await original()), toast: { success: vi.fn() } }));
+vi.mock('sonner', async (original) => ({ ...(await original()), toast: { success: vi.fn(), info: vi.fn() } }));
 
 // The screens opened from a section are tested on their own; here they only
 // need to show which record they were given and hand back their outcome.
@@ -82,6 +82,7 @@ beforeEach(() => {
     policies: [
       { policyNumber: 'PA-WAITING', insurer: INSURER, status: AWAITING_CERTIFICATE, receivedAt: '2026-10-11T10:00:00Z' },
       { policyNumber: 'PA-ACTIVE', insurer: INSURER, status: 'Active', receivedAt: '2026-10-09T10:00:00Z' },
+      { policyNumber: 'PA-OTHER', insurer: 'Global Guard Insurance', status: AWAITING_CERTIFICATE, receivedAt: '2026-10-08T10:00:00Z' },
     ],
     claims: [],
     ncdApplications: [],
@@ -114,6 +115,8 @@ describe('quote screen', () => {
     await waitFor(() => expect(api.quotes.reply).toHaveBeenCalledOnce());
     expect(address()).toBe('/insurer?quote=QR-OPEN');
     expect(screen.getByText('Quote form for QR-OPEN')).toBeVisible();
+    // A request can fail after the server acted on it, so the lists are reloaded either way.
+    await waitFor(() => expect(hydrateInsurerPortal).toHaveBeenCalledTimes(2));
   });
 
   it('goes back to the overview without sending anything', async () => {
@@ -151,9 +154,34 @@ describe('certificate screen', () => {
     expect(address()).toBe('/insurer?view=policies&issue=PA-WAITING');
   });
 
-  it.each(['PA-ACTIVE', 'PA-UNKNOWN'])('shows the paid policies list for %s, which is not waiting for a certificate', (policyNumber) => {
+  it.each(['PA-ACTIVE', 'PA-UNKNOWN', 'PA-OTHER'])('shows the paid policies list for %s, which is not this insurer’s certificate to issue', (policyNumber) => {
     open(`/insurer?view=policies&issue=${policyNumber}`);
     expect(screen.queryByText(/Issue panel for/)).not.toBeInTheDocument();
+  });
+});
+
+describe('keyboard and screen-reader position', () => {
+  const content = () => document.getElementById('insurer-content');
+
+  it('starts each new screen at its content, because the control that opened it is gone', async () => {
+    const user = userEvent.setup();
+    open('/insurer');
+    expect(content()).not.toHaveFocus();
+
+    await user.click(within(screen.getByRole('table', { name: 'Quote requests' })).getByRole('button', { name: 'Send quote' }));
+    expect(screen.getByText('Quote form for QR-OPEN')).toBeVisible();
+    expect(content()).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'Leave quote' }));
+    expect(screen.getByRole('table', { name: 'Quote requests' })).toBeVisible();
+    expect(content()).toHaveFocus();
+  });
+
+  it('says how much work each section holds, not only shows it', () => {
+    open('/insurer');
+    const navigation = screen.getByRole('navigation', { name: 'Insurer navigation' });
+    expect(within(navigation).getByRole('link', { name: 'Paid policies' })).toHaveAccessibleDescription('1 to do');
+    expect(within(navigation).getByRole('link', { name: 'Claims' })).toHaveAccessibleDescription('');
   });
 });
 
@@ -191,9 +219,26 @@ describe('carrying on to the next item', () => {
     await waitFor(() => expect(address()).toBe('/insurer'));
     expect(lastToast()[0]).toBe('Quote sent');
     expect(lastToast()[1].action.label).toBe('Next request');
+    // Long enough to reach with a keyboard; the default is gone in a few seconds.
+    expect(lastToast()[1].duration).toBeGreaterThanOrEqual(20_000);
 
     act(() => lastToast()[1].action.onClick());
     expect(address()).toBe('/insurer?quote=QR-ALSO-OPEN');
+  });
+
+  it('says so when the next request was answered by someone else in the meantime', async () => {
+    const user = userEvent.setup();
+    api.quotes.reply.mockResolvedValue(undefined);
+    useStore.setState({ quoteRequests: [request('QR-OPEN'), request('QR-ALSO-OPEN')] });
+    open('/insurer?quote=QR-OPEN');
+
+    await user.click(screen.getByRole('button', { name: 'Submit quote' }));
+    await waitFor(() => expect(address()).toBe('/insurer'));
+    act(() => useStore.setState({ quoteRequests: [request('QR-OPEN'), request('QR-ALSO-OPEN', { [INSURER]: { premium: 9000 } })] }));
+
+    act(() => lastToast()[1].action.onClick());
+    expect(address()).toBe('/insurer');
+    expect(toast.info).toHaveBeenCalledExactlyOnceWith('That request has already been answered.');
   });
 
   it('offers nothing more when that was the last request', async () => {
@@ -204,6 +249,7 @@ describe('carrying on to the next item', () => {
     await user.click(screen.getByRole('button', { name: 'Submit quote' }));
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(lastToast()[1].action).toBeUndefined();
+    expect(lastToast()[1].duration).toBeUndefined();
   });
 
   it('offers the customer who has waited longest once a policy is issued', async () => {
@@ -220,9 +266,15 @@ describe('carrying on to the next item', () => {
     await waitFor(() => expect(address()).toBe('/insurer?view=policies'));
     expect(lastToast()[0]).toBe('Official policy issued');
     expect(lastToast()[1].action.label).toBe('Next policy');
+    expect(lastToast()[1].duration).toBeGreaterThanOrEqual(20_000);
 
     act(() => lastToast()[1].action.onClick());
     expect(address()).toBe('/insurer?view=policies&issue=PA-OLDEST');
+
+    // Offered again later, after a colleague has issued it, it no longer opens.
+    act(() => useStore.setState({ policies: [{ policyNumber: 'PA-OLDEST', insurer: INSURER, status: 'Active', receivedAt: '2026-10-09T10:00:00Z' }] }));
+    act(() => lastToast()[1].action.onClick());
+    expect(toast.info).toHaveBeenCalledExactlyOnceWith('That policy has already been issued.');
   });
 });
 

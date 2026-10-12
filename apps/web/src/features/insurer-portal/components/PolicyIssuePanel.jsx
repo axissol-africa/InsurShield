@@ -30,7 +30,8 @@ export default function PolicyIssuePanel({ policy, onBack, onIssued }) {
   const [insurerPolicyNumber, setInsurerPolicyNumber] = useState(policy.insurerPolicyNumber || '');
   const issuing = usePortalAction(onIssued, 'This policy could not be issued. Check your connection and try again.');
   const proof = policy.paymentProof || {};
-  const paid = timeAgo(policyPaidAt(policy));
+  const paidAt = policyPaidAt(policy);
+  const paid = timeAgo(paidAt);
   const period = coverPeriod(policy.policyDates);
   const customer = policy.customerName || 'The customer';
 
@@ -84,12 +85,14 @@ export default function PolicyIssuePanel({ policy, onBack, onIssued }) {
                 <h3 className="text-sm font-medium text-foreground">Payment</h3>
                 <Badge variant="secondary"><CircleCheck aria-hidden="true" />{proof.status || 'Confirmed'}</Badge>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">The gateway confirmed this payment before the policy reached you.</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {policy.paymentProof ? 'The gateway confirmed this payment before the policy reached you.' : 'This policy reached you as paid; its payment record was not supplied with it.'}
+              </p>
               <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
-                <Fact label="Transaction reference" value={<span className="font-mono">{proof.transactionId || `TXN-${policy.quoteRequestId}`}</span>} />
+                <Fact label="Transaction reference" value={proof.transactionId ? <span className="font-mono">{proof.transactionId}</span> : 'Not supplied'} />
                 <Fact label="Payment method" value={proof.method || 'Payment gateway'} />
                 <Fact label="Amount confirmed" value={<span className="tabular-nums">{formatZMW(proof.amount || policy.premium || 0)}</span>} />
-                <Fact label="Confirmed on" value={proof.confirmedAt ? formatDate(proof.confirmedAt) : 'Just now'} />
+                <Fact label="Paid on" value={paidAt ? formatDate(paidAt) : 'Not supplied'} />
               </dl>
             </section>
           </div>
@@ -137,7 +140,7 @@ export default function PolicyIssuePanel({ policy, onBack, onIssued }) {
               <Alert variant="destructive">
                 <TriangleAlert aria-hidden="true" />
                 <AlertTitle>{issuing.error}</AlertTitle>
-                <AlertDescription>The policy is still waiting for its certificate. Your file is still attached.</AlertDescription>
+                <AlertDescription>Your file is still attached.</AlertDescription>
               </Alert>
             )}
 

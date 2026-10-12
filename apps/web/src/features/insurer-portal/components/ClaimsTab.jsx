@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { CircleCheck, FileText, Inbox, PhoneIncoming, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { api } from '@/api';
-import { hydrateInsurerPortal } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { cn } from '@/lib/cn';
 import { timeAgo } from '@/lib/time';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { CLAIM_NOTIFIED, CLAIM_RECEIVED } from '@/features/insurer-portal/portal';
+import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Alert, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
@@ -18,8 +20,8 @@ import { Spinner } from '@/components/ui/primitives/spinner';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/primitives/toggle-group';
 import { BackButton, ContactLinks, EmptyPanel, Fact, FactGroup, PageHeader, StatusBadge, StepTrack } from './ui';
 
-const NEW = 'Notified';
-const RECEIVED = 'Received by insurer';
+const NEW = CLAIM_NOTIFIED;
+const RECEIVED = CLAIM_RECEIVED;
 
 const FILTERS = [
   { id: 'all', label: 'All', matches: () => true },
@@ -48,6 +50,18 @@ export default function ClaimsTab({ claims }) {
   const [selectedId, setSelectedId] = useState(null);
   const lastOpenedId = useRef(null);
   const search = useRef(null);
+  // Held here, not in the claim's detail: looking at another claim and coming
+  // back makes a new detail, and a save still in flight must not be offered again.
+  const marking = useKeyedPortalAction(
+    (number) => thenReloadPortal(() => api.claims.markReceived(number)),
+    'This claim could not be marked as received. Please try again.',
+  );
+  const markReceived = async (claim) => {
+    const number = claimNumber(claim);
+    if (!(await marking.run(claim.id, number))) return false;
+    toast.success('Claim marked as received', { description: `The customer can now see that ${number} reached you.` });
+    return true;
+  };
 
   const trimmed = query.trim().toLowerCase();
   const filter = FILTERS.find((candidate) => candidate.id === filterId);
@@ -123,7 +137,14 @@ export default function ClaimsTab({ claims }) {
 
           {/* ── Detail ────────────────────────────────────────────── */}
           {selected ? (
-            <ClaimDetail key={selected.id} claim={selected} onBack={() => setSelectedId(null)} />
+            <ClaimDetail
+              key={selected.id}
+              claim={selected}
+              onBack={() => setSelectedId(null)}
+              onMarkReceived={() => markReceived(selected)}
+              saving={marking.pending(selected.id)}
+              error={marking.error(selected.id)}
+            />
           ) : (
             <div className="hidden items-center justify-center md:flex">
               <EmptyPanel
@@ -158,16 +179,16 @@ function ClaimListItem({ claim, active, onSelect }) {
   );
 }
 
-function ClaimDetail({ claim, onBack }) {
+function ClaimDetail({ claim, onBack, onMarkReceived, saving, error }) {
   const region = useRef(null);
   const isMobile = useIsMobile();
   const received = claim.status === RECEIVED;
   const number = claimNumber(claim);
   const documents = claim.supportingDocs || [];
-  const marking = usePortalAction(async () => {
-    await api.claims.markReceived(number);
-    await hydrateInsurerPortal();
-  }, 'This claim could not be marked as received. Please try again.');
+  // The button that was pressed is replaced by the outcome, so focus stays on the claim it belongs to.
+  const mark = async () => {
+    if (await onMarkReceived()) region.current?.focus({ preventScroll: true });
+  };
 
   // The list is hidden behind the claim on a phone; take the keyboard and
   // screen-reader position with it.
@@ -253,15 +274,15 @@ function ClaimDetail({ claim, onBack }) {
               Once you have spoken to the customer, mark the claim received so they can see it reached you.
               Assessment and settlement continue in your own claims system.
             </p>
-            {marking.error && (
+            {error && (
               <Alert variant="destructive">
                 <TriangleAlert aria-hidden="true" />
-                <AlertTitle>{marking.error}</AlertTitle>
+                <AlertTitle>{error}</AlertTitle>
               </Alert>
             )}
-            <Button type="button" size="lg" onClick={() => marking.run()} disabled={marking.pending} aria-busy={marking.pending} aria-describedby="mark-received-hint" className="w-full sm:w-auto">
-              {marking.pending ? <Spinner aria-hidden="true" /> : <PhoneIncoming aria-hidden="true" />}
-              {marking.pending ? 'Saving…' : 'Mark as received'}
+            <Button type="button" size="lg" onClick={mark} disabled={saving} aria-busy={saving} aria-describedby="mark-received-hint" className="w-full sm:w-auto">
+              {saving ? <Spinner aria-hidden="true" /> : <PhoneIncoming aria-hidden="true" />}
+              {saving ? 'Saving…' : 'Mark as received'}
             </Button>
           </>
         )}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AWAITING_CERTIFICATE, benefitsForCoverage, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalRequest, waitingLongestFirst } from './portal';
+import { AWAITING_CERTIFICATE, benefitsForCoverage, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalRequest, waitingLongestFirst } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -11,14 +11,24 @@ describe('toPortalRequest', () => {
 
   it('formats the request for display and picks out this insurer’s reply', () => {
     const portal = toPortalRequest(request, 'Prestige Assurance');
-    expect(portal).toMatchObject({ value: 'ZMW 250,000.00', coverage: 'Third Party Only', client: 'Mwiza Banda', contact: '0970123456', period: '1 Year (12 Months)', dates: 'From payment date', plate: 'BAA 1234', photos: 2, time: 'just now' });
+    expect(portal).toMatchObject({ value: 'ZMW 250,000.00', coverage: 'Third Party Only', client: 'Mwiza Banda', period: '1 Year (12 Months)', dates: 'From payment date', plate: 'BAA 1234', photos: 2, time: 'just now' });
     expect(portal.reply).toEqual({ premium: 10900 });
     expect(toPortalRequest(request, 'Global Guard Insurance').reply).toBeNull();
   });
 
+  it('names the cover type one way, whatever the record calls it', () => {
+    expect(coverTypeOf({ insuranceType: 'ThirdParty' })).toBe('ThirdParty');
+    expect(coverTypeOf({ coverage: 'Third Party Only' })).toBe('ThirdParty');
+    // Anything unrecognised is priced as comprehensive, as the queue already labels it.
+    for (const request of [{ insuranceType: 'Comprehensive' }, { insuranceType: 'third party' }, { insuranceType: 'Fleet' }, {}]) {
+      expect(coverTypeOf(request)).toBe('Comprehensive');
+    }
+    expect(toPortalRequest({ id: 'QR-3', insuranceType: 'Fleet' }, 'Prestige Assurance').coverage).toBe('Comprehensive');
+  });
+
   it('has sensible fallbacks for sparse records', () => {
     const portal = toPortalRequest({ id: 'QR-2', insurers: [] }, 'Prestige Assurance');
-    expect(portal).toMatchObject({ vehicle: 'Vehicle pending', value: 'ZMW 0.00', usage: 'Private', coverage: 'Comprehensive', client: 'Customer', contact: '', period: '—', plate: '', photos: 0, reply: null });
+    expect(portal).toMatchObject({ vehicle: 'Vehicle pending', value: 'ZMW 0.00', usage: 'Private', coverage: 'Comprehensive', client: 'Customer', period: '—', plate: '', photos: 0, reply: null });
   });
 });
 
@@ -59,9 +69,14 @@ describe('replyDeadline', () => {
     expect(replyDeadline({ expiresAt: '2026-10-13T10:00:00Z' }, now)).toEqual({ label: 'Reply by 13 Oct 2026 · 1 day left', urgent: true });
   });
 
-  it('says so when the request has closed, and nothing when it carries no deadline', () => {
-    expect(replyDeadline({ expiresAt: '2026-10-11T10:00:00Z' }, now)).toEqual({ label: 'Closed for quotes on 11 Oct 2026', urgent: true });
+  it('says the reply is overdue once the date has passed, without claiming the request is closed', () => {
+    // A late quote is still accepted, so the label must not say otherwise.
+    expect(replyDeadline({ expiresAt: '2026-10-11T10:00:00Z' }, now)).toEqual({ label: 'Reply was due 11 Oct 2026', urgent: true });
+  });
+
+  it('says nothing when the request carries no deadline, or one that is not a date', () => {
     expect(replyDeadline({}, now)).toBeNull();
+    expect(replyDeadline({ expiresAt: 'soon' }, now)).toBeNull();
   });
 });
 
@@ -83,6 +98,13 @@ describe('waitingLongestFirst', () => {
   it('orders work by who has waited longest', () => {
     const records = [{ id: 'new', at: '2026-10-12T09:00:00Z' }, { id: 'old', at: '2026-10-10T09:00:00Z' }, { id: 'mid', at: '2026-10-11T09:00:00Z' }];
     expect([...records].sort(waitingLongestFirst((record) => record.at)).map((record) => record.id)).toEqual(['old', 'mid', 'new']);
+  });
+
+  it('puts a record whose wait is unknown first rather than losing it in the order', () => {
+    const records = [{ id: 'new', at: '2026-10-12T09:00:00Z' }, { id: 'garbled', at: 'yesterday' }, { id: 'old', at: '2026-10-10T09:00:00Z' }, { id: 'undated' }];
+    const order = waitingLongestFirst((record) => record.at);
+    expect(order(records[1], records[0])).not.toBeNaN();
+    expect([...records].sort(order).map((record) => record.id)).toEqual(['garbled', 'undated', 'old', 'new']);
   });
 });
 

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/primitives/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/primitives/card';
 import { DataTable } from '@/components/ui/data-table';
 import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
-import { replyDeadline } from '@/features/insurer-portal/portal';
+import { EXTENSION_DAYS, days, replyDeadline } from '@/features/insurer-portal/portal';
 
 const PAGE_SIZE = 4;
 
@@ -117,7 +117,7 @@ function QuotedStatus({ reply, onExtend, extending, error }) {
       {validity.validUntil && <p className={`text-xs ${validity.expired || validity.expiringSoon ? 'text-primary' : 'text-muted-foreground'}`}>{validity.label}</p>}
       {validity.validUntil && !validity.expired && onExtend && (
         <Button type="button" variant="link" size="sm" onClick={onExtend} disabled={extending} aria-busy={extending} className="h-8 px-0">
-          {extending ? 'Extending…' : 'Extend 7 days'}
+          {extending ? 'Extending…' : `Extend ${days(EXTENSION_DAYS)}`}
         </Button>
       )}
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}

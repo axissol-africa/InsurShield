@@ -1,26 +1,28 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { BadgePercent, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/api';
-import { hydrateInsurerPortal } from '@/api/sync';
 import { timeAgo } from '@/lib/time';
 import { ncdDiscountForYears } from '@/domain/insurers';
 import { isOpenNcdApplication, waitingLongestFirst } from '@/features/insurer-portal/portal';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { useWorkList } from '@/features/insurer-portal/hooks/useWorkList';
+import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
 import { Card } from '@/components/ui/primitives/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/primitives/tabs';
 import { DataTable } from '@/components/ui/data-table';
 import DecisionDialog from './DecisionDialog';
-import { ContactLinks, EmptyPanel, Fact, PageHeader, StatusBadge } from './ui';
+import { ContactLinks, Detail, EmptyPanel, Fact, PageHeader, StatusBadge } from './ui';
 
 const PAGE_SIZE = 8;
 const years = (count, unit = 'yr') => `${count} ${unit}${count === 1 ? '' : 's'}`;
 const applicationNumber = (application) => application.applicationNumber || application.id;
+const reviewButtonId = (application) => `ncd-review-${application.id}`;
 const applied = (application) => (application.submittedAt ? `Applied ${timeAgo(application.submittedAt)}` : null);
-
-const Detail = ({ children, className = '' }) => <span className={`mt-1 block text-xs text-muted-foreground ${className}`}>{children}</span>;
+/** The discount the claimed years would give; a rejected application carries none, so none is shown beside it. */
+const discountNote = (application) => (application.status === 'Rejected' ? null : `${ncdDiscountForYears(application.yearsClaimFree)}% discount`);
 
 /**
  * What the insurer can decide, each with what it does. Approving and
@@ -73,7 +75,7 @@ const applicationColumns = [
     cell: ({ row }) => (
       <div className="min-w-28 whitespace-normal">
         <p className="font-medium tabular-nums">{years(row.original.yearsClaimFree)}</p>
-        <Detail>{ncdDiscountForYears(row.original.yearsClaimFree)}% discount</Detail>
+        {discountNote(row.original) && <Detail>{discountNote(row.original)}</Detail>}
       </div>
     ),
   },
@@ -101,7 +103,7 @@ function ApplicationCard({ application, children }) {
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
         <Fact label="Policy to check" value={<span className="font-mono">{application.policyNumber}</span>} />
-        <Fact label="Claim-free" value={`${years(application.yearsClaimFree)} · ${ncdDiscountForYears(application.yearsClaimFree)}% discount`} />
+        <Fact label="Claim-free" value={[years(application.yearsClaimFree), discountNote(application)].filter(Boolean).join(' · ')} />
       </dl>
       {children}
     </div>
@@ -116,15 +118,14 @@ function ApplicationCard({ application, children }) {
 export default function NcdTab({ applications }) {
   const open = applications.filter(isOpenNcdApplication).sort(waitingLongestFirst((application) => application.submittedAt));
   const decided = applications.filter((application) => !isOpenNcdApplication(application));
-  // Until the person picks a list, show the one with work in it.
-  const [chosenList, setChosenList] = useState(null);
-  const list = chosenList ?? (open.length > 0 || decided.length === 0 ? 'open' : 'decided');
+  const [list, setList] = useWorkList('open', 'decided', open.length > 0);
+  const lists = useRef(null);
   const [reviewingId, setReviewingId] = useState(null);
   const reviewing = open.find((application) => application.id === reviewingId);
-  const deciding = usePortalAction(async (application, status) => {
-    await api.ncd.decide(application.id, status);
-    await hydrateInsurerPortal();
-  }, 'That decision could not be saved. Please try again.');
+  const deciding = usePortalAction(
+    (application, status) => thenReloadPortal(() => api.ncd.decide(application.id, status)),
+    'That decision could not be saved. Please try again.',
+  );
 
   const startReview = (application) => {
     deciding.clearError();
@@ -138,7 +139,7 @@ export default function NcdTab({ applications }) {
   };
 
   const reviewAction = (application, className) => (
-    <Button type="button" onClick={() => startReview(application)} aria-label={`Review & decide ${application.fullName}’s application`} className={className}>
+    <Button type="button" id={reviewButtonId(application)} onClick={() => startReview(application)} aria-label={`Review & decide ${application.fullName}’s application`} className={className}>
       <ClipboardCheck aria-hidden="true" />Review &amp; decide
     </Button>
   );
@@ -167,8 +168,8 @@ export default function NcdTab({ applications }) {
       {applications.length === 0 ? (
         <EmptyPanel icon={BadgePercent} title="No NCD applications yet" description="When a policyholder applies for a no-claim discount with you, the application appears here for your decision." />
       ) : (
-        <Tabs value={list} onValueChange={setChosenList} className="gap-4">
-          <TabsList>
+        <Tabs value={list} onValueChange={setList} className="gap-4">
+          <TabsList ref={lists}>
             <TabsTrigger value="open">Open <Badge variant="secondary">{open.length}</Badge></TabsTrigger>
             <TabsTrigger value="decided">Decided <Badge variant="secondary">{decided.length}</Badge></TabsTrigger>
           </TabsList>
@@ -209,6 +210,8 @@ export default function NcdTab({ applications }) {
           error={deciding.error}
           onDecide={decide}
           onClose={() => setReviewingId(null)}
+          // Back to the application's own button, or to the list when a decision has taken it out of the open list.
+          returnFocusTo={() => document.getElementById(reviewButtonId(reviewing)) ?? lists.current?.querySelector('[aria-selected="true"]')}
         >
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-2xl border border-border bg-muted/40 p-4">
             <Fact label="Applicant" value={<>{reviewing.fullName}<ContactLinks phone={reviewing.phone} email={reviewing.email} className="mt-1" /></>} />

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Download, ExternalLink, FilePenLine, ShieldCheck } from 'lucide-react';
 import { formatZMW } from '@/domain/premiumEngine';
 import { coverPeriodLabel } from '@/domain/coverPeriod';
@@ -6,12 +5,13 @@ import { openDocument } from '@/lib/files';
 import { downloadPolicyCertificate } from '@/lib/policyDocuments';
 import { timeAgo } from '@/lib/time';
 import { AWAITING_CERTIFICATE, policyPaidAt, waitingLongestFirst } from '@/features/insurer-portal/portal';
+import { useWorkList } from '@/features/insurer-portal/hooks/useWorkList';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
 import { Card } from '@/components/ui/primitives/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/primitives/tabs';
 import { DataTable } from '@/components/ui/data-table';
-import { EmptyPanel, Fact, PageHeader, StatusBadge } from './ui';
+import { Detail, EmptyPanel, Fact, PageHeader, StatusBadge } from './ui';
 
 const PAGE_SIZE = 8;
 const policyId = (policy) => policy.policyNumber;
@@ -20,8 +20,6 @@ const policyId = (policy) => policy.policyNumber;
 const lastEvent = (policy) => (policy.status !== AWAITING_CERTIFICATE && policy.issuedAt
   ? `Issued ${timeAgo(policy.issuedAt)}`
   : `Paid ${timeAgo(policyPaidAt(policy)) || 'just now'}`);
-
-const Detail = ({ children, className = '' }) => <span className={`mt-1 block text-xs text-muted-foreground ${className}`}>{children}</span>;
 
 /** The request a policy came from, and the insurer's own reference for it when they gave one. */
 const References = ({ policy }) => (
@@ -106,10 +104,7 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
   // uploaded, so whoever paid first is served first.
   const awaiting = policies.filter((policy) => policy.status === AWAITING_CERTIFICATE).sort(waitingLongestFirst(policyPaidAt));
   const issued = policies.filter((policy) => policy.status !== AWAITING_CERTIFICATE);
-  // Until the person picks a list, show the one with work in it. Deriving it
-  // keeps that true when the policies arrive after the screen has opened.
-  const [chosenList, setChosenList] = useState(null);
-  const list = chosenList ?? (awaiting.length > 0 ? 'awaiting' : 'issued');
+  const [list, setList] = useWorkList('awaiting', 'issued', awaiting.length > 0);
 
   const issueAction = (policy, className) => (
     <Button type="button" onClick={() => onIssue(policy)} className={className}>
@@ -155,7 +150,7 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
           description="When a customer pays for your accepted quote, the paid request appears here for your team to issue the official certificate."
         />
       ) : (
-        <Tabs value={list} onValueChange={setChosenList} className="gap-4">
+        <Tabs value={list} onValueChange={setList} className="gap-4">
           <TabsList>
             <TabsTrigger value="awaiting">Awaiting certificate <Badge variant="secondary">{awaiting.length}</Badge></TabsTrigger>
             <TabsTrigger value="issued">Issued <Badge variant="secondary">{issued.length}</Badge></TabsTrigger>

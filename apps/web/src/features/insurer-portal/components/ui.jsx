@@ -1,4 +1,5 @@
 /** Small presentational pieces shared by the insurer portal sections. */
+import { useEffect, useRef } from 'react';
 import { ArrowLeft, Check, FileImage, FileText, Mail, Phone, Upload, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { mailtoHref, telHref } from '@/lib/contactLinks';
@@ -76,6 +77,9 @@ export function FactGroup({ title, columns = 2, children }) {
     </section>
   );
 }
+
+/** A quieter second line under a value: a reference, a time, a short qualifier. */
+export const Detail = ({ children, className }) => <span className={cn('mt-1 block text-xs text-muted-foreground', className)}>{children}</span>;
 
 /**
  * The customer's phone and email, as links wherever their name appears so
@@ -171,22 +175,33 @@ export function EmptyPanel({ icon: PanelIcon, title, description, children, clas
  * `documentToRecord`. `id` labels the file input, so a `<label htmlFor>` or
  * `FieldLabel` can name it; `inputRef` lets a form move focus to it.
  */
-export function DocumentPicker({ id, inputRef, document, onPick, onClear, prompt, error }) {
+export function DocumentPicker({ id, inputRef, document: chosen, onPick, onClear, prompt, error }) {
   const errorId = id ? `${id}-error` : undefined;
+  const picker = useRef(null);
+  const hadDocument = useRef(Boolean(chosen));
+
+  // Choosing a file replaces the input with the file, and removing the file
+  // brings the input back; whichever had focus is gone, so focus moves to
+  // what took its place instead of dropping out of the form.
+  useEffect(() => {
+    if (hadDocument.current === Boolean(chosen)) return;
+    hadDocument.current = Boolean(chosen);
+    picker.current?.querySelector(chosen ? 'button' : 'input')?.focus();
+  }, [chosen]);
 
   return (
-    <div className="flex flex-col gap-2">
-      {document ? (
+    <div ref={picker} className="flex flex-col gap-2">
+      {chosen ? (
         <Attachment className="w-full">
           <AttachmentMedia>
-            {document.type === 'application/pdf' ? <FileText aria-hidden="true" /> : <FileImage aria-hidden="true" />}
+            {chosen.type === 'application/pdf' ? <FileText aria-hidden="true" /> : <FileImage aria-hidden="true" />}
           </AttachmentMedia>
           <AttachmentContent>
-            <AttachmentTitle>{document.name}</AttachmentTitle>
-            <AttachmentDescription>{formatBytes(document.size)}</AttachmentDescription>
+            <AttachmentTitle>{chosen.name}</AttachmentTitle>
+            <AttachmentDescription>{formatBytes(chosen.size)}</AttachmentDescription>
           </AttachmentContent>
           <AttachmentActions>
-            <AttachmentAction type="button" size="icon-sm" aria-label={`Remove ${document.name}`} onClick={onClear}>
+            <AttachmentAction type="button" size="icon-sm" aria-label={`Remove ${chosen.name}`} onClick={onClear}>
               <X aria-hidden="true" />
             </AttachmentAction>
           </AttachmentActions>

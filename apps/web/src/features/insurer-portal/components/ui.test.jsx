@@ -77,6 +77,24 @@ describe('DocumentPicker', () => {
   });
 });
 
+describe('DocumentPicker focus', () => {
+  const file = { name: 'quote.pdf', type: 'application/pdf', size: 2048 };
+
+  it('keeps focus on the picker when the control that had it is replaced', () => {
+    const props = { id: 'quotation', prompt: 'Attach', onPick: vi.fn(), onClear: vi.fn() };
+    const { container, rerender } = render(<DocumentPicker {...props} />);
+    expect(container.querySelector('input[type="file"]')).not.toHaveFocus();
+
+    // Choosing a file removes the input that had focus…
+    rerender(<DocumentPicker {...props} document={file} />);
+    expect(screen.getByRole('button', { name: 'Remove quote.pdf' })).toHaveFocus();
+
+    // …and removing the file removes the button that had it.
+    rerender(<DocumentPicker {...props} />);
+    expect(container.querySelector('input[type="file"]')).toHaveFocus();
+  });
+});
+
 describe('CaseProgress', () => {
   const steps = () => within(screen.getByRole('list', { name: 'Where this policy stands' })).getAllByRole('listitem');
 

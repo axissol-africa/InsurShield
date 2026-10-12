@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, Eye, Pencil, Plus, TriangleAlert, Upload, X } from 'lucide-react';
 import {
   COVER_TYPES, COVER_TYPE_LABELS, blankCoverGuide, cleanCoverGuide,
@@ -194,16 +194,19 @@ export default function CoverGuideLibrary({ insurer, onSave }) {
                   <AlertTitle>{error}</AlertTitle>
                 </Alert>
               )}
-              {saved === coverType && (
-                <Item variant="muted" size="sm" role="status">
-                  <ItemMedia variant="icon"><CircleCheck className="text-primary" aria-hidden="true" /></ItemMedia>
-                  <ItemContent>
-                    <ItemDescription className="line-clamp-none text-foreground">
-                      Published. Customers comparing {COVER_TYPE_LABELS[coverType].toLowerCase()} quotes see this guide.
-                    </ItemDescription>
-                  </ItemContent>
-                </Item>
-              )}
+              {/* The region is always there, so a screen reader hears the confirmation arrive in it. */}
+              <div role="status">
+                {saved === coverType && (
+                  <Item variant="muted" size="sm">
+                    <ItemMedia variant="icon"><CircleCheck className="text-primary" aria-hidden="true" /></ItemMedia>
+                    <ItemContent>
+                      <ItemDescription className="line-clamp-none text-foreground">
+                        Published. Customers comparing {COVER_TYPE_LABELS[coverType].toLowerCase()} quotes see this guide on quotes you send from now on.
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
+                )}
+              </div>
 
               <Card size="sm" className="sticky bottom-4 z-10 shadow-lg">
                 <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-3">
@@ -280,9 +283,24 @@ function GuideField({ id, field, value, error, onChange }) {
 function ListField({ control, label, value, max, placeholder, onChange }) {
   const rows = value.length ? value : [''];
   const update = (index, next) => onChange(rows.map((row, position) => (position === index ? next : row)));
+  const lines = useRef(null);
+  const focusLine = useRef(null);
+
+  // Removing a line removes the button that was pressed; focus goes to the
+  // line that took its place, or the last one when the last was removed.
+  useEffect(() => {
+    if (focusLine.current === null) return;
+    const inputs = lines.current?.querySelectorAll('input') ?? [];
+    inputs[Math.min(focusLine.current, inputs.length - 1)]?.focus();
+    focusLine.current = null;
+  });
+  const remove = (index) => {
+    focusLine.current = index;
+    onChange(rows.filter((_, position) => position !== index));
+  };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={lines} className="flex flex-col gap-2">
       {rows.map((row, index) => (
         <div key={index} className="flex gap-2">
           <Input
@@ -295,7 +313,7 @@ function ListField({ control, label, value, max, placeholder, onChange }) {
             type="button"
             variant="ghost"
             size="icon"
-            onClick={() => onChange(rows.filter((_, position) => position !== index))}
+            onClick={() => remove(index)}
             aria-label={`Remove ${label} line ${index + 1}`}
             className="shrink-0 text-muted-foreground"
           >

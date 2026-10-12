@@ -68,6 +68,8 @@ describe('CoverGuideLibrary', () => {
     const onSave = vi.fn().mockReturnValue(new Promise((resolve) => { finish = resolve; }));
     show({ onSave });
 
+    // The announcement region is there before there is anything to announce, so a screen reader hears it fill.
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     await user.type(screen.getByLabelText('Claims contact *'), '  ');
     await user.click(screen.getByRole('switch', { name: 'No-claim discount accepted' }));
     await user.click(screen.getByRole('button', { name: 'Update the guide' }));
@@ -78,7 +80,7 @@ describe('CoverGuideLibrary', () => {
     expect(onSave).toHaveBeenCalledExactlyOnceWith('Comprehensive', { ...guide, ncdAccepted: false });
 
     await act(async () => { finish(); });
-    expect(screen.getByRole('status')).toHaveTextContent('Published. Customers comparing comprehensive quotes see this guide.');
+    expect(screen.getByRole('status')).toHaveTextContent('Published. Customers comparing comprehensive quotes see this guide on quotes you send from now on.');
   });
 
   it('points at the first unanswered question instead of publishing', async () => {
@@ -158,5 +160,10 @@ describe('CoverGuideLibrary', () => {
     await user.type(benefits()[2], 'Windscreen cover');
     await user.click(within(section).getByRole('button', { name: 'Remove Covered benefits line 1' }));
     expect(benefits().map((input) => input.value)).toEqual(['Theft and fire', 'Windscreen cover']);
+    // The button that was pressed went with its line; focus goes to the line that took its place.
+    expect(benefits()[0]).toHaveFocus();
+
+    await user.click(within(section).getByRole('button', { name: 'Remove Covered benefits line 2' }));
+    expect(benefits()[0]).toHaveFocus();
   });
 });

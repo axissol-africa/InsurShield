@@ -4,9 +4,11 @@ import userEvent from '@testing-library/user-event';
 import ClaimsTab from './ClaimsTab';
 import { api } from '@/api';
 import { hydrateInsurerPortal } from '@/api/sync';
+import { toast } from 'sonner';
 
 vi.mock('@/api', () => ({ api: { claims: { markReceived: vi.fn() } } }));
 vi.mock('@/api/sync', () => ({ hydrateInsurerPortal: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('sonner', async (original) => ({ ...(await original()), toast: { success: vi.fn() } }));
 
 const theft = {
   id: 'CLM-654321', claimNumber: 'CLM-654321', status: 'Notified', submittedAt: new Date().toISOString(), insurer: 'Prestige Assurance', type: 'Theft',
@@ -117,7 +119,11 @@ describe('ClaimsTab', () => {
     const user = userEvent.setup();
     let finish;
     api.claims.markReceived.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-    render(<ClaimsTab claims={[theft]} />);
+    const { rerender } = render(<ClaimsTab claims={[theft]} />);
+    // The reload is what brings the claim back as received.
+    hydrateInsurerPortal.mockImplementationOnce(async () => {
+      rerender(<ClaimsTab claims={[{ ...theft, status: 'Received by insurer', receivedAt: new Date().toISOString() }]} />);
+    });
     await open(user, 'CLM-654321');
 
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
@@ -128,7 +134,24 @@ describe('ClaimsTab', () => {
 
     await act(async () => { finish(); });
     expect(hydrateInsurerPortal).toHaveBeenCalledOnce();
-    expect(screen.getByRole('button', { name: 'Mark as received' })).toBeEnabled();
+    expect(screen.getByText('Received — this claim continues in your own claims system.')).toBeVisible();
+    // The button that had focus is gone, so the outcome is announced and focus stays on the claim.
+    expect(toast.success).toHaveBeenCalledExactlyOnceWith('Claim marked as received', { description: 'The customer can now see that CLM-654321 reached you.' });
+    expect(screen.getByRole('region', { name: 'Claim CLM-654321' })).toHaveFocus();
+  });
+
+  it('keeps a claim’s save in flight while the insurer looks at another claim and comes back', async () => {
+    const user = userEvent.setup();
+    api.claims.markReceived.mockReturnValue(new Promise(() => {}));
+    render(<ClaimsTab claims={[theft, collision]} />);
+
+    await open(user, 'CLM-654321');
+    await user.click(screen.getByRole('button', { name: 'Mark as received' }));
+    await open(user, 'CLM-111222');
+    await open(user, 'CLM-654321');
+
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(api.claims.markReceived).toHaveBeenCalledOnce();
   });
 
   it('explains a failure and lets the insurer try again', async () => {
@@ -139,6 +162,8 @@ describe('ClaimsTab', () => {
 
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('This claim could not be marked as received. Please try again.');
+    expect(hydrateInsurerPortal).toHaveBeenCalledOnce();
+    expect(toast.success).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     expect(api.claims.markReceived).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();

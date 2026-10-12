@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import NcdTab from './NcdTab';
 import { api } from '@/api';
@@ -47,7 +47,10 @@ describe('NcdTab', () => {
     await user.click(screen.getByRole('tab', { name: /Decided/ }));
     const table = await screen.findByRole('table', { name: 'Decided NCD applications' });
     expect(within(table).getByRole('row', { name: /Bwalya Mumba/ })).toHaveTextContent('NCD-20-BWALYA');
+    expect(within(table).getByRole('row', { name: /Bwalya Mumba/ })).toHaveTextContent('20% discount');
     expect(within(table).getByRole('row', { name: /Thandiwe Zulu/ })).toHaveTextContent('Rejected');
+    // A rejected application carries no discount, so none is shown beside it.
+    expect(within(table).getByRole('row', { name: /Thandiwe Zulu/ })).not.toHaveTextContent('% discount');
     expect(within(table).queryByRole('button', { name: /Review/ })).not.toBeInTheDocument();
   });
 
@@ -118,11 +121,36 @@ describe('NcdTab', () => {
     await user.click(within(dialog).getByRole('radio', { name: /^Approve/ }));
     await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('That decision could not be saved. Please try again.');
+    // A colleague may have decided it first; the reload is what would show that.
+    expect(hydrateInsurerPortal).toHaveBeenCalledOnce();
     expect(within(dialog).getByRole('radio', { name: /^Approve/ })).toBeChecked();
 
     await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
     expect(api.ncd.decide).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('leaves focus on the list once the decided application has left it', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<NcdTab applications={[submitted, reviewing]} />);
+    hydrateInsurerPortal.mockImplementationOnce(async () => {
+      rerender(<NcdTab applications={[{ ...submitted, status: 'Approved', approvedCode: 'NCD-30-MWIZA' }, reviewing]} />);
+    });
+    const dialog = await review(user, 'Mwiza Banda');
+
+    await user.click(within(dialog).getByRole('radio', { name: /^Approve/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
+    // The row and its button are gone; without this focus falls to the top of the document.
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Open/ })).toHaveFocus());
+  });
+
+  it('returns focus to the application when it stays in the list', async () => {
+    const user = userEvent.setup();
+    render(<NcdTab applications={[submitted]} />);
+    const dialog = await review(user, 'Mwiza Banda');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review & decide Mwiza Banda’s application' })).toHaveFocus());
   });
 
   it('says so when there are no applications', () => {

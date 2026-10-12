@@ -75,10 +75,24 @@ describe('PolicyIssuePanel', () => {
     expect(next).toHaveTextContent('Mwiza Banda can open the certificate from their account');
   });
 
-  it('falls back to the request number when the gateway gave no transaction reference', () => {
-    show({ policy: { ...policy, paymentProof: undefined, quoteDocument: undefined } });
-    expect(screen.getByText('TXN-QR-774510')).toBeVisible();
+  it('says what it was not given about a payment instead of inventing it', () => {
+    show({ policy: { ...policy, paymentProof: undefined, quoteDocument: undefined, receivedAt: '2026-10-11T10:00:00Z' } });
+
+    const bought = screen.getByRole('region', { name: 'What the customer bought' });
+    expect(within(bought).getByText('Transaction reference').nextElementSibling).toHaveTextContent('Not supplied');
+    expect(within(bought).queryByText(/^TXN-/)).not.toBeInTheDocument();
+    expect(within(bought).queryByText(/gateway confirmed this payment/)).not.toBeInTheDocument();
+    // The same moment the header counts the wait from.
+    expect(within(bought).getByText('Paid on').nextElementSibling).toHaveTextContent('11 Oct 2026');
+    expect(within(bought).queryByText('Just now')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /View the quotation you sent/ })).not.toBeInTheDocument();
+  });
+
+  it('dates a confirmed payment from the gateway’s confirmation', () => {
+    show({ policy: { ...policy, paymentProof: { ...policy.paymentProof, confirmedAt: '2026-10-10T08:00:00Z' } } });
+    const bought = screen.getByRole('region', { name: 'What the customer bought' });
+    expect(within(bought).getByText('Paid on').nextElementSibling).toHaveTextContent('10 Oct 2026');
+    expect(within(bought).getByText(/gateway confirmed this payment/)).toBeVisible();
   });
 
   it('asks for the certificate before issuing', async () => {
@@ -119,7 +133,10 @@ describe('PolicyIssuePanel', () => {
     expect(issuing).toHaveAttribute('aria-busy', 'true');
 
     await act(async () => { fail(new Error('ECONNRESET')); });
-    expect(await screen.findByRole('alert')).toHaveTextContent('This policy could not be issued. Check your connection and try again.');
+    const failure = await screen.findByRole('alert');
+    expect(failure).toHaveTextContent('This policy could not be issued. Check your connection and try again.');
+    expect(failure).toHaveTextContent('Your file is still attached.');
+    expect(failure).not.toHaveTextContent(/still waiting for its certificate/);
     expect(screen.getByText('certificate.pdf')).toBeVisible();
 
     await user.click(issue());

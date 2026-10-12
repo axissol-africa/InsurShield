@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Building2, LogOut, X } from 'lucide-react';
 import { useStore } from '@/store';
 import { cn } from '@/lib/cn';
-import { portalPath } from '@/features/insurer-portal/portal';
+import { PORTAL_CONTENT_ID, portalPath } from '@/features/insurer-portal/portal';
 import {
   Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator,
 } from '@/components/ui/primitives/breadcrumb';
@@ -35,7 +35,7 @@ export default function InsurerShell({ insurerName, insurerLogo, sections, activ
 
   return (
     <SidebarProvider className="insurer-shell bg-muted text-foreground">
-      <a href="#insurer-content" className="sr-only z-50 rounded-md bg-background p-3 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
+      <a href={`#${PORTAL_CONTENT_ID}`} className="sr-only z-50 rounded-md bg-background p-3 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
       <InsurerNavigation
         insurerName={insurerName}
         insurerLogo={insurerLogo}
@@ -76,7 +76,7 @@ export default function InsurerShell({ insurerName, insurerLogo, sections, activ
             </Button>
           </div>
         </header>
-        <div id="insurer-content" tabIndex={-1} className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6 p-4 outline-none sm:p-6 lg:p-8">
+        <div id={PORTAL_CONTENT_ID} tabIndex={-1} className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6 p-4 outline-none sm:p-6 lg:p-8">
           {children}
         </div>
       </SidebarInset>
@@ -127,6 +127,7 @@ function InsurerNavigation({ insurerName, insurerLogo, sections, activeSection, 
                       <Link
                         to={portalPath.section(id)}
                         aria-label={label}
+                        aria-describedby={badge > 0 ? `insurer-section-${id}-count` : undefined}
                         aria-current={activeSection === id ? 'page' : undefined}
                         onClick={() => setOpenMobile(false)}
                       >
@@ -134,7 +135,12 @@ function InsurerNavigation({ insurerName, insurerLogo, sections, activeSection, 
                         <span>{label}</span>
                       </Link>
                     </SidebarMenuButton>
-                    {badge > 0 && <SidebarMenuBadge className="right-3 top-3 bg-sidebar-accent text-sidebar-accent-foreground" aria-hidden="true">{badge}</SidebarMenuBadge>}
+                    {/* Read with the link it belongs to, not as a stray number after it. */}
+                    {badge > 0 && (
+                      <SidebarMenuBadge id={`insurer-section-${id}-count`} className="right-3 top-3 bg-sidebar-accent text-sidebar-accent-foreground" aria-hidden="true">
+                        {badge}{' '}<span className="sr-only">to do</span>
+                      </SidebarMenuBadge>
+                    )}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>

@@ -6,7 +6,7 @@ import { isForeignRegistered } from '@/domain/countries';
 import { COVER_TYPE_LABELS, isCoverGuideComplete } from '@/domain/coverGuide';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
-import { days, portalPath, premiumCheck, quoteOpenUntil, replyDeadline } from '@/features/insurer-portal/portal';
+import { coverTypeOf, days, portalPath, premiumCheck, quoteOpenUntil, replyDeadline } from '@/features/insurer-portal/portal';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
@@ -54,6 +54,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
   const quotation = useDocumentUpload();
   const quotationInput = useRef(null);
   const validityInput = useRef(null);
+  const premiumInput = useRef(null);
   const [premium, setPremium] = useState('');
   const [reference, setReference] = useState('');
   const [validityDays, setValidityDays] = useState('');
@@ -61,7 +62,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
   const sending = usePortalAction(onSubmit, 'This quote could not be sent. Check your connection and try again.');
 
   const estimate = indicativePremium(request, insurer, piaRatePercentage);
-  const coverageType = request.insuranceType || (request.coverage === 'Third Party Only' ? 'ThirdParty' : 'Comprehensive');
+  const coverageType = coverTypeOf(request);
   const coverLabel = COVER_TYPE_LABELS[coverageType];
   const coverGuide = coverGuides[coverageType];
   const guidePublished = isCoverGuideComplete(coverGuide);
@@ -72,6 +73,11 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
   const handleSubmit = (event) => {
     event.preventDefault();
     if (!guidePublished) return;
+    // The browser already refuses an empty or zero premium; this holds if that check is ever bypassed.
+    if (!(Number(premium) > 0)) {
+      premiumInput.current?.focus();
+      return;
+    }
     if (validityProblem) {
       validityInput.current?.focus();
       return;
@@ -163,6 +169,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
                   <InputGroup>
                     <InputGroupAddon><InputGroupText>ZMW</InputGroupText></InputGroupAddon>
                     <InputGroupInput
+                      ref={premiumInput}
                       id="quote-premium"
                       required
                       type="number"
@@ -269,7 +276,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
               <Alert variant="destructive">
                 <TriangleAlert aria-hidden="true" />
                 <AlertTitle>{sending.error}</AlertTitle>
-                <AlertDescription>Nothing was sent to the customer. What you entered is still here.</AlertDescription>
+                <AlertDescription>What you entered is still here.</AlertDescription>
               </Alert>
             )}
 
