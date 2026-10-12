@@ -115,6 +115,44 @@ Today the mock adapter is complete and two flows are already routed through `api
 2. Put business rules in `src/domain/` with unit tests and backend operations in `src/api/contracts.js` and both adapters. Compose query and mutation hooks around those operations. Put shared client-only state in the relevant store slice, and follow the persistence version and migration mechanism when its stored shape changes.
 3. Add a Vitest test for any rule and a Playwright spec in `tests/` for the user-visible flow.
 
+## Insurer workspace
+
+`/insurer` uses `InsurerShell` and the installed shadcn Sidebar components, behind the existing staff route guard. Section links use `?view=guides`, `policies`, `claims`, or `ncd`; the overview uses the base URL. Desktop navigation collapses to icons, while the mobile drawer closes after selection and returns keyboard focus to its trigger.
+
+The overview composes shadcn summary cards and a reusable `DataTable` for incoming and sent quotes. The table uses TanStack Table v9 for sorting and pagination and keeps actions bound to each original request. Each summary card links to the work it counts.
+
+The portal is an exchange desk beside the insurer's own systems: a request arrives, the officer does the work in their own system, and one thing is handed back. Every screen is built from four patterns in `src/features/insurer-portal/components/`, so the officer always finds whose turn it is, how long the customer has waited, and what the customer sees afterwards:
+
+| Pattern | Used for | Parts |
+| --- | --- | --- |
+| Work queue | Quote requests, paid policies, open NCD applications | `DataTable` with `renderCard`; one action per item; stacked cards on phones. Paid policies and NCD applications list the longest wait first (`waitingLongestFirst`). |
+| Task screen | Preparing a quotation (`?quote=<requestId>`), issuing a certificate (`?view=policies&issue=<policyNumber>`) | `TaskScreen`, `TaskPanel`, `TaskOutcome`: the case journey (`CaseProgress`), what the customer gave, what the insurer hands back, then what the customer gets, directly above the one action. |
+| Review and decide | NCD decisions | `DecisionDialog`: the facts to check and every outcome with its consequence; an outcome is chosen and then confirmed. |
+| Record detail | Claim notifications | Master–detail with `StepTrack`, `FactGroup` and `ContactLinks`; facts the customer did not give are left out rather than shown blank. |
+
+Task screens are addressed by the record they act on, so Back and refresh keep the officer's place; finishing one offers the next waiting item. `usePortalAction` gives every portal action the same pending state, duplicate-submission guard and failure message; a queue whose rows each carry an action holds `useKeyedPortalAction` itself, keyed by record, so the guard outlives a row that leaves the page. A task screen is mounted with its record as `key`, so nothing typed or uploaded for one record carries into the next. `portal.js` holds the shared rules: the case stages, the reply deadline, the premium check against the indicative estimate, and status tones.
+
+The portal covers what the current API supports. FR-IP-007, FR-IP-004 and FR-NCD-004 also call for declining a request with a reason, asking the customer for more information, assignment, internal notes, claim status updates and a recorded reason on NCD rejection; none has an operation in `src/api/contracts.js` yet, so none is offered in the interface.
+
+The sidebar follows the [documented composition](https://ui.shadcn.com/docs/components/base/sidebar) using the installed Radix `asChild` API. The table follows the [Radix Data Table recipe](https://ui.shadcn.com/docs/components/radix/data-table). Existing red/neutral theme tokens remain the source of color.
+
+## Customer journey layout and interaction
+
+The customer journey uses `JourneyLayout` for its progress, page heading, and content width. Progress is informational and does not provide links that bypass required inputs. The shared progress indicator exposes its actual completion value to assistive technology.
+
+- Cover comparison uses two shadcn cards in one radio group. Customers choose exactly one cover type, Comprehensive or Third Party Only, and commit that choice on Continue.
+- Vehicle lookup and manual entry use labelled tabs. Manual fields are grouped into identity, registration, and valuation, with the valuation warning and acknowledgement visible. Vehicle use is a single-choice radio group with the existing seven options.
+- Quote requests group contact and cover details, required documents and photos, and the review/declaration section. Validation moves focus to the first required correction. The summary precedes the submit action on phones.
+- Customer quote comparison uses equal-weight, independently expandable cards with the same labelled attributes in the same order. Cards form two columns on wider screens and stack on phones. Compact cards keep price, quote status, validity, inspection, terms notices, documents, and Choose actions visible. Benefits and extended conditions expand with the shadcn Collapsible control. There is no comparison table or mandatory shortlist step.
+- Payment separates the itemised quote summary from method entry. Confirmation distinguishes receipt of payment from issuance of the insurer's certificate. Account access is the primary next step; reviews are optional.
+- Phone capture uses clear loading, error, retry, and completion states. The camera checks, per-photo relay, and automatic completion behavior are unchanged.
+
+These choices follow [WAI multi-page forms](https://www.w3.org/WAI/tutorials/forms/multi-page/), [grouped controls](https://www.w3.org/WAI/tutorials/forms/grouping/), [form notifications](https://www.w3.org/WAI/tutorials/forms/notifications/), and the [GOV.UK question-page pattern](https://design-system.service.gov.uk/patterns/question-pages/). The installed [shadcn radio-group choice cards](https://ui.shadcn.com/docs/components/radix/radio-group#choice-card) provide the single-choice interaction. Relevant requirements are FR-VEH-001–005, FR-QTE-001–008, FR-CMP-001–005, FR-PAY-001–004, and FR-POL-001–002.
+
+The quote-card pattern adapts [Baymard's research on consistent listing attributes](https://baymard.com/research-articles/list-item-design-ecommerce) and [essential product information](https://baymard.com/research-articles/product-listing-information). Two columns is a project layout choice, not a universal research finding. Stacking cards on phones follows [W3C reflow guidance](https://www.w3.org/WAI/WCAG22/Understanding/reflow.html).
+
+The requirements specification is a draft. Its one-to-five insurer selection rule differs from the current all-insurer broadcast, and its valid-quotation purchase rule differs from the prototype's selectable estimates. This UI cleanup preserves those tested business behaviors; resolving them requires a separate product decision. It does not add backend integrations, driver underwriting fields, or new policy types.
+
 ## Testing
 
 | Layer | Tool | Where |
