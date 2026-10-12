@@ -23,6 +23,14 @@ const lastEvent = (policy) => (policy.status !== AWAITING_CERTIFICATE && policy.
 
 const Detail = ({ children, className = '' }) => <span className={`mt-1 block text-xs text-muted-foreground ${className}`}>{children}</span>;
 
+/** The request a policy came from, and the insurer's own reference for it when they gave one. */
+const References = ({ policy }) => (
+  <>
+    <Detail className="break-all font-mono">{policy.quoteRequestId || 'Legacy policy — quote reference unavailable'}</Detail>
+    {policy.insurerQuoteReference && <Detail>Your ref: <span className="break-all font-mono">{policy.insurerQuoteReference}</span></Detail>}
+  </>
+);
+
 /** What both lists show about a paid policy; each list adds its own last column. */
 const policyColumns = [
   {
@@ -31,8 +39,7 @@ const policyColumns = [
     cell: ({ row }) => (
       <div className="min-w-44 max-w-64 whitespace-normal">
         <p className="font-mono font-medium text-foreground">{row.original.policyNumber}</p>
-        <Detail className="break-all font-mono">{row.original.quoteRequestId || 'Legacy policy — quote reference unavailable'}</Detail>
-        {row.original.insurerQuoteReference && <Detail>Your ref: <span className="font-mono">{row.original.insurerQuoteReference}</span></Detail>}
+        <References policy={row.original} />
       </div>
     ),
   },
@@ -75,7 +82,7 @@ function PolicyCard({ policy, status = false, children }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="break-all font-mono font-medium text-foreground">{policy.policyNumber}</p>
-          <Detail className="break-all font-mono">{policy.quoteRequestId || 'Legacy policy — quote reference unavailable'}</Detail>
+          <References policy={policy} />
         </div>
         {status && <StatusBadge status={policy.status} />}
       </div>

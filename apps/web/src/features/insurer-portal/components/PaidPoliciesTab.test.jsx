@@ -90,13 +90,14 @@ describe('PaidPoliciesTab', () => {
     it('stacks each policy with its action in reach', async () => {
       window.innerWidth = 375;
       const onIssue = vi.fn();
-      render(<PaidPoliciesTab policies={[waiting, active]} onIssue={onIssue} />);
+      render(<PaidPoliciesTab policies={[{ ...waiting, insurerQuoteReference: 'PA-Q-2026-00412' }, active]} onIssue={onIssue} />);
 
       expect(screen.queryByRole('table')).not.toBeInTheDocument();
       const card = within(screen.getByRole('list', { name: 'Policies awaiting a certificate' })).getByRole('listitem');
-      for (const text of ['PA-2026-011293', 'QR-774510', 'Mwiza Banda', '2020 Toyota Hilux', 'BAA 1234', 'ZMW 10,650.00']) expect(card).toHaveTextContent(text);
+      // The insurer's own reference is what they search their system by, so a phone shows it too.
+      for (const text of ['PA-2026-011293', 'QR-774510', 'Your ref: PA-Q-2026-00412', 'Mwiza Banda', '2020 Toyota Hilux', 'BAA 1234', 'ZMW 10,650.00']) expect(card).toHaveTextContent(text);
       await userEvent.click(within(card).getByRole('button', { name: 'Review & issue policy' }));
-      expect(onIssue).toHaveBeenCalledExactlyOnceWith(waiting);
+      expect(onIssue).toHaveBeenCalledExactlyOnceWith({ ...waiting, insurerQuoteReference: 'PA-Q-2026-00412' });
 
       await userEvent.click(screen.getByRole('tab', { name: /Issued/ }));
       const issued = within(await screen.findByRole('list', { name: 'Issued policies' })).getByRole('listitem');
