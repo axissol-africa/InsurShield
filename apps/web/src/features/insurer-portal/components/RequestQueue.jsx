@@ -4,14 +4,22 @@ import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/primitives/card';
 import { DataTable } from '@/components/ui/data-table';
-import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
+import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
 import { replyDeadline } from '@/features/insurer-portal/portal';
 
 const PAGE_SIZE = 4;
 
 export default function RequestQueue({ title, hint, countLabel, requests, emptyMessage, onQuote, onExtend }) {
+  // Held by the queue, not the row: paging away and back makes a new row, and
+  // an extension still in flight must not be offered a second time.
+  const extending = useKeyedPortalAction(onExtend, 'Could not extend this quote. Please try again.');
   const quoteCell = (request, className) => request.reply ? (
-    <QuotedStatus reply={request.reply} onExtend={onExtend && (() => onExtend(request))} />
+    <QuotedStatus
+      reply={request.reply}
+      onExtend={onExtend && (() => extending.run(request.id, request))}
+      extending={extending.pending(request.id)}
+      error={extending.error(request.id)}
+    />
   ) : (
     <Button type="button" onClick={onQuote && (() => onQuote(request))} className={className}>Send quote</Button>
   );
@@ -100,8 +108,7 @@ function ReplyBy({ request }) {
   return <span className={`block text-xs ${deadline.urgent ? 'font-medium text-primary' : 'text-muted-foreground'}`}>{deadline.label}</span>;
 }
 
-function QuotedStatus({ reply, onExtend }) {
-  const { run: extend, pending: extending, error } = usePortalAction(onExtend, 'Could not extend this quote. Please try again.');
+function QuotedStatus({ reply, onExtend, extending, error }) {
   const validity = quoteValidity(reply);
 
   return (
@@ -109,7 +116,7 @@ function QuotedStatus({ reply, onExtend }) {
       <p className="font-medium tabular-nums">{formatZMW(reply.premium)}</p>
       {validity.validUntil && <p className={`text-xs ${validity.expired || validity.expiringSoon ? 'text-primary' : 'text-muted-foreground'}`}>{validity.label}</p>}
       {validity.validUntil && !validity.expired && onExtend && (
-        <Button type="button" variant="link" size="sm" onClick={() => extend()} disabled={extending} aria-busy={extending} className="h-8 px-0">
+        <Button type="button" variant="link" size="sm" onClick={onExtend} disabled={extending} aria-busy={extending} className="h-8 px-0">
           {extending ? 'Extending…' : 'Extend 7 days'}
         </Button>
       )}

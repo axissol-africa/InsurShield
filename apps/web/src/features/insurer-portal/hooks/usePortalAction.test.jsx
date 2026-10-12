@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { usePortalAction } from './usePortalAction';
+import { useKeyedPortalAction, usePortalAction } from './usePortalAction';
 
 const deferred = () => {
   let resolve;
@@ -51,5 +51,39 @@ describe('usePortalAction', () => {
     await act(async () => { outcome = await result.current.run(); });
     expect(outcome).toBe(true);
     expect(result.current.error).toBe('');
+  });
+});
+
+describe('useKeyedPortalAction', () => {
+  it('lets a caller word the failure from what was thrown', async () => {
+    const action = vi.fn().mockRejectedValue(new Error('Your insurer profile could not be found.'));
+    const { result } = renderHook(() => usePortalAction(action, (caught) => caught.message));
+
+    await act(async () => { await result.current.run(); });
+    expect(result.current.error).toBe('Your insurer profile could not be found.');
+  });
+
+  it('tracks each record on its own, and refuses a second run for a record already in flight', async () => {
+    const first = deferred();
+    const second = deferred();
+    const action = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const { result } = renderHook(() => useKeyedPortalAction(action, 'Could not save.'));
+
+    act(() => { void result.current.run('QR-1', 'QR-1'); });
+    act(() => { void result.current.run('QR-1', 'QR-1'); });
+    act(() => { void result.current.run('QR-2', 'QR-2'); });
+    expect(action).toHaveBeenCalledTimes(2);
+    expect(result.current.pending('QR-1')).toBe(true);
+    expect(result.current.pending('QR-2')).toBe(true);
+    expect(result.current.pending('QR-3')).toBe(false);
+
+    await act(async () => { first.reject(new Error('offline')); });
+    expect(result.current.pending('QR-1')).toBe(false);
+    expect(result.current.error('QR-1')).toBe('Could not save.');
+    expect(result.current.pending('QR-2')).toBe(true);
+    expect(result.current.error('QR-2')).toBe('');
+
+    await act(async () => { second.resolve(); });
+    expect(result.current.pending('QR-2')).toBe(false);
   });
 });

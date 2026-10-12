@@ -46,6 +46,25 @@ describe('RequestQueue', () => {
     expect(screen.getByRole('button', { name: 'Extend 7 days' })).toBeEnabled();
   });
 
+  it('keeps an extension in flight when its row leaves the page and comes back', async () => {
+    const user = userEvent.setup();
+    const onExtend = vi.fn().mockReturnValue(new Promise(() => {}));
+    const validUntil = new Date(Date.now() + 7 * 86400000).toISOString();
+    const sent = ['A', 'B', 'C', 'D', 'E'].map((letter) => ({ ...quote(validUntil), id: `REQ-${letter}` }));
+    render(<RequestQueue title="Quotes sent" requests={sent} onExtend={onExtend} />);
+    const firstRow = () => within(screen.getByRole('table', { name: 'Quotes sent' })).getByRole('row', { name: /REQ-A/ });
+
+    await user.click(within(firstRow()).getByRole('button', { name: 'Extend 7 days' }));
+    await user.click(screen.getByRole('button', { name: /Next/ }));
+    expect(screen.queryByRole('row', { name: /REQ-A/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Previous/ }));
+
+    // A second click here would add a second seven days to the same quote.
+    expect(within(firstRow()).getByRole('button', { name: 'Extending…' })).toBeDisabled();
+    expect(within(screen.getByRole('table', { name: 'Quotes sent' })).getByRole('row', { name: /REQ-B/ })).toHaveTextContent('Extend 7 days');
+    expect(onExtend).toHaveBeenCalledOnce();
+  });
+
   it('keeps an expired quote visible without offering an extension', () => {
     render(<RequestQueue title="Quotes sent" requests={[quote('2000-01-01T00:00:00Z')]} onExtend={vi.fn()} />);
     expect(screen.getByText(/Expired on/)).toBeVisible();
