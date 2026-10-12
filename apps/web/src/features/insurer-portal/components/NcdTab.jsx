@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import { api } from '@/api';
 import { hydrateInsurerPortal } from '@/api/sync';
 import { timeAgo } from '@/lib/time';
-import { expectedNcdDiscount, isOpenNcdApplication, waitingLongestFirst } from '@/features/insurer-portal/portal';
+import { ncdDiscountForYears } from '@/domain/insurers';
+import { isOpenNcdApplication, waitingLongestFirst } from '@/features/insurer-portal/portal';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
@@ -31,7 +32,7 @@ const decisionsFor = (application) => [
   {
     value: 'Approved',
     title: 'Approve',
-    description: `Issues a ${expectedNcdDiscount(application.yearsClaimFree)}% no-claim discount code to ${application.fullName}. This cannot be undone here.`,
+    description: `Issues a ${ncdDiscountForYears(application.yearsClaimFree)}% no-claim discount code to ${application.fullName}. This cannot be undone here.`,
     confirm: 'Approve & issue code',
     done: 'Application approved',
     doneDetail: 'The discount code is listed under Decided.',
@@ -72,7 +73,7 @@ const applicationColumns = [
     cell: ({ row }) => (
       <div className="min-w-28 whitespace-normal">
         <p className="font-medium tabular-nums">{years(row.original.yearsClaimFree)}</p>
-        <Detail>{expectedNcdDiscount(row.original.yearsClaimFree)}% discount</Detail>
+        <Detail>{ncdDiscountForYears(row.original.yearsClaimFree)}% discount</Detail>
       </div>
     ),
   },
@@ -100,7 +101,7 @@ function ApplicationCard({ application, children }) {
       </div>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
         <Fact label="Policy to check" value={<span className="font-mono">{application.policyNumber}</span>} />
-        <Fact label="Claim-free" value={`${years(application.yearsClaimFree)} · ${expectedNcdDiscount(application.yearsClaimFree)}% discount`} />
+        <Fact label="Claim-free" value={`${years(application.yearsClaimFree)} · ${ncdDiscountForYears(application.yearsClaimFree)}% discount`} />
       </dl>
       {children}
     </div>
@@ -213,7 +214,7 @@ export default function NcdTab({ applications }) {
             <Fact label="Applicant" value={<>{reviewing.fullName}<ContactLinks phone={reviewing.phone} email={reviewing.email} className="mt-1" /></>} />
             <Fact label="Application" value={<><span className="font-mono">{applicationNumber(reviewing)}</span>{applied(reviewing) && <Detail>{applied(reviewing)}</Detail>}</>} />
             <Fact label="Claim-free period claimed" value={years(reviewing.yearsClaimFree, 'year')} />
-            <Fact label="Discount if approved" value={`${expectedNcdDiscount(reviewing.yearsClaimFree)}%`} />
+            <Fact label="Discount if approved" value={`${ncdDiscountForYears(reviewing.yearsClaimFree)}%`} />
           </dl>
         </DecisionDialog>
       )}

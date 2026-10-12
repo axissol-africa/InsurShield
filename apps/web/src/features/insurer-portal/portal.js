@@ -2,17 +2,13 @@
 import { formatDate, formatZMW } from '@/domain/premiumEngine';
 import { addDays, quoteValidity } from '@/domain/quoteValidity';
 import { coverPeriodLabel } from '@/domain/coverPeriod';
-import { COVERAGE_DURATION_OPTIONS, NCD_TIERS } from '@/domain/insurers';
+import { COVERAGE_DURATION_OPTIONS } from '@/domain/insurers';
 import { timeAgo } from '@/lib/time';
 
 export const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
 
 const OPEN_NCD_STATUSES = ['Submitted', 'Under Review'];
 export const isOpenNcdApplication = (application) => OPEN_NCD_STATUSES.includes(application.status);
-
-/** The discount the published tiers give for this many claim-free years; the top tier covers every year beyond it. */
-export const expectedNcdDiscount = (yearsClaimFree) =>
-  NCD_TIERS.reduce((percentage, tier) => (yearsClaimFree >= tier.years ? tier.percentage : percentage), 0);
 
 /**
  * What a status asks of the insurer: `open` work is waiting on them, `settled`

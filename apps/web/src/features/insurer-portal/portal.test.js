@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AWAITING_CERTIFICATE, benefitsForCoverage, expectedNcdDiscount, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalRequest, waitingLongestFirst } from './portal';
+import { AWAITING_CERTIFICATE, benefitsForCoverage, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalRequest, waitingLongestFirst } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -33,15 +33,6 @@ describe('portal helpers', () => {
     expect(isOpenNcdApplication({ status: 'Submitted' })).toBe(true);
     expect(isOpenNcdApplication({ status: 'Under Review' })).toBe(true);
     expect(isOpenNcdApplication({ status: 'Approved' })).toBe(false);
-  });
-
-  it('reads the expected discount from the published tiers, capped at the top one', () => {
-    expect(expectedNcdDiscount(1)).toBe(10);
-    expect(expectedNcdDiscount(3)).toBe(30);
-    expect(expectedNcdDiscount(5)).toBe(50);
-    expect(expectedNcdDiscount(8)).toBe(50);
-    expect(expectedNcdDiscount(0)).toBe(0);
-    expect(expectedNcdDiscount(undefined)).toBe(0);
   });
 
   it('marks open work for attention and everything else as dealt with', () => {
