@@ -19,12 +19,15 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/components/ui/primitives/**/*.jsx'],
+    // shadcn registry output is vendored: it is regenerated with the CLI, not
+    // edited by hand, so it keeps the registry's own conventions (a React
+    // namespace import, variants and hooks exported beside components, state
+    // synced from the carousel API or a media query inside an effect).
+    files: ['src/components/ui/primitives/**/*.jsx', 'src/hooks/use-mobile.js'],
     rules: {
-      'react-refresh/only-export-components': ['error', {
-        allowConstantExport: true,
-        allowExportNames: ['buttonVariants', 'badgeVariants', 'tabsListVariants'],
-      }],
+      'no-unused-vars': ['error', { varsIgnorePattern: '^React$' }],
+      'react-refresh/only-export-components': 'off',
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
   {
