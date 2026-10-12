@@ -39,7 +39,7 @@ Returning customers use **Sign in** with their email/mobile number and password.
 
 ## Implementation notes
 
-- `CustomerRoute` (see `frontend/src/components/ProtectedRoute.jsx`) gates the quote request, comparison, payment, account, claims and renewal pages; `StaffRoute` gates the staff and insurer portals.
+- `CustomerRoute` (see `apps/web/src/app/guards.jsx`) gates the quote request, comparison, payment, account, claims and renewal pages; `StaffRoute` gates the staff and insurer portals.
 - Every quote request is sent to all active insurers at once (`submitQuoteRequest` in the store). Insurers reply through the insurer portal (`addInsurerQuote`), and the comparison page shows each insurer's final quote or, until it arrives, an indicative estimate.
 - The `next` query parameter preserves the intended destination after account creation.
 - Zustand persistence retains non-sensitive quote-progress data locally so customers do not need to re-enter vehicle details after verification.

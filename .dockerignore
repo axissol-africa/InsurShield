@@ -6,8 +6,8 @@
 **/.env.*
 !**/.env.example
 **/*.tsbuildinfo
-backend/src/generated
-frontend/dist
+apps/api/src/generated
+apps/web/dist
 .git
 .github
 docs

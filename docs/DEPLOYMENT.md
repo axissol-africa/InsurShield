@@ -29,14 +29,14 @@ Two decisions are still open and neither is a code change:
 
 ## Building the images
 
-Both are built from the repository root, not from `backend/`:
+Both are built from the repository root, not from `apps/api/`:
 
 ```bash
 # the API that serves traffic
-docker build -f backend/Dockerfile -t insurshield-api .
+docker build -f apps/api/Dockerfile -t insurshield-api .
 
 # a separate image that only applies migrations
-docker build -f backend/Dockerfile --target migrator -t insurshield-migrator .
+docker build -f apps/api/Dockerfile --target migrator -t insurshield-migrator .
 ```
 
 The build uses `turbo prune` to emit a backend-only workspace, so the React
@@ -55,7 +55,7 @@ it never generates one and never prompts.
 
 ## Environment variables
 
-`backend/.env.example` documents all of them. What changes in production:
+`apps/api/.env.example` documents all of them. What changes in production:
 
 ```bash
 NODE_ENV=production
@@ -111,7 +111,7 @@ Both paths sit outside the `API_PREFIX`, so they are `/health`, not
 
 ## Frontend
 
-The frontend is a static build (`npm run build -w frontend` → `frontend/dist`).
+The frontend is a static build (`npm run build -w @insurshield/web` → `apps/web/dist`).
 Set `VITE_API_MODE=http` and point `VITE_API_BASE_URL` at the deployed API. Any
 static host works; S3 + CloudFront keeps it in the same account as the rest.
 
@@ -152,7 +152,7 @@ dependency. This service is Postgres-only and never loads the MySQL driver.
 
 `npm audit fix --force` would downgrade Prisma from 7.10 to 6.x — a major
 version backwards — so it is deliberately not applied. Instead the runtime image
-drops the CLI entirely (see `backend/Dockerfile`), which removes those packages
+drops the CLI entirely (see `apps/api/Dockerfile`), which removes those packages
 from what actually ships. The remaining advisories affect development tooling
 only.
 
