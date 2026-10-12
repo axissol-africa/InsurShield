@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import InsurerDashboard from './InsurerDashboard';
 import { toast } from 'sonner';
 import { useStore } from '@/store';
@@ -26,6 +26,7 @@ vi.mock('@/features/insurer-portal/components/QuoteRequestForm', () => ({
   default: ({ request, onSubmit, onBack }) => (
     <div>
       <p>Quote form for {request.id}</p>
+      <input aria-label="Draft premium" />
       <button type="button" onClick={() => onSubmit({ premium: 10650 }).catch(() => {})}>Submit quote</button>
       <button type="button" onClick={onBack}>Leave quote</button>
     </div>
@@ -35,6 +36,7 @@ vi.mock('@/features/insurer-portal/components/PolicyIssuePanel', () => ({
   default: ({ policy, onIssued, onBack }) => (
     <div>
       <p>Issue panel for {policy.policyNumber}</p>
+      <input aria-label="Draft policy number" />
       <button type="button" onClick={() => onIssued(policy.policyNumber, { insurerPolicyNumber: 'PA-1' }).catch(() => {})}>Issue</button>
       <button type="button" onClick={onBack}>Leave issue</button>
     </div>
@@ -52,11 +54,17 @@ function Address() {
   return <p data-testid="address">{location.pathname}{location.search}</p>;
 }
 
-function open(address) {
+/** Stands in for anything that changes the address while a screen is open, such as an earlier toast's "next" action. */
+function Jump({ to }) {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(to)}>Jump to {to}</button>;
+}
+
+function open(address, { jumpTo = '/insurer' } = {}) {
   render(
     <TooltipProvider>
       <MemoryRouter initialEntries={[address]}>
-        <Routes><Route path="/insurer" element={<><InsurerDashboard /><Address /></>} /></Routes>
+        <Routes><Route path="/insurer" element={<><InsurerDashboard /><Address /><Jump to={jumpTo} /></>} /></Routes>
       </MemoryRouter>
     </TooltipProvider>,
   );
@@ -215,5 +223,32 @@ describe('carrying on to the next item', () => {
 
     act(() => lastToast()[1].action.onClick());
     expect(address()).toBe('/insurer?view=policies&issue=PA-OLDEST');
+  });
+});
+
+describe('moving between records', () => {
+  it('starts a fresh quotation for each request, so one customer’s draft never goes to another', async () => {
+    const user = userEvent.setup();
+    useStore.setState({ quoteRequests: [request('QR-OPEN'), request('QR-ALSO-OPEN')] });
+    open('/insurer?quote=QR-OPEN', { jumpTo: '/insurer?quote=QR-ALSO-OPEN' });
+
+    await user.type(screen.getByLabelText('Draft premium'), '10650');
+    await user.click(screen.getByRole('button', { name: /Jump to/ }));
+    expect(screen.getByText('Quote form for QR-ALSO-OPEN')).toBeVisible();
+    expect(screen.getByLabelText('Draft premium')).toHaveValue('');
+  });
+
+  it('starts a fresh certificate for each policy', async () => {
+    const user = userEvent.setup();
+    useStore.setState({ policies: [
+      { policyNumber: 'PA-WAITING', insurer: INSURER, status: AWAITING_CERTIFICATE, receivedAt: '2026-10-11T10:00:00Z' },
+      { policyNumber: 'PA-OLDEST', insurer: INSURER, status: AWAITING_CERTIFICATE, receivedAt: '2026-10-09T10:00:00Z' },
+    ] });
+    open('/insurer?view=policies&issue=PA-WAITING', { jumpTo: '/insurer?view=policies&issue=PA-OLDEST' });
+
+    await user.type(screen.getByLabelText('Draft policy number'), 'PA-2026-00412');
+    await user.click(screen.getByRole('button', { name: /Jump to/ }));
+    expect(screen.getByText('Issue panel for PA-OLDEST')).toBeVisible();
+    expect(screen.getByLabelText('Draft policy number')).toHaveValue('');
   });
 });

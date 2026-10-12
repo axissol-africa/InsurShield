@@ -106,6 +106,8 @@ export default function InsurerDashboard() {
   if (issuingPolicy) {
     content = (
       <PolicyIssuePanel
+        // A different policy is a different task: nothing typed or uploaded for one may carry into the next.
+        key={issuingPolicy.policyNumber}
         policy={issuingPolicy}
         onBack={backToSection}
         onIssued={async (policyNumber, issuance) => {
@@ -122,6 +124,7 @@ export default function InsurerDashboard() {
   } else if (quotingRequest) {
     content = (
       <QuoteRequestForm
+        key={quotingRequest.id}
         request={quotingRequest}
         insurer={insurer}
         coverGuides={insurer?.coverGuides}
