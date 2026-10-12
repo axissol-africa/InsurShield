@@ -67,7 +67,9 @@ test('insurer uploads a quotation document and the customer can open it', async 
   await page.getByPlaceholder('e.g. PA-Q-2026-00412').fill('PA-Q-2026-00412');
   await page.getByPlaceholder('e.g. 21000').fill('10650');
   await page.getByRole('button', { name: 'Send quote to customer' }).click();
-  await expect(page.getByText('ZMW 10,650.00').first()).toBeVisible();
+  // The form shows the premium back before sending, so the confirmation is what proves it went.
+  await expect(page.getByText('Quote sent', { exact: true })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Quotes sent' }).getByText('ZMW 10,650.00')).toBeVisible();
 
   await page.goto('/quotes-comparison');
   await expect(page.getByText('PA-Q-2026-00412').first()).toBeVisible();
@@ -124,7 +126,7 @@ test('insurer can find a claim by its number and mark it received', async ({ pag
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   });
   await page.goto('/insurer');
-  await page.getByRole('tab', { name: /Claims/ }).click();
+  await page.getByRole('link', { name: 'Claims', exact: true }).click();
   await page.getByPlaceholder('Claim number, name or plate').fill('654321');
   await page.getByRole('button', { name: /CLM-654321/ }).click();
   await expect(page.getByText('ZP/2026/1')).toBeVisible();
@@ -147,7 +149,7 @@ test('a paid quote needs the insurer certificate before it becomes an active pol
   await expect(page.getByText('Policies you buy through InsurShield will appear here.')).toBeVisible();
 
   await page.goto('/insurer');
-  await page.getByRole('tab', { name: /Paid policies/ }).click();
+  await page.getByRole('link', { name: 'Paid policies', exact: true }).click();
   await expect(page.getByText('PA-2026-011293')).toBeVisible();
   await page.getByRole('button', { name: 'Review & issue policy' }).click();
   await expect(page.getByText('TXN-MTN-1789714666139')).toBeVisible();
@@ -181,13 +183,13 @@ test('an insurer quote needs the quotation document and a premium', async ({ pag
   await page.getByRole('button', { name: 'Use estimate' }).click();
   await expect(premium).not.toHaveValue('100');
   await page.getByRole('button', { name: 'Send quote to customer' }).click();
-  await expect(page.getByText(/^ZMW /).first()).toBeVisible();
+  await expect(page.getByText('Quote sent', { exact: true })).toBeVisible();
 });
 
 test('an insurer states its cover in the shared form, and the customer reads that same document', async ({ page }) => {
   await seedStaff('insurer', 'Prestige Assurance')({ page });
   await page.goto('/insurer');
-  await page.getByRole('tab', { name: /Cover guides/ }).click();
+  await page.getByRole('link', { name: 'Cover guides', exact: true }).click();
 
   // Catalogue insurers arrive published, so the form opens complete.
   await expect(page.getByText('11 of 11 answered')).toBeVisible();
@@ -210,7 +212,7 @@ test('an insurer states its cover in the shared form, and the customer reads tha
 test('a guide must be complete before that cover type can be quoted', async ({ page }) => {
   await seedStaff('insurer', 'Prestige Assurance')({ page });
   await page.goto('/insurer');
-  await page.getByRole('tab', { name: /Cover guides/ }).click();
+  await page.getByRole('link', { name: 'Cover guides', exact: true }).click();
 
   // Empty one required answer: the guide stops being publishable, and says why.
   await page.getByLabel('Claims contact *').fill('');
@@ -256,7 +258,7 @@ test('a guide published before benefits became plain lines opens as readable tex
   });
 
   await page.goto('/insurer');
-  await page.getByRole('tab', { name: /Cover guides/ }).click();
+  await page.getByRole('link', { name: 'Cover guides', exact: true }).click();
 
   const benefits = page.getByRole('textbox', { name: /Covered benefits/ }).or(page.locator('input[placeholder^="e.g. Medical expenses"]'));
   await expect(benefits.first()).toHaveValue('Own damage — Market value');
