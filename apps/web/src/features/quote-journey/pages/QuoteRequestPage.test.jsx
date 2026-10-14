@@ -62,7 +62,7 @@ describe('quote request requirements', () => {
     useStore.setState({ matchRtsaAnniversary: true, rtsaRegistrationDate: '' });
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /Send request to/ }));
+    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
     expect(screen.getByText('Enter the RTSA registration date, or untick the anniversary option.')).toBeVisible();
     expect(screen.getByLabelText('RTSA registration date')).toBeVisible();
     expect(screen.getByLabelText('Full name')).toHaveValue('Test Customer');
@@ -89,7 +89,7 @@ describe('quote request requirements', () => {
     expect(await screen.findByText('Third party only')).toBeVisible();
     expect(useStore.getState().vehicleValue).toBe(120000);
     await user.click(screen.getByRole('checkbox', { name: /I confirm/ }));
-    await user.click(screen.getByRole('button', { name: /Send request to/ }));
+    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
     await waitFor(() =>
       expect(screen.getByLabelText('Current route')).toHaveTextContent('/quotes-comparison?capture=phone-123'),
     );
@@ -113,7 +113,7 @@ describe('quote request requirements', () => {
   it('blocks sending without ownership documents, photos and consent', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /Send request to/ }));
+    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
     expect(screen.getByText('Add your White Book so insurers can verify ownership.')).toBeVisible();
     expect(screen.getByText('Capture 7 more inspection photos.')).toBeVisible();
     expect(screen.getByText('Accept the declaration to send your request.')).toBeVisible();
@@ -130,12 +130,12 @@ describe('quote request requirements', () => {
     });
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /Send request to/ }));
+    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
     expect(screen.getByText('Accept the declaration to send your request.')).toBeVisible();
     expect(submitQuoteRequest).not.toHaveBeenCalled();
     expect(screen.getByRole('checkbox', { name: /I confirm/ })).toHaveFocus();
     await user.click(screen.getByRole('checkbox', { name: /I confirm/ }));
-    await user.click(screen.getByRole('button', { name: /Send request to/ }));
+    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
     expect(submitQuoteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         customer: { fullName: 'Test Customer', phone: '0970000000', email: 'test@example.com' },

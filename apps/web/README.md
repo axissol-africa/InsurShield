@@ -21,7 +21,7 @@ Prototype front end for InsurShield, a motor-insurance aggregator for Zambia.
 
 Every request carries seven photos taken with the camera at the time of the request (front, rear, left, right, dashboard/mileage, chassis number, car stereo). Photos are stamped with the capture time and plate; gallery images are not accepted.
 
-Customers on a laptop click **Continue on my phone**: a QR code opens `/capture/<code>` on the phone, the photos are taken there and stream back to the laptop. In development this runs through `tools/capture-relay.js`, a small in-memory relay inside the Vite dev server (`server.host: true` exposes it on the LAN; phone and laptop must be on the same network). The relay documents the four endpoints a production API needs to provide.
+Customers on a laptop click **Continue on my phone**: a QR code opens `/capture/<code>` on the phone, the photos are taken there and stream back to the laptop. In development this runs through `tools/capture-relay.js`, a small in-memory relay inside the Vite dev server (`server.host: true` exposes it on the LAN; phone and laptop must be on the same network). The relay selects the active Wi-Fi address rather than `localhost`, so the QR can be opened from a phone. If a presentation network isolates devices, use a personal hotspot or set `CAPTURE_PUBLIC_ORIGIN=https://your-public-demo-address` before starting Vite. The relay documents the four endpoints a production API needs to provide.
 
 `getUserMedia` needs a secure context, so over plain `http://<lan-ip>` the phone falls back to its camera app via `<input capture="environment">`; on HTTPS (or localhost) the in-page live viewfinder is used.
 

@@ -16,6 +16,7 @@ beforeEach(() => {
         id: 'QR-TEST',
         submittedAt: new Date().toISOString(),
         status: 'Submitted',
+        guideSelectionPending: false,
         insurerIds: ['1', '2'],
         insurers: ['Prestige Assurance', 'Global Guard Insurance'],
         vehicle: '2020 Toyota Corolla',
@@ -46,31 +47,10 @@ const renderPage = () =>
   );
 
 describe('quote comparison', () => {
-  it('expands and collapses each insurer independently using the keyboard and pointer', async () => {
-    const user = userEvent.setup();
+  it('keeps final quote cards focused on the insurer quotation, not cover-guide details', () => {
     renderPage();
-    const first = screen.getByRole('button', { name: 'Show cover details for Prestige Assurance' });
-    const second = screen.getByRole('button', { name: 'Show cover details for Global Guard Insurance' });
-    expect(first).toHaveAttribute('aria-expanded', 'false');
-    expect(second).toHaveAttribute('aria-expanded', 'false');
-    expect(
-      within(screen.getByRole('listitem', { name: 'Prestige Assurance' })).queryByText('Benefits'),
-    ).not.toBeInTheDocument();
-    first.focus();
-    await user.keyboard('{Enter}');
-    expect(first).toHaveAttribute('aria-expanded', 'true');
-    const regionId = first.getAttribute('aria-controls');
-    expect(regionId).toBeTruthy();
-    expect(first).toHaveAccessibleName('Hide cover details for Prestige Assurance');
-    expect(document.getElementById(regionId)).toBeVisible();
-    expect(second).toHaveAttribute('aria-expanded', 'false');
-    expect(within(screen.getByRole('listitem', { name: 'Prestige Assurance' })).getByText('Benefits')).toBeVisible();
-    await user.click(first);
-    expect(first).toHaveAttribute('aria-expanded', 'false');
-    expect(document.getElementById(regionId)).not.toBeVisible();
-    await user.click(second);
-    expect(second).toHaveAttribute('aria-expanded', 'true');
-    expect(first).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: /cover details/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /cover guide/i })).not.toBeInTheDocument();
   });
 
   it('presents all insurers as consistently labelled cards without a comparison table', () => {
@@ -81,10 +61,8 @@ describe('quote comparison', () => {
     for (const card of cards) {
       expect(within(card).getByText('Comprehensive')).toBeVisible();
       expect(within(card).getByText('Estimate', { exact: true })).toBeVisible();
-      expect(within(card).getByText('Cover period')).toBeVisible();
-      expect(within(card).getByText('Vehicle inspection')).toBeVisible();
       expect(within(card).queryByText('Benefits')).not.toBeInTheDocument();
-      expect(within(card).getByText(/Excess or deductible: not provided/)).toBeVisible();
+      expect(within(card).queryByText(/Excess or deductible/)).not.toBeInTheDocument();
     }
   });
 
@@ -96,19 +74,73 @@ describe('quote comparison', () => {
     expect(screen.queryByText(/Comprehensive/)).not.toBeInTheDocument();
   });
 
-  it('labels estimates and preserves the selected insurer and capture continuation', async () => {
+  it('labels estimates, blocks them from payment, and preserves the capture continuation for a final quote', async () => {
     const user = userEvent.setup();
     renderPage();
     expect(screen.getByText(/0 of 2 insurers have replied/)).toHaveTextContent('0 of 2 insurers have replied');
     expect(screen.getAllByText(/Indicative estimate · awaiting/)).toHaveLength(2);
     expect(screen.queryByText('Lowest')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Choose Prestige Assurance', exact: true }));
+    expect(screen.getAllByRole('button', { name: 'Awaiting insurer quote' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Awaiting insurer quote' })[0]).toBeDisabled();
+    const request = useStore.getState().quoteRequests[0];
+    useStore.setState({
+      quoteRequests: [{
+        ...request,
+        insurerQuotes: { 'Prestige Assurance': { premium: 2300, validUntil: '2099-01-01T00:00:00Z' } },
+      }],
+    });
+    await user.click(await screen.findByRole('button', { name: 'Choose Prestige Assurance', exact: true }));
     expect(useStore.getState().selectedQuote.name).toBe('Prestige Assurance');
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/payment?capture=phone-123');
   });
 
-  it('keeps final and estimate prices, validity and insurer terms in their own cards', async () => {
+  it('shows published cover guides first and sends a request only to selected insurers', async () => {
     const user = userEvent.setup();
+    const request = useStore.getState().quoteRequests[0];
+    useStore.setState({ quoteRequests: [{ ...request, status: 'GuidesReady', guideSelectionPending: true, insurerIds: [], insurers: [] }] });
+    renderPage();
+
+    expect(screen.getByRole('heading', { name: 'Choose cover guides' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Show full cover guide for Prestige Assurance' }));
+    expect(screen.getByText('Full cover details · Comprehensive')).toBeVisible();
+    expect(screen.getByText('Making a claim')).toBeVisible();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show full cover guide for Global Guard Insurance' })).toHaveAttribute('aria-expanded', 'false');
+    await user.click(screen.getByRole('button', { name: 'Show full cover guide for Global Guard Insurance' }));
+    expect(screen.getByRole('button', { name: 'Hide full cover guide for Prestige Assurance' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide full cover guide for Global Guard Insurance' })).toHaveAttribute('aria-expanded', 'true');
+    const first = screen.getByRole('checkbox', { name: /Select Prestige Assurance cover guide/ });
+    await user.click(first);
+    await user.click(screen.getByRole('button', { name: 'Request 1 final quote' }));
+
+    const updated = useStore.getState().quoteRequests[0];
+    expect(updated.guideSelectionPending).toBe(false);
+    expect(updated.insurers).toEqual(['Prestige Assurance']);
+    expect(updated.insurerQuotes['Prestige Assurance'].document.type).toBe('application/pdf');
+    expect(screen.getByRole('heading', { name: 'Your final quote' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Continue to payment' })).toBeEnabled();
+  });
+
+  it('completes an older mock guide selection with final PDF quotes', async () => {
+    const request = useStore.getState().quoteRequests[0];
+    useStore.setState({
+      quoteRequests: [{
+        ...request,
+        status: 'Submitted',
+        guideSelectionPending: false,
+        quotesRequestedAt: new Date().toISOString(),
+        insurerIds: ['1'],
+        insurers: ['Prestige Assurance'],
+        insurerQuotes: {},
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: 'Continue to payment' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'View quotation' })).toBeEnabled();
+  });
+
+  it('keeps final and estimate prices in their own cards without attaching a cover guide', () => {
     const request = useStore.getState().quoteRequests[0];
     useStore.setState({
       quoteRequests: [
@@ -118,13 +150,8 @@ describe('quote comparison', () => {
             'Prestige Assurance': {
               premium: 2300,
               validUntil: '2099-01-01T00:00:00Z',
-              coverGuide: {
-                coverageType: 'Comprehensive',
-                planName: 'Motor cover',
-                coveredItems: ['Replacement keys up to ZMW 1,000'],
-                exclusions: ['Unlicensed drivers'],
-                territorialLimit: 'Zambia',
-              },
+              document: { name: 'Prestige quotation.pdf', type: 'application/pdf', size: 4, dataUrl: 'data:application/pdf;base64,AA==' },
+              insurerReference: 'PA-Q-2300',
             },
           },
         },
@@ -137,13 +164,10 @@ describe('quote comparison', () => {
     expect(within(finalCard).getByText('ZMW 2,300.00')).toBeVisible();
     expect(within(finalCard).getByText(/Valid until/)).toBeVisible();
     expect(within(finalCard).queryByText('Unlicensed drivers')).not.toBeInTheDocument();
-    await user.click(within(finalCard).getByRole('button', { name: /Show cover details/ }));
-    expect(within(finalCard).getByText('Unlicensed drivers')).toBeVisible();
-    expect(within(finalCard).getByRole('button', { name: /Read the cover guide/ })).toBeEnabled();
+    expect(within(finalCard).getByRole('button', { name: 'View quotation' })).toBeEnabled();
+    expect(within(finalCard).getByText('PA-Q-2300')).toBeVisible();
+    expect(within(finalCard).queryByRole('button', { name: /cover guide/i })).not.toBeInTheDocument();
     expect(within(estimateCard).getByText('Estimate', { exact: true })).toBeVisible();
-    await user.click(within(estimateCard).getByRole('button', { name: /Show cover details/ }));
-    expect(within(estimateCard).getAllByText('Not listed').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Not included')).not.toBeInTheDocument();
   });
 
   it('shows final price and blocks choosing expired quotes', () => {

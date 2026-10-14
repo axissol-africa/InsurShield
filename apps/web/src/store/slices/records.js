@@ -48,11 +48,16 @@ export const createRecordsSlice = (set) => ({
       const validityDays = quote.validityDays || insurer?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
       const sentAt = NOW();
       return {
-        quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({
-          ...request,
-          status: 'Quoted',
-          insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...quote, sentAt, validityDays, validUntil: addDays(sentAt, validityDays) } },
-        })),
+        quoteRequests: updateById(state.quoteRequests, requestId, (request) => {
+          // A guide is not a quote request. Only insurers the customer chose
+          // may see the details and return a final quotation.
+          if (!request.insurers?.includes(insurerName)) return request;
+          return {
+            ...request,
+            status: 'Quoted',
+            insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...quote, sentAt, validityDays, validUntil: addDays(sentAt, validityDays) } },
+          };
+        }),
       };
     }),
 

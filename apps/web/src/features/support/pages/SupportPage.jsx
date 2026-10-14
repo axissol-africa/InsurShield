@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import Meta from '@/components/ui/Meta';
+import { Button } from '@/components/ui/primitives/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { useStore } from '@/store';
 import { hydrateDirectory } from '@/api/sync';
 
@@ -39,11 +40,11 @@ const FAQS = [
 function FAQItem({ q, a }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="overflow-hidden rounded-[1px] border border-line bg-canvas">
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors duration-200 ease-out hover:bg-canvas-2"
+        className="flex w-full items-center justify-between gap-4 p-4 text-left text-sm font-medium transition-colors hover:bg-muted/60"
       >
         <p className="text-[14px] font-medium text-ink">{q}</p>
         <span className={`material-symbols-outlined shrink-0 text-[20px] text-ink-faint transition-transform duration-200 ease-out ${open ? 'rotate-180' : ''}`}>
@@ -56,7 +57,7 @@ function FAQItem({ q, a }) {
           animate={{ opacity: 1, height: 'auto' }}
           className="px-4 pb-4"
         >
-          <p className="text-[13px] text-ink-muted leading-relaxed">{a}</p>
+          <p className="text-sm leading-6 text-muted-foreground">{a}</p>
         </motion.div>
       )}
     </div>
@@ -69,10 +70,10 @@ function InsurerCard({ insurer }) {
   return (
     <motion.div
       layout
-      className="overflow-hidden rounded-[1px] border border-line bg-canvas transition-colors duration-200 ease-out"
+      className="overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors duration-200 ease-out"
     >
-      <div className="flex items-center gap-4 border-b border-dashed border-line p-5">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-primary">
+      <div className="flex items-center gap-4 border-b border-border p-5">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
           {insurer.logoUrl ? <img src={insurer.logoUrl} alt="" className="h-8 w-8 object-contain" /> : <span className="material-symbols-outlined text-[22px]">{insurer.logo}</span>}
         </span>
         <div className="min-w-0 flex-1">
@@ -82,8 +83,8 @@ function InsurerCard({ insurer }) {
       </div>
 
       {/* Contact Person Badge */}
-      <div className="px-5 py-3 border-b border-line-strong flex items-center gap-3">
-        <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center flex-shrink-0">
+      <div className="flex items-center gap-3 border-b border-border px-5 py-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10">
           <span className="material-symbols-outlined text-primary text-[18px]">person</span>
         </div>
         <div>
@@ -93,12 +94,12 @@ function InsurerCard({ insurer }) {
       </div>
 
       {/* Quick Contact Actions — all use theme tokens */}
-      <div className="p-4 grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 p-4">
         <a
           href={`tel:${insurer.mobile}`}
-          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-[1px] hover:bg-primary/10 transition-colors group"
+          className="group flex flex-col items-center gap-1.5 rounded-lg border border-primary/15 bg-primary/5 p-3 transition-colors hover:bg-primary/10"
         >
-          <div className="w-9 h-9 bg-white rounded-[1px] flex items-center justify-center group-hover:scale-110 transition-transform border border-line-strong">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background transition-transform group-hover:scale-105">
             <span className="material-symbols-outlined text-primary text-[20px]">phone</span>
           </div>
           <p className="text-[10px] font-medium text-primary uppercase tracking-wide">Call</p>
@@ -107,18 +108,18 @@ function InsurerCard({ insurer }) {
           href={`https://wa.me/${insurer.whatsapp}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-[1px] hover:bg-primary/10 transition-colors group"
+          className="group flex flex-col items-center gap-1.5 rounded-lg border border-primary/15 bg-primary/5 p-3 transition-colors hover:bg-primary/10"
         >
-          <div className="w-9 h-9 bg-white rounded-[1px] flex items-center justify-center group-hover:scale-110 transition-transform border border-line-strong">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background transition-transform group-hover:scale-105">
             <span className="material-symbols-outlined text-primary text-[20px]">chat</span>
           </div>
           <p className="text-[10px] font-medium text-primary uppercase tracking-wide">WhatsApp</p>
         </a>
         <a
           href={`mailto:${insurer.email}`}
-          className="flex flex-col items-center gap-1.5 p-3 bg-primary/5 border border-primary/15 rounded-[1px] hover:bg-primary/10 transition-colors group"
+          className="group flex flex-col items-center gap-1.5 rounded-lg border border-primary/15 bg-primary/5 p-3 transition-colors hover:bg-primary/10"
         >
-          <div className="w-9 h-9 bg-white rounded-[1px] flex items-center justify-center group-hover:scale-110 transition-transform border border-line-strong">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background transition-transform group-hover:scale-105">
             <span className="material-symbols-outlined text-primary text-[20px]">email</span>
           </div>
           <p className="text-[10px] font-medium text-primary uppercase tracking-wide">Email</p>
@@ -128,7 +129,7 @@ function InsurerCard({ insurer }) {
       {/* Expand / Collapse */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-5 py-3 border-t border-line-strong text-[13px] font-semibold text-ink-muted hover:text-primary hover:bg-canvas-2 transition-colors"
+        className="flex w-full items-center justify-between border-t border-border px-5 py-3 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-primary"
       >
         <span>{expanded ? 'Hide details' : 'View full contact details'}</span>
         <span className={`material-symbols-outlined text-[18px] transition-transform ${expanded ? 'rotate-180' : ''}`}>
@@ -140,7 +141,7 @@ function InsurerCard({ insurer }) {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="px-5 pb-5 space-y-3 border-t border-line-strong pt-4 bg-canvas-2/40"
+          className="space-y-3 border-t border-border bg-muted/40 px-5 pb-5 pt-4"
         >
           <DetailRow icon="phone" label="Office Line" value={insurer.phone} href={`tel:${insurer.phone}`} />
           <DetailRow icon="smartphone" label="Mobile / WhatsApp" value={insurer.mobile} href={`tel:${insurer.mobile}`} />
@@ -156,7 +157,7 @@ function InsurerCard({ insurer }) {
 function DetailRow({ icon, label, value, href }) {
   const content = (
     <div className="flex items-start gap-3">
-      <div className="w-8 h-8 bg-white border border-line-strong rounded-[1px] flex items-center justify-center flex-shrink-0 mt-0.5">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
         <span className="material-symbols-outlined text-ink-muted text-[16px]">{icon}</span>
       </div>
       <div>
@@ -191,73 +192,52 @@ export default function SupportPage() {
   );
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="relative overflow-hidden">
-      <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
-      <div className="relative mx-auto w-full max-w-[1100px] px-6 py-12 pb-24 lg:px-10">
-      {/* Header */}
-      <header className="border-b border-line pb-8">
-        <span className="inline-flex items-center gap-3">
-          <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-          <Meta className="text-ink-muted">Insurer directory</Meta>
+    <main className="pwa-main min-h-full bg-muted/60">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
+      <header className="border-b border-border pb-7">
+        <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+          <span className="material-symbols-outlined text-[15px]" aria-hidden="true">support_agent</span>
+          Help centre
         </span>
-        <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Contact your insurer</h1>
-        <p className="mt-4 max-w-2xl text-[16px] leading-[1.6] text-ink-muted">
-          Reach your insurance company's claims desk directly for policy queries, claims assistance and more.
+        <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">Contact your insurer</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+          Find the right claims desk, contact your insurer directly, or get quick answers about InsurShield.
         </p>
       </header>
 
-      {/* Two things people usually came here to do, but can do on InsurShield. */}
-      <div className="mt-8 flex flex-col gap-4 border border-dashed border-line-strong p-5 sm:flex-row sm:items-center">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1px] border border-dashed border-line-strong text-primary">
-          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">info</span>
-        </span>
-        <div className="flex-1">
-          <p className="text-[15px] font-medium text-ink">Need to file a claim or apply for NCD?</p>
-          <p className="mt-1.5 text-[13px] leading-[1.55] text-ink-muted">
-            You can do this directly through InsurShield — no account needed. For all other questions, contact your insurer below.
-          </p>
-        </div>
-        <div className="flex w-full shrink-0 gap-3 sm:w-auto">
-          <button
-            onClick={() => navigate('/claims')}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-primary text-white font-medium px-4 py-2.5 rounded-[1px] hover:bg-[#b91c1c] transition-all text-[13px] active:scale-95"
-          >
-            <span className="material-symbols-outlined text-[16px]">report_problem</span>
-            File Claim
-          </button>
-          <button
-            onClick={() => navigate('/claims')}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-white border-2 border-primary/20 text-primary font-medium px-4 py-2.5 rounded-[1px] hover:border-primary/40 transition-all text-[13px] active:scale-95"
-          >
-            <span className="material-symbols-outlined text-[16px]">sell</span>
-            Apply NCD
-          </button>
-        </div>
-      </div>
+      <Card className="mt-6 gap-0 border-border shadow-none">
+        <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><span className="material-symbols-outlined text-[20px]" aria-hidden="true">info</span></span>
+            <div><p className="text-sm font-medium text-foreground">Need to file a claim or apply for NCD?</p><p className="mt-1 text-sm leading-5 text-muted-foreground">Start the process in InsurShield, then use this directory for insurer-specific help.</p></div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button type="button" size="sm" onClick={() => navigate('/claims')}><span className="material-symbols-outlined" aria-hidden="true">report_problem</span>File claim</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => navigate('/claims')}><span className="material-symbols-outlined" aria-hidden="true">sell</span>Apply NCD</Button>
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Search */}
-      <div className="relative mb-6">
-        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted text-[20px]">search</span>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search by insurer name or contact person..."
-          className="w-full bg-white border border-line-strong rounded-[1px] pl-10 pr-4 py-3 text-[14px] focus:ring-2 focus:ring-primary outline-none"
-        />
-      </div>
-
-      {/* Insurer Cards */}
-      <div className="space-y-4 mb-10">
+      <section className="mt-6">
+        <Card className="gap-0 border-border shadow-none">
+          <CardHeader className="gap-4 border-b lg:grid-cols-[1fr_minmax(280px,420px)] lg:items-center">
+            <div><CardTitle>Insurer directory</CardTitle><p className="mt-1 text-sm text-muted-foreground">Search the participating insurers and contact the right team.</p></div>
+            <label className="relative block">
+              <span className="sr-only">Search insurers</span>
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-muted-foreground" aria-hidden="true">search</span>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search insurer or contact person" className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-4 text-sm outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring/50" />
+            </label>
+          </CardHeader>
+          <CardContent className="pt-5">
         {filtered.length === 0 ? (
-          <div className="text-center py-12 text-ink-muted">
-            <span className="material-symbols-outlined text-4xl mb-2 block opacity-40">search_off</span>
-            <p className="font-semibold">No insurer found matching "{search}"</p>
-            <button onClick={() => setSearch('')} className="mt-3 text-primary font-medium text-[14px] underline">
-              Clear search
-            </button>
+          <div className="rounded-xl border border-dashed border-border py-12 text-center text-muted-foreground">
+            <span className="material-symbols-outlined mb-2 block text-4xl opacity-40">search_off</span>
+            <p className="font-medium text-foreground">No insurer found matching “{search}”</p>
+            <Button type="button" variant="link" size="sm" onClick={() => setSearch('')} className="mt-2">Clear search</Button>
           </div>
         ) : (
-          filtered.map((insurer, i) => (
+          <div className="grid gap-4 lg:grid-cols-2">
+          {filtered.map((insurer, i) => (
             <motion.div
               key={insurer.id}
               initial={{ opacity: 0, y: 10 }}
@@ -266,36 +246,36 @@ export default function SupportPage() {
             >
               <InsurerCard insurer={insurer} />
             </motion.div>
-          ))
+          ))}
+          </div>
         )}
-      </div>
+          </CardContent>
+        </Card>
+      </section>
 
-      {/* PIA Regulatory Notice */}
-      <div className="bg-canvas-2 border border-line-strong rounded-[1px] p-5 mb-8 flex items-start gap-3">
-        <span className="material-symbols-outlined text-ink-muted text-[22px] flex-shrink-0 mt-0.5">gavel</span>
+      <Card className="mt-6 gap-0 border-border bg-muted/40 shadow-none"><CardContent className="flex items-start gap-3 py-5">
+        <span className="material-symbols-outlined mt-0.5 shrink-0 text-[22px] text-primary">gavel</span>
         <div>
-          <p className="font-medium text-ink text-[14px]">Regulated by the PIA</p>
-          <p className="text-[12px] text-ink-muted mt-1 leading-relaxed">
+          <p className="text-sm font-medium text-foreground">Regulated by the PIA</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
             All insurance companies listed are regulated by the{' '}
-            <strong className="text-ink">Pensions and Insurance Authority (PIA) of Zambia</strong>.
+            <strong className="text-foreground">Pensions and Insurance Authority (PIA) of Zambia</strong>.
             If you have an unresolved dispute with any insurer, you may escalate to the PIA directly at{' '}
             <a href="tel:+260211254644" className="font-medium text-primary underline">+260 211 254 644</a> or{' '}
             <a href="mailto:info@pia.org.zm" className="font-medium text-primary underline">info@pia.org.zm</a>.
           </p>
         </div>
-      </div>
+      </CardContent></Card>
 
-      {/* FAQs */}
-      <div>
-        <div className="mb-5 flex items-center gap-4">
-          <Meta className="text-primary">Frequently asked</Meta>
-          <span className="h-px w-12 bg-line" aria-hidden="true" />
-        </div>
-        <div className="space-y-2">
+      <section className="mt-6">
+        <Card className="gap-0 border-border shadow-none">
+          <CardHeader className="border-b"><CardTitle>Frequently asked questions</CardTitle><p className="text-sm text-muted-foreground">Quick answers before you contact an insurer.</p></CardHeader>
+          <CardContent className="grid gap-2 pt-5 lg:grid-cols-2">
           {FAQS.map((faq, i) => <FAQItem key={i} q={faq.q} a={faq.a} />)}
-        </div>
-      </div>
-      </div>
-    </motion.div>
+          </CardContent>
+        </Card>
+      </section>
+      </motion.div>
+    </main>
   );
 }

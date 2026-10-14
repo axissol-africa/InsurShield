@@ -5,6 +5,9 @@ import { DEMO_CUSTOMER_ACCOUNT, useStore } from '@/store';
 import { fieldClass, labelClass } from '@/components/ui/field';
 import Meta from '@/components/ui/Meta';
 import ConsentModal from '@/features/auth/components/ConsentModal';
+import { Badge } from '@/components/ui/primitives/badge';
+import { Button } from '@/components/ui/primitives/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 
 /**
  * The entry point to a customer account.
@@ -30,7 +33,7 @@ const MIN_PASSWORD_LENGTH = 8;
 
 /** Explains why a guest landed here and what is waiting for them after sign-in. */
 const RESUME_CONTEXT = {
-  '/quote-request': { icon: 'send', text: 'Your vehicle details are saved. Sign in or create an account to send your request to every insurer.' },
+  '/quote-request': { icon: 'send', text: 'Your vehicle details are saved. Sign in or create an account to compare cover guides and choose insurers for final quotes.' },
   '/quotes-comparison': { icon: 'compare_arrows', text: 'Sign in to see the quotes insurers have sent you.' },
   '/claims': { icon: 'report_problem', text: 'Claims are linked to your account so you can return to them any time.' },
   '/renewal': { icon: 'autorenew', text: 'Sign in to renew a policy held in your account.' },
@@ -188,25 +191,40 @@ export default function CreateAccountPage() {
     : 'Sign in to InsurShield';
 
   return (
-    <main className="relative overflow-x-clip">
-      <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.45]" aria-hidden="true" />
+    <main className="min-h-full bg-muted/60">
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mx-auto grid w-full max-w-[1120px] gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[0.85fr_1fr] lg:px-8 lg:py-14">
+        <section className="hidden flex-col justify-between rounded-2xl border border-border bg-card p-8 lg:flex">
+          <div>
+            <Badge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Customer access</Badge>
+            <h1 className="mt-6 text-3xl font-semibold tracking-tight">Insurance, kept simple.</h1>
+            <p className="mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">Sign in to compare insurer quotations, manage cover and return to important documents whenever you need them.</p>
+          </div>
+          <div className="space-y-4 border-t border-border pt-6 text-sm">
+            {[
+              ['verified_user', 'Your policies and certificates'],
+              ['compare_arrows', 'Quotes from insurers you choose'],
+              ['support_agent', 'Claims linked to your account'],
+            ].map(([icon, text]) => (
+              <div key={icon} className="flex items-center gap-3 text-muted-foreground"><span className="material-symbols-outlined rounded-lg bg-primary/10 p-2 text-[18px] text-primary" aria-hidden="true">{icon}</span>{text}</div>
+            ))}
+          </div>
+        </section>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative mx-auto w-full max-w-[520px] px-6 py-14 lg:py-20">
-        <span className="inline-flex items-center gap-3 border border-dashed border-line-strong bg-canvas px-3 py-1.5">
-          <span className="dot-pulse block h-[5px] w-[5px] rounded-full bg-primary" aria-hidden="true" />
-          <Meta className="text-ink-muted">Your account</Meta>
-        </span>
-
-        <h1 className="mt-7 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">{heading}</h1>
-
+        <Card className="gap-0 border-border shadow-none">
+          <CardHeader className="border-b">
+            <Badge variant="outline" className="w-fit border-primary/20 bg-primary/10 text-primary">Your account</Badge>
+            <CardTitle className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{heading}</CardTitle>
+            <CardDescription className="mt-2 max-w-lg leading-relaxed">Access your policies, quote requests and claims securely.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
         {resumeContext && stage === 'form' && (
-          <p className="mt-7 flex gap-4 border border-dashed border-line-strong p-5 text-[14px] leading-[1.55] text-ink-muted">
+          <div className="mb-6 flex gap-3 rounded-xl border border-primary/20 bg-primary/[0.05] p-4 text-sm leading-relaxed text-muted-foreground">
             <span className="material-symbols-outlined shrink-0 text-[20px] text-primary" aria-hidden="true">{resumeContext.icon}</span>
             {resumeContext.text}
-          </p>
+          </div>
         )}
 
-        <div className="mt-8">
+        <div>
           {stage === 'form' && mode === 'login' && (
             <form onSubmit={submitLogin} className="space-y-5">
               <Field label="Email address or mobile number">
@@ -218,7 +236,7 @@ export default function CreateAccountPage() {
               <Alert text={error} />
               <Alert text={notice} tone="notice" />
 
-              <div className="border border-dashed border-line-strong bg-canvas-2 p-4">
+              <div className="rounded-xl border border-dashed border-line-strong bg-canvas-2 p-4">
                 <Meta className="text-ink-muted">Prototype account</Meta>
                 <dl className="mt-3 space-y-1 text-[13px] text-ink">
                   <div className="flex gap-2"><dt className="text-ink-muted">Email</dt><dd className="break-all font-mono">{DEMO_CUSTOMER_ACCOUNT.email}</dd></div>
@@ -232,7 +250,7 @@ export default function CreateAccountPage() {
                     setError('');
                     setNotice('Prototype details filled in. Select Sign in to continue.');
                   }}
-                  className="mt-4 inline-flex min-h-10 items-center rounded-[1px] border border-dashed border-line-strong bg-canvas px-3 text-[13px] font-medium text-primary transition-colors duration-200 ease-out hover:border-primary"
+                  className="mt-4 inline-flex min-h-10 items-center rounded-lg border border-dashed border-line-strong bg-canvas px-3 text-[13px] font-medium text-primary transition-colors duration-200 ease-out hover:border-primary"
                 >
                   Fill them in
                 </button>
@@ -287,7 +305,7 @@ export default function CreateAccountPage() {
             <form onSubmit={verifyCode} className="space-y-5">
               <p className="text-[15px] leading-[1.6] text-ink-muted">{notice}</p>
 
-              <p className={`border border-dashed p-3.5 text-center font-mono text-[12px] uppercase tracking-[0.1em] ${expired ? 'border-primary text-primary' : 'border-line-strong text-ink-muted'}`}>
+              <p className={`rounded-xl border border-dashed p-3.5 text-center font-mono text-[12px] uppercase tracking-[0.1em] ${expired ? 'border-primary text-primary' : 'border-line-strong text-ink-muted'}`}>
                 {expired ? 'Code expired' : `Expires in ${clock(secondsLeft)}`}
               </p>
 
@@ -366,13 +384,14 @@ export default function CreateAccountPage() {
             />
           )}
         </div>
-
-        {stage !== 'done' && (
-          <p className="mt-12 border-t border-line pt-6 text-[13px] leading-[1.6] text-ink-faint">
+          </CardContent>
+          {stage !== 'done' && (
+          <CardFooter className="border-t pt-5 text-xs leading-relaxed text-muted-foreground">
             Accounts are held in this browser while InsurShield is a prototype. Nothing you enter
             here leaves the device.
-          </p>
-        )}
+          </CardFooter>
+          )}
+        </Card>
       </motion.div>
 
       {stage === 'consent' && <ConsentModal onAccept={acceptConsent} onDecline={() => navigate('/', { replace: true })} />}
@@ -394,14 +413,14 @@ function Field({ label, hint, children }) {
 
 function Submit({ children, disabled = false }) {
   return (
-    <button
+    <Button
       type="submit"
       disabled={disabled}
-      className="group relative flex min-h-[52px] w-full items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] disabled:pointer-events-none disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint"
+      size="lg"
+      className="min-h-12 w-full"
     >
-      <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
-      <span className="relative">{children}</span>
-    </button>
+      {children}
+    </Button>
   );
 }
 
@@ -423,7 +442,7 @@ function Alert({ text, tone = 'error' }) {
   return (
     <p
       role={tone === 'error' ? 'alert' : undefined}
-      className={`flex items-start gap-2.5 border p-3.5 text-[14px] leading-[1.5] ${tone === 'error' ? 'border-primary/30 bg-primary/[0.06] text-primary' : 'border-dashed border-line-strong bg-canvas-2 text-ink'}`}
+      className={`flex items-start gap-2.5 rounded-xl border p-3.5 text-[14px] leading-[1.5] ${tone === 'error' ? 'border-primary/30 bg-primary/[0.06] text-primary' : 'border-dashed border-line-strong bg-canvas-2 text-ink'}`}
     >
       <span className="material-symbols-outlined shrink-0 text-[20px]" aria-hidden="true">{tone === 'error' ? 'error' : 'info'}</span>
       {text}
@@ -433,15 +452,13 @@ function Alert({ text, tone = 'error' }) {
 
 function Outcome({ icon, title, body, action, onAction }) {
   return (
-    <section className="border border-dashed border-line-strong bg-canvas-2 p-10 text-center">
-      <span className="mx-auto flex h-14 w-14 items-center justify-center border border-line-strong bg-canvas">
+    <section className="rounded-xl border border-border bg-muted/40 p-8 text-center">
+      <span className="mx-auto flex size-12 items-center justify-center rounded-lg bg-primary/10">
         <span className="material-symbols-outlined text-[26px] text-primary" aria-hidden="true">{icon}</span>
       </span>
-      <h2 className="mt-5 text-[20px] font-semibold tracking-[-0.02em] text-ink">{title}</h2>
-      <p className="mx-auto mt-3 max-w-sm text-[14px] leading-[1.6] text-ink-muted">{body}</p>
-      <button type="button" onClick={onAction} className="mt-6 inline-flex min-h-12 items-center rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">
-        {action}
-      </button>
+      <h2 className="mt-5 text-xl font-semibold tracking-tight">{title}</h2>
+      <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">{body}</p>
+      <Button type="button" onClick={onAction} size="lg" className="mt-6">{action}</Button>
     </section>
   );
 }

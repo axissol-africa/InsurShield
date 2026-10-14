@@ -32,10 +32,64 @@ const sessions = new Map();
 
 const newCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
-const lanAddress = () =>
-  Object.values(os.networkInterfaces())
-    .flat()
-    .find((iface) => iface && iface.family === 'IPv4' && !iface.internal)?.address || 'localhost';
+const normaliseOrigin = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = new URL(value);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+};
+
+const isPrivateIpv4 = (address) => (
+  address.startsWith('10.')
+  || address.startsWith('192.168.')
+  || /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
+);
+
+/**
+ * A laptop can have VPN, Docker, bridge and Wi-Fi adapters at once. Choosing
+ * the first address Node happens to return can create a QR link a phone on the
+ * same Wi-Fi cannot open. Prefer ordinary network adapters and local-network
+ * addresses; retain a public IPv4 address as the final fallback.
+ */
+export const findLanAddress = (interfaces = os.networkInterfaces()) => {
+  const candidates = Object.entries(interfaces)
+    .flatMap(([name, entries]) => (entries || []).map((entry) => ({ name, ...entry })))
+    .filter((entry) => entry.family === 'IPv4' && !entry.internal && entry.address && !entry.address.startsWith('127.'));
+
+  const adapterScore = (name) => {
+    if (/^en\d+$/i.test(name) || /wifi|wi-fi|wlan|ethernet/i.test(name)) return 0;
+    if (/utun|bridge|docker|vbox|vmnet|virtual/i.test(name)) return 3;
+    return 1;
+  };
+
+  return candidates
+    .sort((a, b) => {
+      const adapterDifference = adapterScore(a.name) - adapterScore(b.name);
+      const privateDifference = Number(!isPrivateIpv4(a.address)) - Number(!isPrivateIpv4(b.address));
+      return adapterDifference || privateDifference || a.name.localeCompare(b.name);
+    })[0]?.address || null;
+};
+
+/**
+ * Resolve the address put into the QR code. CAPTURE_PUBLIC_ORIGIN gives a
+ * hosted/staging deployment an explicit public address; local development
+ * falls back to the active LAN address. Exported for regression tests.
+ */
+export const resolveCaptureOrigin = ({
+  interfaces = os.networkInterfaces(),
+  port = 5173,
+  https = false,
+  publicOrigin = process.env.CAPTURE_PUBLIC_ORIGIN,
+} = {}) => {
+  const configuredOrigin = normaliseOrigin(publicOrigin);
+  if (configuredOrigin) return configuredOrigin;
+
+  const address = findLanAddress(interfaces);
+  return address ? `${https ? 'https' : 'http'}://${address}:${port}` : null;
+};
 
 const readJson = (req) =>
   new Promise((resolve, reject) => {
@@ -109,7 +163,7 @@ const openStream = (session, req, res) => {
   req.on('error', close);
 };
 
-export default function captureRelay() {
+export default function captureRelay({ publicOrigin } = {}) {
   return {
     name: 'insurshield-capture-relay',
     configureServer(server) {
@@ -118,8 +172,21 @@ export default function captureRelay() {
         const parts = url.pathname.split('/').filter(Boolean);
         try {
           if (req.method === 'GET' && parts[0] === 'host') {
-            const port = server.config.server.port || 5173;
-            return send(res, 200, { origin: `${server.config.server.https ? 'https' : 'http'}://${lanAddress()}:${port}` });
+            const address = server.httpServer?.address?.();
+            const port = typeof address === 'object' && address?.port
+              ? address.port
+              : (server.config.server.port || 5173);
+            const origin = resolveCaptureOrigin({
+              port,
+              https: Boolean(server.config.server.https),
+              publicOrigin,
+            });
+            if (!origin) {
+              return send(res, 503, {
+                error: 'No Wi-Fi address is available. Connect this computer to Wi-Fi, then create a new phone link.',
+              });
+            }
+            return send(res, 200, { origin });
           }
           if (req.method === 'POST' && parts.length === 0) {
             const { plate = '', shots = [], journey = null } = await readJson(req);

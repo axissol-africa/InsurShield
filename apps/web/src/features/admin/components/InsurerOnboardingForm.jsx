@@ -25,8 +25,8 @@ const toForm = (insurer) => insurer ? {
   address: insurer.contact?.address || insurer.address || '', hours: insurer.contact?.hours || EMPTY.hours,
 } : EMPTY;
 
-const field = 'w-full rounded-[1px] border border-line-strong bg-canvas p-3 text-[15px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/30';
-const label = 'mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-ink-muted';
+const field = 'w-full rounded-xl border border-border bg-background p-3 text-[15px] outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20';
+const label = 'mb-2 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground';
 
 /**
  * Super-admin onboarding of an insurance company: legal identity, PIA
@@ -135,33 +135,33 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
             <span className="mt-1 block text-[11px] text-ink-muted">How long the insurer's final quote stays open unless it sets a different period per quote.</span>
           </label>
           <label className="block"><span className={label}>Vehicle inspection</span><select value={form.inspectionRules} onChange={set('inspectionRules')} className={field}>{INSPECTION_OPTIONS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
-          <label className="flex items-center gap-3 self-end rounded-[1px] border border-dashed border-line-strong p-3"><input type="checkbox" checked={form.ncdAccepted} onChange={set('ncdAccepted')} className="h-5 w-5 accent-red-600" /><span className="text-[14px] font-semibold">Accepts No Claim Discount codes</span></label>
+          <label className="flex items-center gap-3 self-end rounded-xl border border-border bg-muted/30 p-3"><input type="checkbox" checked={form.ncdAccepted} onChange={set('ncdAccepted')} className="h-5 w-5 accent-red-600" /><span className="text-sm font-medium">Accepts No Claim Discount codes</span></label>
         </div>
       </Section>
 
       <Section title="Logo" hint="Shown in the partner strip on the home page and on the insurer's quotes.">
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex h-24 w-40 items-center justify-center rounded-[1px] border border-dashed border-line-strong bg-canvas p-3">
-            {form.logoUrl ? <img src={form.logoUrl} alt="Company logo preview" className="max-h-16 max-w-[130px] object-contain" /> : <span className="text-[12px] text-ink-muted">No logo yet</span>}
+          <div className="flex h-24 w-40 items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 p-3">
+            {form.logoUrl ? <img src={form.logoUrl} alt="Company logo preview" className="max-h-16 max-w-[130px] object-contain" /> : <span className="text-xs text-muted-foreground">No logo yet</span>}
           </div>
           <div>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-[1px] border border-dashed border-line-strong px-4 py-2.5 text-[14px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5 text-sm font-medium transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary">
               <span className="material-symbols-outlined text-[18px]" aria-hidden="true">upload</span>{form.logoUrl ? 'Replace logo' : 'Upload logo'}
               <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="sr-only" onChange={handleLogo} />
             </label>
-            <p className="mt-2 text-[11px] text-ink-muted">PNG, JPG or SVG. Resized automatically; transparent PNG works best.</p>
+            <p className="mt-2 text-xs text-muted-foreground">PNG, JPG or SVG. Resized automatically; transparent PNG works best.</p>
             {logoError && <p role="alert" className="mt-1 text-[12px] font-medium text-red-700">{logoError}</p>}
           </div>
         </div>
       </Section>
 
-      {error && <p role="alert" className="rounded-[1px] border border-primary bg-primary/[0.04] px-4 py-3 text-[13px] text-primary">{error}</p>}
+      {error && <p role="alert" className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-primary">{error}</p>}
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button type="submit" className="group relative flex-1 overflow-hidden rounded-[1px] bg-primary py-4 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">
+        <button type="submit" className="flex h-11 flex-1 items-center justify-center rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
           {insurer ? 'Update insurer' : 'Onboard insurance company'}
         </button>
-        <button type="button" onClick={onCancel} className="rounded-[1px] border border-dashed border-line-strong px-6 py-4 text-[15px] font-medium text-ink transition-colors duration-200 ease-out hover:border-primary hover:text-primary">Cancel</button>
+        <button type="button" onClick={onCancel} className="h-11 rounded-xl border border-border bg-background px-6 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
       </div>
     </form>
   );
@@ -170,8 +170,8 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
 function Section({ title, hint, children }) {
   return (
     <section>
-      <h3 className="text-[16px] font-extrabold text-ink">{title}</h3>
-      {hint && <p className="mb-4 mt-0.5 text-[12px] text-ink-muted">{hint}</p>}
+      <h3 className="text-base font-semibold">{title}</h3>
+      {hint && <p className="mb-4 mt-1 text-sm text-muted-foreground">{hint}</p>}
       {children}
     </section>
   );

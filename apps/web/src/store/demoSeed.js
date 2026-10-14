@@ -1,4 +1,5 @@
-import { INSURER_RATES, demoCoverGuides } from '@/domain/insurers';
+import { INSURER_RATES } from '@/domain/insurers';
+import { calculatePremium } from '@/domain/premiumEngine';
 
 /**
  * Demo records: the demo customer account and the insurer-portal records.
@@ -91,13 +92,12 @@ const samplePdf = (insurer) => {
  * The demo customer's own request, already answered.
  *
  * Without this the comparison page opens empty on a fresh install, and the
- * thing it exists to show — a quotation and a cover guide arriving together
- * from each insurer — cannot be seen without first playing both sides of the
- * marketplace by hand.
+ * thing it exists to show — a final insurer quotation — cannot be seen
+ * without first playing both sides of the marketplace by hand.
  */
 export const SEED_ACTIVE_REQUEST_ID = 'QR-7741';
 
-const quotedReply = ({ insurer, premium, reference, minutesOld, coverType = 'Comprehensive' }) => {
+const quotedReply = ({ insurer, premium, reference, minutesOld }) => {
   const entry = INSURER_RATES.find((rate) => rate.name === insurer);
   return {
     premium,
@@ -106,31 +106,29 @@ const quotedReply = ({ insurer, premium, reference, minutesOld, coverType = 'Com
     insurerReference: reference,
     notes: null,
     document: samplePdf(insurer),
-    coverGuide: { ...demoCoverGuides(entry)[coverType], coverageType: coverType },
   };
 };
 
 /**
  * Insurers answer a request that nobody has replied to yet, exactly as they
- * would from the portal: a quotation from their own system, and the cover
- * guide they have published for the cover asked for.
+ * would from the portal: a quotation from their own system. The customer has
+ * already read and selected a cover guide before this request is sent.
  *
  * Demo only. It exists because a prototype whose comparison page says "0 of 5
  * insurers have replied" shows none of what the page is for, and a customer
  * cannot answer on the insurers' behalf.
  */
-export function answeredByInsurers(request, { replies = 2 } = {}) {
+export function answeredByInsurers(request, { replies = 2, immediate = false } = {}) {
   if (!request || Object.keys(request.insurerQuotes || {}).length > 0) return request;
   // Only the demo customer's own requests. The others fill the insurer's
   // queue, and answering them would leave the portal with nothing to do.
-  if (request.customer?.email !== DEMO_CUSTOMER_ACCOUNT.email) return request;
+  if (!immediate && request.customer?.email !== DEMO_CUSTOMER_ACCOUNT.email) return request;
   // And only one left sitting from an earlier session. A request sent moments
   // ago is one somebody is working through — answering that in front of them,
   // or in front of a test about to answer it from the portal, is a conjuring
   // trick rather than a demo.
   const age = Date.now() - new Date(request.submittedAt || 0).getTime();
-  if (!(age > SETTLED_REQUEST_MS)) return request;
-  const coverType = request.insuranceType === 'ThirdParty' ? 'ThirdParty' : 'Comprehensive';
+  if (!immediate && !(age > SETTLED_REQUEST_MS)) return request;
   const answering = (request.insurers || []).slice(0, replies);
 
   const insurerQuotes = {};
@@ -139,16 +137,23 @@ export function answeredByInsurers(request, { replies = 2 } = {}) {
     if (!entry) return;
     // Priced off this insurer's own published rate, so the figure agrees with
     // the estimate the customer was shown before anyone replied.
-    const premium = Math.round(((request.vehicleValue || 0) * entry.ratePercentage) / 100);
+    const premium = Math.round(
+      calculatePremium({
+        vehicleValueZMW: request.vehicleValue,
+        insurer: entry,
+        vehicleUsage: request.vehicleUsage,
+        coverageDurationId: request.coverageDurationId,
+        coverageDays: request.policyDates?.anchoredToAnniversary ? request.policyDates.daysTotal : null,
+      }).finalPremium,
+    );
     insurerQuotes[name] = quotedReply({
       insurer: name,
       premium,
       reference: `${name.split(' ')[0].slice(0, 2).toUpperCase()}-Q-${String(request.id || '').replace(/\D/g, '').slice(-4) || '0001'}-${index + 1}`,
       minutesOld: 30 + index * 14,
-      coverType,
     });
   });
-  return Object.keys(insurerQuotes).length ? { ...request, insurerQuotes } : request;
+  return Object.keys(insurerQuotes).length ? { ...request, status: 'Quoted', insurerQuotes } : request;
 }
 
 export const SEED_ACTIVE_REQUEST = {

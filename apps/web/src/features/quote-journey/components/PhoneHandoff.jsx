@@ -73,7 +73,11 @@ export default function PhoneHandoff({ plate, photos = {}, journey, onPhotos, on
     (async () => {
       try {
         const draft = await portableJourney(journeySnapshot.current);
-        const [origin, created] = await Promise.all([captureApi.host(), captureApi.create(plate, requestedShotKeys.current, draft)]);
+        // Resolve the phone-reachable address before opening a short-lived
+        // session. That way a network problem is reported immediately instead
+        // of leaving an unusable QR session behind.
+        const origin = await captureApi.host();
+        const created = await captureApi.create(plate, requestedShotKeys.current, draft);
         if (cancelled) return;
         const url = `${origin}/capture/${created.code}`;
         setSession(created);

@@ -16,3 +16,15 @@ export const updateById = (items, id, updater) => items.map((item) => (item.id =
 
 /** Deactivated and removed insurers keep their history but receive no new quote requests. */
 export const insurerReceivesRequests = (insurer) => !['Inactive', 'Deleted'].includes(insurer.status);
+
+/**
+ * Requests created before guide selection was introduced have no
+ * `guideSelectionPending` flag. If they have not received a reply, treat them
+ * as waiting for the customer to choose guides rather than leaving them in the
+ * old, all-insurers comparison flow.
+ */
+export const needsCoverGuideSelection = (request) =>
+  Boolean(request?.guideSelectionPending) ||
+  (request?.guideSelectionPending === undefined &&
+    request?.status === 'Submitted' &&
+    Object.keys(request?.insurerQuotes || {}).length === 0);

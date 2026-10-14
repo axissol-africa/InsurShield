@@ -111,7 +111,7 @@ test('admin can edit, deactivate and delete an insurer, and deactivated insurers
   await expect(page.getByText('PIA/GI/2026/001')).toBeVisible();
 
   await page.goto('/quote-request');
-  await expect(page.getByText('One request goes to all 3 insurers')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'See cover guides from 3 insurers' })).toBeVisible();
   await page.goto('/support');
   await expect(page.getByText('Madison General')).toHaveCount(0);
 });

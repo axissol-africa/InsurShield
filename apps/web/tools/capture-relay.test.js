@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, it } from 'vitest';
-import captureRelay from './capture-relay.js';
+import captureRelay, { findLanAddress, resolveCaptureOrigin } from './capture-relay.js';
 
 const disconnect = (req) => req.emit('close');
 
@@ -43,6 +43,21 @@ const openStream = (url) => {
 };
 
 describe('capture relay', () => {
+  it('prefers the ordinary Wi-Fi adapter over virtual-network addresses', () => {
+    expect(findLanAddress({
+      bridge100: [{ family: 'IPv4', internal: false, address: '192.168.64.1' }],
+      en0: [{ family: 'IPv4', internal: false, address: '203.0.113.96' }],
+      utun4: [{ family: 'IPv4', internal: false, address: '10.0.0.4' }],
+    })).toBe('203.0.113.96');
+  });
+
+  it('uses an explicitly configured public origin when one is supplied', () => {
+    expect(resolveCaptureOrigin({
+      publicOrigin: 'https://demo.insurshield.zm/anything-after-this-is-ignored',
+      interfaces: {},
+    })).toBe('https://demo.insurshield.zm');
+  });
+
   it('reports a reachable origin', async () => {
     const { status, body } = await call('GET', '/host');
     expect(status).toBe(200);

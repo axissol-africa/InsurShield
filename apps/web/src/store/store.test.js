@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { isCoverGuideComplete } from '@/domain/coverGuide';
 import { DEMO_CUSTOMER_ACCOUNT, belongsToCustomer, selectActiveQuoteRequest, useStore } from './index';
 import { SEED_ACTIVE_REQUEST_ID, SEED_CLAIMS, SEED_POLICIES, SEED_QUOTE_REQUESTS, answeredByInsurers } from './demoSeed';
 import { INSPECTION_KEYS } from '@/domain/inspection';
@@ -68,7 +67,7 @@ describe('quote requests', () => {
     expect(saved.documents).toBeUndefined();
   });
 
-  it('sends a request to every active insurer and records the captured shots', () => {
+  it('holds a request for cover-guide selection and records the captured shots', () => {
     signInDemo();
     seedVehicle();
     state().setInsurerStatus('4', 'Inactive');
@@ -76,11 +75,13 @@ describe('quote requests', () => {
 
     const request = selectActiveQuoteRequest(state());
     expect(request.id).toBe(id);
-    expect(request.insurers).toHaveLength(4);
-    expect(request.insurers).not.toContain('Metro Safe Assurance');
+    expect(request.insurers).toEqual([]);
     expect(request.inspectionShots).toEqual(INSPECTION_KEYS);
     expect(request.insurerQuotes).toEqual({});
-    expect(request.status).toBe('Submitted');
+    expect(request.status).toBe('GuidesReady');
+    expect(state().requestQuotesFromGuides(id, ['1', '2'])).toBe(true);
+    expect(selectActiveQuoteRequest(state()).insurers).toEqual(['Prestige Assurance', 'Global Guard Insurance']);
+    expect(selectActiveQuoteRequest(state()).status).toBe('Submitted');
   });
 
   it('attaches an insurer reply and reopens earlier requests', () => {
@@ -90,6 +91,7 @@ describe('quote requests', () => {
     const second = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
     expect(state().activeQuoteRequestId).toBe(second);
 
+    state().requestQuotesFromGuides(first, ['1']);
     state().addInsurerQuote(first, 'Prestige Assurance', { premium: 10900, notes: 'Includes windscreen' });
     const replied = state().quoteRequests.find((request) => request.id === first);
     expect(replied.status).toBe('Quoted');
@@ -167,6 +169,8 @@ describe('quote validity and re-quote', () => {
     signInDemo();
     seedVehicle();
     const id = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    const globalGuard = state().insurersList.find((insurer) => insurer.name === 'Global Guard Insurance');
+    state().requestQuotesFromGuides(id, [globalGuard.id]);
     state().addInsurerQuote(id, 'Global Guard Insurance', { premium: 9000 });
     const reply = state().quoteRequests[0].insurerQuotes['Global Guard Insurance'];
     expect(reply.validityDays).toBe(2); // Global Guard's configured window
@@ -246,12 +250,13 @@ describe('insurer lifecycle', () => {
     expect(state().insurersList).toHaveLength(5); // kept for history
   });
 
-  it('sends new requests only to insurers that still receive them', () => {
+  it('offers only active insurers when the customer requests final quotes', () => {
     signInDemo();
     seedVehicle();
     state().setInsurerStatus('2', 'Inactive');
     state().deleteInsurer('5');
-    state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    const requestId = state().submitQuoteRequest({ customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, policyDates: null });
+    state().requestQuotesFromGuides(requestId, ['1', '2', '3', '4', '5']);
     expect(selectActiveQuoteRequest(state()).insurers).toEqual(['Prestige Assurance', 'ValueDirect Insurance', 'Metro Safe Assurance']);
   });
 
@@ -315,7 +320,7 @@ describe('quote replies', () => {
     state().extendInsurerQuote(id, 'Prestige Assurance', 7); // nothing to extend yet
     expect(state().quoteRequests).toHaveLength(1);
     expect(state().quoteRequests[0].insurerQuotes).toEqual({});
-    expect(state().quoteRequests[0].status).toBe('Submitted');
+    expect(state().quoteRequests[0].status).toBe('GuidesReady');
   });
 });
 
@@ -345,14 +350,12 @@ describe('demo records', () => {
     expect(SEED_CLAIMS.filter(mine).map((claim) => claim.id)).toEqual(['CLM-882031']);
   });
 
-  // The page exists to show a quotation and a cover guide arriving together;
-  // seeded with neither it demonstrates nothing.
-  it('answer the demo customer with a quotation and a cover guide', () => {
+  it('answers the demo customer with insurer quotation documents', () => {
     const replies = Object.values(SEED_QUOTE_REQUESTS.find((request) => request.id === SEED_ACTIVE_REQUEST_ID).insurerQuotes);
     expect(replies.length).toBeGreaterThan(1);
     for (const reply of replies) {
       expect(reply.document.type).toBe('application/pdf');
-      expect(isCoverGuideComplete(reply.coverGuide)).toBe(true);
+      expect(reply.coverGuide).toBeUndefined();
     }
   });
 });
@@ -376,8 +379,8 @@ describe('records in backend mode', () => {
 });
 
 describe('a browser that already holds an unanswered request', () => {
-  // The comparison page exists to show a quotation and a cover guide arriving
-  // from each insurer. An install carrying a request nobody has replied to saw
+  // The comparison page exists to show a quotation from each insurer. An
+  // install carrying a request nobody has replied to saw
   // none of that, and a customer cannot reply on the insurers' behalf.
   it('is answered by the insurers it was sent to', () => {
     const mine = {
@@ -391,7 +394,7 @@ describe('a browser that already holds an unanswered request', () => {
     expect(Object.keys(answered.insurerQuotes)).toEqual(['Global Guard Insurance', 'ValueDirect Insurance']);
     for (const reply of replies) {
       expect(reply.document.type).toBe('application/pdf');
-      expect(isCoverGuideComplete(reply.coverGuide)).toBe(true);
+      expect(reply.coverGuide).toBeUndefined();
       expect(reply.premium).toBeGreaterThan(0);
     }
   });
@@ -405,12 +408,23 @@ describe('a browser that already holds an unanswered request', () => {
     expect(answered.insurerQuotes['Prestige Assurance'].premium).toBe(11250);
   });
 
-  it('answers a third party request with the third party guide', () => {
+  it('can create prompt demo replies for any customer without changing the real insurer workflow', () => {
+    const requested = {
+      id: 'QR-IMMEDIATE', customer: { email: 'presenter@example.zm' }, insurerQuotes: {}, submittedAt: new Date().toISOString(),
+      insurers: ['Prestige Assurance'], vehicleValue: 250000, vehicleUsage: 'Individual', coverageDurationId: '1q', insuranceType: 'Comprehensive',
+    };
+    const answered = answeredByInsurers(requested, { replies: 1, immediate: true });
+    expect(answered.insurerQuotes['Prestige Assurance'].document.type).toBe('application/pdf');
+    expect(answered.insurerQuotes['Prestige Assurance'].premium).toBe(2813);
+  });
+
+  it('answers a third party request with a quotation only', () => {
     const answered = answeredByInsurers({
       id: 'QR-TP', customer: { email: DEMO_CUSTOMER_ACCOUNT.email }, insurerQuotes: {}, submittedAt: new Date(Date.now() - 86_400_000).toISOString(),
       insurers: ['Prestige Assurance'], vehicleValue: 250000, insuranceType: 'ThirdParty',
     });
-    expect(answered.insurerQuotes['Prestige Assurance'].coverGuide.coverageType).toBe('ThirdParty');
+    expect(answered.insurerQuotes['Prestige Assurance'].document.type).toBe('application/pdf');
+    expect(answered.insurerQuotes['Prestige Assurance'].coverGuide).toBeUndefined();
   });
 
   // Replying for them would empty the insurer's own queue.
