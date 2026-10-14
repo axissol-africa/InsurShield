@@ -1,6 +1,6 @@
 /**
- * The product in one picture: a single request fans out to every active
- * insurer at once, and each replies with its own final quote.
+ * The product in one picture: the customer can read a guide from every active
+ * insurer before choosing who receives their final quote request.
  *
  * Drawn as an SVG so it scales cleanly and the connectors can carry an
  * animated signal. Insurer names come from the live catalogue, so this stays
@@ -19,7 +19,7 @@ export default function QuoteFanSchematic({ insurers = [] }) {
   return (
     <figure className="relative">
       <figcaption className="sr-only">
-        One quote request is delivered to {nodes.length} insurers at the same time; each returns its own final quote.
+        Published cover guides from {nodes.length} active insurers are ready to compare.
       </figcaption>
 
       <svg
@@ -28,7 +28,7 @@ export default function QuoteFanSchematic({ insurers = [] }) {
         role="presentation"
         aria-hidden="true"
       >
-        {/* Connectors: request out to each insurer. */}
+        {/* Connectors: every active insurer has a guide in the comparison. */}
         {nodes.map((insurer, index) => {
           const y = rowGap * index + rowGap / 2;
           const midX = (originX + targetX) / 2;
@@ -45,7 +45,7 @@ export default function QuoteFanSchematic({ insurers = [] }) {
           );
         })}
 
-        {/* Origin node: the customer's single request. */}
+        {/* Origin node: the guide comparison the customer starts with. */}
         <rect
           x={originX - 76} y={originY - 19} width="76" height="38"
           fill="var(--color-primary)"
@@ -56,7 +56,7 @@ export default function QuoteFanSchematic({ insurers = [] }) {
           className="fill-white font-mono"
           style={{ fontSize: 11, letterSpacing: '0.06em' }}
         >
-          REQUEST
+          GUIDES
         </text>
 
         {/* Insurer nodes. */}

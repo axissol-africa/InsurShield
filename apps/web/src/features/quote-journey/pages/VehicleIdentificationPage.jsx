@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/primitives/checkbox';
 import { NativeSelect, NativeSelectOption, NativeSelectOptGroup } from '@/components/ui/primitives/native-select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/primitives/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/primitives/popover';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { COUNTRY_GROUPS, DEFAULT_COUNTRY, MAX_COUNTRY_LENGTH, OTHER, resolveCountry } from '@/domain/countries';
 import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
@@ -114,17 +115,17 @@ export default function VehicleIdentificationPage() {
 
   return (
     <JourneyLayout step={2} title="Your vehicle" description="Look it up on the RTSA register, or enter the details yourself." className="max-w-3xl">
-      <Alert role="note" className="mb-6 bg-muted/40">
-        <Info aria-hidden="true" />
-        <AlertTitle>Have ready</AlertTitle>
+      <Alert role="note" className="mb-6 border-primary/20 bg-primary/[0.045]">
+        <Info aria-hidden="true" className="text-primary" />
+        <AlertTitle className="text-primary">Have ready</AlertTitle>
         <AlertDescription>Your White Book and the vehicle's current market value. You'll upload the White Book and seven vehicle photos when you request quotes.</AlertDescription>
       </Alert>
 
       {mode === 'confirm' && retrievedVehicle ? (
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle><h2>Vehicle found — check the details</h2></CardTitle>
+          <Card className="border border-primary/20 shadow-sm">
+            <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
+              <CardTitle className="flex items-center gap-2 text-primary"><span className="material-symbols-outlined text-[20px]" aria-hidden="true">verified</span><h2>Vehicle found — check the details</h2></CardTitle>
               <CardDescription>Make sure these details match your White Book.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -139,10 +140,10 @@ export default function VehicleIdentificationPage() {
                 <Detail label="RTSA anniversary" value={formatDate(retrievedVehicle.rtsaAnniversaryDate)} span />
               </dl>
               <p className="text-sm leading-relaxed text-muted-foreground">Use the RTSA anniversary to align the policy start date when requesting quotes.</p>
-              <Button variant="outline" className="min-h-11" onClick={() => { setMode('search'); setRetrievedVehicle(null); setError(''); }}>Wrong vehicle</Button>
+              <Button variant="outline" className="min-h-11 border-primary text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { setMode('search'); setRetrievedVehicle(null); setError(''); }}>Wrong vehicle</Button>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="border border-primary/15 shadow-sm">
             <CardContent>
               <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} valueRef={valueRef} acknowledgementRef={acknowledgementRef} />
             </CardContent>
@@ -155,14 +156,14 @@ export default function VehicleIdentificationPage() {
         </div>
       ) : (
         <Tabs value={mode} onValueChange={switchMode} className="flex-col gap-5">
-          <TabsList aria-label="Vehicle entry method" className="grid h-auto w-full grid-cols-2">
-            <TabsTrigger value="search" disabled={loading} className="min-h-11 data-[state=active]:bg-background data-[state=active]:text-foreground">RTSA lookup</TabsTrigger>
-            <TabsTrigger value="manual" disabled={loading} className="min-h-11 data-[state=active]:bg-background data-[state=active]:text-foreground">Manual entry</TabsTrigger>
+          <TabsList aria-label="Vehicle entry method" className="grid h-auto w-full grid-cols-2 rounded-2xl border border-primary/15 bg-primary/[0.045] p-1">
+            <TabsTrigger value="search" disabled={loading} className="min-h-11 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">RTSA lookup</TabsTrigger>
+            <TabsTrigger value="manual" disabled={loading} className="min-h-11 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">Manual entry</TabsTrigger>
           </TabsList>
           <TabsContent value="search">
-            <Card>
-              <CardHeader>
-                <CardTitle><h2>Find your vehicle</h2></CardTitle>
+            <Card className="border border-primary/15 shadow-sm">
+              <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
+                <CardTitle className="flex items-center gap-2"><span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Search className="size-4" aria-hidden="true" /></span><h2>Find your vehicle</h2></CardTitle>
                 <CardDescription>Enter the registration number shown on your White Book.</CardDescription>
               </CardHeader>
               <CardContent>
@@ -178,9 +179,9 @@ export default function VehicleIdentificationPage() {
           </TabsContent>
           <TabsContent value="manual">
             <form onSubmit={handleManualSubmit} className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle><h2>Enter vehicle details</h2></CardTitle>
+              <Card className="border border-primary/15 shadow-sm">
+                <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
+                  <CardTitle className="flex items-center gap-2"><span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">directions_car</span></span><h2>Enter vehicle details</h2></CardTitle>
                   <CardDescription>Fields marked * are required. Use the details on your White Book.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-7">
@@ -224,7 +225,7 @@ export default function VehicleIdentificationPage() {
                   </fieldset>
                 </CardContent>
               </Card>
-              <Card>
+              <Card className="border border-primary/15 shadow-sm">
                 <CardContent>
                   <Valuation valuation={valuation} onChange={updateValuation} declaredValue={declaredValue} valueRef={valueRef} acknowledgementRef={acknowledgementRef} />
                 </CardContent>
@@ -256,13 +257,27 @@ function Valuation({ valuation, onChange, declaredValue, valueRef, acknowledgeme
     <fieldset className="min-w-0 space-y-5">
       <legend className="mb-4 text-base font-semibold">Vehicle value</legend>
       <div className="space-y-2">
-        <FormInput label="Current market value (ZMW) *" id="vehicle-value" ref={valueRef} inputMode="decimal" required placeholder="e.g. 200000" value={valuation.value} onChange={(event) => onChange({ ...valuation, value: event.target.value.replace(/[^0-9.]/g, '') })} aria-describedby="valuation-help" />
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="vehicle-value" className="text-primary">Current market value (ZMW) *</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+                <Info aria-hidden="true" className="size-3.5" />
+                Why important?
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[min(22rem,calc(100vw-2rem))] border border-primary/20 p-4">
+              <p className="font-semibold text-primary">Why accurate valuation matters</p>
+              <div className="mt-3 space-y-3 text-sm leading-relaxed text-muted-foreground">
+                <p><strong className="text-primary">Under-valuing:</strong> a lower value may reduce your premium, but a payout is capped at the declared value. You carry the difference.</p>
+                <p><strong className="text-primary">Over-valuing:</strong> declaring more than the market value does not increase a payout and may be treated as fraud.</p>
+                <p>Use recent market listings or a professional valuation.</p>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+        <Input id="vehicle-value" ref={valueRef} className="min-h-11" inputMode="decimal" required placeholder="e.g. 200000" value={valuation.value} onChange={(event) => onChange({ ...valuation, value: event.target.value.replace(/[^0-9.]/g, '') })} aria-describedby="valuation-help" />
         <p id="valuation-help" className="text-sm text-muted-foreground">{declaredValue > 0 ? <>Declared: <strong className="text-foreground">{formatZMW(declaredValue)}</strong></> : 'This sets your premium and the most a claim can pay out.'}</p>
-      </div>
-      <div className="space-y-3 rounded-lg bg-muted/50 p-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong className="text-foreground">Under-valuing:</strong> A lower value may reduce your premium, but any payout is capped at the declared value. You carry the difference.</p>
-        <p><strong className="text-foreground">Over-valuing:</strong> Declaring more than the market value does not increase a payout and may be treated as fraud.</p>
-        <p>Use recent market listings or a professional valuation.</p>
       </div>
       <div className="flex items-start gap-3">
         <Checkbox id="valuation-acknowledgement" ref={acknowledgementRef} checked={valuation.acknowledged} onCheckedChange={(checked) => onChange({ ...valuation, acknowledged: checked === true })} className="mt-1 size-5 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground" />

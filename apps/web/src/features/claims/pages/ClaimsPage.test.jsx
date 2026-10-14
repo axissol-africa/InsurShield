@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import ClaimsPage from './ClaimsPage';
@@ -14,10 +14,23 @@ const application = (yearsClaimFree) => ({
 });
 
 beforeEach(() => {
+  cleanup();
   useStore.setState({ customer, claims: [], policies: [] });
 });
 
 describe('ClaimsPage — a no-claim discount application', () => {
+  it('opens the new-claim form directly from the customer account quick action', () => {
+    render(<MemoryRouter initialEntries={['/claims?action=claim']}><ClaimsPage /></MemoryRouter>);
+
+    expect(screen.getByRole('heading', { name: 'Start a claim' })).toBeInTheDocument();
+  });
+
+  it('opens the new NCD form directly from the customer account quick action', () => {
+    render(<MemoryRouter initialEntries={['/claims?action=ncd']}><ClaimsPage /></MemoryRouter>);
+
+    expect(screen.getByRole('heading', { name: 'Apply for a No Claim Discount' })).toBeInTheDocument();
+  });
+
   // The insurer deciding this application is shown the same figure.
   it.each([[3, '30%'], [6, '50%']])('tells the customer the discount the published tiers give for %i claim-free years', async (yearsClaimFree, discount) => {
     const user = userEvent.setup();

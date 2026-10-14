@@ -1,6 +1,7 @@
 import { INSPECTION_KEYS } from '@/domain/inspection';
 import { env } from '@/config/env';
 import { SEED_ACTIVE_REQUEST_ID } from '../demoSeed';
+import { answeredByInsurers } from '../demoSeed';
 import { REQUEST_VALIDITY_DAYS, addDays, photosReusable } from '@/domain/quoteValidity';
 import { EMPTY_DOCUMENTS, NOW, TODAY, insurerReceivesRequests, newReference, updateById } from '../shared';
 
@@ -55,25 +56,25 @@ export const createJourneySlice = (set, get) => ({
     set((state) => ({ documents: { ...state.documents, [type]: url }, ...(type.startsWith('insp_') ? { photosCapturedAt: NOW() } : {}) })),
 
   /**
-   * Submit the customer's request to every active insurer at once.
-   * Returns the new request id.
+   * Save the customer's verified details, then let them compare published
+   * cover guides before choosing which insurers receive the quote request.
    */
   submitQuoteRequest: ({ customer, policyDates }) => {
     const state = get();
-    const insurers = state.insurersList.filter(insurerReceivesRequests);
     const id = newReference('QR');
     const submittedAt = NOW();
     const request = {
       id,
-      status: 'Submitted',
+      status: 'GuidesReady',
+      guideSelectionPending: true,
       submittedAt,
       // The declared value and live photos go stale; without valid quotes the request expires.
       expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
       requotedFromId: state.requotedFromId,
       renewalOfPolicyNumber: state.renewalOfPolicyNumber,
       customer,
-      insurers: insurers.map((insurer) => insurer.name),
-      insurerIds: insurers.map((insurer) => insurer.id),
+      insurers: [],
+      insurerIds: [],
       insurerQuotes: {},
       vehicle: vehicleLabel(state.vehicleDetails),
       vehicleDetails: state.vehicleDetails,
@@ -93,6 +94,47 @@ export const createJourneySlice = (set, get) => ({
       : state.quoteRequests;
     set({ quoteRequests: [request, ...quoteRequests], activeQuoteRequestId: id, policyDates, requotedFromId: null, renewalOfPolicyNumber: null });
     return id;
+  },
+
+  /**
+   * Distribute a saved request only to the insurers whose published cover
+   * guide the customer chose. This keeps the choice explicit and auditable.
+   */
+  requestQuotesFromGuides: (requestId, insurerIds, { createDemoReplies = false } = {}) => {
+    const state = get();
+    const selectedIds = [...new Set(insurerIds || [])];
+    const insurers = state.insurersList.filter(
+      (insurer) => selectedIds.includes(insurer.id) && insurerReceivesRequests(insurer),
+    );
+    if (!insurers.length) return false;
+
+    set((current) => ({
+      quoteRequests: updateById(current.quoteRequests, requestId, (request) => ({
+        ...request,
+        status: 'Submitted',
+        guideSelectionPending: false,
+        quotesRequestedAt: NOW(),
+        insurers: insurers.map((insurer) => insurer.name),
+        insurerIds: insurers.map((insurer) => insurer.id),
+      })),
+    }));
+    // Demo mode needs a complete customer journey without asking the
+    // presenter to play every insurer as well. Real insurers still reply
+    // through their portal, with their own uploaded PDF or image.
+    if (createDemoReplies && env.apiMode === 'mock') get().completeDemoQuoteReplies(requestId);
+    return true;
+  },
+
+  /** Create immediately available example PDF quotations in mock mode only. */
+  completeDemoQuoteReplies: (requestId) => {
+    if (env.apiMode !== 'mock') return false;
+    set((current) => ({
+      quoteRequests: updateById(current.quoteRequests, requestId, (request) => {
+        if (!request?.insurers?.length || Object.keys(request.insurerQuotes || {}).length) return request;
+        return answeredByInsurers(request, { replies: request.insurers.length, immediate: true });
+      }),
+    }));
+    return true;
   },
 
   /**

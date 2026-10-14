@@ -112,8 +112,8 @@ export default function InsuranceTypePage() {
           </RadioGroup>
 
           <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            Your choice goes to every insurer in the same request. Review the prices and cover
-            details before choosing a policy.
+            First compare cover guides for your chosen cover type. Then choose which insurers should
+            prepare a final quote.
           </p>
 
           <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:justify-between">

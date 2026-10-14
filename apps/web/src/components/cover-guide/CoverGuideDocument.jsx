@@ -21,31 +21,40 @@ const written = (field, value) => {
   return String(value ?? '').trim() || 'Not stated';
 };
 
-export default function CoverGuideDocument({ guide, coverType, insurerName, className = '' }) {
+export default function CoverGuideDocument({ guide, coverType, insurerName, className = '', embedded = false }) {
   if (!guide) return null;
   // The plan section is the header; everything else is the body.
   const body = sectionsFor().filter((section) => section.id !== 'plan');
 
   return (
     <article className={`border border-line bg-white ${className}`}>
-      <header className="border-b border-line p-6 sm:p-8">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
-          <Meta className="text-primary">{COVER_TYPE_LABELS[coverType]} cover</Meta>
-          {insurerName && <Meta className="text-ink-faint">{insurerName}</Meta>}
-        </div>
-        <h2 className="mt-4 text-[26px] font-semibold leading-[1.1] tracking-[-0.03em] text-ink sm:text-[32px]">
-          {guide.planName || 'Plan name not stated'}
-        </h2>
-        {guide.summary && <p className="mt-3 max-w-2xl text-[15px] leading-[1.6] text-ink-muted">{guide.summary}</p>}
-      </header>
+      {embedded ? (
+        <header className="border-b border-line bg-canvas-2 px-4 py-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <Meta className="text-primary">Full cover details · {COVER_TYPE_LABELS[coverType]}</Meta>
+            {insurerName && <Meta className="text-ink-faint">{insurerName}</Meta>}
+          </div>
+        </header>
+      ) : (
+        <header className="border-b border-line p-6 sm:p-8">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+            <Meta className="text-primary">{COVER_TYPE_LABELS[coverType]} cover</Meta>
+            {insurerName && <Meta className="text-ink-faint">{insurerName}</Meta>}
+          </div>
+          <h2 className="mt-4 text-[26px] font-semibold leading-[1.1] tracking-[-0.03em] text-ink sm:text-[32px]">
+            {guide.planName || 'Plan name not stated'}
+          </h2>
+          {guide.summary && <p className="mt-3 max-w-2xl text-[15px] leading-[1.6] text-ink-muted">{guide.summary}</p>}
+        </header>
+      )}
 
       <div className="divide-y divide-dashed divide-line">
         {body.map((section) => (
-          <section key={section.id} className="p-6 sm:p-8">
+          <section key={section.id} className={embedded ? 'p-4' : 'p-6 sm:p-8'}>
             <Meta className="text-ink-muted">{section.title}</Meta>
 
             {section.id === 'covered' && (
-              <ul className="mt-5 space-y-2.5">
+              <ul className={embedded ? 'mt-3 space-y-2' : 'mt-5 space-y-2.5'}>
                 {asLines(guide.coveredItems).map((benefit) => (
                   <li key={benefit} className="flex items-start gap-2.5 text-[15px] leading-[1.45] text-ink">
                     <span className="material-symbols-outlined mt-0.5 shrink-0 text-[18px] text-primary" aria-hidden="true">check</span>
@@ -56,7 +65,7 @@ export default function CoverGuideDocument({ guide, coverType, insurerName, clas
             )}
 
             {section.id === 'excluded' && (
-              <ul className="mt-5 space-y-2.5">
+              <ul className={embedded ? 'mt-3 space-y-2' : 'mt-5 space-y-2.5'}>
                 {asLines(guide.exclusions).map((exclusion) => (
                   <li key={exclusion} className="flex items-start gap-2.5 text-[15px] leading-[1.45] text-ink-muted">
                     <span className="material-symbols-outlined mt-0.5 shrink-0 text-[18px] text-ink-faint" aria-hidden="true">close</span>
@@ -67,7 +76,7 @@ export default function CoverGuideDocument({ guide, coverType, insurerName, clas
             )}
 
             {!['covered', 'excluded'].includes(section.id) && (
-              <dl className="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2">
+              <dl className={`${embedded ? 'mt-3 gap-x-6 gap-y-4' : 'mt-5 gap-x-8 gap-y-5'} grid sm:grid-cols-2`}>
                 {section.fields
                   // An optional limit nobody offers is left out rather than
                   // printed as "Not stated", which reads like an oversight.
@@ -100,7 +109,7 @@ export default function CoverGuideDocument({ guide, coverType, insurerName, clas
         ))}
       </div>
 
-      <footer className="border-t border-line bg-canvas-2 p-6 text-[12px] leading-[1.6] text-ink-muted sm:px-8">
+      <footer className={`${embedded ? 'p-4' : 'p-6 sm:px-8'} border-t border-line bg-canvas-2 text-[12px] leading-[1.6] text-ink-muted`}>
         Every insurer on InsurShield answers these same questions, so you are comparing like with like.
         The figures above are this insurer&apos;s own and form part of the policy they quote.
       </footer>

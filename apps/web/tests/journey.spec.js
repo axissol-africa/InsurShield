@@ -73,6 +73,23 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   await expect(page).toHaveURL(/quotes-comparison/);
   await expect(page.getByRole('heading', { name: 'Compare your quotes' })).toBeVisible();
   await expect(page.getByText('0 of 5 insurers have replied')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' }).first()).toBeDisabled();
+
+  // Payment is only available after the insurer sends a final quote.
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
+    const request = store.state.quoteRequests.find((item) => item.id === store.state.activeQuoteRequestId);
+    request.insurerQuotes = {
+      'Prestige Assurance': {
+        premium: 14400,
+        sentAt: new Date().toISOString(),
+        validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+    };
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+  await page.reload();
+  await expect(page.getByText('1 of 5 insurers have replied')).toBeVisible();
   await page.getByRole('button', { name: /Choose Prestige/ }).first().click();
 
   await expect(page).toHaveURL(/payment/);

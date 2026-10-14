@@ -16,7 +16,7 @@ const TILES = [
 ];
 
 const FEATURES = [
-  ['bolt', 'One request reaches every insurer'],
+  ['layers', 'Compare cover guides before requesting quotes'],
   ['description', 'Insurer-issued quotation documents'],
   ['balance', 'PIA-regulated minimum rate applied'],
   ['photo_camera', 'Guided photo capture, no depot visit'],
@@ -60,8 +60,8 @@ export default function CtaBand() {
             Cover without the phone calls
           </h2>
           <p className="mx-auto mt-6 max-w-xl text-[16px] leading-[1.6] text-white/85 sm:text-[17px]">
-            Start with your registration number. Every registered insurer prices the same request,
-            and nothing is payable until you accept a quote.
+            Start with your registration number. Compare cover guides, choose the insurers you want
+            to hear from, and pay only after you accept a final quote.
           </p>
 
           <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">

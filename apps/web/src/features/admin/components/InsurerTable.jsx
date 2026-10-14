@@ -16,11 +16,11 @@ const STATUS_BADGE = {
  */
 export default function InsurerTable({ insurers, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore }) {
   return (
-    <div className="border border-line">
-      <div className={`hidden border-b border-line bg-canvas-2 px-5 py-4 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-muted lg:grid lg:gap-x-5 ${GRID}`}>
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className={`hidden border-b border-border bg-muted/50 px-5 py-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground lg:grid lg:gap-x-5 ${GRID}`}>
         <div>Company</div><div>Licence</div><div>Rate %</div><div>Effective rate</div><div>Status</div><div className="text-right">Actions</div>
       </div>
-      <div className="divide-y divide-dashed divide-line">
+      <div className="divide-y divide-border">
         {insurers.map((insurer) => (
           <InsurerRow key={insurer.id} insurer={insurer} piaRatePercentage={piaRatePercentage} onView={() => onView(insurer)} onEdit={() => onEdit(insurer)}
             onRateChange={(rate) => onRateChange(insurer.id, rate)} onStatusChange={(status) => onStatusChange(insurer.id, status)}
@@ -35,42 +35,41 @@ function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, 
   const status = insurer.status || 'Active';
   const effectiveRate = Math.max(insurer.ratePercentage, piaRatePercentage);
   return (
-    <div className={`group relative grid grid-cols-1 items-center gap-3 px-5 py-4 transition-colors duration-200 ease-out hover:bg-canvas-2 lg:gap-x-5 lg:gap-y-0 ${GRID}`}>
-      <span className="beam pointer-events-none absolute left-0 top-0 h-px w-1/4 bg-primary" aria-hidden="true" />
+    <div className={`group grid grid-cols-1 items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/40 lg:gap-x-5 lg:gap-y-0 ${GRID}`}>
       <div className="flex min-w-0 items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[1px] border border-dashed border-line-strong bg-canvas">
+        <span className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-primary/10 text-primary">
           {insurer.logoUrl ? <img src={insurer.logoUrl} alt="" className="max-h-7 max-w-7 object-contain" /> : <span className="material-symbols-outlined text-[18px] text-primary" aria-hidden="true">{insurer.icon || 'business'}</span>}
         </span>
         <div className="min-w-0">
-          <div className="truncate text-[14px] font-medium tracking-[-0.01em] text-ink">{insurer.name}</div>
-          <div className="mt-1 truncate text-[12px] text-ink-muted">{insurer.coverage || '—'} · quotes valid {insurer.quoteValidityDays || 5} days</div>
+          <div className="truncate text-sm font-medium">{insurer.name}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">{insurer.coverage || '—'} · quotes valid {insurer.quoteValidityDays || 5} days</div>
         </div>
       </div>
-      <div className="min-w-0 text-[13px] text-ink-muted">
+      <div className="min-w-0 text-sm text-muted-foreground">
         <CellLabel>Licence</CellLabel>
         {insurer.licenceNumber
-          ? <><span className="font-mono text-ink">{insurer.licenceNumber}</span><span className="mt-1 block text-[12px]">expires {formatDate(insurer.licenceExpiry)}</span></>
+          ? <><span className="font-mono text-foreground">{insurer.licenceNumber}</span><span className="mt-1 block text-xs">expires {formatDate(insurer.licenceExpiry)}</span></>
           : <span className="text-primary">Licence not recorded</span>}
       </div>
       <div><CellLabel>Rate</CellLabel><RateCell insurer={insurer} onSave={onRateChange} /></div>
-      <div className="text-[13px] text-ink">
+      <div className="text-sm">
         <CellLabel>Effective rate</CellLabel>
         <span className="font-medium">{effectiveRate}%</span>
         {insurer.ratePercentage < piaRatePercentage && (
-          <Meta className="ml-2 rounded-[1px] border border-primary/30 bg-primary/10 px-1.5 py-1 text-primary">PIA floor</Meta>
+          <Meta className="ml-2 rounded-md border border-primary/20 bg-primary/10 px-1.5 py-1 text-primary">PIA floor</Meta>
         )}
       </div>
-      <div><Meta className={`inline-flex rounded-[1px] border px-2 py-1.5 ${STATUS_BADGE[status] || STATUS_BADGE.Inactive}`}>{status}</Meta></div>
+      <div><Meta className={`inline-flex rounded-full border px-2.5 py-1 ${STATUS_BADGE[status] || STATUS_BADGE.Inactive}`}>{status}</Meta></div>
       <div className="flex items-center gap-2 lg:justify-end">
-        <div className="inline-flex rounded-[1px] border border-line-strong">
-          <button type="button" onClick={onView} className="inline-flex min-h-9 items-center justify-center border-r border-line-strong px-4 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted transition-colors duration-200 ease-out hover:text-primary">View</button>
-          <button type="button" onClick={onEdit} className="inline-flex min-h-9 items-center justify-center px-4 font-mono text-[11px] uppercase tracking-[0.08em] text-primary transition-colors duration-200 ease-out hover:bg-primary/5">Edit</button>
+        <div className="inline-flex overflow-hidden rounded-lg border border-border">
+          <button type="button" onClick={onView} className="inline-flex min-h-9 items-center justify-center border-r border-border px-4 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">View</button>
+          <button type="button" onClick={onEdit} className="inline-flex min-h-9 items-center justify-center px-4 text-xs font-medium text-primary transition-colors hover:bg-primary/10">Edit</button>
         </div>
         {status === 'Deleted' ? (
           <button
             type="button"
             onClick={onRestore}
-            className="inline-flex min-h-9 items-center gap-2 rounded-[1px] border border-dashed border-line-strong px-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted transition-colors duration-200 ease-out hover:border-primary hover:text-primary"
+            className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
           >
             <span className="material-symbols-outlined text-[16px]" aria-hidden="true">restart_alt</span>
             Restore
@@ -84,7 +83,7 @@ function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, 
 }
 
 /** Column label shown only when the row stacks vertically and the header row is hidden. */
-const CellLabel = ({ children }) => <span className="mr-2 text-[10px] font-bold uppercase tracking-wider text-ink-muted lg:hidden">{children}</span>;
+const CellLabel = ({ children }) => <span className="mr-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground lg:hidden">{children}</span>;
 
 function RateCell({ insurer, onSave }) {
   const [draft, setDraft] = useState(null); // null = not editing
@@ -92,8 +91,8 @@ function RateCell({ insurer, onSave }) {
   if (draft === null) {
     return (
       <div className="inline-flex items-center gap-2 align-middle">
-        <span className="text-[14px] font-bold text-primary">{insurer.ratePercentage}%</span>
-        <button type="button" aria-label={`Edit rate for ${insurer.name}`} onClick={() => setDraft(String(insurer.ratePercentage))} className="text-ink-muted transition-colors hover:text-primary">
+        <span className="text-sm font-semibold text-primary">{insurer.ratePercentage}%</span>
+        <button type="button" aria-label={`Edit rate for ${insurer.name}`} onClick={() => setDraft(String(insurer.ratePercentage))} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary">
           <span className="material-symbols-outlined text-[16px]" aria-hidden="true">edit</span>
         </button>
       </div>
@@ -110,14 +109,14 @@ function RateCell({ insurer, onSave }) {
     <div className="inline-flex items-center gap-2 align-middle">
       <input type="number" step="0.1" min="0.1" value={draft} onChange={(event) => setDraft(event.target.value)} aria-label={`New rate for ${insurer.name}`}
         onKeyDown={(event) => { if (event.key === 'Enter') save(); if (event.key === 'Escape') setDraft(null); }}
-        className="w-20 rounded-[1px] border border-line-strong p-1.5 text-[13px] outline-none focus:ring-1 focus:ring-primary" />
-      <button type="button" onClick={save} aria-label="Save rate" className="text-primary"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">check</span></button>
-      <button type="button" onClick={() => setDraft(null)} aria-label="Cancel rate edit" className="text-red-500"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">close</span></button>
+        className="w-20 rounded-lg border border-border bg-background p-1.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+      <button type="button" onClick={save} aria-label="Save rate" className="rounded-md p-1 text-primary hover:bg-primary/10"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">check</span></button>
+      <button type="button" onClick={() => setDraft(null)} aria-label="Cancel rate edit" className="rounded-md p-1 text-red-600 hover:bg-red-50"><span className="material-symbols-outlined text-[18px]" aria-hidden="true">close</span></button>
     </div>
   );
 }
 
-const menuItemClass = 'flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-medium transition-colors duration-200 ease-out';
+const menuItemClass = 'flex w-full items-center gap-2.5 px-4 py-3 text-left text-sm font-medium transition-colors';
 
 function RowActionsMenu({ insurer, status, onStatusChange, onDelete }) {
   const [open, setOpen] = useState(false);
@@ -138,17 +137,17 @@ function RowActionsMenu({ insurer, status, onStatusChange, onDelete }) {
   return (
     <div className="relative" data-insurer-actions>
       <button type="button" aria-label={`More actions for ${insurer.name}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((current) => !current)}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-[1px] border border-line-strong bg-canvas text-ink-muted transition-colors duration-200 ease-out hover:border-primary hover:text-primary">
+        className="inline-flex size-9 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-primary">
         <span className="material-symbols-outlined text-[20px]" aria-hidden="true">more_horiz</span>
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-[1px] border border-line-strong bg-canvas">
+        <div role="menu" className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-lg">
           {status === 'Inactive' ? (
-            <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Active'))} className={`${menuItemClass} text-primary hover:bg-primary/5`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">restart_alt</span>Reactivate</button>
+            <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Active'))} className={`${menuItemClass} text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">restart_alt</span>Reactivate</button>
           ) : (
-            <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Inactive'))} className={`${menuItemClass} text-ink-muted hover:bg-canvas-2`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">pause_circle</span>Deactivate</button>
+            <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Inactive'))} className={`${menuItemClass} text-muted-foreground hover:bg-muted`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">pause_circle</span>Deactivate</button>
           )}
-          <button type="button" role="menuitem" onClick={() => choose(onDelete)} className={`${menuItemClass} border-t border-dashed border-line text-primary hover:bg-primary/5`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">delete</span>Remove</button>
+          <button type="button" role="menuitem" onClick={() => choose(onDelete)} className={`${menuItemClass} mt-1 border-t border-border text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">delete</span>Remove</button>
         </div>
       )}
     </div>

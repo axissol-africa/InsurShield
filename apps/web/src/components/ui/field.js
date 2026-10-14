@@ -12,7 +12,7 @@
  * field; that rule is in index.css rather than repeated here.
  */
 export const fieldClass =
-  'w-full rounded-[1px] border border-line-strong bg-canvas-2 p-3 text-[15px] text-ink outline-none transition-colors duration-200 ease-out focus:border-primary focus:ring-2 focus:ring-primary/30';
+  'w-full rounded-xl border border-line-strong bg-canvas-2 p-3 text-[15px] text-ink outline-none transition-colors duration-200 ease-out focus:border-primary focus:ring-2 focus:ring-primary/30';
 
 /** The small monospace caption that names a field. */
 export const labelClass =

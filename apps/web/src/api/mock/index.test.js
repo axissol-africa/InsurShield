@@ -34,8 +34,10 @@ describe('mock api adapter', () => {
     state.setDocuments(Object.fromEntries(INSPECTION_KEYS.map((key) => [key, 'data:image/jpeg;base64,x'])));
 
     const request = await mock.quotes.submitRequest({ customer: state.customer, policyDates: null });
-    expect(request.insurers).toHaveLength(5);
+    expect(request.insurers).toEqual([]);
     expect(await mock.quotes.listMine()).toHaveLength(1);
+
+    state.requestQuotesFromGuides(request.id, ['1']);
 
     asInsurer();
     expect(await mock.quotes.listForInsurer()).toHaveLength(1);

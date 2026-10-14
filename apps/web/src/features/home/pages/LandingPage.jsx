@@ -12,14 +12,14 @@ const BENEFITS = [
   {
     index: '01',
     icon: 'layers',
-    title: 'One request, every insurer',
-    text: 'Enter your vehicle details once. The same request reaches every registered insurer at the same moment.',
+    title: 'Compare cover guides first',
+    text: 'Read each insurer’s published cover guide before deciding who should prepare a final quote.',
   },
   {
     index: '02',
     icon: 'balance',
-    title: 'No favourites, no ranking',
-    text: 'Insurers compete on the same brief. You see each final quote exactly as the insurer issued it.',
+    title: 'Choose who quotes',
+    text: 'Only the insurers you choose receive your verified details and return a final quotation.',
   },
   {
     index: '03',
@@ -31,8 +31,8 @@ const BENEFITS = [
 
 const STEPS = [
   ['Describe the vehicle', 'Pick your cover, confirm the registration details, declare a value and state how the vehicle is used.'],
-  ['Send one request', 'Create your account and submit once. Every insurer on the platform receives an identical brief.'],
-  ['Compare and pay', 'Each insurer returns its own final quote and document. Compare price and cover, then pay to issue.'],
+  ['Compare cover guides', 'Create your account and submit once to read the published cover guides from active insurers.'],
+  ['Request, compare and pay', 'Choose one or more insurers for a final quote, compare the documents they return, then pay to issue.'],
   ['Manage the cover', 'Policies, renewals, quote history and claim notifications all stay attached to your account.'],
 ];
 
@@ -70,14 +70,14 @@ export default function LandingPage() {
             </span>
 
             <h1 className="mt-8 text-[44px] font-semibold leading-[1.02] tracking-[-0.04em] text-ink sm:text-[58px] lg:text-[68px]">
-              Every insurer.
+              Know the cover.
               <br />
-              <span className="text-primary">One request.</span>
+              <span className="text-primary">Then choose the quote.</span>
             </h1>
 
             <p className="mt-7 max-w-lg text-[17px] leading-[1.6] text-ink-muted">
-              Tell us about your vehicle once. Your request goes to every insurer on InsurShield
-              simultaneously, and you compare the quotes they send back — priced by them, not by us.
+              Tell us about your vehicle once. First compare each active insurer’s published cover guide,
+              then choose one or more insurers to prepare final quotes — priced by them, not by us.
             </p>
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
@@ -104,7 +104,7 @@ export default function LandingPage() {
             </div>
 
             <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-3">
-              {['All active insurers', 'Insurer documents', 'Secure account'].map((item, index) => (
+              {['Cover guides', 'Choose insurers', 'Final quote documents'].map((item, index) => (
                 <span key={item} className="inline-flex items-center gap-3">
                   {index > 0 && <span className="hidden h-3 w-px bg-line-strong sm:block" aria-hidden="true" />}
                   <Meta className="text-ink-faint">{item}</Meta>
@@ -116,14 +116,14 @@ export default function LandingPage() {
           {/* Schematic panel: the mechanism, drawn. */}
           <div className="ticked border border-line bg-canvas p-6 sm:p-8">
             <div className="flex items-center justify-between border-b border-dashed border-line pb-4">
-              <Meta className="text-ink-muted">Request routing</Meta>
-              <Meta className="text-primary">{activeInsurers.length} active</Meta>
+              <Meta className="text-ink-muted">Cover guide comparison</Meta>
+              <Meta className="text-primary">{activeInsurers.length} guides</Meta>
             </div>
             <div className="py-6">
               <QuoteFanSchematic insurers={activeInsurers} />
             </div>
             <div className="flex items-center justify-between border-t border-dashed border-line pt-4">
-              <Meta className="text-ink-faint">Simultaneous delivery</Meta>
+              <Meta className="text-ink-faint">Read, choose, then request</Meta>
               <DotBand count={10} />
             </div>
           </div>
@@ -134,8 +134,8 @@ export default function LandingPage() {
       <section className="border-b border-line bg-canvas-2">
         <div className="mx-auto grid max-w-[1200px] grid-cols-2 px-6 lg:grid-cols-4 lg:px-10">
           {[
-            [String(activeInsurers.length), 'Insurers receive every request'],
-            ['1', 'Form to complete, ever'],
+            [String(activeInsurers.length), 'Published guides to compare'],
+            ['1', 'Form before choosing insurers'],
             [`${PIA_CONFIG.piaRatePercentage}%`, 'PIA regulated minimum rate'],
             ['3–12', 'Month cover periods'],
           ].map(([value, label], index) => (

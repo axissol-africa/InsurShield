@@ -4,8 +4,9 @@ import DitherChart from './DitherChart';
 
 /**
  * The argument for the product, made visually: phoning insurers one at a time
- * versus sending one request. The left panel is deliberately cluttered and
- * never quite still; the right panel is almost empty.
+ * versus reading published cover guides before choosing who should quote. The
+ * left panel is deliberately cluttered and never quite still; the right panel
+ * is almost empty.
  *
  * The scattered notes on the left are illustrative, so they are hidden from
  * assistive technology — the headings and the summary line carry the meaning.
@@ -127,7 +128,7 @@ export default function ComparisonSplit({ insurerCount }) {
 
           <div className="relative">
             <span className="font-mono text-[12px] uppercase leading-none tracking-[0.12em] text-white/60">
-              Status: quotes in
+              Status: cover guides ready
             </span>
             <h3 className="mt-7 max-w-[320px] text-[30px] font-semibold leading-[1.1] tracking-[-0.035em] text-white sm:text-[36px]">
               Buying cover with InsurShield
@@ -140,14 +141,14 @@ export default function ComparisonSplit({ insurerCount }) {
             <span className="inline-flex items-center gap-3 rounded-full border border-white/35 bg-white/10 px-6 py-4 backdrop-blur-sm">
               <span className="material-symbols-outlined text-[20px] text-white" aria-hidden="true">check</span>
               <span className="text-[17px] font-medium text-white sm:text-[19px]">
-                <motion.span className="tabular-nums">{count}</motion.span> final quotes, side by side
+                <motion.span className="tabular-nums">{count}</motion.span> cover guides, side by side
               </span>
             </span>
             <span className="hidden h-px flex-1 border-t border-dashed border-white/30 sm:block" aria-hidden="true" />
           </div>
 
           <p className="relative mt-14 font-mono text-[12px] uppercase tracking-[0.12em] text-white/60">
-            1 request · 1 form · every insurer at once
+            1 form · compare guides · choose insurers
           </p>
         </div>
       </div>

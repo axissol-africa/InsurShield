@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore, selectActiveQuoteRequest } from '@/store';
+import { insurerReceivesRequests, needsCoverGuideSelection } from '@/store/shared';
+import { env } from '@/config/env';
 import { hydrateCustomer, hydrateDirectory } from '@/api/sync';
 import { calculatePremium, formatZMW, formatDate } from '@/domain/premiumEngine';
 import { sameInsurerName } from '@/domain/insurers';
 import { quoteValidity, requestStatus } from '@/domain/quoteValidity';
 import { coverPeriod } from '@/domain/coverPeriod';
 import { openDocument } from '@/lib/files';
-import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
-import { COVER_TYPE_LABELS, asLines, benefitKey, splitBenefit } from '@/domain/coverGuide';
+import CoverGuideDocument from '@/components/cover-guide/CoverGuideDocument';
+import { COVER_TYPE_LABELS, asLines, isCoverGuideComplete } from '@/domain/coverGuide';
 import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/primitives/card';
 import { Button } from '@/components/ui/primitives/button';
@@ -16,61 +18,14 @@ import { Badge } from '@/components/ui/primitives/badge';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/primitives/collapsible';
 import { ChevronDown } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
-
-/**
- * Rows are taken from the benefits insurers publish in their cover guides,
- * each with the limit stated against it. Older quotes carry free-text
- * benefits with no limits, so those still appear — as the benefit alone.
- */
-const coveredRows = (quotes, coverageType) => {
-  // Keyed by the benefit, labelled by the first insurer to name it, so the
-  // same cover at different ceilings is one row with different cells.
-  const rows = new Map();
-  for (const quote of quotes) {
-    for (const benefit of benefitsOf(quote, coverageType)) {
-      const key = benefitKey(benefit);
-      if (key && !rows.has(key)) rows.set(key, splitBenefit(benefit).name);
-    }
-  }
-  return [...rows].map(([key, label]) => ({ key, label }));
-};
-
-/** A quote's benefits, from its published guide or from an older reply. */
-/**
- * An insurer that has not replied yet is still compared on its published
- * guide, not on the free text in the catalogue. Those wordings differ per
- * insurer — "Medical Expenses up to ZMW 30,000" against "…up to ZMW 50,000" —
- * so every variant became a row of its own and the table grew a line for each
- * insurer rather than one per benefit.
- */
-const benefitsOf = (quote, coverageType) => {
-  const quoted = quote.reply?.coverGuide;
-  if (quoted?.coveredItems?.length) return asLines(quoted.coveredItems);
-  const published = quote.coverGuides?.[coverageType];
-  if (published?.coveredItems?.length) return asLines(published.coveredItems);
-  return asLines(quoted?.benefits || quote.benefits || []);
-};
-
-const INSPECTION_LABELS = {
-  'NOT REQUIRED': 'Not required',
-  REQUIRED: 'Required before policy issue',
-  OPTIONAL: 'May be requested',
-};
-
-/** What this insurer says about one benefit: its ceiling, or just that it is included. */
-const benefitCell = (quote, key, coverageType) => {
-  const match = benefitsOf(quote, coverageType).find((benefit) => benefitKey(benefit) === key);
-  if (!match) return null;
-  return splitBenefit(match).detail || 'Included';
-};
+import { Checkbox } from '@/components/ui/primitives/checkbox';
 
 export default function QuotesComparisonPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [reading, setReading] = useState(null); // { guide, insurerName } while a cover guide is open
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { insurersList, selectQuote, quoteRequests, customer, piaConfig, requoteFromRequest, insurerReviews } =
+  const { insurersList, selectQuote, quoteRequests, customer, piaConfig, requoteFromRequest, requestQuotesFromGuides, completeDemoQuoteReplies, insurerReviews } =
     useStore();
 
   // Insurer replies arrive after the request was sent, so this page reloads
@@ -80,6 +35,22 @@ export default function QuotesComparisonPage() {
     void hydrateCustomer();
   }, []);
   const request = useStore(selectActiveQuoteRequest);
+
+  // A request made during an earlier prototype session may have been sent
+  // before demo replies were introduced. Finish only that mock-mode hand-off;
+  // production requests always wait for an insurer's uploaded quotation.
+  useEffect(() => {
+    const hasNoReplies = Object.keys(request?.insurerQuotes || {}).length === 0;
+    if (
+      env.apiMode === 'mock' &&
+      request?.quotesRequestedAt &&
+      !needsCoverGuideSelection(request) &&
+      request.insurers?.length &&
+      hasNoReplies
+    ) {
+      completeDemoQuoteReplies(request.id);
+    }
+  }, [completeDemoQuoteReplies, request?.id, request?.quotesRequestedAt, request?.insurers?.length, request?.insurerQuotes, request]);
 
   const quotes = useMemo(() => {
     if (!request) return [];
@@ -138,13 +109,21 @@ export default function QuotesComparisonPage() {
   const repliedCount = quotes.filter((quote) => quote.isFinal).length;
   const coverageType =
     request?.insuranceType === 'Third Party Only' ? 'ThirdParty' : request?.insuranceType || 'Comprehensive';
-  const benefitRows = coveredRows(quotes, coverageType);
+  const guideInsurers = useMemo(
+    () =>
+      insurersList.filter(
+        (insurer) => insurerReceivesRequests(insurer) && isCoverGuideComplete(insurer.coverGuides?.[coverageType]),
+      ),
+    [coverageType, insurersList],
+  );
   const status = requestStatus(request);
   const cover = coverPeriod(request?.policyDates);
   const requestExpired = status.status === 'expired';
 
   const choose = (quote) => {
-    if (quote.expired || requestExpired) return;
+    // Indicative estimates explain the market but are not an offer a customer
+    // can buy. A documented insurer reply is required before payment.
+    if (!quote.isFinal || quote.expired || requestExpired) return;
     selectQuote(
       { ...quote, price: quote.premium, requestId: request.id, validUntil: quote.validity.validUntil },
       quote.breakdown,
@@ -159,12 +138,29 @@ export default function QuotesComparisonPage() {
 
   if (!request) return <NoActiveRequest requests={quoteRequests} customer={customer} />;
 
+  if (needsCoverGuideSelection(request)) {
+    return (
+      <CoverGuideSelection
+        request={request}
+        coverageType={coverageType}
+        insurers={guideInsurers}
+        onRequestQuotes={(insurerIds) =>
+          requestQuotesFromGuides(request.id, insurerIds, { createDemoReplies: env.apiMode === 'mock' })
+        }
+      />
+    );
+  }
+
   return (
     <>
       <JourneyLayout
         step={5}
-        title="Compare your quotes"
-        description="Compare each insurer's price, benefits and conditions before choosing your cover."
+        title={quotes.length === 1 ? 'Your final quote' : 'Compare your quotes'}
+        description={
+          quotes.length === 1
+            ? 'Review the insurer’s final quotation, then continue to payment.'
+            : 'Compare each insurer’s final quotation, price and validity before choosing your cover.'
+        }
         className="max-w-6xl"
       >
         <Card className="mb-6">
@@ -186,7 +182,7 @@ export default function QuotesComparisonPage() {
             <p role="status" className="text-sm">
               {repliedCount === quotes.length
                 ? 'All insurers have sent their final quotes.'
-                : `${repliedCount} of ${quotes.length} insurers have replied. Estimates are shown while you wait for final quotes.`}
+                : `${repliedCount} of ${quotes.length} insurers have replied. Only a final insurer quotation can be selected for payment.`}
             </p>
           </CardContent>
         </Card>
@@ -233,12 +229,11 @@ export default function QuotesComparisonPage() {
             <li key={quote.id} aria-labelledby={`quote-${quote.id}`} className="min-w-0">
               <QuoteCard
                 quote={quote}
-                benefitRows={benefitRows}
                 coverageType={coverageType}
                 disabled={requestExpired}
                 onChoose={() => choose(quote)}
                 onRequote={requote}
-                onOpenGuide={(guide) => setReading({ guide, insurerName: quote.name })}
+                selectionLabel={quotes.length === 1 ? 'Continue to payment' : `Choose ${quote.name}`}
               />
             </li>
           ))}
@@ -249,11 +244,136 @@ export default function QuotesComparisonPage() {
           are confirmed by the insurer before your policy is issued.
         </p>
       </JourneyLayout>
-
-      {reading && (
-        <CoverGuideReader guide={reading.guide} insurerName={reading.insurerName} onClose={() => setReading(null)} />
-      )}
     </>
+  );
+}
+
+function CoverGuideSelection({ request, coverageType, insurers, onRequestQuotes }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [expandedInsurerIds, setExpandedInsurerIds] = useState([]);
+  const selectedCount = selectedIds.length;
+
+  const toggle = (insurerId, checked) => {
+    setSelectedIds((current) => (checked ? [...new Set([...current, insurerId])] : current.filter((id) => id !== insurerId)));
+  };
+
+  return (
+    <>
+      <JourneyLayout
+        step={5}
+        title="Choose cover guides"
+        description="Your vehicle details and documents are ready. Read each insurer’s published cover guide, then select one or more insurers to prepare a final quote."
+        className="max-w-6xl"
+      >
+        <Card className="mb-6 border-primary/20 bg-primary/[0.04]">
+          <CardContent className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="font-medium text-foreground">{request.id} · {COVER_TYPE_LABELS[coverageType]} cover</p>
+              <p className="mt-1 text-sm text-muted-foreground">Cover guides are shared automatically. Your full quote request is sent only to the insurers you select.</p>
+            </div>
+            <Badge variant="secondary">{selectedCount} selected</Badge>
+          </CardContent>
+        </Card>
+
+        {insurers.length ? (
+          <div className="grid items-start gap-4 md:grid-cols-2">
+            {insurers.map((insurer) => {
+              const guide = insurer.coverGuides[coverageType];
+              const selected = selectedIds.includes(insurer.id);
+              return (
+                <CoverGuideOption
+                  key={insurer.id}
+                  insurer={insurer}
+                  guide={guide}
+                  coverageType={coverageType}
+                  selected={selected}
+                  expanded={expandedInsurerIds.includes(insurer.id)}
+                  onExpandedChange={(open) =>
+                    setExpandedInsurerIds((current) =>
+                      open ? [...new Set([...current, insurer.id])] : current.filter((id) => id !== insurer.id),
+                    )
+                  }
+                  onToggle={(checked) => toggle(insurer.id, checked)}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <Alert>
+            <AlertTitle>Cover guides are not available yet</AlertTitle>
+            <AlertDescription>There are no published {COVER_TYPE_LABELS[coverageType].toLowerCase()} guides to compare at the moment. Please try again later.</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="mt-7 flex flex-col gap-3 border-t pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">Choose at least one insurer. Each selected insurer receives the same verified vehicle details and inspection photos.</p>
+          <Button type="button" size="lg" disabled={!selectedCount} onClick={() => onRequestQuotes(selectedIds)}>
+            Request {selectedCount || '—'} final quote{selectedCount === 1 ? '' : 's'}
+          </Button>
+        </div>
+      </JourneyLayout>
+    </>
+  );
+}
+
+/** A complete insurer guide, kept in its comparison card rather than a separate page. */
+function CoverGuideOption({ insurer, guide, coverageType, selected, expanded, onExpandedChange, onToggle }) {
+  const action = expanded ? 'Hide full cover guide' : 'Show full cover guide';
+
+  return (
+    <Collapsible open={expanded} onOpenChange={onExpandedChange} asChild>
+      <Card size="sm" className={`gap-3 border ${selected ? 'ring-2 ring-primary/70' : ''}`}>
+        <CardHeader>
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id={`guide-${insurer.id}`}
+              checked={selected}
+              onCheckedChange={(checked) => onToggle(checked === true)}
+              aria-label={`Select ${insurer.name} cover guide`}
+              className="mt-1 size-5"
+            />
+            <div className="min-w-0 flex-1">
+              <h2 className="font-semibold text-foreground">{insurer.name}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{guide.planName}</p>
+            </div>
+            <Badge variant="outline">Cover guide</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm leading-6 text-muted-foreground">{guide.summary}</p>
+          <dl className="grid grid-cols-2 gap-3 border-y py-3 text-sm">
+            <div>
+              <dt className="text-muted-foreground">Benefits</dt>
+              <dd className="mt-1 font-medium">{asLines(guide.coveredItems).length} listed</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Quote validity</dt>
+              <dd className="mt-1 font-medium">{guide.quoteValidityDays} days</dd>
+            </div>
+          </dl>
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full justify-between border-primary text-primary hover:bg-primary hover:text-white"
+              aria-label={`${action} for ${insurer.name}`}
+            >
+              <span>{action}</span>
+              <ChevronDown className={`size-4 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </Button>
+          </CollapsibleTrigger>
+        </CardContent>
+        <CollapsibleContent className="border-t border-line">
+          <CoverGuideDocument
+            guide={guide}
+            coverType={coverageType}
+            insurerName={insurer.name}
+            embedded
+            className="border-x-0 border-b-0 border-t-0"
+          />
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }
 
@@ -280,9 +400,8 @@ function PriceBlock({ quote }) {
 }
 
 /** The insurer's own quotation document and reference, as uploaded from its system. */
-function QuoteDocuments({ reply, onOpenGuide }) {
+function QuoteDocuments({ reply }) {
   if (!reply) return <span className="text-ink-muted/70">—</span>;
-  const guide = reply.coverGuide;
   return (
     <div className="space-y-1.5 text-[13px]">
       {reply.document && (
@@ -298,44 +417,11 @@ function QuoteDocuments({ reply, onOpenGuide }) {
           View quotation
         </Button>
       )}
-      {guide?.planName && (
-        <Button
-          type="button"
-          variant="link"
-          onClick={() => onOpenGuide(guide)}
-          className="flex h-auto justify-start whitespace-normal px-0 font-medium"
-        >
-          <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-            description
-          </span>
-          Read the cover guide
-        </Button>
-      )}
       {reply.insurerReference && (
         <p className="text-ink-muted">
           Insurer ref <span className="font-mono font-semibold text-ink">{reply.insurerReference}</span>
         </p>
       )}
-    </div>
-  );
-}
-
-function CoverGuideDetails({ quote }) {
-  const guide = quote.reply?.coverGuide;
-  if (!guide)
-    return (
-      <p className="mt-3 text-[12px] leading-[1.5] text-ink-muted">
-        The insurer sends its cover guide with its final quote.
-      </p>
-    );
-  const covered = asLines(guide.coveredItems).length || asLines(guide.benefits).length;
-  return (
-    <div className="mt-4 border-y border-line py-3 text-[12px] leading-[1.55] text-ink-muted">
-      <p className="font-medium text-ink">{guide.planName || COVER_TYPE_LABELS[guide.coverageType] || 'Cover guide'}</p>
-      <p className="mt-1">
-        {covered} stated benefit{covered === 1 ? '' : 's'}
-        {guide.claimsContact ? ` · Claims: ${guide.claimsContact}` : ''}
-      </p>
     </div>
   );
 }
@@ -368,6 +454,12 @@ function ValidityLine({ quote }) {
 }
 
 function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
+  if (!quote.isFinal)
+    return (
+      <Button type="button" variant="outline" disabled className="h-auto min-h-11 w-full whitespace-normal">
+        Awaiting insurer quote
+      </Button>
+    );
   if (quote.expired || disabled)
     return (
       <Button type="button" variant="outline" onClick={onRequote} className="h-auto min-h-11 w-full whitespace-normal">
@@ -381,12 +473,8 @@ function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
   );
 }
 
-function QuoteCard({ quote, benefitRows, coverageType, disabled, onChoose, onRequote, onOpenGuide }) {
-  const [expanded, setExpanded] = useState(false);
-  const guide = quote.reply?.coverGuide || quote.coverGuides?.[coverageType];
-  const exclusions = asLines(guide?.exclusions);
+function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selectionLabel }) {
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded} asChild>
       <Card size="sm" className="gap-3">
         <CardHeader>
           <div className="flex items-start gap-2">
@@ -414,101 +502,25 @@ function QuoteCard({ quote, benefitRows, coverageType, disabled, onChoose, onReq
             <PriceBlock quote={quote} />
             <ValidityLine quote={quote} />
           </div>
-          <dl className="grid grid-cols-2 gap-3 border-y py-2 text-sm">
-            <div className="space-y-1">
-              <dt className="text-muted-foreground">Cover period</dt>
-              <dd className="font-medium">
-                {quote.breakdown.coverageDays
-                  ? `${quote.breakdown.coverageDays} days`
-                  : quote.breakdown.coverageDuration}
-              </dd>
-            </div>
-            <div className="space-y-1">
-              <dt className="text-muted-foreground">Vehicle inspection</dt>
-              <dd className="font-medium">{INSPECTION_LABELS[quote.inspectionRules] || 'May be requested'}</dd>
-            </div>
-          </dl>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {exclusions.length
-              ? 'Conditions and exclusions apply. Review cover details. '
-              : 'Exclusions not provided. Confirm insurer terms. '}
-            Excess or deductible: not provided. Confirm with the insurer.
-          </p>
           {quote.reply?.notes && (
             <p className="rounded-xl bg-muted p-3 text-sm">
               <strong>Insurer note:</strong> {quote.reply.notes}
             </p>
           )}
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full justify-between"
-              aria-label={`${expanded ? 'Hide' : 'Show'} cover details for ${quote.name}`}
-            >
-              {expanded ? 'Hide cover details' : 'Show cover details'}
-              <ChevronDown
-                className={`size-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
-                aria-hidden="true"
-              />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">Published rate: {quote.ratePercentage}% of vehicle value</p>
-            <section aria-labelledby={`benefits-${quote.id}`}>
-              <h3 id={`benefits-${quote.id}`} className="mb-3 text-sm font-semibold">
-                Benefits
-              </h3>
-              <dl className="space-y-3 text-sm">
-                {benefitRows.map((row) => {
-                  const value = benefitCell(quote, row.key, coverageType);
-                  return (
-                    <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
-                      <dt className="text-muted-foreground">{row.label}</dt>
-                      <dd className="text-right font-medium">{value || 'Not listed'}</dd>
-                    </div>
-                  );
-                })}
-              </dl>
-              {!benefitRows.length && (
-                <p className="text-sm text-muted-foreground">
-                  Benefits have not been provided. Check the insurer's cover guide before purchasing.
-                </p>
-              )}
-            </section>
-            <section className="border-t pt-4 text-sm" aria-labelledby={`conditions-${quote.id}`}>
-              <h3 id={`conditions-${quote.id}`} className="font-semibold">
-                Conditions and exclusions
-              </h3>
-              <p className="mt-2 text-muted-foreground">
-                {exclusions.length
-                  ? exclusions.join('; ')
-                  : 'Exclusions have not been provided. Check the insurer’s terms.'}
-              </p>
-              {guide?.territorialLimit && (
-                <p className="mt-2">
-                  <span className="text-muted-foreground">Where cover applies: </span>
-                  {guide.territorialLimit}
-                </p>
-              )}
-            </section>
-            <CoverGuideDetails quote={quote} />
-          </CollapsibleContent>
         </CardContent>
         <CardFooter className="mt-auto flex-col items-stretch gap-2 border-t pt-3">
-          {(quote.reply?.document || quote.reply?.coverGuide?.planName || quote.reply?.insurerReference) && (
-            <QuoteDocuments reply={quote.reply} onOpenGuide={onOpenGuide} />
+          {(quote.reply?.document || quote.reply?.insurerReference) && (
+            <QuoteDocuments reply={quote.reply} />
           )}
           <ChooseButton
             quote={quote}
             disabled={disabled}
             onChoose={onChoose}
             onRequote={onRequote}
-            label={`Choose ${quote.name}`}
+            label={selectionLabel}
           />
         </CardFooter>
       </Card>
-    </Collapsible>
   );
 }
 
@@ -531,7 +543,7 @@ function NoActiveRequest({ requests, customer }) {
     <JourneyLayout
       step={5}
       title="No quotes to compare yet"
-      description="Send one request and every insurer on InsurShield replies here."
+      description="Compare cover guides first, then request final quotes from the insurers you choose."
     >
       <Button asChild>
         <Link to="/insurance-type">Start a quote request</Link>

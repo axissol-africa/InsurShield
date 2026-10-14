@@ -1,5 +1,5 @@
 import { env } from '@/config/env';
-import { INSURER_RATES, PIA_CONFIG } from '@/domain/insurers';
+import { demoCoverGuides, INSURER_RATES, PIA_CONFIG } from '@/domain/insurers';
 import { NOW, newReference, updateById, withTimestamp } from '../shared';
 
 /** Platform configuration owned by the InsurShield administrator: the insurer catalogue and the PIA premium floor. */
@@ -9,7 +9,10 @@ export const createCatalogueSlice = (set, get) => ({
 
   // With a backend the catalogue is loaded from it; the built-in list is the
   // standalone demo's own.
-  insurersList: env.apiMode === 'mock' ? INSURER_RATES : [],
+  // The standalone demo starts with published guides, just as a directory
+  // restored from storage does. This keeps a first-time customer journey
+  // usable before an insurer administrator has made any local changes.
+  insurersList: env.apiMode === 'mock' ? INSURER_RATES.map((insurer) => ({ ...insurer, coverGuides: demoCoverGuides(insurer) })) : [],
   /** Replaces the catalogue with the backend's list. */
   setInsurers: (insurersList) => set({ insurersList }),
   addInsurer: (insurer) => set((state) => ({ insurersList: [...state.insurersList, { ...insurer, id: newReference('INS') }] })),

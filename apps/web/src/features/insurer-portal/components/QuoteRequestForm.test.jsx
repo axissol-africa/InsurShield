@@ -85,7 +85,8 @@ describe('QuoteRequestForm', () => {
     const { fileInput } = show();
 
     // Before anything is entered it says what is still missing, and what goes out by default.
-    expect(within(customerView()).getByText('Comprehensive Gold Plan')).toBeVisible();
+    expect(within(customerView()).getByText('Cover requested')).toBeVisible();
+    expect(within(customerView()).getByText('Comprehensive')).toBeVisible();
     expect(within(customerView()).getByText('Not entered yet')).toBeVisible();
     expect(within(customerView()).getByText('Not attached yet')).toBeVisible();
     expect(within(customerView()).getByText(`${quoteOpenUntil(5)} · 5 days`)).toBeVisible();
@@ -180,7 +181,7 @@ describe('QuoteRequestForm', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it('sends the quotation, its premium and the published cover guide', async () => {
+  it('sends the insurer quotation and its premium without attaching the cover guide', async () => {
     const user = userEvent.setup();
     const { onSubmit, fileInput } = show();
 
@@ -198,8 +199,8 @@ describe('QuoteRequestForm', () => {
       validityDays: 5,
       insurerReference: 'PA-Q-2026-00412',
       document: { name: 'quote.pdf', type: 'application/pdf' },
-      coverGuide: { planName: 'Comprehensive Gold Plan', coverageType: 'Comprehensive' },
     });
+    expect(onSubmit.mock.calls[0][0].coverGuide).toBeUndefined();
   });
 
   it('uses the validity the insurer enters and the estimate when asked', async () => {

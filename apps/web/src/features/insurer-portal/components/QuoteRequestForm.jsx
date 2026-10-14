@@ -93,9 +93,6 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
       validityDays: openDays,
       insurerReference: reference.trim() || null,
       document: quotation.document,
-      // The guide travels with the quote, so what the customer compares is
-      // what this insurer had published at the moment they quoted.
-      coverGuide: { ...coverGuide, coverageType },
     });
   };
 
@@ -153,7 +150,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
                 <TriangleAlert aria-hidden="true" />
                 <AlertTitle>Publish your {coverLabel.toLowerCase()} cover guide before sending this quote.</AlertTitle>
                 <AlertDescription>
-                  <p>Customers compare every insurer on the same guide, so a quote cannot go out without one.</p>
+                  <p>Customers read this guide before choosing whom to request a quote from. Publish it before responding.</p>
                   <Button asChild variant="outline" size="sm" className="w-fit text-foreground no-underline!">
                     <Link to={portalPath.section('guides')}>Open cover guides</Link>
                   </Button>
@@ -264,7 +261,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
 
             <TaskOutcome title="What the customer will see">
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                <Fact label="Plan" value={guidePublished ? coverGuide.planName : <Missing>No cover guide published</Missing>} />
+                <Fact label="Cover requested" value={coverLabel} />
                 <Fact label="Premium to pay" value={Number(premium) > 0 ? <span className="text-base font-semibold tabular-nums">{formatZMW(Number(premium))}</span> : <Missing>Not entered yet</Missing>} />
                 <Fact label="Open until" value={openDays ? `${quoteOpenUntil(openDays)} · ${days(openDays)}` : <Missing>Enter 1 to {MAX_VALIDITY_DAYS} days</Missing>} />
                 <Fact label="Quotation document" value={quotation.document ? 'Attached' : <Missing>Not attached yet</Missing>} />

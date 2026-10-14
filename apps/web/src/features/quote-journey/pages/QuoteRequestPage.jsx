@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { CalendarDays, FolderOpen } from 'lucide-react';
 import { useStore, useActiveInsurers } from '@/store';
 import { submitQuoteRequest } from '@/features/quote-journey/submitRequest';
 import { calculatePolicyDates, calculatePremium, formatDate, formatZMW } from '@/domain/premiumEngine';
@@ -252,7 +253,7 @@ export default function QuoteRequestPage() {
       <JourneyLayout
         step={4}
         title="Request your quotes"
-        description={`One request goes to all ${activeInsurers.length} insurers on InsurShield. Review your details, add your documents and send it for final quotations.`}
+        description={`Review your details and documents first. Then compare the published cover guides from ${activeInsurers.length} insurers before choosing who should prepare a final quote.`}
         className="max-w-6xl"
       >
         {requotedFromId && (
@@ -272,23 +273,26 @@ export default function QuoteRequestPage() {
           className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start"
         >
           <div className="min-w-0 space-y-6">
-            <Card>
-              <CardHeader>
+            <Card className="border border-primary/20 shadow-sm">
+              <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
                 <CardTitle>
-                  <h2>Cover period and contact details</h2>
+                  <h2 className="flex items-center gap-2 text-primary">
+                    <CalendarDays aria-hidden="true" className="size-5" />
+                    Cover period and contact details
+                  </h2>
                 </CardTitle>
                 <CardDescription>Choose your dates and tell insurers how to reach you.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div id="section-anniversary" tabIndex={-1} className="space-y-3">
+                <div id="section-anniversary" tabIndex={-1} className="space-y-3 rounded-xl border border-primary/15 bg-primary/[0.035] p-4">
                   <label className="flex cursor-pointer items-start gap-3">
                     <Checkbox
-                      className="mt-1"
+                      className="mt-1 border-primary/40 data-[state=checked]:border-primary data-[state=checked]:bg-primary"
                       checked={matchRtsaAnniversary}
                       onCheckedChange={(checked) => toggleRtsaAnniversary(checked === true)}
                     />
                     <span>
-                      <span className="block font-medium">
+                      <span className="block font-medium text-primary">
                         Match my policy start to the RTSA registration anniversary
                       </span>
                       <span className="mt-1 block text-sm text-muted-foreground">
@@ -297,8 +301,9 @@ export default function QuoteRequestPage() {
                     </span>
                   </label>
                   {matchRtsaAnniversary && rtsaAnniversaryDate ? (
-                    <p className="text-sm">
-                      Using RTSA anniversary: <strong>{formatDate(rtsaAnniversaryDate)}</strong>
+                    <p className="rounded-lg bg-background/80 px-3 py-2 text-sm">
+                      <span className="text-primary">Using RTSA anniversary:</span>{' '}
+                      <strong>{formatDate(rtsaAnniversaryDate)}</strong>
                     </p>
                   ) : (
                     matchRtsaAnniversary && (
@@ -318,7 +323,7 @@ export default function QuoteRequestPage() {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block space-y-2">
-                    <span className="text-sm font-medium">
+                    <span className="text-sm font-medium text-primary">
                       Policy start date{matchRtsaAnniversary ? ' (from RTSA anniversary)' : ''}
                     </span>
                     <Input
@@ -331,7 +336,7 @@ export default function QuoteRequestPage() {
                     />
                   </label>
                   <label className="block space-y-2">
-                    <span className="text-sm font-medium">Cover period</span>
+                    <span className="text-sm font-medium text-primary">Cover period</span>
                     <NativeSelect
                       className="w-full"
                       value={coverageDurationId}
@@ -374,18 +379,18 @@ export default function QuoteRequestPage() {
                   </label>
                 </div>
                 {policyDates && (
-                  <dl className="grid gap-2 border-t pt-4 text-sm sm:grid-cols-3">
+                  <dl className="grid gap-3 rounded-xl border border-primary/15 bg-primary/[0.035] p-4 text-sm sm:grid-cols-3">
                     <div>
-                      <dt className="text-muted-foreground">Starts</dt>
-                      <dd className="mt-1 font-medium">{policyDates.formattedStart}</dd>
+                      <dt className="text-primary">Starts</dt>
+                      <dd className="mt-1 font-semibold">{policyDates.formattedStart}</dd>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Ends</dt>
-                      <dd className="mt-1 font-medium">{policyDates.formattedEnd}</dd>
+                      <dt className="text-primary">Ends</dt>
+                      <dd className="mt-1 font-semibold">{policyDates.formattedEnd}</dd>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Cover</dt>
-                      <dd className="mt-1 font-medium">{policyDates.daysTotal} days</dd>
+                      <dt className="text-primary">Cover</dt>
+                      <dd className="mt-1 font-semibold">{policyDates.daysTotal} days</dd>
                     </div>
                   </dl>
                 )}
@@ -406,19 +411,22 @@ export default function QuoteRequestPage() {
                 )}
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader>
+            <Card className="border border-primary/20 shadow-sm">
+              <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
                 <CardTitle>
-                  <h2>Documents and vehicle photos</h2>
+                  <h2 className="flex items-center gap-2 text-primary">
+                    <FolderOpen aria-hidden="true" className="size-5" />
+                    Documents and vehicle photos
+                  </h2>
                 </CardTitle>
                 <CardDescription>
                   Insurers need proof of ownership and all seven clear views to prepare a final quote.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <section id="section-whiteBook" tabIndex={-1}>
+                <section id="section-whiteBook" tabIndex={-1} className="rounded-xl border border-primary/15 bg-primary/[0.035] p-4">
                   <label className="block space-y-2">
-                    <span className="font-medium">White Book</span>
+                    <span className="font-medium text-primary">White Book</span>
                     <span className="block text-sm text-muted-foreground">
                       {documents.whiteBook
                         ? 'Added. Choose another file to replace it.'
@@ -442,16 +450,16 @@ export default function QuoteRequestPage() {
                   </label>
                   <FieldError show={showErrors} message={errors.whiteBook} />
                 </section>
-                <section id="section-photos" tabIndex={-1} className="border-t pt-6">
+                <section id="section-photos" tabIndex={-1} className="border-t border-primary/10 pt-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-medium">Vehicle inspection photos</h3>
+                      <h3 className="font-medium text-primary">Vehicle inspection photos</h3>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {7 - missingPhotos.length} of 7 photos added. Include the chassis number and car stereo.
                       </p>
                     </div>
                     {!mobileDevice && (
-                      <Button type="button" variant="outline" onClick={() => setHandoffOpen(true)}>
+                      <Button type="button" variant="outline" className="border-primary text-primary hover:bg-primary/10 hover:text-primary" onClick={() => setHandoffOpen(true)}>
                         Capture live on my phone
                       </Button>
                     )}
@@ -545,7 +553,7 @@ export default function QuoteRequestPage() {
           <Card className="lg:col-start-1">
             <CardHeader>
               <CardTitle>
-                <h2>Review and send</h2>
+                <h2>Review and see cover guides</h2>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -559,8 +567,8 @@ export default function QuoteRequestPage() {
                   />
                   <span className="text-sm leading-relaxed">
                     <strong>I confirm</strong> the vehicle and contact information is accurate, I am authorised to
-                    insure this vehicle, and I consent to InsurShield sharing these details with all its listed insurers
-                    solely to prepare quotations.
+                    insure this vehicle, and I consent to InsurShield using these details to prepare the cover-guide
+                    comparison and to share them only with insurers I choose for a final quotation.
                   </span>
                 </label>
                 <FieldError show={showErrors} message={errors.declaration} />
@@ -571,7 +579,7 @@ export default function QuoteRequestPage() {
                 </Alert>
               )}
               <Button type="submit" disabled={sending} className="h-12 w-full">
-                {sending ? 'Sending your request…' : `Send request to ${activeInsurers.length} insurers`}
+                {sending ? 'Preparing cover guides…' : `See cover guides from ${activeInsurers.length} insurers`}
               </Button>
             </CardContent>
           </Card>
