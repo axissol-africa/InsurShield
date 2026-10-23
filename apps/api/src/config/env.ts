@@ -21,17 +21,15 @@ export const envSchema = z.object({
 
   DATABASE_URL: z.string().startsWith('postgres'),
 
-  // ── Identity (Keycloak) ─────────────────────────────────────────────
+  // ── Identity ────────────────────────────────────────────────────────
   /**
-   * The realm's issuer URL. Tokens are accepted only if their `iss` matches
-   * this exactly, and their signature verifies against the realm's JWKS.
+   * Signs this service's access tokens. Anyone holding it can mint a token for
+   * any account, so it belongs in Secrets Manager in production and must be
+   * long enough that guessing it is hopeless. Changing it signs everyone out.
    */
-  KEYCLOAK_ISSUER: z.string().url(),
-  /** The audience this API expects in an access token. */
-  KEYCLOAK_AUDIENCE: z.string().default('insurshield-api'),
-  /** Confidential client used for administrative user management. */
-  KEYCLOAK_CLIENT_ID: z.string().default('insurshield-api'),
-  KEYCLOAK_CLIENT_SECRET: z.string().min(1),
+  AUTH_JWT_SECRET: z.string().min(32, 'AUTH_JWT_SECRET must be at least 32 characters'),
+  /** How long an access token stays valid; any span `jose` accepts, e.g. "12h". */
+  AUTH_TOKEN_TTL: z.string().default('12h'),
 
   /** Unset in production so the AWS SDK talks to real S3. */
   S3_ENDPOINT: z.string().url().optional(),

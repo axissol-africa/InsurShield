@@ -18,13 +18,19 @@
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
- *  insurers    GET  /insurers · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · GET /insurers/directory
+ *  insurers    GET  /insurers · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id
+ *              GET  /insurers/directory · GET /insurers/:id/reviews
  *  payments    POST /payments · GET /payments/:id
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
+ *              POST /policies/:number/review · GET /reviews
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
  *  claims      POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
+ *  admin       GET  /admin/overview · GET /admin/premium-by-month · GET /admin/policies · GET /admin/customers/find
+ *              GET  /admin/staff · POST /admin/staff · PATCH /admin/staff/:id
+ *              POST /admin/staff/:id/password · DELETE /admin/staff/:id
+ *              GET  /admin/customers · PATCH /admin/customers/:id/suspension
  *  config      GET  /config/pia · PUT /config/pia
  *  capture     see `api/capture.js` (photo hand-off relay)
  */

@@ -118,7 +118,7 @@ enum DocumentKind {
   NCD_EVIDENCE
 }
 
-// PARKED — SMS phone verification. Keycloak provides TOTP but not SMS, so this
+// PARKED — SMS phone verification. This needs an SMS provider, so
 // would live here rather than in the realm. Uncomment this enum together with
 // the OtpChallenge model and Customer.phoneVerifiedAt below, then migrate.
 // enum OtpPurpose {
@@ -150,19 +150,23 @@ enum ActorType {
 
 model Customer {
   id           String    @id @default(uuid()) @db.Uuid
-  /// The `sub` claim from Keycloak. Credentials live there, never here.
-  keycloakId   String    @unique
+  /// scrypt hash of the password. Never the password itself, and never logged.
+  passwordHash String
   fullName     String
   email        String    @unique
   phone        String    @unique
   // PARKED with the OTP flow above — set once SMS verification completes.
   // phoneVerifiedAt DateTime?
   emailVerifiedAt DateTime?
+  /// Set by an administrator to bar sign-in without destroying the records.
+  suspendedAt  DateTime?
+  lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
 
   consents        ConsentRecord[]
+  reviews         InsurerReview[]
   quoteRequests   QuoteRequest[]
   payments        Payment[]
   policies        Policy[]
@@ -210,8 +214,10 @@ model ConsentRecord {
 
 model StaffUser {
   id           String    @id @default(uuid()) @db.Uuid
-  /// The `sub` claim from Keycloak. Credentials live there, never here.
-  keycloakId   String    @unique
+  /// scrypt hash of the password. Never the password itself, and never logged.
+  passwordHash String
+  /// Forces a change at next sign-in, after an administrator sets the password.
+  mustChangePassword Boolean @default(false)
   email        String    @unique
   fullName     String
   role         StaffRole
@@ -256,6 +262,11 @@ model Insurer {
   icon              String?
   isBestValue       Boolean          @default(false)
   benefits          String[]
+  /// One filled-in cover guide per cover type, keyed by it:
+  /// `{ "Comprehensive": {…}, "ThirdParty": {…} }`. Held as JSON because the
+  /// sections and fields are defined by the product (see domain/coverGuide.js)
+  /// and change together; nothing here is queried on its own.
+  coverGuides       Json?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   deletedAt         DateTime?
@@ -271,9 +282,37 @@ model Insurer {
   ncdCodes      NcdCode[]
   inspections   Inspection[]
   deliveries    IntegrationDelivery[]
+  reviews       InsurerReview[]
 
   @@index([status])
   @@map("insurers")
+}
+
+/// What a customer thought of the insurer that sold them a policy.
+///
+/// One review per policy, amendable by its author. Reviews are shown to other
+/// customers while they compare, so they belong to the platform rather than to
+/// the browser that wrote them.
+model InsurerReview {
+  id         String   @id @default(uuid()) @db.Uuid
+  insurerId  String   @db.Uuid
+  insurer    Insurer  @relation(fields: [insurerId], references: [id], onDelete: Cascade)
+  customerId String   @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  /// The policy being reviewed — proof the reviewer actually bought cover.
+  policyNumber String
+  policy       Policy @relation(fields: [policyNumber], references: [policyNumber], onDelete: Cascade)
+
+  /// Whole stars, 1 to 5. Enforced in the service as well as here.
+  rating    Int
+  comment   String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// One review per policy per customer: amending replaces, never duplicates.
+  @@unique([policyNumber, customerId])
+  @@index([insurerId])
+  @@map("insurer_reviews")
 }
 
 /// The claims desk customers contact after a first notification.
@@ -565,6 +604,7 @@ model Policy {
   updatedAt  DateTime  @updatedAt
 
   claims ClaimNotification[]
+  reviews InsurerReview[]
   /// Quote requests started to renew this policy.
   renewals QuoteRequest[] @relation("PolicyRenewal")
 

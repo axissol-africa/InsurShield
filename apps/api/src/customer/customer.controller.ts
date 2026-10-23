@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import { CustomerService } from './customer.service.js';
+import { ReviewPolicyDto } from './dto/review.dto.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { Public } from '../common/auth/auth.guard.js';
 import { ApiException } from '../common/errors/api.exception.js';
@@ -71,6 +72,22 @@ export class CustomerController {
   @HttpCode(HttpStatus.CREATED)
   renewPolicy(@Param('policyNumber') policyNumber: string, @CurrentUser() principal: Principal) {
     return this.customer.renewPolicy(this.scope(principal), policyNumber);
+  }
+
+  /** What the customer thought of the insurer behind one of their policies. */
+  @Post('policies/:policyNumber/review')
+  @HttpCode(HttpStatus.OK)
+  reviewPolicy(
+    @Param('policyNumber') policyNumber: string,
+    @Body() dto: ReviewPolicyDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.customer.reviewPolicy(this.scope(principal), policyNumber, dto);
+  }
+
+  @Get('reviews')
+  listMyReviews(@CurrentUser() principal: Principal) {
+    return this.customer.listMyReviews(this.scope(principal));
   }
 
   // ── Claims and NCD ──────────────────────────────────────────────

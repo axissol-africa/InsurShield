@@ -5,14 +5,18 @@
 import { apiClient } from '@/lib/apiClient';
 import { newIdempotencyKey } from '../shared';
 
+// PARKED: `/auth/otp`, `/auth/otp/verify` and `/auth/password-reset` all need
+// an email or SMS provider. Nothing calls them, so nothing claims they work.
 export const auth = {
   register: (account) => apiClient.post('/auth/register', account),
   login: (identifier, password) => apiClient.post('/auth/login', { identifier, password }),
-  requestOtp: (phone) => apiClient.post('/auth/otp', { phone }),
-  verifyOtp: (phone, code) => apiClient.post('/auth/otp/verify', { phone, code }),
-  resetPassword: (identifier, password, otp) => apiClient.post('/auth/password-reset', { identifier, password, otp }),
   staffLogin: (email, password) => apiClient.post('/auth/staff/login', { email, password }),
+  changePassword: (currentPassword, newPassword) =>
+    apiClient.post('/auth/password', { currentPassword, newPassword }),
   me: () => apiClient.get('/auth/me'),
+  myReviews: () => apiClient.get('/reviews'),
+  acceptConsent: (noticeVersion) => apiClient.post('/auth/consent', { noticeVersion }),
+  closeAccount: () => apiClient.delete('/account'),
 };
 
 /**
@@ -51,6 +55,7 @@ export const insurers = {
   setStatus: (id, status) => apiClient.patch(`/insurers/${id}/status`, { status }),
   remove: (id) => apiClient.delete(`/insurers/${id}`),
   directory: () => apiClient.get('/insurers/directory'),
+  reviews: (id) => apiClient.get(`/insurers/${id}/reviews`),
 };
 
 export const payments = {
@@ -62,6 +67,7 @@ export const policies = {
   listMine: () => apiClient.get('/policies'),
   get: (policyNumber) => apiClient.get(`/policies/${policyNumber}`),
   renew: (policyNumber) => apiClient.post(`/policies/${policyNumber}/renew`),
+  review: (policyNumber, review) => apiClient.post(`/policies/${policyNumber}/review`, review),
   listForInsurer: () => apiClient.get('/insurer/policies'),
   issueCertificate: (policyNumber, issuance) => apiClient.post(`/insurer/policies/${policyNumber}/certificate`, issuance),
 };
@@ -85,6 +91,27 @@ export const inspections = {
   request: (inspection) => apiClient.post('/inspections', inspection),
   list: () => apiClient.get('/inspections'),
   update: (id, changes) => apiClient.patch(`/inspections/${id}`, changes),
+};
+
+export const insurerPortal = {
+  profile: () => apiClient.get('/insurer/profile'),
+};
+
+export const admin = {
+  overview: () => apiClient.get('/admin/overview'),
+  premiumByMonth: (months = 12) => apiClient.get('/admin/premium-by-month', { params: { months } }),
+  recentPolicies: (limit = 8) => apiClient.get('/admin/policies', { params: { limit } }),
+  findCustomer: (query) => apiClient.get('/admin/customers/find', { params: { query } }),
+
+  listStaff: () => apiClient.get('/admin/staff'),
+  createStaff: (staff) => apiClient.post('/admin/staff', staff),
+  updateStaff: (id, changes) => apiClient.patch(`/admin/staff/${id}`, changes),
+  resetStaffPassword: (id) => apiClient.post(`/admin/staff/${id}/password`),
+  deactivateStaff: (id) => apiClient.delete(`/admin/staff/${id}`),
+
+  listCustomers: (query = '', limit = 50) => apiClient.get('/admin/customers', { params: { query, limit } }),
+  setCustomerSuspended: (id, suspended) =>
+    apiClient.patch(`/admin/customers/${id}/suspension`, { suspended }),
 };
 
 export const config = {

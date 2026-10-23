@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { api } from '@/api';
 import { useStore } from '@/store';
 import { COVER_TYPE_LABELS } from '@/domain/coverGuide';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
@@ -32,10 +33,14 @@ export default function PolicyConfirmationPage() {
   const [reviewText, setReviewText] = useState('');
   const [reviewed, setReviewed] = useState(false);
   const [readingGuide, setReadingGuide] = useState(false);
+  const [reviewError, setReviewError] = useState('');
 
   const selectedCoverType = quoteRequests.find((request) => request.id === selectedQuote?.requestId)?.insuranceType || insuranceType;
+  // The policy is created when payment is taken, and the receipt carries its
+  // number. Deriving one here instead would show the customer a number their
+  // insurer cannot find.
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
-  const policyNumber = `POL-${reference}`;
+  const policyNumber = paymentReceipt?.policyNumber || `POL-${reference}`;
   const insurancePremium = premiumBreakdown?.finalPremium ?? selectedQuote?.price ?? 0;
   const rtsaFee = matchRtsaAnniversary ? RTSA_ANNIVERSARY_FEE : 0;
   const premium = insurancePremium + rtsaFee;
@@ -89,10 +94,18 @@ export default function PolicyConfirmationPage() {
     navigate(continuation('/account'));
   };
 
-  const submitReview = () => {
+  const submitReview = async () => {
     if (!rating || !selectedQuote || !customer?.email) return;
-    submitInsurerReview({ insurer: selectedQuote.name, policyNumber, customerEmail: customer.email, rating, comment: reviewText });
-    setReviewed(true);
+    try {
+      // Reviews are shown to other customers while they compare, so they are
+      // recorded against the policy rather than kept in this browser.
+      await api.policies.review(policyNumber, { rating, comment: reviewText });
+      submitInsurerReview({ insurer: selectedQuote.name, policyNumber, customerEmail: customer.email, rating, comment: reviewText });
+      setReviewed(true);
+      setReviewError('');
+    } catch (caught) {
+      setReviewError(caught.message || 'Your review could not be saved. Please try again.');
+    }
   };
 
   return (
@@ -157,6 +170,9 @@ export default function PolicyConfirmationPage() {
                         {[1, 2, 3, 4, 5].map((value) => <div key={value} className="relative min-w-0"><RadioGroupItem id={`review-${value}`} value={String(value)} className="peer sr-only" aria-label={`${value} star${value === 1 ? '' : 's'}`} /><Label htmlFor={`review-${value}`} className="flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-md border border-input text-sm peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 peer-data-[state=checked]:text-primary peer-focus-visible:ring-2 peer-focus-visible:ring-ring">{value}<span aria-hidden="true">★</span></Label></div>)}
                       </RadioGroup>
                       <div className="space-y-2"><Label htmlFor="purchase-review">Optional review</Label><Textarea id="purchase-review" value={reviewText} onChange={(event) => setReviewText(event.target.value)} maxLength={500} rows={3} placeholder="Tell other customers what went well" /></div>
+                      {reviewError && (
+                        <p role="alert" className="text-sm text-primary">{reviewError}</p>
+                      )}
                       <Button variant="outline" disabled={!rating} onClick={submitReview}>Submit rating</Button>
                     </div>
                   )}

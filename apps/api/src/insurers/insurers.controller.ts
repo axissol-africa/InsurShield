@@ -25,6 +25,16 @@ export class InsurersController {
     return this.insurers.list();
   }
 
+  /**
+   * Customer reviews of this insurer, shown while comparing quotes. Readable
+   * by any signed-in user — unlike the record below, which carries the
+   * licence, registration and tax numbers and stays with staff.
+   */
+  @Get(':id/reviews')
+  listReviews(@Param('id') id: string) {
+    return this.insurers.listReviews(id);
+  }
+
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Get(':id')
   get(@Param('id') id: string) {

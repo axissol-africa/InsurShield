@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUrl,
@@ -57,6 +58,13 @@ export class CreateInsurerDto {
 
   @IsOptional() @IsArray() @IsString({ each: true }) benefits?: string[];
 
+  /**
+   * The filled-in cover guides, keyed by cover type. The shape is owned by the
+   * product (domain/coverGuide.js) and moves as a whole, so it is stored as
+   * given rather than mirrored field by field here.
+   */
+  @IsOptional() @IsObject() coverGuides?: Record<string, unknown>;
+
   @ValidateNested()
   @Type(() => InsurerContactDto)
   contact!: InsurerContactDto;
@@ -83,6 +91,13 @@ export class UpdateInsurerDto {
   @IsOptional() @IsString() icon?: string;
   @IsOptional() @IsBoolean() isBestValue?: boolean;
   @IsOptional() @IsArray() @IsString({ each: true }) benefits?: string[];
+
+  /**
+   * The filled-in cover guides, keyed by cover type. The shape is owned by the
+   * product (domain/coverGuide.js) and moves as a whole, so it is stored as
+   * given rather than mirrored field by field here.
+   */
+  @IsOptional() @IsObject() coverGuides?: Record<string, unknown>;
 
   @IsOptional()
   @ValidateNested()

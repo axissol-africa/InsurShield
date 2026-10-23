@@ -14,7 +14,7 @@ import {
   InspectionTiming,
   StaffRole,
 } from '../src/generated/prisma/enums.js';
-import { keycloakConfigured, upsertUser } from './keycloak-admin.js';
+import { hashPassword } from '../src/common/auth/password.js';
 import { resetDemoData, seedDemoData } from './demo-data.js';
 
 const prisma = new PrismaClient({
@@ -221,30 +221,22 @@ async function main(): Promise<void> {
   }
 
   // ── Staff accounts ────────────────────────────────────────────────
-  // Credentials live in Keycloak; these rows only carry the link (keycloakId)
-  // and the relationships Keycloak knows nothing about, such as insurerId.
-  if (!keycloakConfigured) {
-    console.log('\nKeycloak is not configured — skipping staff accounts.');
-    console.log('Start it with `npm run infra:up` and re-run this seed.');
-    return;
-  }
+  // Credentials live here now. The password is only written on create, so
+  // re-running the seed never silently resets one someone has since changed;
+  // SEED_RESET_PASSWORDS=true forces it back to the seed password.
+  const resetPasswords = process.env.SEED_RESET_PASSWORDS === 'true';
+  const seedPassword = await hashPassword(STAFF_PASSWORD);
+  const passwordUpdate = resetPasswords ? { passwordHash: seedPassword } : {};
 
-  const adminId = await upsertUser({
-    email: 'admin@insurshield.zm',
-    firstName: 'InsurShield',
-    lastName: 'Administrator',
-    password: STAFF_PASSWORD,
-    realmRoles: ['super_admin', 'admin'],
-  });
   await prisma.staffUser.upsert({
     where: { email: 'admin@insurshield.zm' },
     create: {
-      keycloakId: adminId,
       email: 'admin@insurshield.zm',
       fullName: 'InsurShield Administrator',
       role: StaffRole.SUPER_ADMIN,
+      passwordHash: seedPassword,
     },
-    update: { keycloakId: adminId, role: StaffRole.SUPER_ADMIN, isActive: true },
+    update: { role: StaffRole.SUPER_ADMIN, isActive: true, ...passwordUpdate },
   });
   console.log('Staff ready: admin@insurshield.zm (SUPER_ADMIN)');
 
@@ -256,23 +248,16 @@ async function main(): Promise<void> {
   for (const insurer of insurers) {
     const slug = insurer.name.toLowerCase().replace(/[^a-z0-9]+/g, '');
     const email = `insurer@${slug}.zm`;
-    const keycloakId = await upsertUser({
-      email,
-      firstName: insurer.name,
-      lastName: 'Portal',
-      password: STAFF_PASSWORD,
-      realmRoles: ['insurer_user'],
-    });
     await prisma.staffUser.upsert({
       where: { email },
       create: {
-        keycloakId,
         email,
         fullName: `${insurer.name} portal`,
         role: StaffRole.INSURER_USER,
         insurerId: insurer.id,
+        passwordHash: seedPassword,
       },
-      update: { keycloakId, insurerId: insurer.id, isActive: true },
+      update: { insurerId: insurer.id, isActive: true, ...passwordUpdate },
     });
     console.log(`Staff ready: ${email} (INSURER_USER)`);
   }

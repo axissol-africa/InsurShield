@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { BadgePercent, FileCheck2, FileText, HeartPulse, LayoutDashboard, LifeBuoy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { api } from '@/api';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '@/store';
 import { hydrateCustomer } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
@@ -69,6 +70,7 @@ export default function CustomerAccountPage() {
   // Your records come from the server when one is configured; a no-op otherwise.
   useEffect(() => { void hydrateCustomer(); }, []);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [closureError, setClosureError] = useState('');
   const [readingGuide, setReadingGuide] = useState(null); // the policy whose cover guide is open
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
   const requestedSection = searchParams.get('section');
@@ -110,9 +112,22 @@ export default function CustomerAccountPage() {
     requoteFromRequest(request.id);
     navigate('/quote-request');
   };
-  const removeAccount = () => {
-    setConfirmingRemoval(false);
-    deleteCurrentAccount(); // CustomerRoute sends the visitor home once the session ends
+  /**
+   * Closing an account is a server-side act: clearing this browser alone would
+   * leave the account open and signed into from anywhere else. The API refuses
+   * while cover is still in force, and that refusal is shown rather than
+   * swallowed — otherwise the account would look closed and not be.
+   */
+  const removeAccount = async () => {
+    setClosureError('');
+    try {
+      await api.auth.closeAccount();
+      setConfirmingRemoval(false);
+      deleteCurrentAccount(); // CustomerRoute sends the visitor home once the session ends
+    } catch (caught) {
+      setConfirmingRemoval(false);
+      setClosureError(caught.message || 'Your account could not be closed. Please try again.');
+    }
   };
 
   const summary = [
@@ -483,6 +498,12 @@ export default function CustomerAccountPage() {
           insurerName={readingGuide.insurer}
           onClose={() => setReadingGuide(null)}
         />
+      )}
+
+      {closureError && (
+        <p role="alert" className="mx-auto mt-8 max-w-[1120px] border border-primary/30 bg-primary/[0.06] px-4 py-3 text-[13px] text-primary">
+          {closureError}
+        </p>
       )}
 
       <ConfirmDialog

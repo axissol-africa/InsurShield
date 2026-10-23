@@ -468,6 +468,66 @@ export class CustomerService {
     return this.serialiseRequest(created);
   }
 
+  /**
+   * Records what the customer thought of the insurer that sold them a policy.
+   *
+   * The policy is the proof of purchase: only its holder can review it, and
+   * only once — amending replaces the review rather than adding another, so
+   * nobody can stack ratings on one purchase.
+   */
+  async reviewPolicy(customerId: string, policyNumber: string, input: { rating: number; comment?: string }) {
+    const policy = await this.prisma.policy.findFirst({
+      where: { policyNumber, customerId },
+      select: { policyNumber: true, insurerId: true },
+    });
+    if (!policy) throw ApiException.notFound('Policy', policyNumber);
+
+    const comment = input.comment?.trim().slice(0, 500) || null;
+    const review = await this.prisma.insurerReview.upsert({
+      where: { policyNumber_customerId: { policyNumber: policy.policyNumber, customerId } },
+      create: {
+        policyNumber: policy.policyNumber,
+        customerId,
+        insurerId: policy.insurerId,
+        rating: input.rating,
+        comment,
+      },
+      update: { rating: input.rating, comment },
+      select: { id: true, rating: true, comment: true, createdAt: true, updatedAt: true },
+    });
+
+    this.logger.log(`Review ${review.rating}/5 recorded for policy ${policy.policyNumber}`);
+    return {
+      ...review,
+      policyNumber: policy.policyNumber,
+      createdAt: review.createdAt.toISOString(),
+      updatedAt: review.updatedAt.toISOString(),
+    };
+  }
+
+  /** The customer's own reviews, so a page can show what they already said. */
+  async listMyReviews(customerId: string) {
+    const reviews = await this.prisma.insurerReview.findMany({
+      where: { customerId },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        rating: true,
+        comment: true,
+        policyNumber: true,
+        createdAt: true,
+        updatedAt: true,
+        insurer: { select: { name: true } },
+      },
+    });
+    return reviews.map(({ insurer, createdAt, updatedAt, ...review }) => ({
+      ...review,
+      insurer: insurer.name,
+      createdAt: createdAt.toISOString(),
+      updatedAt: updatedAt.toISOString(),
+    }));
+  }
+
   private async serialisePolicy(
     policy: Awaited<ReturnType<CustomerService['getPolicyRow']>>,
   ) {
