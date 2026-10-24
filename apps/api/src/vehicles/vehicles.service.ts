@@ -1,16 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { comparablePlate, displayPlate } from './domain/plate.js';
+import { VehiclesRepository } from './vehicles.repository.js';
 
-/** Plates are stored and compared without spacing or case, e.g. "baa1234". */
-const normalisePlate = (plate: string) => plate.replace(/\s+/g, '').toUpperCase();
-
-/** Display form: three letters, a space, then the digits — "BAA 1234". */
-const formatPlate = (plate: string) => {
-  const compact = normalisePlate(plate);
-  const parts = compact.match(/^([A-Z]+)(\d+)$/);
-  return parts ? `${parts[1]} ${parts[2]}` : compact;
-};
+/** Only this many of the most recently updated vehicles are searched for a known plate. */
+const KNOWN_VEHICLE_CANDIDATES = 50;
 
 /**
  * The reference vehicle the RTSA stand-in returns for any plate it has never
@@ -40,7 +34,7 @@ const STAND_IN = {
 export class VehiclesService {
   private readonly logger = new Logger(VehiclesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repository: VehiclesRepository) {}
 
   async lookup(plate: string) {
     const trimmed = plate?.trim() ?? '';
@@ -50,7 +44,7 @@ export class VehiclesService {
 
     const known = await this.findKnownVehicle(trimmed);
     if (known) {
-      this.logger.log(`Plate ${formatPlate(trimmed)} matched a vehicle already on the platform`);
+      this.logger.log(`Plate ${displayPlate(trimmed)} matched a vehicle already on the platform`);
       return known;
     }
 
@@ -63,12 +57,9 @@ export class VehiclesService {
    * time rather than a fresh guess.
    */
   private async findKnownVehicle(plate: string) {
-    const compact = normalisePlate(plate);
-    const candidates = await this.prisma.vehicle.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 50,
-    });
-    const match = candidates.find((vehicle) => normalisePlate(vehicle.plateNumber) === compact);
+    const compact = comparablePlate(plate);
+    const candidates = await this.repository.findLatest(KNOWN_VEHICLE_CANDIDATES);
+    const match = candidates.find((vehicle) => comparablePlate(vehicle.plateNumber) === compact);
     if (!match) return null;
 
     return {
@@ -92,7 +83,7 @@ export class VehiclesService {
    */
   private lookupFromRegistry(plate: string) {
     return {
-      plateNumber: formatPlate(plate),
+      plateNumber: displayPlate(plate),
       ...STAND_IN,
       source: 'RTSA_STAND_IN' as const,
     };

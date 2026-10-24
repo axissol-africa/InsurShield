@@ -77,6 +77,15 @@ export function productionPool(connectionString: string, poolSize: number): Pool
   return createPool(config as unknown as ConfigService<Env, true>);
 }
 
+/** Polls `condition` every 50 ms until it holds, failing after 15 s with what was awaited. */
+export async function until(condition: () => Promise<boolean> | boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 /** Records every log line so a spec can check what the server wrote. */
 export class RecordingLogger implements LoggerService {
   readonly lines: string[] = [];
