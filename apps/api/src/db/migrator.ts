@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { Client, DatabaseError, escapeIdentifier, type ClientBase, type ClientConfig } from 'pg';
+import { Client, escapeIdentifier, type ClientBase, type ClientConfig } from 'pg';
 import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/domain/money-limits.js';
 import { databaseUrl, loadEnvFile } from '../config/env.js';
 import {
@@ -13,7 +13,7 @@ import {
   type Catalog,
   type CatalogDifference,
 } from './catalog.js';
-import { causes, describeDatabaseError } from './errors.js';
+import { describeDatabaseError, DRIVER_CODE, serverError } from './errors.js';
 
 /**
  * The only way migrations are applied: `src/db/migrate.ts` runs it for `npm run db:migrate`,
@@ -405,6 +405,8 @@ export async function migrateDatabase(
 ): Promise<MigrationResult> {
   const plan = loadPlan(options.migrationsFolder ?? MIGRATIONS);
   const client = new Client(config);
+  // A connection lost between statements fails the next one, which reports it; unheard, the event ends the process.
+  client.on('error', () => undefined);
   await client.connect();
   try {
     const version = await client.query<{ major: number }>(
@@ -454,15 +456,9 @@ const CONNECTION_ERROR_CODES = new Set([
   'ENETUNREACH',
 ]);
 
-const NODE_ERROR_CODE = /^[A-Z][A-Z0-9_]+$/;
 const TLS_ERROR_CODE = /^ERR_(TLS|SSL)_|CERT|^UNABLE_TO_|^(INVALID_CA|HOSTNAME_MISMATCH)$/;
 // node-postgres's fixed message when the server answers a TLS request with no.
 const NO_TLS_MESSAGE = 'The server does not support SSL connections';
-
-// Only the server's errors carry a SQLSTATE; Node's codes such as EPIPE have the same shape.
-function serverError(error: unknown): DatabaseError | undefined {
-  return [...causes(error)].find((current): current is DatabaseError => current instanceof DatabaseError);
-}
 
 // Driver messages carry hosts, roles, database names and parameter values, so only these are printed.
 export function failureReason(error: unknown): string {
@@ -473,7 +469,7 @@ export function failureReason(error: unknown): string {
   if (code) return 'a statement failed';
   if (error instanceof Error && error.message === NO_TLS_MESSAGE) return 'TLS failed: the server does not offer TLS';
   const nodeCode = error instanceof Error ? (error as Error & { code?: unknown }).code : undefined;
-  if (typeof nodeCode !== 'string' || !NODE_ERROR_CODE.test(nodeCode)) return 'an unexpected error';
+  if (typeof nodeCode !== 'string' || !DRIVER_CODE.test(nodeCode)) return 'an unexpected error';
   if (CONNECTION_ERROR_CODES.has(nodeCode)) return `could not connect to the server (${nodeCode})`;
   if (TLS_ERROR_CODE.test(nodeCode)) return `TLS failed (${nodeCode})`;
   return `an unexpected error (${nodeCode})`;

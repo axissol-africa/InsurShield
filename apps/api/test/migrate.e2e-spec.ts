@@ -23,6 +23,8 @@ import { TEST_DATABASE_SUFFIX } from '../src/config/env.js';
 import { readCatalog } from '../src/db/catalog.js';
 import {
   CONVERTED_COLUMNS,
+  failureDetails,
+  failureReason,
   MigrationRefusedError,
   migrateDatabase,
   type MigrationStep,
@@ -708,4 +710,36 @@ describe('concurrent runs', () => {
     expect(await second).toEqual({ state: 'managed', applied: [] });
     expect(Date.now() - started).toBeGreaterThan(60_000);
   }, 150_000);
+});
+
+describe('a connection lost while the migrator waits between statements', () => {
+  it('fails the next statement with the fixed reason instead of ending the process', async () => {
+    const db = await scratch();
+    const side = await db.connect();
+    try {
+      const error: unknown = await migrateDatabase(db.config, {
+        async onStep(step, client) {
+          if (step.name !== 'created-drizzle-schema') return;
+          const { rows } = await client.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+          await side.query('SELECT pg_catalog.pg_terminate_backend($1)', [rows[0].pid]);
+          for (let attempt = 0; attempt < 200; attempt += 1) {
+            const { rowCount } = await side.query('SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid = $1', [rows[0].pid]);
+            if (rowCount === 0) break;
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        },
+      }).then(
+        () => undefined,
+        (rejection: unknown) => rejection,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(MigrationRefusedError);
+      expect(`db:migrate failed: ${failureReason(error)}`).toBe('db:migrate failed: an unexpected error');
+      expect(failureDetails(error)).toEqual({});
+    } finally {
+      await side.end();
+    }
+  });
 });

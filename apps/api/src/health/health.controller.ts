@@ -1,6 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Inject } from '@nestjs/common';
+import { sql } from 'drizzle-orm';
 import { Public } from '../common/auth/auth.guard.js';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { DATABASE, type Database } from '../db/database.module.js';
 import { StorageService } from '../storage/storage.service.js';
 
 type DependencyState = 'up' | 'down';
@@ -13,7 +14,7 @@ type DependencyState = 'up' | 'down';
 @Controller('health')
 export class HealthController {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(DATABASE) private readonly db: Database,
     private readonly storage: StorageService,
   ) {}
 
@@ -30,7 +31,10 @@ export class HealthController {
     dependencies: { database: DependencyState; storage: DependencyState };
   }> {
     const [database, storage] = await Promise.all([
-      this.prisma.ping().then((): DependencyState => 'up').catch((): DependencyState => 'down'),
+      this.db
+        .execute(sql`SELECT 1`)
+        .then((): DependencyState => 'up')
+        .catch((): DependencyState => 'down'),
       this.storage.isReachable().then((ok): DependencyState => (ok ? 'up' : 'down')),
     ]);
 

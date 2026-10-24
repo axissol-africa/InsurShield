@@ -86,7 +86,7 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
-      "secret": "local-development-api-secret",
+      "secret": "${KEYCLOAK_CLIENT_SECRET}",
       "attributes": {
         "use.refresh.tokens": "false"
       }

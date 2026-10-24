@@ -8,20 +8,22 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { IsEnum } from 'class-validator';
+import { IsIn } from 'class-validator';
 import { Body } from '@nestjs/common';
 import { DocumentsService } from './documents.service.js';
-import { DocumentKind } from '../generated/prisma/enums.js';
+import { FileTooLargeInterceptor } from './upload-limits.js';
+import { DOCUMENT_KINDS, type DocumentKind } from '../common/domain/enums.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import type { DocumentScope } from '../storage/storage.service.js';
 
 class UploadDocumentDto {
-  @IsEnum(DocumentKind, { message: 'Unknown document kind.' })
+  @IsIn(DOCUMENT_KINDS, { message: 'Unknown document kind.' })
   kind!: DocumentKind;
 }
 
 /** Maps a document kind onto the storage prefix it belongs under. */
-const SCOPE_FOR_KIND = {
+const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
   QUOTATION: { kind: 'quotation' as const, quoteRequestId: 'unfiled', insurerId: 'unfiled' },
   CERTIFICATE: { kind: 'certificate' as const, policyNumber: 'unfiled' },
   INSPECTION_PHOTO: { kind: 'inspection-shot' as const, quoteRequestId: 'unfiled', shotKey: 'unfiled' },
@@ -39,7 +41,7 @@ export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
   @Post()
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileTooLargeInterceptor, FileInterceptor('file'))
   upload(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: UploadDocumentDto,
@@ -50,7 +52,7 @@ export class DocumentsController {
 
   /** A fresh signed URL, because the one issued at upload time expires. */
   @Get(':id')
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.documents.record(id);
+  get(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() principal: Principal) {
+    return this.documents.recordFor(principal, id);
   }
 }

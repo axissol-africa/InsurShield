@@ -120,6 +120,15 @@ npm run test:e2e -w @insurshield/api      # e2e tests against the test database
 - Adding: schema first, then the code that needs it. Removing or narrowing: code first, then the schema.
 - Repository methods take the transaction they run in when the use case needs atomicity. A repository never commits
   part of an operation that the service expects to be atomic.
+- A request's database writes run in one transaction. After a request has committed a write, nothing it still does
+  (a second transaction, a read, building the response) may answer `503 TRY_AGAIN`. The one exception is customer
+  provisioning, whose `ON CONFLICT DO NOTHING` insert is safe to repeat.
+- Start a transaction only with `db.transaction` on the injected `DATABASE`, never with `pool.connect()` or a
+  `drizzle(client)` of your own: the database module owns the client's release and its connection errors.
+- Inside a transaction, never catch a database error and carry on: PostgreSQL turns the later `COMMIT` into a
+  silent `ROLLBACK`. Let it propagate, or use a nested `tx.transaction` (a savepoint) for a step that may fail.
+- A transaction's statements run one after another, never through `Promise.all`: they queue on one connection,
+  and the time a statement waits in that queue counts toward its read deadline.
 - Tests use a separate test database whose name ends in `_test`.
 
 ## Tests

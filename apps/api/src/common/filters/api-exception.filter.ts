@@ -7,6 +7,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import {
+  describeDatabaseError,
+  isDatabaseError,
+  isRetryableDatabaseError,
+  isUniqueViolation,
+} from '../../db/errors.js';
 
 interface ErrorBody {
   code: string;
@@ -14,10 +20,12 @@ interface ErrorBody {
   details: unknown;
 }
 
+const RETRY_AFTER_SECONDS = 1;
+
 /**
  * Normalises every failure into the one shape the client understands:
  * `{ code, message, details }` with an HTTP status. Nothing else may leave the
- * API — an unhandled error must not leak a stack trace or a Prisma message to
+ * API — an unhandled error must not leak a stack trace or a database message to
  * the browser.
  */
 @Catch()
@@ -30,14 +38,19 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const request = context.getRequest<Request>();
 
     const { status, body } = this.describe(exception);
+    // The query string can carry personal data, so only the path is logged.
+    const summary = `${request.method} ${request.path} -> ${status} ${body.code}`;
 
-    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      this.logger.error(
-        `${request.method} ${request.url} -> ${status} ${body.code}`,
-        exception instanceof Error ? exception.stack : String(exception),
-      );
+    if (isDatabaseError(exception)) {
+      const unexpected = status >= HttpStatus.INTERNAL_SERVER_ERROR && status !== HttpStatus.SERVICE_UNAVAILABLE;
+      this.logger[unexpected ? 'error' : 'warn'](summary, describeDatabaseError(exception));
+    } else if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error(summary, exception instanceof Error ? exception.stack : String(exception));
     }
 
+    if (body.code === 'TRY_AGAIN') {
+      response.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));
+    }
     response.status(status).json(body);
   }
 
@@ -73,6 +86,29 @@ export class ApiExceptionFilter implements ExceptionFilter {
             ? 'Some of the details you entered need attention.'
             : String(message),
           details: isValidation ? { fields: message } : null,
+        },
+      };
+    }
+
+    if (isRetryableDatabaseError(exception)) {
+      return {
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        body: {
+          code: 'TRY_AGAIN',
+          message: 'The service is busy right now. Please try again in a moment.',
+          details: null,
+        },
+      };
+    }
+
+    // A clash a service did not translate into its own error. The constraint names the data, so it stays in the log.
+    if (isUniqueViolation(exception)) {
+      return {
+        status: HttpStatus.CONFLICT,
+        body: {
+          code: 'CONFLICT',
+          message: 'This conflicts with a record that already exists. Refresh and try again.',
+          details: null,
         },
       };
     }

@@ -1,4 +1,5 @@
-# Local development infrastructure.
+# Local development infrastructure. Every credential, port and database name comes from the root .env
+# (see .env.example); Compose refuses to start while one is missing.
 #
 # Both services speak the same protocols as their AWS counterparts, so moving to
 # production is a change of environment variables rather than a change of code:
@@ -11,19 +12,21 @@ services:
     container_name: insurshield-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: insurshield
-      POSTGRES_PASSWORD: insurshield
-      POSTGRES_DB: insurshield
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      # Created beside POSTGRES_DB by infra/postgres on a fresh volume.
+      POSTGRES_TEST_DB: ${POSTGRES_TEST_DB:?set POSTGRES_TEST_DB in .env}
+      KEYCLOAK_DB: ${KEYCLOAK_DB:?set KEYCLOAK_DB in .env}
       # Match the collation/encoding RDS uses so local and production sort alike.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:?set POSTGRES_PORT in .env}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Creates the Keycloak database on a fresh volume.
       - ./infra/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U insurshield -d insurshield"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -37,11 +40,11 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: insurshield
-      MINIO_ROOT_PASSWORD: insurshield-dev-secret
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # web console -> http://localhost:9001
+      - "127.0.0.1:${MINIO_API_PORT:?set MINIO_API_PORT in .env}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:?set MINIO_CONSOLE_PORT in .env}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -50,24 +53,29 @@ services:
       timeout: 5s
       retries: 10
 
-  # Creates the private documents bucket on first boot, then exits.
+  # Creates the private documents bucket on first boot, then exits. The shell reads the
+  # credentials from its environment, so they never appear in the command line.
   minio-init:
     image: cgr.dev/chainguard/minio:latest
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 insurshield insurshield-dev-secret &&
-      mc mb --ignore-existing local/insurshield-documents &&
-      mc anonymous set none local/insurshield-documents &&
-      echo 'bucket ready: insurshield-documents (private)'
+      mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
+      mc mb --ignore-existing \"local/$$S3_BUCKET\" &&
+      mc anonymous set none \"local/$$S3_BUCKET\" &&
+      echo \"bucket ready: $$S3_BUCKET (private)\"
       "
 
-  # Identity provider. Runs in dev mode locally (embedded H2, HTTP, realm
-  # imported on boot) so a checkout needs no setup. Production runs the same
-  # image with KC_DB=postgres against RDS and TLS terminated in front of it —
-  # see docs/DEPLOYMENT.md.
+  # Identity provider. Runs in dev mode locally (HTTP, realm imported on boot)
+  # so a checkout needs no setup. Production runs the same image with
+  # KC_DB=postgres against RDS and TLS terminated in front of it — see
+  # docs/DEPLOYMENT.md.
   keycloak:
     image: quay.io/keycloak/keycloak:26.7
     container_name: insurshield-keycloak
@@ -77,17 +85,19 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?set KEYCLOAK_ADMIN_USER in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
       KC_HTTP_PORT: 8080
       KC_HEALTH_ENABLED: "true"
       # Same engine as production; only the URL and credentials change there.
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: insurshield
-      KC_DB_PASSWORD: insurshield
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB:?set KEYCLOAK_DB in .env}
+      KC_DB_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # The realm import puts this in the insurshield-api client; apps/api/.env must hold the same value.
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in .env}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${KEYCLOAK_PORT:?set KEYCLOAK_PORT in .env}:8080"
     volumes:
       - ./infra/keycloak:/opt/keycloak/data/import:ro
     healthcheck:

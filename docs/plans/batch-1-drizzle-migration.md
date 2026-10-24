@@ -44,7 +44,9 @@ Guaranteed:
 8. Existing defects fixed (C8): document links only for principals related to the document; insurer-scoped,
    single NCD redemption; concurrent transitions and unique clashes answer `409`, not `500`; a reused payment key
    with a different request answers `409`; any other unique clash or deadlock answers `409 CONFLICT` or
-   `503 TRY_AGAIN`, never `500`; database errors never put query parameters in logs or responses. [r3 R3-M3]
+   `503 TRY_AGAIN`, never `500`; database errors never put query parameters in logs or responses. `503 TRY_AGAIN`
+   means the failed database operation was rolled back or never started (a connection was not obtained); a
+   connection lost mid-statement answers `500`, because the outcome is unknown. [r3 R3-M3; W1b redesign]
 
 Not guaranteed, with the reason:
 
@@ -62,6 +64,11 @@ Not guaranteed, with the reason:
 - **A Prisma build keeps working on tables without money.** It may, but it is not supported (C5).
 - **Correcting timestamps a non-UTC session's column default wrote before the migration.** The Prisma build already
   read them as UTC; the migration keeps what it read and cannot know the zone of a past session. [w1a gate]
+- **Log redaction for Prisma errors in the W1b–W2 working tree.** No Prisma remains at the end (guarantee 2), and
+  the mixed tree is never run against a kept database or committed on its own. [W1b fix-1 C-H1, R-L-a]
+- **A repeated upload after `TRY_AGAIN` leaves no unreferenced object.** The bytes are stored before the record
+  (storage cannot join a database transaction); an unreferenced object is never served, because `GET /documents/:id`
+  reads the record. The orphan sweep belongs to batch 2. [W1b gate r1]
 - **Business dates as `date`, snake_case column names, module ownership of writes, a PIA floor check, an
   append-only trigger on consent records** → batch 2.
 
@@ -151,6 +158,10 @@ Out: the "not guaranteed" list in section 1. Web changes: none. The web shows `m
 ## 6. Packages
 
 File ownership is by wave; a later wave takes a file over only after its earlier owner has finished.
+
+Every W2 package (P4–P8) keeps a request's writes in one `db.transaction` and, after it commits, does nothing that
+can answer `503 TRY_AGAIN` (a second transaction, a read, building the response); the package's review checks this
+(`apps/api/AGENTS.md` "Database"). [W1b fix-2 R-L1]
 
 | Package | Owner scope (files) | What it delivers | Depends on | Tests |
 | --- | --- | --- | --- | --- |
@@ -326,7 +337,7 @@ File ownership is by wave; a later wave takes a file over only after its earlier
   | the uploader (customer or staff) | that document |
   | a customer | quotation (`insurer_quotes."documentId"`) on their own quote request; quote document and certificate on their own policy; shots of their own request; attachments of their own claim; photos of their own inspection |
   | an insurer user | quotation from its insurer; quote document and certificate of its insurer's policy; shots of a request sent to its insurer (a `quote_request_recipients` row); attachments of a claim for its insurer; photos of an inspection for its insurer |
-  | anyone signed in | an `INSURER_LOGO` |
+  | anyone signed in | an `INSURER_LOGO` uploaded by staff (a customer's upload of that kind stays its uploader's) [W1b R-L1] |
 
   Anything else answers `404`, as if the document did not exist.
 - `assertAttachable(tx, principal, documentIds, kind)`: locks the document rows (`FOR UPDATE`, in sorted id order so
@@ -412,7 +423,7 @@ Steps, in this order:
 | T-D4 | A failure injected at each step of the applying sequence (after creating `drizzle`, after moving the Prisma history, after recording 0000, inside 0001, at the final check) rolls everything back; for each of the seven converted columns, a Prisma-era fixture with a negative or `NaN` value (rates also 100.01) is refused naming every failing column and count, with every value unchanged; a NULL `estimatedLoss` passes; the columns counted, and their bounds parsed from the final catalog's CHECK definitions, equal the constants in `money-limits.ts` [r7 R7-L2, r8 R8-L5] | Half-adopted database; data silently altered [r6 C6-M2] |
 | T-D5 | Fresh install, then a second `db:migrate`, does nothing; a second run started while a first holds the lock for over 60 s waits and then does nothing | Fresh and repeat runs refused [r2 C2-H1, r3 R3-L8] |
 | T-C1 | Config refuses `CHANGE_ME`, a non-`_test` test database, the same database for dev and test, pool settings and NUL bytes in URLs, missing host and port settings; no message contains the value | Tests wipe the dev database; secrets in logs |
-| T-E1 | A lock wait beyond 5 s (held from a second connection) → `503 TRY_AGAIN`; an unknown error → `500 INTERNAL_ERROR`; neither body nor log contains query parameters | Driver text and customer data leak |
+| T-E1 | A lock wait beyond 5 s (held from a second connection) → `503 TRY_AGAIN`; a connection not obtained (refused, timed out, ended while connecting), for a query or a transaction, through the production pool → `503 TRY_AGAIN`; a connection lost mid-statement → `500`; a storage error → `500` with its stack; an unknown error → `500 INTERNAL_ERROR`; for any failed query (with or without a SQLSTATE) neither body nor log contains the statement or its parameters [W1b C-H1/R-M1] | Driver text and customer data leak |
 | T-W1 | Swagger served only when `SWAGGER_ENABLED=true` | Docs exposed in production |
 | T-W2 | `contract.ts` maps every enum value both ways, as before | Wire strings change |
 | T-F1 | The e2e setup refuses to reset a database whose `current_database()` differs from the `_test` name | A misconfigured run wipes another database |
@@ -422,7 +433,7 @@ Steps, in this order:
 | T-DOC1 | Each row of the P3 access table, positive and negative: a customer gets the certificate of their own policy and the quotation on their own request, not another customer's; an insurer user gets a shot on a request sent to it and a claim attachment for its claim, not another insurer's; admins get any; uploaders get theirs; logos for all | Leaked links, or legitimate links broken |
 | T-DOC2 | Through each attach endpoint: a document uploaded by someone else, of the wrong kind, or already attached → `409 DOCUMENT_NOT_ATTACHABLE`; one id twice in a request → `400`; a fresh own upload succeeds | Hijacked attachments, `500` on reuse |
 | T-ATT1 | One certificate attached to two policies concurrently (forced interleaving) → one success | Shared certificate [r2 C2-M3] |
-| T-DOC3–4 | Upload stores metadata and bytes; size and type limits unchanged | Upload regressions |
+| T-DOC3–4 | Upload stores metadata and bytes; size and type limits unchanged; an upload over `MAX_UPLOAD_BYTES` is cut off while it streams (multipart limits: one file, no more than the limit), answering the same `400 FILE_TOO_LARGE` [W1b R-M2] | Upload regressions; memory exhaustion from one large body |
 | T-H1 | `/health/ready` reports database and storage reachability | Readiness lies |
 | T-H2 | `/health` answers with the database down | Restarts on an outage |
 | T-HTTP1 | For fixtures with known values (premium K1,234.56, rate 5.25%, `estimatedLoss` null and K0.01, `benefits` NULL → `[]`, timestamps with milliseconds), every affected endpoint returns those wire values and exactly the expected keys (no `rateBps` or other stored names). One table per module | Missing ÷100, bigint strings, leaked columns [r2 R2-L11] |
@@ -620,3 +631,6 @@ rule (R8-L3) was checked on a throwaway PostgreSQL 17 container first. That meet
 | W1a R2-L3–L7 | Read against `31cf205` | Error codes in failure reasons; one URL parse in scratch configs; allow-list defined once; test hygiene; rate bounds from `money-limits.ts` (`pia.controller.ts` literals go to P7) |
 | W1a round 3 | Codex (C3-) 0 Critical, 0 High, 1 Medium (diagnostic tests point the real migrator at a non-`_test` name), APPLY yes; reviewer agent (R3-) 0/0/0, 5 Low, APPLY yes, BUILD yes | C3-M1 = R3-L2: the built-entry helper refuses any target not ending in `_test`; R3-L1 role name dropped from default-ACL identities; R3-L5 a SQLSTATE is taken only from a pg `DatabaseError` in the cause chain, other codes are treated as Node codes; the printed details follow the same rule; R3-L3 row above; R3-L4 is P9's script change (apply only with `tsx src/db/migrate.ts` until then) |
 | W1a final round | Codex (C4-) 0 Critical, 0 High, 0 Medium, 1 Low; reviewer agent (R4-) 0/0/0, 2 Low; both APPLY yes, BUILD yes. W1a is ready within the stated contract | C4-L1: the role check no longer depends on the configured username (`not.toMatch(/for role/)`); R4-L1: row above reworded; R4-L2: printed details come only from the server's error (`failureDetails`, unit cases) |
+| W1b round 1 | Codex 0/1/1/1, BUILD no; reviewer 0/0/2/6, BUILD yes | C-H1=R-M1 log leak on connection failure; C-M1 masked access predicates; C-L1 UUID case; R-M2 multer limits (pre-existing); R-L1 customer logo public; R-L2–L4, R-L6 test and doc gaps: all fixed by w1b-fix-platform and w1b-fix-documents. R-L5 README cutover → P9 |
+| W1b fix round 1 | Codex 0/1/2/1, BUILD no, all three Medium-or-worse introduced by the fix; reviewer 0/0/0/5, BUILD yes | Second fix-introduced Medium → redesign of error classification (provenance, redaction, retry kept apart; a Pool subclass marks connection acquisition). Gate r1 BUILD no (unwrapped acquisition in transactions; request-level retry overclaim); gate r2 BUILD yes. Prisma redaction declined (Not guaranteed). R-L-e fixed by the coordinator (one FILE_TOO_LARGE message) |
+| W1b fix rounds 2–4 | Redesign round: Codex 0/0/2/2, reviewer 0/1/1/2 (crash on a lost transaction connection; BEGIN-failure leak, both pre-existing in the Drizzle integration) → transaction boundary design, gate r1 no (listener after checkout), r2 yes, built. Round 3: Codex 0/0/1/0 (no client-side read deadline), reviewer 0/0/0/2 → query deadline and keep-alive. Round 4 (final): Codex 0/0/0/2, reviewer 0/0/0/3; both BUILD yes | Lows fixed by the coordinator (local, plaintext-only stall proxy; marker across chunks; keep-alive delay; no `Promise.all` inside a transaction), Codex re-read: one Low (TLS check), fixed. Declined: a shutdown deadline over `pool.end()` (reviewer suspicion; needs pg-pool internals; the per-query deadline bounds every database wait and the container stop grace bounds the rest). W1b ready within the contract |

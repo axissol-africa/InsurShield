@@ -1,23 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { AppModule } from './app.module.js';
+import { appSettings, configureApp } from './app.setup.js';
 import type { Env } from './config/env.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const config = app.get(ConfigService<Env, true>);
-
-  // Routes are served under this prefix so they line up with the paths in
-  // `apps/web/src/api/contracts.js` (default: /api/v1).
-  app.setGlobalPrefix(config.get('API_PREFIX', { infer: true }), {
-    exclude: ['health', 'health/ready'],
-  });
-  app.enableCors({ origin: config.get('CORS_ORIGINS', { infer: true }), credentials: true });
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
-  );
-  // Run Prisma's disconnect and in-flight requests to completion on SIGTERM,
+  configureApp(app, appSettings(config));
+  // Closes the database pool and lets in-flight requests finish on SIGTERM,
   // which is how ECS, Fly and Render stop a container.
   app.enableShutdownHooks();
 
