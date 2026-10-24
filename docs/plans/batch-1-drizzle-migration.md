@@ -69,6 +69,27 @@ Not guaranteed, with the reason:
 - **A repeated upload after `TRY_AGAIN` leaves no unreferenced object.** The bytes are stored before the record
   (storage cannot join a database transaction); an unreferenced object is never served, because `GET /documents/:id`
   reads the record. The orphan sweep belongs to batch 2. [W1b gate r1]
+- **The RTSA anniversary fee is known to the server.** Its amount exists only in the web (`RTSA_ANNIVERSARY_FEE`);
+  the API checks `amount = premium + rtsaAnniversaryFee` with the fee the caller sends, as at `cbef7b5`. A server-side
+  fee setting and the web change it needs belong to batch 2 (queued for the user, with the web payment page sending
+  the fee inside `amount` only, which `cbef7b5` already refused). [W2 P6 C-H2]
+- **A payment retried after its insurer was renamed is replayed.** The replay compares the insurer by name, and the
+  payment row does not keep the name it was paid under; such a retry answers `409 IDEMPOTENCY_KEY_REUSED`. Keeping it
+  needs a column (batch 2). [W2 P6 C-M1, R-L3]
+- **The public plate lookup hides stored vehicle details.** It answers as at `cbef7b5` (the 50 latest vehicles);
+  whether it should return stored details at all is queued for the user (batch 2). [W2 P8 C-H1, R-M1]
+- **A customer cannot change the details of a vehicle another customer submitted.** Vehicles are one row per plate
+  for the whole platform, as at `cbef7b5`; a submission with a known plate updates that row. Keeping the submitted
+  details per request, or per customer, is a schema change queued for the user (batch 2). [W2 P4 C-H1]
+- **Admin roles are checked inside the admin, insurers and PIA services.** They are enforced by the route guard, as
+  across the API; guarantee 7 is about tenancy, which every insurer and customer service checks itself. [W2 P7 C-M2,
+  C-M3]
+- **An insurer cannot learn whether another insurer used a reference on the same request.** The unique index on
+  `insurer_quotes ("quoteRequestId", "insurerReference")` spans insurers, so a clash answers `409 CONFLICT` (it was
+  `500`); a per-insurer index is a batch 2 migration. [W2 P5 R-L1]
+- **A deleted insurer's staff lose access to the portal.** Their profile and records stay readable to them, as at
+  `cbef7b5`; no other tenant's data is reachable. What a deleted insurer's staff may still do is a product decision
+  (batch 2). [W2 P7 R-L3]
 - **Business dates as `date`, snake_case column names, module ownership of writes, a PIA floor check, an
   append-only trigger on consent records** → batch 2.
 

@@ -4,7 +4,6 @@ import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { ConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './db/database.module.js';
-import { PrismaModule } from './prisma/prisma.module.js';
 import { StorageModule } from './storage/storage.module.js';
 import { HealthController } from './health/health.controller.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -23,7 +22,6 @@ import { AuthGuard } from './common/auth/auth.guard.js';
   imports: [
     ConfigModule,
     DatabaseModule,
-    PrismaModule,
     StorageModule,
     AuthModule,
     DocumentsModule,

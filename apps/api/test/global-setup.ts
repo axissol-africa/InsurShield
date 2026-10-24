@@ -14,7 +14,9 @@ const BUILD_COMMAND = 'npm run build -w @insurshield/api';
 export default async function setup(project: TestProject) {
   assertCurrentBuild();
   const test = testDatabase();
-  await resetTestDatabase(parseIntoClientConfig(test.url), test.name);
+  // The migrator needs the catalogs being regenerated; the schema spec migrates only its own scratch databases.
+  const migrate = process.env.REGENERATE_CATALOGS !== '1';
+  await resetTestDatabase(parseIntoClientConfig(test.url), test.name, { migrate });
 
   const jwks = await startJwksServer();
   // Spec workers start after this and inherit it, so the app's verifier fetches this run's key.
@@ -43,7 +45,7 @@ export function assertCurrentBuild(apiRoot = API_ROOT) {
 }
 
 /** Empties the test database and migrates it, after checking the server opened that database. */
-export async function resetTestDatabase(config: ClientConfig, expectedName: string) {
+export async function resetTestDatabase(config: ClientConfig, expectedName: string, { migrate = true } = {}) {
   if (!expectedName.endsWith(TEST_DATABASE_SUFFIX)) {
     throw new Error(`Refusing to reset: the database name must end in ${TEST_DATABASE_SUFFIX}`);
   }
@@ -61,5 +63,7 @@ export async function resetTestDatabase(config: ClientConfig, expectedName: stri
   } finally {
     await client.end();
   }
-  await migrateDatabase(config);
+  if (migrate) {
+    await migrateDatabase(config);
+  }
 }

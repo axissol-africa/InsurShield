@@ -90,12 +90,6 @@ export class DocumentsService {
     return this.toRecord(document);
   }
 
-  /** Confirms a document exists before it is attached to a quote or policy. */
-  async requireExists(documentId: string): Promise<void> {
-    const document = await this.repository.find(documentId);
-    if (!document) throw ApiException.notFound('Document', documentId);
-  }
-
   /**
    * Refuses documents the principal did not upload, of another kind, or already
    * attached anywhere. The rows stay locked until `tx` ends, so the caller's

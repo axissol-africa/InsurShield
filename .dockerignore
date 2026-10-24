@@ -6,7 +6,6 @@
 **/.env.*
 !**/.env.example
 **/*.tsbuildinfo
-apps/api/src/generated
 apps/web/dist
 .git
 .github

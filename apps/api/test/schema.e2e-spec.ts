@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { cp, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,9 @@ import {
 const DRIZZLE = fileURLToPath(new URL('../drizzle/', import.meta.url));
 const SCHEMA = fileURLToPath(new URL('../src/db/schema.ts', import.meta.url));
 const LUSAKA = { options: '-c TimeZone=Africa/Lusaka' };
+const TAGS = (
+  JSON.parse(readFileSync(join(DRIZZLE, 'meta', '_journal.json'), 'utf8')) as { entries: { tag: string }[] }
+).entries.map((entry) => entry.tag);
 
 const created: ScratchDatabase[] = [];
 
@@ -93,17 +97,17 @@ describe('expected catalogs in drizzle/catalog', () => {
     await expectCatalogFile(await catalogOf(db), 'prisma-era');
   });
 
-  it.each([
-    [1, '0000_baseline'],
-    [2, '0001_minor_units_timestamptz'],
-  ])('the catalog after %i Drizzle migrations is %s.json', async (count, tag) => {
-    const db = await scratch((client) => applyMigrationFiles(client, count));
-    await expectCatalogFile(await catalogOf(db), tag);
-  });
+  it.each(TAGS.map((tag, index) => [index + 1, tag] as const))(
+    'the catalog after %i Drizzle migrations is %s.json',
+    async (count, tag) => {
+      const db = await scratch((client) => applyMigrationFiles(client, count));
+      await expectCatalogFile(await catalogOf(db), tag);
+    },
+  );
 
-  it('the final catalog is what drizzle-kit push makes of src/db/schema.ts', async () => {
+  it(`the final catalog, ${TAGS.at(-1)}.json, is what drizzle-kit push makes of src/db/schema.ts`, async () => {
     const db = await pushed();
-    await expectCatalogFile(await catalogOf(db), '0001_minor_units_timestamptz');
+    await expectCatalogFile(await catalogOf(db), TAGS[TAGS.length - 1]);
   });
 });
 
