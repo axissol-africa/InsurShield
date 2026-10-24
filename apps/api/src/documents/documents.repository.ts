@@ -29,8 +29,8 @@ export class DocumentsRepository {
     return created;
   }
 
-  async find(documentId: string): Promise<DocumentRow | undefined> {
-    const [document] = await this.db.select().from(documents).where(eq(documents.id, documentId));
+  async find(documentId: string, tx: Database | Transaction = this.db): Promise<DocumentRow | undefined> {
+    const [document] = await tx.select().from(documents).where(eq(documents.id, documentId));
     return document;
   }
 

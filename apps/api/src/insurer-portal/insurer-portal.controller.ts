@@ -10,7 +10,6 @@ import {
 } from './dto/portal.dto.js';
 import { Roles } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
-import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal } from '../common/auth/auth.types.js';
 
 /**
@@ -28,14 +27,6 @@ export class InsurerPortalController {
     private readonly insurers: InsurersService,
   ) {}
 
-  /** The insurer this caller acts for, or a refusal if the account has none. */
-  private scope(principal: Principal): string {
-    if (principal.kind !== 'staff' || !principal.insurerId) {
-      throw ApiException.forbidden('This account is not linked to an insurer.');
-    }
-    return principal.insurerId;
-  }
-
   // ── This insurer ────────────────────────────────────────────────
 
   /**
@@ -45,14 +36,14 @@ export class InsurerPortalController {
    */
   @Get('profile')
   profile(@CurrentUser() principal: Principal) {
-    return this.insurers.profile(this.scope(principal));
+    return this.insurers.profile(this.portal.insurerOf(principal));
   }
 
   // ── Quote requests ──────────────────────────────────────────────
 
   @Get('quote-requests')
   listQuoteRequests(@CurrentUser() principal: Principal) {
-    return this.portal.listQuoteRequests(this.scope(principal));
+    return this.portal.listQuoteRequests(principal);
   }
 
   @Post('quote-requests/:id/quote')
@@ -62,7 +53,7 @@ export class InsurerPortalController {
     @Body() dto: SubmitQuoteDto,
     @CurrentUser() principal: Principal,
   ) {
-    return this.portal.submitQuote(this.scope(principal), id, dto);
+    return this.portal.submitQuote(principal, id, dto);
   }
 
   @Post('quote-requests/:id/extend')
@@ -72,14 +63,14 @@ export class InsurerPortalController {
     @Body() dto: ExtendQuoteDto,
     @CurrentUser() principal: Principal,
   ) {
-    return this.portal.extendQuote(this.scope(principal), id, dto);
+    return this.portal.extendQuote(principal, id, dto);
   }
 
   // ── Paid policies ───────────────────────────────────────────────
 
   @Get('policies')
   listPolicies(@CurrentUser() principal: Principal) {
-    return this.portal.listPolicies(this.scope(principal));
+    return this.portal.listPolicies(principal);
   }
 
   @Post('policies/:policyNumber/certificate')
@@ -89,14 +80,14 @@ export class InsurerPortalController {
     @Body() dto: IssueCertificateDto,
     @CurrentUser() principal: Principal,
   ) {
-    return this.portal.issueCertificate(this.scope(principal), policyNumber, dto);
+    return this.portal.issueCertificate(principal, policyNumber, dto);
   }
 
   // ── Claims ──────────────────────────────────────────────────────
 
   @Get('claims')
   listClaims(@CurrentUser() principal: Principal) {
-    return this.portal.listClaims(this.scope(principal));
+    return this.portal.listClaims(principal);
   }
 
   @Post('claims/:claimNumber/received')
@@ -106,14 +97,14 @@ export class InsurerPortalController {
     @Body() dto: AcknowledgeClaimDto,
     @CurrentUser() principal: Principal,
   ) {
-    return this.portal.acknowledgeClaim(this.scope(principal), claimNumber, dto);
+    return this.portal.acknowledgeClaim(principal, claimNumber, dto);
   }
 
   // ── No-claim discount ───────────────────────────────────────────
 
   @Get('ncd/applications')
   listNcdApplications(@CurrentUser() principal: Principal) {
-    return this.portal.listNcdApplications(this.scope(principal));
+    return this.portal.listNcdApplications(principal);
   }
 
   @Post('ncd/applications/:id/decision')
@@ -123,6 +114,6 @@ export class InsurerPortalController {
     @Body() dto: NcdDecisionDto,
     @CurrentUser() principal: Principal,
   ) {
-    return this.portal.decideNcdApplication(this.scope(principal), id, dto);
+    return this.portal.decideNcdApplication(principal, id, dto);
   }
 }

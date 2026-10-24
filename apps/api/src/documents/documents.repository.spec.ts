@@ -27,3 +27,26 @@ describe('lockForAttach', () => {
     expect(statements[0]).toMatch(/ order by "documents"\."id" asc for update$/);
   });
 });
+
+describe('find', () => {
+  it('reads through the transaction when given one', async () => {
+    const pool = recordingTransaction();
+    const transaction = recordingTransaction();
+    const repository = new DocumentsRepository(pool.tx as never);
+
+    await repository.find('a0000000-0000-4000-8000-000000000000', transaction.tx);
+
+    expect(transaction.statements).toHaveLength(1);
+    expect(transaction.statements[0]).toMatch(/^select .* from "documents" where "documents"\."id" = \$1$/);
+    expect(pool.statements).toEqual([]);
+  });
+
+  it('reads through the pool otherwise', async () => {
+    const pool = recordingTransaction();
+    const repository = new DocumentsRepository(pool.tx as never);
+
+    await repository.find('a0000000-0000-4000-8000-000000000000');
+
+    expect(pool.statements).toHaveLength(1);
+  });
+});

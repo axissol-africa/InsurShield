@@ -75,9 +75,10 @@ export class DocumentsService {
   /**
    * Re-signs a stored document so the client always gets a fresh link. For
    * callers that have already checked the principal may see the parent record.
+   * Inside a transaction pass `tx`, so the read does not wait for a second connection.
    */
-  async record(documentId: string): Promise<DocumentRecord> {
-    const document = await this.repository.find(documentId);
+  async record(documentId: string, tx?: Transaction): Promise<DocumentRecord> {
+    const document = await this.repository.find(documentId, tx);
     if (!document) throw ApiException.notFound('Document', documentId);
     return this.toRecord(document);
   }

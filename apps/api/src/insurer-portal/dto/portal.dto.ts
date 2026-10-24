@@ -1,6 +1,6 @@
 import {
   IsBoolean,
-  IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -11,12 +11,14 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { NcdStatus } from '../../generated/prisma/enums.js';
+import { NCD_STATUSES, type NcdStatus } from '../../common/domain/enums.js';
+import { MAX_KWACHA } from '../../common/domain/money-limits.js';
 
 export class SubmitQuoteDto {
   /** Must equal the premium printed on the uploaded quotation. */
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0.01, { message: 'Enter the premium exactly as it appears on your quotation.' })
+  @Max(MAX_KWACHA, { message: `The premium must be at most ${MAX_KWACHA}.` })
   premium!: number;
 
   /** The quotation the insurer prepared in its own system. */
@@ -52,7 +54,7 @@ export class AcknowledgeClaimDto {
 }
 
 export class NcdDecisionDto {
-  @IsEnum(NcdStatus, { message: 'Decision must be Under Review, Approved or Rejected.' })
+  @IsIn(NCD_STATUSES, { message: 'Decision must be Under Review, Approved or Rejected.' })
   status!: NcdStatus;
 
   /** Set when approving to override the automatic percentage. */

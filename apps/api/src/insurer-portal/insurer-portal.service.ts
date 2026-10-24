@@ -1,15 +1,30 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
-import { toContract } from '../common/contract.js';
+import { kwachaToNgwee } from '../common/money.js';
+import { isOpenRenewal } from '../customer/domain/renewal.js';
+import type { Principal } from '../common/auth/auth.types.js';
+import type { Transaction } from '../db/database.module.js';
 import {
-  ClaimStatus,
-  DeliveryStatus,
-  NcdStatus,
-  PolicyStatus,
-  QuoteRequestStatus,
-} from '../generated/prisma/enums.js';
+  addDays,
+  canDecideNcd,
+  ncdDecidedAt,
+  ncdPercentage,
+  newNcdCode,
+} from './domain/portal.js';
+import { InsurerPortalRepository, type NewNcdCode } from './insurer-portal.repository.js';
+import {
+  toAcknowledgement,
+  toExtension,
+  toIssuedPolicy,
+  toNcdApplication,
+  toNcdApproval,
+  toNcdDecision,
+  toPortalClaim,
+  toPortalPolicy,
+  toPortalRequest,
+  toReply,
+} from './dto/portal.response.js';
 import type {
   AcknowledgeClaimDto,
   ExtendQuoteDto,
@@ -18,271 +33,129 @@ import type {
   SubmitQuoteDto,
 } from './dto/portal.dto.js';
 
-/** Ten percent per claim-free year, matching the customer-facing NCD tiers. */
-const NCD_PERCENTAGE_PER_YEAR = 10;
-const MAX_NCD_PERCENTAGE = 50;
+/** Chooses one of `n` characters for a new NCD code; `crypto.randomInt` outside tests. */
+export const NCD_CODE_PICK = Symbol('NCD_CODE_PICK');
 
-const addDays = (from: Date, days: number) =>
-  new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
+const NCD_CODE_ATTEMPTS = 5;
 
 /**
  * Everything the insurer portal does.
  *
- * Every method takes the insurer resolved from the caller's token and filters
- * on it. No endpoint accepts an insurer id from the client, so one insurer can
- * never read or act on another's work — the scoping is not something a request
- * can influence.
+ * Every method resolves the insurer from the caller's own staff record and
+ * filters on it. No endpoint accepts an insurer id from the client, so one
+ * insurer can never read or act on another's work.
  */
 @Injectable()
 export class InsurerPortalService {
   private readonly logger = new Logger(InsurerPortalService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly portal: InsurerPortalRepository,
     private readonly documents: DocumentsService,
+    @Inject(NCD_CODE_PICK) private readonly pick: (n: number) => number,
   ) {}
+
+  /** The insurer this caller acts for, or a refusal if the account has none. */
+  insurerOf(principal: Principal): string {
+    if (principal.kind !== 'staff' || principal.role !== 'INSURER_USER' || !principal.insurerId) {
+      throw ApiException.forbidden('This account is not linked to an insurer.');
+    }
+    return principal.insurerId;
+  }
 
   // ── Quote requests ──────────────────────────────────────────────
 
   /** Requests delivered to this insurer, newest first, with its own reply. */
-  async listQuoteRequests(insurerId: string) {
-    const recipients = await this.prisma.quoteRequestRecipient.findMany({
-      where: { insurerId },
-      orderBy: { quoteRequest: { submittedAt: 'desc' } },
-      select: {
-        status: true,
-        deliveredAt: true,
-        quoteRequest: {
-          include: {
-            customer: { select: { fullName: true, email: true, phone: true } },
-            vehicle: true,
-            inspectionShots: { select: { shotKey: true } },
-            // Only this insurer's reply; the others are none of its business.
-            quotes: {
-              where: { insurerId },
-              include: { document: true },
-            },
-          },
-        },
-      },
-    });
+  async listQuoteRequests(principal: Principal) {
+    const insurerId = this.insurerOf(principal);
+    const requests = await this.portal.listRequests(insurerId);
+    const shots = await this.portal.shotKeys(insurerId, requests.map((request) => request.id));
 
-    return Promise.all(recipients.map((row) => this.toPortalRequest(row.quoteRequest, row.status)));
-  }
-
-  private async toPortalRequest(
-    request: NonNullable<Awaited<ReturnType<InsurerPortalService['loadRequest']>>>,
-    deliveryStatus: DeliveryStatus,
-  ) {
-    const reply = request.quotes[0] ?? null;
-
-    return {
-      id: request.id,
-      status: toContract.quoteRequestStatus(request.status),
-      deliveryStatus,
-      submittedAt: request.submittedAt.toISOString(),
-      expiresAt: request.expiresAt.toISOString(),
-      vehicle: `${request.vehicle.year} ${request.vehicle.make} ${request.vehicle.model}`.trim(),
-      vehicleDetails: {
-        plateNumber: request.vehicle.plateNumber,
-        make: request.vehicle.make,
-        model: request.vehicle.model,
-        year: request.vehicle.year,
-        chassisNumber: request.vehicle.chassisNumber,
-      },
-      vehicleValue: request.vehicleValue.toNumber(),
-      vehicleUsage: request.vehicleUsage,
-      insuranceType: toContract.insuranceType(request.insuranceType),
-      coverageDurationId: toContract.coverageDuration(request.coverageDuration),
-      policyDates:
-        request.policyStartDate && request.policyEndDate
-          ? {
-              startDate: request.policyStartDate.toISOString(),
-              endDate: request.policyEndDate.toISOString(),
-              daysTotal: request.coverageDays,
-            }
-          : null,
-      customer: request.customer,
-      inspectionShots: request.inspectionShots.map((shot) => shot.shotKey),
-      photosCapturedAt: request.photosCapturedAt?.toISOString() ?? null,
-      reply: reply
-        ? {
-            premium: reply.premium.toNumber(),
-            notes: reply.notes,
-            insurerReference: reply.insurerReference,
-            validityDays: reply.validityDays,
-            sentAt: reply.sentAt.toISOString(),
-            validUntil: reply.validUntil.toISOString(),
-            extendedAt: reply.extendedAt?.toISOString() ?? null,
-            document: await this.documents.record(reply.documentId),
-          }
-        : null,
-    };
-  }
-
-  private loadRequest(id: string, insurerId: string) {
-    return this.prisma.quoteRequest.findFirst({
-      where: { id, recipients: { some: { insurerId } } },
-      include: {
-        customer: { select: { fullName: true, email: true, phone: true } },
-        vehicle: true,
-        inspectionShots: { select: { shotKey: true } },
-        quotes: { where: { insurerId }, include: { document: true } },
-      },
-    });
+    return Promise.all(
+      requests.map(async (request) =>
+        toPortalRequest(
+          request,
+          shots.filter((shot) => shot.quoteRequestId === request.id).map((shot) => shot.shotKey),
+          request.reply ? await this.documents.record(request.reply.documentId) : null,
+        ),
+      ),
+    );
   }
 
   /** The insurer's single final reply to a request. */
-  async submitQuote(insurerId: string, requestId: string, dto: SubmitQuoteDto) {
-    const request = await this.loadRequest(requestId, insurerId);
-    if (!request) throw ApiException.notFound('Quote request', requestId);
+  async submitQuote(principal: Principal, requestId: string, dto: SubmitQuoteDto) {
+    const insurerId = this.insurerOf(principal);
+    const premiumMinor = kwachaToNgwee(dto.premium);
+    const requestExpired = () =>
+      ApiException.conflict('REQUEST_EXPIRED', 'This request has expired and can no longer be quoted.');
 
-    if (request.quotes.length > 0) {
-      throw ApiException.conflict(
-        'ALREADY_QUOTED',
-        'You have already sent a final quote for this request. Extend it instead of replacing it.',
-      );
-    }
-    if (request.expiresAt < new Date()) {
-      throw ApiException.conflict(
-        'REQUEST_EXPIRED',
-        'This request has expired and can no longer be quoted.',
-      );
-    }
+    const reply = await this.portal.transaction(async (tx) => {
+      const delivery = await this.portal.lockDelivery(tx, requestId, insurerId);
+      if (!delivery) throw ApiException.notFound('Quote request', requestId);
 
-    await this.documents.requireExists(dto.documentId);
+      if (await this.portal.hasQuote(requestId, insurerId, tx)) {
+        throw ApiException.conflict(
+          'ALREADY_QUOTED',
+          'You have already sent a final quote for this request. Extend it instead of replacing it.',
+        );
+      }
+      const sentAt = new Date();
+      if (!isOpenRenewal({ id: requestId, status: delivery.status, expiresAt: delivery.expiresAt }, sentAt)) {
+        throw requestExpired();
+      }
 
-    const insurer = await this.prisma.insurer.findUniqueOrThrow({
-      where: { id: insurerId },
-      select: { quoteValidityDays: true },
+      await this.documents.assertAttachable(tx, principal, [dto.documentId], 'QUOTATION');
+
+      const validityDays = dto.validityDays ?? delivery.quoteValidityDays;
+      const quote = await this.portal.insertQuote(tx, {
+        quoteRequestId: requestId,
+        insurerId,
+        premiumMinor,
+        notes: dto.notes ?? null,
+        insurerReference: dto.insurerReference ?? null,
+        documentId: dto.documentId,
+        validityDays,
+        sentAt,
+        validUntil: addDays(sentAt, validityDays),
+      });
+      // The request is "Quoted" as soon as one insurer replies; others may still reply afterwards.
+      if (!(await this.portal.markQuoted(tx, requestId, insurerId, sentAt))) throw requestExpired();
+      return toReply(quote, await this.documents.record(quote.documentId, tx));
     });
-    const validityDays = dto.validityDays ?? insurer.quoteValidityDays;
-    const sentAt = new Date();
-
-    const [quote] = await this.prisma.$transaction([
-      this.prisma.insurerQuote.create({
-        data: {
-          quoteRequestId: requestId,
-          insurerId,
-          premium: dto.premium,
-          notes: dto.notes ?? null,
-          insurerReference: dto.insurerReference ?? null,
-          documentId: dto.documentId,
-          validityDays,
-          sentAt,
-          validUntil: addDays(sentAt, validityDays),
-        },
-        include: { document: true },
-      }),
-      // The request is "Quoted" as soon as one insurer replies; others may
-      // still reply afterwards.
-      this.prisma.quoteRequest.update({
-        where: { id: requestId },
-        data: { status: QuoteRequestStatus.QUOTED },
-      }),
-      this.prisma.quoteRequestRecipient.updateMany({
-        where: { quoteRequestId: requestId, insurerId },
-        data: { status: DeliveryStatus.ACKNOWLEDGED, acknowledgedAt: sentAt },
-      }),
-    ]);
 
     this.logger.log(`Quote sent for ${requestId} by insurer ${insurerId}`);
-
-    return {
-      premium: quote.premium.toNumber(),
-      notes: quote.notes,
-      insurerReference: quote.insurerReference,
-      validityDays: quote.validityDays,
-      sentAt: quote.sentAt.toISOString(),
-      validUntil: quote.validUntil.toISOString(),
-      extendedAt: null,
-      document: await this.documents.record(quote.documentId),
-    };
+    return reply;
   }
 
   /** Keeps an open quote available for longer. An expired quote cannot be revived. */
-  async extendQuote(insurerId: string, requestId: string, dto: ExtendQuoteDto) {
-    const quote = await this.prisma.insurerQuote.findUnique({
-      where: { quoteRequestId_insurerId: { quoteRequestId: requestId, insurerId } },
-    });
-    if (!quote) throw ApiException.notFound('Quote for request', requestId);
+  async extendQuote(principal: Principal, requestId: string, dto: ExtendQuoteDto) {
+    const insurerId = this.insurerOf(principal);
 
-    if (quote.validUntil < new Date()) {
-      throw ApiException.conflict(
-        'QUOTE_EXPIRED',
-        'This quote has already expired. The customer needs to request new quotes.',
-      );
+    const extended = await this.portal.extendOpenQuote(requestId, insurerId, dto.extraDays, new Date());
+    if (extended) return toExtension(extended);
+
+    if (!(await this.portal.hasQuote(requestId, insurerId))) {
+      throw ApiException.notFound('Quote for request', requestId);
     }
-
-    const updated = await this.prisma.insurerQuote.update({
-      where: { id: quote.id },
-      data: {
-        validUntil: addDays(quote.validUntil, dto.extraDays),
-        validityDays: quote.validityDays + dto.extraDays,
-        extendedAt: new Date(),
-      },
-    });
-
-    return {
-      premium: updated.premium.toNumber(),
-      validityDays: updated.validityDays,
-      validUntil: updated.validUntil.toISOString(),
-      extendedAt: updated.extendedAt!.toISOString(),
-    };
+    throw ApiException.conflict(
+      'QUOTE_EXPIRED',
+      'This quote has already expired. The customer needs to request new quotes.',
+    );
   }
 
   // ── Paid policies ───────────────────────────────────────────────
 
-  async listPolicies(insurerId: string) {
-    const policies = await this.prisma.policy.findMany({
-      where: { insurerId },
-      orderBy: { receivedAt: 'desc' },
-      include: {
-        customer: { select: { fullName: true, email: true, phone: true } },
-        vehicle: true,
-        payment: true,
-      },
-    });
+  async listPolicies(principal: Principal) {
+    const policies = await this.portal.listPolicies(this.insurerOf(principal));
 
     return Promise.all(
-      policies.map(async (policy) => ({
-        policyNumber: policy.policyNumber,
-        insurerPolicyNumber: policy.insurerPolicyNumber,
-        status: toContract.policyStatus(policy.status),
-        coverage: policy.coverage,
-        plan: policy.plan,
-        premium: policy.premium.toNumber(),
-        customerName: policy.customer.fullName,
-        customerEmail: policy.customer.email,
-        customerPhone: policy.customer.phone,
-        vehicle: `${policy.vehicle.year} ${policy.vehicle.make} ${policy.vehicle.model}`.trim(),
-        vehicleDetails: { plateNumber: policy.vehicle.plateNumber },
-        policyDates:
-          policy.policyStartDate && policy.policyEndDate
-            ? {
-                startDate: policy.policyStartDate.toISOString(),
-                endDate: policy.policyEndDate.toISOString(),
-              }
-            : null,
-        quoteRequestId: policy.quoteRequestId,
-        insurerQuoteReference: policy.insurerQuoteReference,
-        quoteDocument: policy.quoteDocumentId
-          ? await this.documents.record(policy.quoteDocumentId)
-          : null,
-        certificateDocument: policy.certificateDocumentId
-          ? await this.documents.record(policy.certificateDocumentId)
-          : null,
-        paymentProof: {
-          transactionId: policy.payment.transactionId,
-          status: policy.payment.status,
-          method: policy.payment.method,
-          amount: policy.payment.amount.toNumber(),
-          currency: policy.payment.currency,
-          confirmedAt: policy.payment.confirmedAt?.toISOString() ?? null,
-        },
-        receivedAt: policy.receivedAt.toISOString(),
-        issuedAt: policy.issuedAt?.toISOString() ?? null,
-      })),
+      policies.map(async (policy) =>
+        toPortalPolicy(
+          policy,
+          policy.quoteDocumentId ? await this.documents.record(policy.quoteDocumentId) : null,
+          policy.certificateDocumentId ? await this.documents.record(policy.certificateDocumentId) : null,
+        ),
+      ),
     );
   }
 
@@ -290,142 +163,76 @@ export class InsurerPortalService {
    * Uploading the official certificate is what activates the policy. Payment
    * alone never does — see INSURER_API_INTEGRATION.md.
    */
-  async issueCertificate(insurerId: string, policyNumber: string, dto: IssueCertificateDto) {
-    const policy = await this.prisma.policy.findFirst({ where: { policyNumber, insurerId } });
-    if (!policy) throw ApiException.notFound('Policy', policyNumber);
+  async issueCertificate(principal: Principal, policyNumber: string, dto: IssueCertificateDto) {
+    const insurerId = this.insurerOf(principal);
+    const alreadyIssued = () =>
+      ApiException.conflict('ALREADY_ISSUED', 'This policy has already been issued and is active.');
 
-    if (policy.status === PolicyStatus.ACTIVE) {
-      throw ApiException.conflict(
-        'ALREADY_ISSUED',
-        'This policy has already been issued and is active.',
-      );
-    }
+    const issued = await this.portal.transaction(async (tx) => {
+      const policy = await this.portal.lockPolicy(tx, policyNumber, insurerId);
+      if (!policy) throw ApiException.notFound('Policy', policyNumber);
+      if (policy.status === 'ACTIVE') throw alreadyIssued();
 
-    await this.documents.requireExists(dto.certificateDocumentId);
+      await this.documents.assertAttachable(tx, principal, [dto.certificateDocumentId], 'CERTIFICATE');
 
-    const updated = await this.prisma.policy.update({
-      where: { policyNumber },
-      data: {
+      const activated = await this.portal.activatePolicy(tx, policyNumber, insurerId, {
         certificateDocumentId: dto.certificateDocumentId,
         insurerPolicyNumber: dto.insurerPolicyNumber ?? null,
-        status: PolicyStatus.ACTIVE,
         issuedAt: new Date(),
-      },
+      });
+      if (!activated) throw alreadyIssued();
+      return toIssuedPolicy(activated, await this.documents.record(dto.certificateDocumentId, tx));
     });
 
     this.logger.log(`Policy ${policyNumber} activated by insurer ${insurerId}`);
-
-    return {
-      policyNumber: updated.policyNumber,
-      insurerPolicyNumber: updated.insurerPolicyNumber,
-      status: toContract.policyStatus(updated.status),
-      issuedAt: updated.issuedAt!.toISOString(),
-      certificateDocument: await this.documents.record(dto.certificateDocumentId),
-    };
+    return issued;
   }
 
   // ── Claims ──────────────────────────────────────────────────────
 
-  async listClaims(insurerId: string) {
-    const claims = await this.prisma.claimNotification.findMany({
-      where: { insurerId },
-      orderBy: { submittedAt: 'desc' },
-      include: { attachments: { select: { documentId: true } } },
-    });
+  async listClaims(principal: Principal) {
+    const insurerId = this.insurerOf(principal);
+    const claims = await this.portal.listClaims(insurerId);
+    const attachments = await this.portal.attachmentIds(insurerId, claims.map((claim) => claim.claimNumber));
 
     return Promise.all(
-      claims.map(async (claim) => ({
-        claimNumber: claim.claimNumber,
-        status: toContract.claimStatus(claim.status),
-        fullName: claim.fullName,
-        phone: claim.phone,
-        email: claim.email,
-        plate: claim.plate,
-        vehicle: claim.vehicleLabel,
-        type: claim.type,
-        incidentDate: claim.incidentDate.toISOString(),
-        location: claim.location,
-        description: claim.description,
-        estimatedLoss: claim.estimatedLoss?.toNumber() ?? null,
-        policeReport: claim.policeReport,
-        policeReportNumber: claim.policeReportNumber,
-        lateReason: claim.lateReason,
-        policyNumber: claim.policyNumber,
-        insurerClaimReference: claim.insurerClaimReference,
-        submittedAt: claim.submittedAt.toISOString(),
-        receivedAt: claim.receivedAt?.toISOString() ?? null,
-        supportingDocs: await Promise.all(
-          claim.attachments.map((attachment) => this.documents.record(attachment.documentId)),
+      claims.map(async (claim) =>
+        toPortalClaim(
+          claim,
+          await Promise.all(
+            attachments
+              .filter((attachment) => attachment.claimNumber === claim.claimNumber)
+              .map((attachment) => this.documents.record(attachment.documentId)),
+          ),
         ),
-      })),
+      ),
     );
   }
 
-  /** The insurer confirms it has the notification; the claim then continues in its own system. */
-  async acknowledgeClaim(insurerId: string, claimNumber: string, dto: AcknowledgeClaimDto) {
-    const claim = await this.prisma.claimNotification.findFirst({
-      where: { claimNumber, insurerId },
+  /**
+   * The insurer confirms it has the notification; the claim then continues in
+   * its own system. Acknowledging twice is harmless, so a repeat answers the
+   * state the first one recorded rather than failing a retry.
+   */
+  async acknowledgeClaim(principal: Principal, claimNumber: string, dto: AcknowledgeClaimDto) {
+    const insurerId = this.insurerOf(principal);
+
+    const acknowledged = await this.portal.acknowledgeClaim(claimNumber, insurerId, {
+      receivedAt: new Date(),
+      insurerClaimReference: dto.insurerClaimReference ?? undefined,
     });
+    if (acknowledged) return toAcknowledgement(acknowledged);
+
+    const claim = await this.portal.findAcknowledgement(claimNumber, insurerId);
     if (!claim) throw ApiException.notFound('Claim', claimNumber);
-
-    if (claim.status === ClaimStatus.RECEIVED_BY_INSURER) {
-      // Acknowledging twice is harmless, so this returns the existing state
-      // rather than failing a retry.
-      return this.claimAck(claim.claimNumber, claim.status, claim.receivedAt, claim.insurerClaimReference);
-    }
-
-    const updated = await this.prisma.claimNotification.update({
-      where: { claimNumber },
-      data: {
-        status: ClaimStatus.RECEIVED_BY_INSURER,
-        receivedAt: new Date(),
-        insurerClaimReference: dto.insurerClaimReference ?? claim.insurerClaimReference,
-      },
-    });
-
-    return this.claimAck(
-      updated.claimNumber,
-      updated.status,
-      updated.receivedAt,
-      updated.insurerClaimReference,
-    );
-  }
-
-  private claimAck(
-    claimNumber: string,
-    status: ClaimStatus,
-    receivedAt: Date | null,
-    insurerClaimReference: string | null,
-  ) {
-    return {
-      claimNumber,
-      status,
-      receivedAt: receivedAt?.toISOString() ?? null,
-      insurerClaimReference,
-    };
+    return toAcknowledgement(claim);
   }
 
   // ── No-claim discount ───────────────────────────────────────────
 
-  async listNcdApplications(insurerId: string) {
-    const applications = await this.prisma.ncdApplication.findMany({
-      where: { insurerId },
-      orderBy: { submittedAt: 'desc' },
-      include: { approvedCode: true },
-    });
-
-    return applications.map((application) => ({
-      id: application.id,
-      applicationNumber: application.applicationNumber,
-      policyNumber: application.policyNumber,
-      fullName: application.fullName,
-      phone: application.phone,
-      yearsClaimFree: application.yearsClaimFree,
-      status: toContract.ncdStatus(application.status),
-      approvedCode: application.approvedCode?.code ?? null,
-      submittedAt: application.submittedAt.toISOString(),
-      decidedAt: application.decidedAt?.toISOString() ?? null,
-    }));
+  async listNcdApplications(principal: Principal) {
+    const applications = await this.portal.listNcdApplications(this.insurerOf(principal));
+    return applications.map(toNcdApplication);
   }
 
   /**
@@ -433,64 +240,55 @@ export class InsurerPortalService {
    * is created in the same transaction as the decision, so an approved
    * application can never exist without one.
    */
-  async decideNcdApplication(insurerId: string, applicationId: string, dto: NcdDecisionDto) {
-    const application = await this.prisma.ncdApplication.findFirst({
-      where: { id: applicationId, insurerId },
-      include: { approvedCode: true },
-    });
-    if (!application) throw ApiException.notFound('NCD application', applicationId);
+  async decideNcdApplication(principal: Principal, applicationId: string, dto: NcdDecisionDto) {
+    const insurerId = this.insurerOf(principal);
+    const alreadyDecided = () =>
+      ApiException.conflict('ALREADY_DECIDED', 'This application has already been approved and its code issued.');
 
-    if (application.status === NcdStatus.APPROVED) {
-      throw ApiException.conflict(
-        'ALREADY_DECIDED',
-        'This application has already been approved and its code issued.',
-      );
-    }
+    const { decision, applicationNumber } = await this.portal.transaction(async (tx) => {
+      const application = await this.portal.lockNcdApplication(tx, applicationId, insurerId);
+      if (!application) throw ApiException.notFound('NCD application', applicationId);
+      if (!canDecideNcd(application.status)) throw alreadyDecided();
 
-    if (dto.status !== NcdStatus.APPROVED) {
-      const updated = await this.prisma.ncdApplication.update({
-        where: { id: applicationId },
-        data: {
+      const decidedAt = ncdDecidedAt(dto.status, new Date());
+      const { applicationNumber } = application;
+      if (dto.status !== 'APPROVED') {
+        const decided = await this.portal.decideNcdApplication(tx, applicationId, insurerId, application.status, {
           status: dto.status,
-          decidedAt: dto.status === NcdStatus.UNDER_REVIEW ? null : new Date(),
-        },
+          decidedAt,
+        });
+        if (!decided) throw alreadyDecided();
+        return { decision: toNcdDecision(decided), applicationNumber };
+      }
+
+      const percentage = ncdPercentage(application.yearsClaimFree, dto.percentage);
+      const code = await this.insertUnusedNcdCode(tx, {
+        insurerId,
+        percentage,
+        yearsClaimFree: application.yearsClaimFree,
       });
-      return {
-        id: updated.id,
-        status: toContract.ncdStatus(updated.status),
-        approvedCode: null,
-        decidedAt: updated.decidedAt?.toISOString() ?? null,
-      };
+      const approved = await this.portal.decideNcdApplication(tx, applicationId, insurerId, application.status, {
+        status: 'APPROVED',
+        decidedAt,
+        approvedCodeId: code,
+      });
+      // Rolling back here also removes the code inserted above, so a lost race leaves no code behind.
+      if (!approved) throw alreadyDecided();
+      return { decision: toNcdApproval(approved, { code, percentage }), applicationNumber };
+    });
+
+    if ('percentage' in decision) {
+      this.logger.log(`NCD ${applicationNumber} approved at ${decision.percentage}%`);
     }
+    return decision;
+  }
 
-    const percentage =
-      dto.percentage ??
-      Math.min(application.yearsClaimFree * NCD_PERCENTAGE_PER_YEAR, MAX_NCD_PERCENTAGE);
-    const code = `NCD-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-
-    const [, updated] = await this.prisma.$transaction([
-      this.prisma.ncdCode.create({
-        data: {
-          code,
-          insurerId,
-          percentage,
-          yearsClaimFree: application.yearsClaimFree,
-        },
-      }),
-      this.prisma.ncdApplication.update({
-        where: { id: applicationId },
-        data: { status: NcdStatus.APPROVED, decidedAt: new Date(), approvedCodeId: code },
-      }),
-    ]);
-
-    this.logger.log(`NCD ${application.applicationNumber} approved at ${percentage}%`);
-
-    return {
-      id: updated.id,
-      status: toContract.ncdStatus(updated.status),
-      approvedCode: code,
-      percentage,
-      decidedAt: updated.decidedAt!.toISOString(),
-    };
+  /** Inserts a new code and returns it, drawing again while the drawn code is already taken. */
+  private async insertUnusedNcdCode(tx: Transaction, code: Omit<NewNcdCode, 'code'>): Promise<string> {
+    for (let attempt = 0; attempt < NCD_CODE_ATTEMPTS; attempt++) {
+      const drawn = newNcdCode(this.pick);
+      if (await this.portal.insertNcdCode(tx, { ...code, code: drawn })) return drawn;
+    }
+    throw new Error(`No unused NCD code was found in ${NCD_CODE_ATTEMPTS} attempts.`);
   }
 }

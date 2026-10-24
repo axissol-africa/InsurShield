@@ -124,3 +124,47 @@ describe('upload', () => {
       .rejects.toMatchObject({ response: { code: 'FILE_TOO_LARGE', message: 'That file is larger than the 3 MB limit.' } });
   });
 });
+
+describe('record', () => {
+  const row = { id: 'd', fileName: 'quote.pdf', mimeType: 'application/pdf', sizeBytes: 10, storageKey: 'k/quote.pdf' };
+
+  function serviceFinding(found: typeof row | undefined) {
+    const reads: (Transaction | undefined)[] = [];
+    const repository = {
+      find: async (_id: string, tx?: Transaction) => {
+        reads.push(tx);
+        return found;
+      },
+    };
+    const storage = { signedDownloadUrl: async (key: string) => `https://signed/${key}` };
+    return { service: new DocumentsService(repository as never, storage as never, {} as never), reads };
+  }
+
+  it('reads the document through the given transaction and signs a link', async () => {
+    const { service, reads } = serviceFinding(row);
+    const tx = {} as Transaction;
+
+    await expect(service.record('d', tx)).resolves.toEqual({
+      id: 'd',
+      name: 'quote.pdf',
+      type: 'application/pdf',
+      size: 10,
+      url: 'https://signed/k/quote.pdf',
+    });
+    expect(reads).toEqual([tx]);
+  });
+
+  it('reads through the pool when no transaction is given', async () => {
+    const { service, reads } = serviceFinding(row);
+
+    await service.record('d');
+
+    expect(reads).toEqual([undefined]);
+  });
+
+  it('answers 404 for a missing document', async () => {
+    const { service } = serviceFinding(undefined);
+
+    await expect(service.record('d', {} as Transaction)).rejects.toMatchObject({ status: 404 });
+  });
+});
