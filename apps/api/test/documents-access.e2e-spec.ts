@@ -347,14 +347,18 @@ describe('documents', () => {
       const hold = deferred();
       const firstAttached = deferred();
       const one = attachTo(policyOne, hold.promise, firstAttached.resolve);
-      await firstAttached.promise;
+      await Promise.race([firstAttached.promise, one]);
       const two = attachTo(policyTwo);
       const settledTwo = two.then(
         () => 'attached',
         (error: unknown) => error,
       );
-      await until(async () => (await lockWaiters()) === 1, 'the second attach to wait on the document lock');
-      hold.resolve();
+      try {
+        await until(async () => (await lockWaiters()) === 1, 'the second attach to wait on the document lock');
+      } finally {
+        hold.resolve();
+        await Promise.allSettled([one, settledTwo]);
+      }
 
       await expect(one).resolves.toBeUndefined();
       await expect(settledTwo).resolves.toMatchObject(NOT_ATTACHABLE);
@@ -385,22 +389,28 @@ describe('documents', () => {
         lowLocked.resolve();
         await hold.promise;
       });
-      await lowLocked.promise;
+      // A holder that fails before locking would otherwise leave this wait hanging until the test times out.
+      await Promise.race([lowLocked.promise, holder]);
 
       const waiter = testApp.db.transaction((tx) => service.assertAttachable(tx, me, [high, low], 'CLAIM_ATTACHMENT'));
-      await until(async () => (await lockWaiters()) === 1, 'the second request to wait on the lower id');
-      // The waiting request has not locked the higher id, so it cannot be half of a deadlock.
-      const probe = await side.pool.connect();
+      const settled = Promise.allSettled([holder, waiter]);
       try {
-        await probe.query('BEGIN');
-        await expect(
-          probe.query('SELECT id FROM documents WHERE id = $1 FOR UPDATE NOWAIT', [high]),
-        ).resolves.toMatchObject({ rowCount: 1 });
-        await probe.query('ROLLBACK');
+        await until(async () => (await lockWaiters()) === 1, 'the second request to wait on the lower id');
+        // The waiting request has not locked the higher id, so it cannot be half of a deadlock.
+        const probe = await side.pool.connect();
+        try {
+          await probe.query('BEGIN');
+          await expect(
+            probe.query('SELECT id FROM documents WHERE id = $1 FOR UPDATE NOWAIT', [high]),
+          ).resolves.toMatchObject({ rowCount: 1 });
+          await probe.query('ROLLBACK');
+        } finally {
+          probe.release();
+        }
       } finally {
-        probe.release();
+        hold.resolve();
+        await settled;
       }
-      hold.resolve();
 
       await expect(holder).resolves.toBeUndefined();
       await expect(waiter).resolves.toBeUndefined();

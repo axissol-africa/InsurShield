@@ -135,16 +135,21 @@ describe('a transaction whose backend is terminated mid-statement', () => {
     const marker = unique('terminated-marker');
 
     const pending = testApp.http.post('/api/v1/transaction-probe/sleep').set('x-probe-marker', marker).then((response) => response);
+    const settled = Promise.allSettled([pending]);
     let pid: number | undefined;
-    await until(async () => {
-      const { rows } = await side.pool.query<{ pid: number }>(
-        `SELECT pid FROM pg_stat_activity WHERE application_name = $1 AND wait_event = 'PgSleep'`,
-        [marker],
-      );
-      pid = rows[0]?.pid;
-      return pid !== undefined;
-    }, 'the probe to sleep in the database');
-    await side.pool.query('SELECT pg_terminate_backend($1)', [pid]);
+    try {
+      await until(async () => {
+        const { rows } = await side.pool.query<{ pid: number }>(
+          `SELECT pid FROM pg_stat_activity WHERE application_name = $1 AND wait_event = 'PgSleep'`,
+          [marker],
+        );
+        pid = rows[0]?.pid;
+        return pid !== undefined;
+      }, 'the probe to sleep in the database');
+      await side.pool.query('SELECT pg_terminate_backend($1)', [pid]);
+    } finally {
+      await settled;
+    }
     const response = await pending;
 
     expect(response.status).toBe(500);

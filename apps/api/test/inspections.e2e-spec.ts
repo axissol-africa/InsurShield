@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import type { Response } from 'supertest';
 import type { InspectionStatus } from '../src/common/domain/enums.js';
 import { inspectionPhotos, inspections, insurers, type customers, type documents } from '../src/db/schema.js';
 import { buildCustomer, buildDocument, buildInspection, buildInsurer, type Row } from './builders.js';
@@ -284,15 +285,19 @@ describe('inspections', () => {
       const { insurer } = await buildInsurer(testApp.db);
       const headers = await asCustomer(customer);
       const holder = await side.pool.connect();
+      let request: Promise<Response> = Promise.reject(new Error('the request was not sent'));
+      request.catch(() => undefined);
+      let settled: Promise<unknown> = Promise.resolve();
       try {
         await holder.query('BEGIN');
         await holder.query(`UPDATE insurers SET status = 'INACTIVE' WHERE id = $1`, [insurer.id]);
 
-        const request = testApp.http
+        request = testApp.http
           .post('/api/v1/inspections')
           .set(headers)
           .send({ vehiclePlate: 'BAA 1234', vehicleLabel: 'Corolla', insurerId: insurer.id })
           .then((response) => response);
+        settled = Promise.allSettled([request]);
         await until(async () => {
           const { rows } = await side.pool.query<{ count: string }>(
             `SELECT count(*) FROM pg_stat_activity
@@ -301,14 +306,17 @@ describe('inspections', () => {
           return Number(rows[0].count) > 0;
         }, 'the request to wait for the insurer row');
         await holder.query('COMMIT');
-
-        const response = await request;
-        expect(response.status).toBe(404);
-        expect(response.body).toMatchObject({ code: 'NOT_FOUND', message: `Insurer ${insurer.id} was not found.` });
       } finally {
-        await holder.query('ROLLBACK').catch(() => undefined);
-        holder.release();
+        try {
+          await holder.query('ROLLBACK').catch(() => undefined);
+          holder.release();
+        } finally {
+          await settled;
+        }
       }
+      const response = await request;
+      expect(response.status).toBe(404);
+      expect(response.body).toMatchObject({ code: 'NOT_FOUND', message: `Insurer ${insurer.id} was not found.` });
       expect(await testApp.db.select().from(inspections).where(eq(inspections.customerId, customer.id))).toEqual([]);
     });
 
@@ -472,11 +480,15 @@ describe('inspections', () => {
       const inspection = await buildInspection(testApp.db, { customerId: customer.id }, { notes: 'Before' });
       const headers = await asCustomer(customer);
       const holder = await side.pool.connect();
+      let change: Promise<Response> = Promise.reject(new Error('the change was not sent'));
+      change.catch(() => undefined);
+      let settled: Promise<unknown> = Promise.resolve();
       try {
         await holder.query('BEGIN');
         await holder.query(`UPDATE inspections SET status = 'IN_PROGRESS' WHERE id = $1`, [inspection.id]);
 
-        const change = testApp.http.patch(`/api/v1/inspections/${inspection.id}`).set(headers).send({ notes: 'After' }).then((response) => response);
+        change = testApp.http.patch(`/api/v1/inspections/${inspection.id}`).set(headers).send({ notes: 'After' }).then((response) => response);
+        settled = Promise.allSettled([change]);
         await until(async () => {
           const { rows } = await side.pool.query<{ count: string }>(
             `SELECT count(*) FROM pg_stat_activity
@@ -485,14 +497,17 @@ describe('inspections', () => {
           return Number(rows[0].count) > 0;
         }, 'the change to wait for the inspection row');
         await holder.query('COMMIT');
-
-        const response = await change;
-        expect(response.status).toBe(409);
-        expect(response.body).toMatchObject({ code: 'INSPECTION_IN_PROGRESS' });
       } finally {
-        await holder.query('ROLLBACK').catch(() => undefined);
-        holder.release();
+        try {
+          await holder.query('ROLLBACK').catch(() => undefined);
+          holder.release();
+        } finally {
+          await settled;
+        }
       }
+      const response = await change;
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'INSPECTION_IN_PROGRESS' });
       expect(await stored(inspection.id)).toMatchObject({ status: 'IN_PROGRESS', notes: 'Before' });
     });
   });

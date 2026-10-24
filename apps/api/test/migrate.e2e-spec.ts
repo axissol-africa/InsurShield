@@ -702,12 +702,17 @@ describe('concurrent runs', () => {
         }
       },
     });
-    await held;
+    // A first run that fails before the final check would otherwise leave this wait hanging until the test times out.
+    await Promise.race([held, first]);
     const started = Date.now();
     const second = migrateDatabase({ ...db.config, options: '-c statement_timeout=1000' });
 
-    expect(await first).toEqual({ state: 'fresh', applied: ALL });
-    expect(await second).toEqual({ state: 'managed', applied: [] });
+    // Both runs finish before the assertion, so a failure cannot leave one running while the database is dropped.
+    const results = await Promise.allSettled([first, second]);
+    expect(results).toEqual([
+      { status: 'fulfilled', value: { state: 'fresh', applied: ALL } },
+      { status: 'fulfilled', value: { state: 'managed', applied: [] } },
+    ]);
     expect(Date.now() - started).toBeGreaterThan(60_000);
   }, 150_000);
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import type { Response } from 'supertest';
 import { insurerContacts, insurers } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, buildStaffUser, unique, type Row } from './builders.js';
 import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
@@ -342,24 +343,31 @@ describe('insurers', () => {
     it('answers two creates of one name at the same time with one insurer and one 409 (T-X4)', async () => {
       const name = unique('Race');
       const holder = await side.pool.connect();
+      const sent: Promise<Response>[] = [];
+      let settled: Promise<unknown> = Promise.resolve();
       try {
         await holder.query('BEGIN');
         await holder.query('LOCK TABLE insurer_contacts IN SHARE MODE');
 
-        const first = create(createBody({ name })).then((response) => response);
+        sent.push(create(createBody({ name })).then((response) => response));
+        settled = Promise.allSettled(sent);
         await until(async () => (await waitingInserts()) >= 1, 'the first create to wait on the contact');
-        const second = create(createBody({ name })).then((response) => response);
+        sent.push(create(createBody({ name })).then((response) => response));
+        settled = Promise.allSettled(sent);
         await until(async () => (await waitingInserts()) >= 2, 'the second create to wait on the first');
         await holder.query('COMMIT');
-
-        const responses = await Promise.all([first, second]);
-        expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([201, 409]);
-        expect(responses.find((response) => response.status === 409)?.body.code).toBe('INSURER_EXISTS');
-        expect(await side.db.select().from(insurers).where(eq(insurers.name, name))).toHaveLength(1);
       } finally {
-        await holder.query('ROLLBACK').catch(() => undefined);
-        holder.release();
+        try {
+          await holder.query('ROLLBACK').catch(() => undefined);
+          holder.release();
+        } finally {
+          await settled;
+        }
       }
+      const responses = await Promise.all(sent);
+      expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([201, 409]);
+      expect(responses.find((response) => response.status === 409)?.body.code).toBe('INSURER_EXISTS');
+      expect(await side.db.select().from(insurers).where(eq(insurers.name, name))).toHaveLength(1);
     });
 
     async function waitingInserts(): Promise<number> {

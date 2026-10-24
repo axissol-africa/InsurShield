@@ -12,6 +12,7 @@ const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BUILD_COMMAND = 'npm run build -w @insurshield/api';
 
 export default async function setup(project: TestProject) {
+  assertCatalogRegenerationAllowed(process.env);
   assertCurrentBuild();
   const test = testDatabase();
   // The migrator needs the catalogs being regenerated; the schema spec migrates only its own scratch databases.
@@ -23,6 +24,13 @@ export default async function setup(project: TestProject) {
   process.env.KEYCLOAK_ISSUER = jwks.issuer;
   project.provide('jwks', { issuer: jwks.issuer, signingKey: jwks.signingKey });
   return () => jwks.close();
+}
+
+// A CI run that rewrote a drifted catalog would pass instead of failing on the drift.
+export function assertCatalogRegenerationAllowed(env: NodeJS.ProcessEnv) {
+  if (env.CI && env.REGENERATE_CATALOGS === '1') {
+    throw new Error('REGENERATE_CATALOGS=1 is not allowed when CI is set: unset one of them');
+  }
 }
 
 // Specs run the built migration entry point, so a build older than any source would test old code.
