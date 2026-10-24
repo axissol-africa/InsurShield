@@ -31,6 +31,9 @@ const RECEIPT_KEYS = [
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 const LOCKING_THE_REQUEST = 'select % from "quote_requests" % for update';
 const REDEEMING_THE_CODE = 'update "ncd_codes" %';
+const ANY_STATEMENT = '%';
+const CLOSING_THE_ACCOUNT = `WITH locked AS (SELECT id FROM customers WHERE id = $1 FOR UPDATE)
+  UPDATE customers SET "deletedAt" = now() FROM locked WHERE customers.id = locked.id`;
 
 async function until(condition: () => Promise<boolean>, what: string) {
   const deadline = Date.now() + 4_000;
@@ -866,6 +869,31 @@ describe('payments', () => {
       expect(await policiesFor([refusedRequest])).toEqual([]);
       expect(await paymentsFor([refusedRequest])).toEqual([]);
       expect(await policiesFor([one.id, two.id])).toHaveLength(1);
+    });
+
+    it('on an account being closed wait for the closure, then answer 403 and store nothing', async () => {
+      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const held = await holdLocks(CLOSING_THE_ACCOUNT, [customer.id]);
+
+      const request = pay(customer, body, randomUUID());
+      const settled = Promise.allSettled([request]);
+      try {
+        await until(async () => (await held.waiters(ANY_STATEMENT)) === 1, 'the payment to wait on the closure');
+      } finally {
+        try {
+          await held.release();
+        } finally {
+          await settled;
+        }
+      }
+      const response = await request;
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('FORBIDDEN');
+      expect(response.body.message).toBe('This account has been closed.');
+      expect(await paymentsFor([quoteRequest.id])).toEqual([]);
+      expect(await policiesFor([quoteRequest.id])).toEqual([]);
     });
   });
 });

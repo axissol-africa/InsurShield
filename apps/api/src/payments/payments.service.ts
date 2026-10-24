@@ -17,6 +17,7 @@ import { PaymentsRepository, type ReceiptRow } from './payments.repository.js';
 import { CHOOSE_A_PAYMENT_METHOD, type PayDto } from './dto/payment.dto.js';
 
 const IDEMPOTENCY_KEY_CONSTRAINT = 'payments_idempotencyKey_key';
+const ACCOUNT_CLOSED = 'This account has been closed.';
 
 /**
  * Taking payment for an accepted quote.
@@ -59,6 +60,7 @@ export class PaymentsService {
     let paid: ReceiptRow;
     try {
       paid = await this.payments.transaction(async (tx) => {
+        if (!(await this.payments.lockOpenCustomer(tx, customerId))) throw ApiException.forbidden(ACCOUNT_CLOSED);
         await this.payments.lockRequest(tx, request.id);
 
         // Inserted before the checks, so a second request with this key waits on the first and replays it.

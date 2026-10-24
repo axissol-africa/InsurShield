@@ -1,7 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, exists, isNull, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { insurerQuotes, insurers, ncdApplications, ncdCodes, payments, policies, quoteRequests } from '../db/schema.js';
+import {
+  customers,
+  insurerQuotes,
+  insurers,
+  ncdApplications,
+  ncdCodes,
+  payments,
+  policies,
+  quoteRequests,
+} from '../db/schema.js';
 
 export type NewPayment = typeof payments.$inferInsert;
 export type NewPolicy = typeof policies.$inferInsert;
@@ -110,6 +119,16 @@ export class PaymentsRepository {
   async insertPolicy(tx: Transaction, policy: NewPolicy) {
     const [created] = await tx.insert(policies).values(policy).returning({ policyNumber: policies.policyNumber });
     return created;
+  }
+
+  /** False once the account is closed. Taken first, so a closure under way is waited for and then seen. */
+  async lockOpenCustomer(tx: Transaction, customerId: string): Promise<boolean> {
+    const [customer] = await tx
+      .select({ id: customers.id })
+      .from(customers)
+      .where(and(eq(customers.id, customerId), isNull(customers.deletedAt)))
+      .for('key share');
+    return customer !== undefined;
   }
 
   /** Taken before any insert: the payment's foreign key would otherwise hold a lock this one must wait for. */
