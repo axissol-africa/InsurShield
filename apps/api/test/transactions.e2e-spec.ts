@@ -9,7 +9,7 @@ import { createDatabase, DATABASE, type Database } from '../src/db/database.modu
 import * as schema from '../src/db/schema.js';
 import { customers } from '../src/db/schema.js';
 import { buildCustomer, unique } from './builders.js';
-import { openTestDatabase, productionPool, RecordingLogger, startApp, type TestApp } from './helpers.js';
+import { openTestDatabase, productionPool, RecordingLogger, startApp, until, type TestApp } from './helpers.js';
 
 // Carried only by a lost connection's message: it must never be logged.
 const SENTINEL = 'lost-connection-sentinel-91b2';
@@ -45,14 +45,6 @@ class TransactionProbeController {
 
 function counts(pool: Pool) {
   return { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
-}
-
-async function until(condition: () => Promise<boolean> | boolean) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (await condition()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('the condition never held');
 }
 
 // Forwards to the test database until a connection sends the marker, then holds that connection open in silence.
@@ -151,7 +143,7 @@ describe('a transaction whose backend is terminated mid-statement', () => {
       );
       pid = rows[0]?.pid;
       return pid !== undefined;
-    });
+    }, 'the probe to sleep in the database');
     await side.pool.query('SELECT pg_terminate_backend($1)', [pid]);
     const response = await pending;
 
@@ -350,7 +342,7 @@ describe("the production pool's clients when the connection is lost", () => {
     expect(pool.idleCount).toBe(1);
 
     await side.pool.query('SELECT pg_terminate_backend($1)', [rows[0].pid]);
-    await until(() => pool.totalCount === 0);
+    await until(() => pool.totalCount === 0, 'the pool to drop the terminated client');
 
     expect(warn).toHaveBeenCalledWith({ connectionLost: { code: '57P01' } });
     expect(error).toHaveBeenCalledWith({ idleClient: { code: '57P01' } });

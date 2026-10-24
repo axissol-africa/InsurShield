@@ -20,17 +20,21 @@ export class AccountService {
    */
   async close(customerId: string): Promise<{ closed: true; closedAt: string }> {
     const closedAt = new Date();
-    await this.repository.transaction(async (tx) => {
-      await this.repository.lockCustomer(tx, customerId);
-      const inForce = (await this.repository.policiesInForce(tx, customerId)).length;
-      if (inForce > 0) {
-        throw ApiException.conflict(
-          'ACTIVE_POLICY_EXISTS',
-          `This account holds ${inForce} ${inForce === 1 ? 'policy' : 'policies'} in force. Cover must end before the account can be closed.`,
-        );
-      }
-      await this.repository.close(tx, customerId, closedAt);
-    });
+    // The unlocked read of policies sees a payment committed while the lock was awaited only at READ COMMITTED.
+    await this.repository.transaction(
+      async (tx) => {
+        await this.repository.lockCustomer(tx, customerId);
+        const inForce = (await this.repository.policiesInForce(tx, customerId)).length;
+        if (inForce > 0) {
+          throw ApiException.conflict(
+            'ACTIVE_POLICY_EXISTS',
+            `This account holds ${inForce} ${inForce === 1 ? 'policy' : 'policies'} in force. Cover must end before the account can be closed.`,
+          );
+        }
+        await this.repository.close(tx, customerId, closedAt);
+      },
+      { isolationLevel: 'read committed' },
+    );
 
     this.logger.log(`Customer ${customerId} closed their account`);
     return { closed: true, closedAt: closedAt.toISOString() };

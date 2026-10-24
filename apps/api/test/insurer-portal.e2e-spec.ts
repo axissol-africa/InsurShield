@@ -1,6 +1,6 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import type { Pool, PoolClient } from 'pg';
+import type { Pool } from 'pg';
 import { MAX_KWACHA } from '../src/common/domain/money-limits.js';
 import { testDatabase } from '../src/config/env.js';
 import { createDatabase, DATABASE } from '../src/db/database.module.js';
@@ -32,7 +32,16 @@ import {
 } from './builders.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
 import { buildNcdApplication } from './builders/insurer-portal.js';
-import { openTestDatabase, productionPool, RecordingLogger, startApp, type TestApp } from './helpers.js';
+import {
+  holdLocks,
+  openTestDatabase,
+  productionPool,
+  queueBehind,
+  RecordingLogger,
+  startApp,
+  until,
+  type TestApp,
+} from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 import { FAKE_STORAGE_ORIGIN } from './storage-fake.js';
 
@@ -125,14 +134,6 @@ const LINKING_THE_CODE = 'update "ncd_applications" %';
 
 const sorted = (value: object) => Object.keys(value).sort();
 
-async function until(condition: () => Promise<boolean>, what: string) {
-  const deadline = Date.now() + 4_000;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
-
 describe('insurer portal', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
@@ -181,44 +182,8 @@ describe('insurer portal', () => {
   const codesOf = (insurerId: string) =>
     testApp.db.select().from(ncdCodes).where(eq(ncdCodes.insurerId, insurerId));
 
-  /**
-   * A side transaction holding row locks, and the number of backends queued behind it (directly or behind another
-   * waiter) in a statement like `statement`, so a leftover from another test is not counted.
-   */
-  async function holdLocks(sql: string, params: unknown[]) {
-    const client: PoolClient = await side.pool.connect();
-    let holder: number;
-    try {
-      await client.query('BEGIN');
-      holder = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid;
-      await client.query(sql, params);
-    } catch (error) {
-      client.release(error as Error);
-      throw error;
-    }
-    const waiters = async (statement: string) => {
-      const result = await side.pool.query<{ count: string }>(
-        `WITH RECURSIVE queued AS (
-           SELECT pid FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))
-           UNION
-           SELECT a.pid FROM pg_stat_activity a JOIN queued q ON q.pid = ANY (pg_blocking_pids(a.pid))
-         )
-         SELECT count(*) FROM queued JOIN pg_stat_activity a USING (pid)
-          WHERE a.wait_event_type = 'Lock' AND a.query ILIKE $2`,
-        [holder, statement],
-      );
-      return Number(result.rows[0].count);
-    };
-    const release = async () => {
-      try {
-        await client.query('COMMIT');
-      } finally {
-        client.release();
-      }
-    };
-    const run = (statement: string, values: unknown[]) => client.query(statement, values);
-    return { waiters, run, release };
-  }
+  const lockedBy = (statement: string, values: unknown[]) =>
+    holdLocks(side.pool, (_db, client) => client.query(statement, values));
 
   /** Starts both calls while `lock` is held, waits until both queue on `statement`, then lets them go. */
   async function race<T>(
@@ -226,15 +191,7 @@ describe('insurer portal', () => {
     statement: string,
     calls: [() => Promise<T>, () => Promise<T>],
   ): Promise<T[]> {
-    const held = await holdLocks(lock.sql, lock.params);
-    let pending: Promise<T>[] = [];
-    try {
-      pending = calls.map((call) => call());
-      await until(async () => (await held.waiters(statement)) === 2, 'both calls to wait on the lock');
-    } finally {
-      await held.release();
-    }
-    return Promise.all(pending);
+    return queueBehind(await lockedBy(lock.sql, lock.params), statement, 2, calls);
   }
 
   describe('what each endpoint returns', () => {
@@ -781,6 +738,28 @@ describe('insurer portal', () => {
       ]);
     });
 
+    it('marks no request quoted for an insurer it was not sent to, and changes nothing', async () => {
+      const owner = await buildInsurer(testApp.db);
+      const other = await buildInsurer(testApp.db);
+      const foreignRequest = await openRequest(other);
+      const stored = async () => ({
+        request: await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.id, foreignRequest.id)),
+        recipients: await testApp.db
+          .select()
+          .from(quoteRequestRecipients)
+          .where(eq(quoteRequestRecipients.quoteRequestId, foreignRequest.id)),
+      });
+      const before = await stored();
+      const repository = testApp.app.get(InsurerPortalRepository);
+
+      const marked = await testApp.db.transaction((tx) =>
+        repository.markQuoted(tx, foreignRequest.id, owner.insurer.id, new Date()),
+      );
+
+      expect(marked).toBe(false);
+      expect(await stored()).toEqual(before);
+    });
+
     it('refuses customers and admins with 403 and anonymous callers with 401 on a read and a write', async () => {
       const { request } = await twoInsurers();
       const customer = await buildCustomer(testApp.db);
@@ -877,7 +856,7 @@ describe('insurer portal', () => {
       const request = await openRequest(insurer);
       const document = await upload(insurer, 'QUOTATION');
 
-      const held = await holdLocks('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [request.id]);
+      const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [request.id]);
       const pending = post(insurer, `quote-requests/${request.id}/quote`, { premium: 500, documentId: document.id });
       try {
         await until(async () => (await held.waiters(INSERTING_THE_QUOTE)) === 1, 'the quote insert to wait on the request');
@@ -1265,7 +1244,7 @@ describe('insurer portal', () => {
       const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
 
       // A share lock on the table lets the application be locked and the code inserted, but stops the link update.
-      const held = await holdLocks('LOCK TABLE ncd_applications IN SHARE MODE', []);
+      const held = await lockedBy('LOCK TABLE ncd_applications IN SHARE MODE', []);
       const pending = post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED' });
       try {
         await until(async () => (await held.waiters(LINKING_THE_CODE)) === 1, 'the link update to wait on the table');

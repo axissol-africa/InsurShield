@@ -1,11 +1,9 @@
-import { ncdApplications, type customers, type insurerQuotes, type ncdCodes, type quoteRequests } from '../../src/db/schema.js';
+import type { customers, insurerQuotes, quoteRequests } from '../../src/db/schema.js';
 import {
   buildCustomer,
   buildInsurer,
   buildInsurerQuote,
-  buildNcdCode,
   buildQuoteRequest,
-  unique,
   type BuiltInsurer,
   type Db,
   type Row,
@@ -55,26 +53,4 @@ export async function addQuote(
     overrides,
   );
   return { insurer, quote };
-}
-
-/** A code the insurer issued by approving this customer's NCD application. */
-export async function buildApprovedNcdCode(
-  db: Db,
-  input: { customerId: string; insurerId: string },
-  overrides: Partial<Omit<Insert<typeof ncdCodes>, 'insurerId'>> = {},
-) {
-  const code = await buildNcdCode(db, { insurerId: input.insurerId }, overrides);
-  await db.insert(ncdApplications).values({
-    applicationNumber: unique('NCDA'),
-    insurerId: input.insurerId,
-    customerId: input.customerId,
-    policyNumber: 'PA-2023-0045',
-    fullName: 'Mwiza Banda',
-    phone: '+260971234567',
-    yearsClaimFree: code.yearsClaimFree,
-    status: 'APPROVED',
-    approvedCodeId: code.code,
-    decidedAt: new Date(),
-  });
-  return code;
 }

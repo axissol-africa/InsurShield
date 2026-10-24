@@ -22,7 +22,7 @@ import {
   buildInspectionPhoto,
   buildInspectionShot,
 } from './builders/documents.js';
-import { openTestDatabase, startApp, type TestApp } from './helpers.js';
+import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 import type { customers, staffUsers } from '../src/db/schema.js';
 
@@ -30,14 +30,6 @@ type Customer = Row<typeof customers>;
 type Staff = Row<typeof staffUsers>;
 
 const REALM_ROLE = { SUPER_ADMIN: 'super_admin', ADMIN: 'admin', INSURER_USER: 'insurer_user' } as const;
-
-async function until(condition: () => Promise<boolean>, what: string) {
-  const deadline = Date.now() + 15_000;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
 
 function deferred() {
   let resolve!: () => void;

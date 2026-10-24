@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import type { PoolClient } from 'pg';
 import { customers } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, buildStaffUser } from './builders.js';
-import { openTestDatabase, startApp, type TestApp } from './helpers.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, type TestApp } from './helpers.js';
 import { bearer, customerToken, signToken, staffToken } from './jwks.js';
 
 const ME = '/api/v1/auth/me';
@@ -106,59 +105,20 @@ describe('the auth guard', () => {
   });
 
   describe('creating a customer on first sign-in', () => {
-    let lock: PoolClient | undefined;
-
-    afterEach(async () => {
-      if (lock) {
-        await lock.query('ROLLBACK');
-        lock.release();
-        lock = undefined;
-      }
-    });
-
     // Holding SHARE on the table blocks every INSERT into it, so the requests'
     // inserts queue up and are released together when the lock goes.
-    async function holdInserts(): Promise<{ release(): Promise<void>; waiting(): Promise<number> }> {
-      const client = await side.pool.connect();
-      lock = client;
-      await client.query('BEGIN');
-      await client.query('LOCK TABLE customers IN SHARE MODE');
-      return {
-        waiting: async () => {
-          const { rows } = await side.pool.query<{ count: string }>(
-            `SELECT count(*) FROM pg_stat_activity
-              WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE 'insert into%customers%'`,
-          );
-          return Number(rows[0].count);
-        },
-        release: async () => {
-          await client.query('COMMIT');
-          client.release();
-          lock = undefined;
-        },
-      };
-    }
-
-    async function until(condition: () => Promise<boolean>, what: string) {
-      const deadline = Date.now() + 15_000;
-      while (!(await condition())) {
-        if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
-
     it('creates one customer when five first requests race, and all of them succeed', async () => {
       const customer = newCustomer();
       const token = await customerToken(customer);
-      const inserts = await holdInserts();
+      const held = await holdLocks(side.pool, (_db, client) => client.query('LOCK TABLE customers IN SHARE MODE'));
 
-      const responses = Promise.all(
-        Array.from({ length: 5 }, () => testApp.http.get(ME).set(bearer(token)).then((response) => response)),
+      const settled = await queueBehind(
+        held,
+        'insert into%customers%',
+        5,
+        Array.from({ length: 5 }, () => async () => testApp.http.get(ME).set(bearer(token))),
       );
-      await until(async () => (await inserts.waiting()) === 5, 'five inserts to wait on the lock');
-      await inserts.release();
 
-      const settled = await responses;
       expect(settled.map((response) => response.status)).toEqual([200, 200, 200, 200, 200]);
       const rows = await side.db.select().from(customers).where(eq(customers.keycloakId, customer.keycloakId));
       expect(rows).toHaveLength(1);

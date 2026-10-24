@@ -3,6 +3,8 @@ import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
 import { AuthRepository } from './auth.repository.js';
 
+export const ACCOUNT_CLOSED = 'This account has been closed.';
+
 export interface StaffSession {
   id: string;
   name: string;
@@ -152,7 +154,7 @@ export class AuthService {
   }
 
   private customerPrincipal(customer: { id: string; email: string; deletedAt: Date | null }): Principal {
-    if (customer.deletedAt) throw ApiException.forbidden('This account has been closed.');
+    if (customer.deletedAt) throw ApiException.forbidden(ACCOUNT_CLOSED);
     return { kind: 'customer', id: customer.id, email: customer.email };
   }
 }

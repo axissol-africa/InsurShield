@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
-import type { PoolClient } from 'pg';
 import { MAX_KWACHA } from '../src/common/domain/money-limits.js';
 import { ncdCodes, payments, policies } from '../src/db/schema.js';
 import {
@@ -11,8 +10,9 @@ import {
   buildStaffUser,
   type Row,
 } from './builders.js';
-import { addQuote, buildApprovedNcdCode, buildPayableQuote } from './builders/payments.js';
-import { openTestDatabase, startApp, type TestApp } from './helpers.js';
+import { buildApprovedNcdCode } from './builders/customer.js';
+import { addQuote, buildPayableQuote } from './builders/payments.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, type TestApp } from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 import type { customers } from '../src/db/schema.js';
 
@@ -34,14 +34,6 @@ const REDEEMING_THE_CODE = 'update "ncd_codes" %';
 const ANY_STATEMENT = '%';
 const CLOSING_THE_ACCOUNT = `WITH locked AS (SELECT id FROM customers WHERE id = $1 FOR UPDATE)
   UPDATE customers SET "deletedAt" = now() FROM locked WHERE customers.id = locked.id`;
-
-async function until(condition: () => Promise<boolean>, what: string) {
-  const deadline = Date.now() + 4_000;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
 
 describe('payments', () => {
   let testApp: TestApp;
@@ -69,44 +61,8 @@ describe('payments', () => {
     testApp.db.select().from(payments).where(inArray(payments.quoteRequestId, quoteRequestIds));
   const policiesFor = (quoteRequestIds: string[]) =>
     testApp.db.select().from(policies).where(inArray(policies.quoteRequestId, quoteRequestIds));
-
-  /**
-   * A side transaction holding row locks, and the number of backends queued behind it (directly or behind another
-   * waiter) in a statement like `statement`, so a leftover from another test is not counted.
-   */
-  async function holdLocks(sql: string, params: unknown[]) {
-    const client: PoolClient = await side.pool.connect();
-    let holder: number;
-    try {
-      await client.query('BEGIN');
-      holder = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid;
-      await client.query(sql, params);
-    } catch (error) {
-      client.release(error as Error);
-      throw error;
-    }
-    const waiters = async (statement: string) => {
-      const result = await side.pool.query<{ count: string }>(
-        `WITH RECURSIVE queued AS (
-           SELECT pid FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))
-           UNION
-           SELECT a.pid FROM pg_stat_activity a JOIN queued q ON q.pid = ANY (pg_blocking_pids(a.pid))
-         )
-         SELECT count(*) FROM queued JOIN pg_stat_activity a USING (pid)
-          WHERE a.wait_event_type = 'Lock' AND a.query ILIKE $2`,
-        [holder, statement],
-      );
-      return Number(result.rows[0].count);
-    };
-    const release = async () => {
-      try {
-        await client.query('COMMIT');
-      } finally {
-        client.release();
-      }
-    };
-    return { waiters, release };
-  }
+  const lockedBy = (statement: string, values: unknown[]) =>
+    holdLocks(side.pool, (_db, client) => client.query(statement, values));
 
   describe('POST /payments', () => {
     it('confirms the payment, creates the policy awaiting the certificate and returns the receipt', async () => {
@@ -765,20 +721,12 @@ describe('payments', () => {
     it('for one request, both held after reading it and before inserting, end in one policy and ALREADY_PAID', async () => {
       const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
       const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
-      const held = await holdLocks('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
+      const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
 
-      const requests = [pay(customer, body, randomUUID()), pay(customer, body, randomUUID())];
-      const settled = Promise.allSettled(requests);
-      try {
-        await until(async () => (await held.waiters(LOCKING_THE_REQUEST)) === 2, 'both payments to wait on the request');
-      } finally {
-        try {
-          await held.release();
-        } finally {
-          await settled;
-        }
-      }
-      const responses = await Promise.all(requests);
+      const responses = await queueBehind(held, LOCKING_THE_REQUEST, 2, [
+        () => pay(customer, body, randomUUID()),
+        () => pay(customer, body, randomUUID()),
+      ]);
 
       expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([201, 409]);
       expect(responses.find((response) => response.status === 409)?.body.code).toBe('ALREADY_PAID');
@@ -790,22 +738,16 @@ describe('payments', () => {
       const { customer, insurer, quoteRequest: one } = await buildPayableQuote(testApp.db);
       const { quoteRequest: two } = await buildPayableQuote(testApp.db, { customer, insurer });
       const key = randomUUID();
-      const held = await holdLocks('SELECT id FROM quote_requests WHERE id = ANY($1) FOR UPDATE', [[one.id, two.id]]);
+      const held = await lockedBy('SELECT id FROM quote_requests WHERE id = ANY($1) FOR UPDATE', [[one.id, two.id]]);
 
-      const requests = [one, two].map((request) =>
-        pay(customer, { quoteRequestId: request.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }, key),
+      const responses = await queueBehind(
+        held,
+        LOCKING_THE_REQUEST,
+        2,
+        [one, two].map((request) => () =>
+          pay(customer, { quoteRequestId: request.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }, key),
+        ),
       );
-      const settled = Promise.allSettled(requests);
-      try {
-        await until(async () => (await held.waiters(LOCKING_THE_REQUEST)) === 2, 'both payments to wait on their requests');
-      } finally {
-        try {
-          await held.release();
-        } finally {
-          await settled;
-        }
-      }
-      const responses = await Promise.all(requests);
 
       expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([201, 409]);
       expect(responses.find((response) => response.status === 409)?.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
@@ -817,20 +759,12 @@ describe('payments', () => {
       const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
       const key = randomUUID();
       const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
-      const held = await holdLocks('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
+      const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
 
-      const requests = [pay(customer, body, key), pay(customer, body, key)];
-      const settled = Promise.allSettled(requests);
-      try {
-        await until(async () => (await held.waiters(LOCKING_THE_REQUEST)) === 2, 'both payments to wait on the request');
-      } finally {
-        try {
-          await held.release();
-        } finally {
-          await settled;
-        }
-      }
-      const [first, second] = await Promise.all(requests);
+      const [first, second] = await queueBehind(held, LOCKING_THE_REQUEST, 2, [
+        () => pay(customer, body, key),
+        () => pay(customer, body, key),
+      ]);
 
       expect([first.status, second.status]).toEqual([201, 201]);
       expect(second.body).toEqual(first.body);
@@ -845,22 +779,16 @@ describe('payments', () => {
       const request = { ncdCode: code.code, ncdPercentage: code.percentage };
       const { quoteRequest: one } = await buildPayableQuote(testApp.db, { customer, insurer, request });
       const { quoteRequest: two } = await buildPayableQuote(testApp.db, { customer, insurer, request });
-      const held = await holdLocks('SELECT code FROM ncd_codes WHERE code = $1 FOR UPDATE', [code.code]);
+      const held = await lockedBy('SELECT code FROM ncd_codes WHERE code = $1 FOR UPDATE', [code.code]);
 
-      const requests = [one, two].map((quoteRequest) =>
-        pay(customer, { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }),
+      const responses = await queueBehind(
+        held,
+        REDEEMING_THE_CODE,
+        2,
+        [one, two].map((quoteRequest) => () =>
+          pay(customer, { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }),
+        ),
       );
-      const settled = Promise.allSettled(requests);
-      try {
-        await until(async () => (await held.waiters(REDEEMING_THE_CODE)) === 2, 'both payments to wait on the code');
-      } finally {
-        try {
-          await held.release();
-        } finally {
-          await settled;
-        }
-      }
-      const responses = await Promise.all(requests);
 
       expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([201, 409]);
       const refused = responses.findIndex((response) => response.status === 409);
@@ -874,20 +802,9 @@ describe('payments', () => {
     it('on an account being closed wait for the closure, then answer 403 and store nothing', async () => {
       const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
       const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
-      const held = await holdLocks(CLOSING_THE_ACCOUNT, [customer.id]);
+      const held = await lockedBy(CLOSING_THE_ACCOUNT, [customer.id]);
 
-      const request = pay(customer, body, randomUUID());
-      const settled = Promise.allSettled([request]);
-      try {
-        await until(async () => (await held.waiters(ANY_STATEMENT)) === 1, 'the payment to wait on the closure');
-      } finally {
-        try {
-          await held.release();
-        } finally {
-          await settled;
-        }
-      }
-      const response = await request;
+      const [response] = await queueBehind(held, ANY_STATEMENT, 1, [() => pay(customer, body, randomUUID())]);
 
       expect(response.status).toBe(403);
       expect(response.body.code).toBe('FORBIDDEN');

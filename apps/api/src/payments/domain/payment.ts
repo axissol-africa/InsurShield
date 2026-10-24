@@ -30,14 +30,6 @@ export function isQuoteExpired(validUntil: Date, now: Date): boolean {
   return validUntil <= now;
 }
 
-const REFERENCE_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-
-/** `TXN-…` and `POL-…`: the time in base 36 and three random characters, `pick(n)` choosing one of n. */
-export function newReference(prefix: string, now: Date, pick: (n: number) => number): string {
-  const suffix = Array.from({ length: 3 }, () => REFERENCE_ALPHABET[pick(REFERENCE_ALPHABET.length)]).join('');
-  return `${prefix}-${now.getTime().toString(36).toUpperCase()}${suffix}`;
-}
-
 /** Only the last four digits of a wallet number are kept. */
 export function providerReference(mobileNumber: string | undefined): string | null {
   return mobileNumber ? `MM-${mobileNumber.slice(-4)}` : null;

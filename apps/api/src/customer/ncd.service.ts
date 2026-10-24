@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { ApiException } from '../common/errors/api.exception.js';
-import { newReference } from '../payments/domain/payment.js';
+import { newReference } from '../common/domain/reference.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
 import type { ApplyForNcdDto, ValidateNcdCodeDto } from './dto/customer.dto.js';
 import { toNcdApplicationResponse, toUsableNcdCode, type NcdApplicationResponse, type NcdCodeValidation } from './dto/ncd.response.js';

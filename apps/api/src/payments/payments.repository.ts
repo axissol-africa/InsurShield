@@ -1,16 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, exists, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   customers,
   insurerQuotes,
   insurers,
-  ncdApplications,
   ncdCodes,
   payments,
   policies,
   quoteRequests,
 } from '../db/schema.js';
+import { ncdCodeIssuedTo } from '../customer/ncd-code-ownership.js';
 
 export type NewPayment = typeof payments.$inferInsert;
 export type NewPolicy = typeof policies.$inferInsert;
@@ -143,10 +143,6 @@ export class PaymentsRepository {
     owner: { insurerId: string; customerId: string },
     redeemedAt: Date,
   ): Promise<boolean> {
-    const issuedToCustomer = tx
-      .select({ one: sql`1` })
-      .from(ncdApplications)
-      .where(and(eq(ncdApplications.approvedCodeId, ncdCodes.code), eq(ncdApplications.customerId, owner.customerId)));
     const redeemed = await tx
       .update(ncdCodes)
       .set({ redeemedAt })
@@ -155,7 +151,7 @@ export class PaymentsRepository {
           eq(ncdCodes.code, code),
           eq(ncdCodes.insurerId, owner.insurerId),
           isNull(ncdCodes.redeemedAt),
-          exists(issuedToCustomer),
+          ncdCodeIssuedTo(owner.customerId),
         ),
       )
       .returning({ code: ncdCodes.code });

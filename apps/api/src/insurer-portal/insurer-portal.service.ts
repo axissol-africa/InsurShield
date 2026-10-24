@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { kwachaToNgwee } from '../common/money.js';
-import { isOpenRenewal } from '../customer/domain/renewal.js';
+import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { Transaction } from '../db/database.module.js';
 import {
@@ -100,9 +100,7 @@ export class InsurerPortalService {
         );
       }
       const sentAt = new Date();
-      if (!isOpenRenewal({ id: requestId, status: delivery.status, expiresAt: delivery.expiresAt }, sentAt)) {
-        throw requestExpired();
-      }
+      if (!isRequestOpen(delivery.status, delivery.expiresAt, sentAt)) throw requestExpired();
 
       await this.documents.assertAttachable(tx, principal, [dto.documentId], 'QUOTATION');
 

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { insurerContacts, insurers } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, buildStaffUser, unique, type Row } from './builders.js';
-import { openTestDatabase, startApp, type TestApp } from './helpers.js';
+import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 import type { staffUsers } from '../src/db/schema.js';
 
@@ -49,14 +49,6 @@ const createBody = (overrides: Record<string, unknown> = {}) => ({
   contact: contactBody(),
   ...overrides,
 });
-
-async function until(condition: () => Promise<boolean>, what: string) {
-  const deadline = Date.now() + 5_000;
-  while (!(await condition())) {
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
 
 describe('insurers', () => {
   let testApp: TestApp;

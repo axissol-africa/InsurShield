@@ -3,7 +3,7 @@ import { randomInt } from 'node:crypto';
 import { DocumentsService, type DocumentRecord } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { kwachaToNgwee } from '../common/money.js';
-import { newReference } from '../payments/domain/payment.js';
+import { newReference } from '../common/domain/reference.js';
 import { ClaimsRepository } from './claims.repository.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import { toClaimListItem, toClaimNotified, type ClaimListItem, type ClaimNotified } from './dto/claim.response.js';

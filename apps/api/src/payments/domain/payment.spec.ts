@@ -1,7 +1,6 @@
 import {
   expectedAmountMinor,
   isQuoteExpired,
-  newReference,
   providerReference,
   replayOutcome,
   type PaymentAttempt,
@@ -52,17 +51,6 @@ describe('a quote', () => {
   it('is expired at and after that moment', () => {
     expect(isQuoteExpired(validUntil, validUntil)).toBe(true);
     expect(isQuoteExpired(validUntil, new Date('2026-10-24T12:00:00.001Z'))).toBe(true);
-  });
-});
-
-describe('a reference', () => {
-  it('is the prefix, the time in base 36 and three characters picked from digits and capitals', () => {
-    const now = new Date('2026-10-24T12:00:00.000Z');
-    const picks = [0, 10, 35];
-
-    expect(newReference('TXN', now, () => picks.shift() ?? 0)).toBe(
-      `TXN-${now.getTime().toString(36).toUpperCase()}0AZ`,
-    );
   });
 });
 

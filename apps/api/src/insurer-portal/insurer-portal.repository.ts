@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, ne, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
@@ -154,12 +154,18 @@ export class InsurerPortalRepository {
     return created;
   }
 
-  /** False when the request was marked expired meanwhile. */
+  /** False when the request was marked expired meanwhile or was not sent to the insurer. */
   async markQuoted(tx: Transaction, quoteRequestId: string, insurerId: string, acknowledgedAt: Date): Promise<boolean> {
+    const sentToInsurer = tx
+      .select({ id: quoteRequestRecipients.id })
+      .from(quoteRequestRecipients)
+      .where(
+        and(eq(quoteRequestRecipients.quoteRequestId, quoteRequests.id), eq(quoteRequestRecipients.insurerId, insurerId)),
+      );
     const quoted = await tx
       .update(quoteRequests)
       .set({ status: 'QUOTED' })
-      .where(and(eq(quoteRequests.id, quoteRequestId), ne(quoteRequests.status, 'EXPIRED')))
+      .where(and(eq(quoteRequests.id, quoteRequestId), ne(quoteRequests.status, 'EXPIRED'), exists(sentToInsurer)))
       .returning({ id: quoteRequests.id });
     if (quoted.length !== 1) return false;
     await tx

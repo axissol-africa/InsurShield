@@ -5,7 +5,7 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract } from '../common/contract.js';
 import { kwachaToNgwee } from '../common/money.js';
 import type { Transaction } from '../db/database.module.js';
-import { newReference } from '../payments/domain/payment.js';
+import { newReference } from '../common/domain/reference.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS } from './domain/cover-period.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';

@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
+import { ACCOUNT_CLOSED } from '../auth/auth.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract, toContract } from '../common/contract.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
+import { newReference } from '../common/domain/reference.js';
 import { isUniqueViolation } from '../db/errors.js';
 import {
   expectedAmountMinor,
   isQuoteExpired,
-  newReference,
   providerReference,
   replayOutcome,
   type PaymentAttempt,
@@ -17,7 +18,6 @@ import { PaymentsRepository, type ReceiptRow } from './payments.repository.js';
 import { CHOOSE_A_PAYMENT_METHOD, type PayDto } from './dto/payment.dto.js';
 
 const IDEMPOTENCY_KEY_CONSTRAINT = 'payments_idempotencyKey_key';
-const ACCOUNT_CLOSED = 'This account has been closed.';
 
 /**
  * Taking payment for an accepted quote.

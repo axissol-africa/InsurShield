@@ -1,4 +1,5 @@
 import type { QuoteRequestStatus } from '../../common/domain/enums.js';
+import { isRequestOpen } from '../../common/domain/quote-request.js';
 import { MS_PER_DAY } from './cover-period.js';
 
 /**
@@ -38,11 +39,8 @@ export const daysUntil = (date: Date, now: Date): number =>
   Math.round((startOfDay(date).getTime() - startOfDay(now).getTime()) / MS_PER_DAY);
 
 /** A renewal request still open blocks starting another for the same policy. */
-export const isOpenRenewal = (request: RenewalRequest, now: Date): boolean =>
-  request.status !== 'EXPIRED' && request.expiresAt > now;
-
 export const openRenewal = (renewals: RenewalRequest[], now: Date): RenewalRequest | undefined =>
-  renewals.find((renewal) => isOpenRenewal(renewal, now));
+  renewals.find((renewal) => isRequestOpen(renewal.status, renewal.expiresAt, now));
 
 /** Cover is still in force on its last day, so only a negative count has lapsed. */
 export function renewalWindow(daysRemaining: number | null): RenewalWindow {

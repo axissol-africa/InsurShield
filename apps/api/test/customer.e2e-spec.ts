@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import type { Pool, PoolClient } from 'pg';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import type { Pool } from 'pg';
 import type { Response } from 'supertest';
 import { MAX_KWACHA } from '../src/common/domain/money-limits.js';
 import { testDatabase } from '../src/config/env.js';
@@ -37,7 +36,7 @@ import {
 } from './builders.js';
 import { buildApprovedNcdCode, buildNcdApplication, buildRenewalRequest } from './builders/customer.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
-import { openTestDatabase, productionPool, startApp, until, type TestApp } from './helpers.js';
+import { holdLocks, openTestDatabase, productionPool, queueBehind, startApp, until, type TestApp } from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 
 type Customer = Row<typeof customers>;
@@ -225,66 +224,6 @@ describe('customer', () => {
     } finally {
       await testApp.db.update(insurers).set({ status: 'ACTIVE' }).where(inArray(insurers.id, ids));
     }
-  }
-
-  /**
-   * A side transaction on its own connection that keeps the locks `work` takes until `release`. `waiters` counts the
-   * backends queued behind it (directly or behind another waiter) in a statement like `statement`, so a leftover from
-   * another test is not counted.
-   */
-  async function holdLocks(work: (db: Database) => Promise<unknown>) {
-    const client: PoolClient = await side.pool.connect();
-    let holder: number;
-    try {
-      await client.query('BEGIN');
-      holder = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid;
-      await work(drizzle(client, { schema }));
-    } catch (error) {
-      client.release(error as Error);
-      throw error;
-    }
-    const waiters = async (statement: string) => {
-      const result = await side.pool.query<{ count: string }>(
-        `WITH RECURSIVE queued AS (
-           SELECT pid FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))
-           UNION
-           SELECT a.pid FROM pg_stat_activity a JOIN queued q ON q.pid = ANY (pg_blocking_pids(a.pid))
-         )
-         SELECT count(*) FROM queued JOIN pg_stat_activity a USING (pid)
-          WHERE a.wait_event_type = 'Lock' AND a.query ILIKE $2`,
-        [holder, statement],
-      );
-      return Number(result.rows[0].count);
-    };
-    const release = async () => {
-      try {
-        await client.query('COMMIT');
-      } finally {
-        client.release();
-      }
-    };
-    return { waiters, release };
-  }
-
-  /** Starts `calls` behind `held`, commits it once `queued` of them wait in `statement`, and answers every response. */
-  async function queueBehind(
-    held: Awaited<ReturnType<typeof holdLocks>>,
-    statement: string,
-    queued: number,
-    calls: (() => Promise<Response>)[],
-  ): Promise<Response[]> {
-    const requests = calls.map((call) => call());
-    const settled = Promise.allSettled(requests);
-    try {
-      await until(async () => (await held.waiters(statement)) === queued, `${queued} requests to wait in ${statement}`);
-    } finally {
-      try {
-        await held.release();
-      } finally {
-        await settled;
-      }
-    }
-    return Promise.all(requests);
   }
 
   const statuses = (responses: Response[]) => responses.map((response) => response.status).sort((a, b) => a - b);
@@ -660,7 +599,7 @@ describe('customer', () => {
       const customer = await buildCustomer(testApp.db);
       const { insurer: leaving } = await buildInsurer(testApp.db);
       const { insurer: staying } = await buildInsurer(testApp.db);
-      const held = await holdLocks((db) => db.update(insurers).set({ status: 'INACTIVE' }).where(eq(insurers.id, leaving.id)));
+      const held = await holdLocks(side.pool, (db) => db.update(insurers).set({ status: 'INACTIVE' }).where(eq(insurers.id, leaving.id)));
       const submit = async () =>
         testApp.http.post('/api/v1/quote-requests').set(await asCustomer(customer)).send(submission(unique('BAK').toUpperCase()));
 
@@ -732,7 +671,7 @@ describe('customer', () => {
       const customer = await buildCustomer(testApp.db);
       await buildInsurer(testApp.db);
       const { quoteRequest } = await buildQuoteRequest(testApp.db, { customerId: customer.id, insurerIds: [] }, { status: 'EXPIRED' });
-      const held = await holdLocks((db) =>
+      const held = await holdLocks(side.pool, (db) =>
         db.select({ id: quoteRequests.id }).from(quoteRequests).where(eq(quoteRequests.id, quoteRequest.id)).for('update'),
       );
       const requote = async () =>
@@ -978,7 +917,7 @@ describe('customer', () => {
     it('starts one renewal when two arrive together, and answers the other RENEWAL_IN_PROGRESS', async () => {
       const customer = await buildCustomer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
-      const held = await holdLocks((db) =>
+      const held = await holdLocks(side.pool, (db) =>
         db.select({ policyNumber: policies.policyNumber }).from(policies).where(eq(policies.policyNumber, policy.policyNumber)).for('update'),
       );
       const renew = async () => testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer));
@@ -1207,7 +1146,7 @@ describe('customer', () => {
           await buildDocument(testApp.db, { customerId: claimants[0].id }, { kind: 'CLAIM_ATTACHMENT' }),
           await buildDocument(testApp.db, { customerId: claimants[1].id }, { kind: 'CLAIM_ATTACHMENT' }),
         ];
-        const held = await holdLocks((db) =>
+        const held = await holdLocks(side.pool, (db) =>
           db.select({ id: documentsTable.id }).from(documentsTable).where(inArray(documentsTable.id, photos.map((photo) => photo.id))).for('update'),
         );
         const notify = (index: number) => async () =>
@@ -1396,7 +1335,7 @@ describe('customer', () => {
       const customer = await buildCustomer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
       const { insurer } = await buildInsurer(testApp.db);
-      const held = await holdLocks((db) => db.select({ id: insurers.id }).from(insurers).where(eq(insurers.id, insurer.id)).for('update'));
+      const held = await holdLocks(side.pool, (db) => db.select({ id: insurers.id }).from(insurers).where(eq(insurers.id, insurer.id)).for('update'));
       const renew = async () => testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer));
 
       const calls = [renew()];
@@ -1429,13 +1368,48 @@ describe('customer', () => {
 
     it('waits for a payment creating the customer’s first policy, then refuses', async () => {
       const customer = await buildCustomer(testApp.db);
-      const held = await holdLocks((db) => buildPurchasedPolicy(db, { customer }));
+      const held = await holdLocks(side.pool, (db) => buildPurchasedPolicy(db, { customer }));
 
       const [response] = await queueBehind(held, LOCKING_THE_CUSTOMER, 1, [() => closeAccount(customer)]);
 
       expect(response.status).toBe(409);
       expect(response.body.code).toBe('ACTIVE_POLICY_EXISTS');
       expect(await isOpen(customer)).toBe(true);
+    });
+
+    describe('on a database whose transactions default to repeatable read', () => {
+      let strict: TestApp;
+      let pool: Pool;
+      let db: Database;
+
+      beforeAll(async () => {
+        pool = productionPool(testDatabase().url, 2);
+        db = createDatabase(pool, { schema });
+        const begin = db.transaction.bind(db);
+        db.transaction = (work, config) => begin(work, config ?? { isolationLevel: 'repeatable read' });
+        strict = await startApp({ override: (builder) => builder.overrideProvider(DATABASE).useValue(db) });
+      });
+
+      afterAll(async () => {
+        await strict.close();
+        await pool.end();
+      });
+
+      it('still waits for a payment creating the customer’s first policy, then refuses', async () => {
+        const { rows } = await db.transaction((tx) =>
+          tx.execute<{ transaction_isolation: string }>(sql`SHOW transaction_isolation`),
+        );
+        expect(rows[0].transaction_isolation).toBe('repeatable read');
+        const customer = await buildCustomer(testApp.db);
+        const held = await holdLocks(side.pool, (db) => buildPurchasedPolicy(db, { customer }));
+        const close = async () => strict.http.delete('/api/v1/account').set(await asCustomer(customer));
+
+        const [response] = await queueBehind(held, LOCKING_THE_CUSTOMER, 1, [close]);
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe('ACTIVE_POLICY_EXISTS');
+        expect(await isOpen(customer)).toBe(true);
+      });
     });
 
     it('closes an account without policies and refuses the token afterwards', async () => {

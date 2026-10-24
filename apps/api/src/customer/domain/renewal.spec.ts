@@ -1,4 +1,5 @@
-import { daysUntil, isOpenRenewal, renewalState, renewalWindow } from './renewal.js';
+import { isRequestOpen } from '../../common/domain/quote-request.js';
+import { daysUntil, renewalState, renewalWindow } from './renewal.js';
 
 const DAY_MS = 86_400_000;
 const now = new Date('2026-10-24T10:00:00.000Z');
@@ -64,7 +65,7 @@ describe('renewal', () => {
 
     expect(state.renewable).toBe(true);
     expect(state.renewalRequestId).toBeNull();
-    expect(lapsed.map((request) => isOpenRenewal(request, now))).toEqual([false, false]);
+    expect(lapsed.map((request) => isRequestOpen(request.status, request.expiresAt, now))).toEqual([false, false]);
   });
 
   it('counts calendar days, not elapsed hours', () => {

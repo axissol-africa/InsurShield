@@ -1,14 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { toContract } from '../common/contract.js';
+import { newReference } from '../common/domain/reference.js';
 import type { RequestInspectionDto, UpdateInspectionDto } from '../customer/dto/customer.dto.js';
 import { isCustomerEditable } from './domain/inspection.js';
 import { toInspectionResponse, type InspectionPhotoResponse } from './dto/inspection.response.js';
 import { InspectionsRepository, type PhotoRow } from './inspections.repository.js';
-
-const newReference = () =>
-  `INS-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
 
 /**
  * Scheduled vehicle inspections.
@@ -49,7 +48,7 @@ export class InspectionsService {
       }
 
       const created = await this.repository.insert(tx, {
-        id: newReference(),
+        id: newReference('INS', new Date(), randomInt),
         customerId,
         insurerId: dto.insurerId ?? null,
         vehiclePlate: dto.vehiclePlate.trim(),

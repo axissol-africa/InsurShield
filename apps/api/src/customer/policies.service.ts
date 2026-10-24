@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
-import { newReference } from '../payments/domain/payment.js';
+import { newReference } from '../common/domain/reference.js';
 import { addDays, REQUEST_VALIDITY_DAYS } from './domain/cover-period.js';
 import { openRenewal, renewalState } from './domain/renewal.js';
 import { toPolicyResponse, type PolicyResponse } from './dto/policy.response.js';
