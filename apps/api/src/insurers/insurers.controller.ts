@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { InsurersService } from './insurers.service.js';
 import { CreateInsurerDto, SetInsurerStatusDto, UpdateInsurerDto } from './dto/insurer.dto.js';
 import { Public, Roles } from '../common/auth/auth.guard.js';
+import { CurrentUser } from '../common/auth/current-user.decorator.js';
+import type { Principal } from '../common/auth/auth.types.js';
 
 @Controller('insurers')
 export class InsurersController {
@@ -27,7 +29,7 @@ export class InsurersController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Get(':id')
-  get(@Param('id') id: string) {
+  get(@Param('id', ParseUUIDPipe) id: string) {
     return this.insurers.get(id);
   }
 
@@ -39,19 +41,23 @@ export class InsurersController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateInsurerDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateInsurerDto) {
     return this.insurers.update(id, dto);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Patch(':id/status')
-  setStatus(@Param('id') id: string, @Body() dto: SetInsurerStatusDto) {
-    return this.insurers.setStatus(id, dto.status);
+  setStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetInsurerStatusDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.setStatus(id, dto.status, principal.role);
   }
 
   @Roles('SUPER_ADMIN')
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.insurers.remove(id);
   }
 }
