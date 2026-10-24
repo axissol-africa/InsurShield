@@ -1,4 +1,4 @@
-import {
+import type {
   ClaimStatus,
   CoverageDuration,
   InspectionStatus,
@@ -8,16 +8,16 @@ import {
   PaymentStatus,
   PolicyStatus,
   QuoteRequestStatus,
-} from '../generated/prisma/enums.js';
+} from './domain/enums.js';
 
 /**
- * Translation between the database enums and the wire values in
+ * Translation between the stored enum values and the wire values in
  * `apps/web/src/api/contracts.js`.
  *
  * The contract is the agreement with the client, and the client branches on
  * these exact strings (`status === 'Expired'`, `insuranceType === 'ThirdParty'`),
- * so every response must speak them. Storage keeps SCREAMING_CASE enums, which
- * is what Prisma and Postgres want. These maps are the only place the two
+ * so every response must speak them. Storage keeps the SCREAMING_CASE values of
+ * the PostgreSQL enum types. These maps are the only place the two
  * vocabularies meet — nothing else should compare a raw enum to a wire string.
  */
 

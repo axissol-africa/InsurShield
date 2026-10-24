@@ -1,0 +1,2 @@
+# Migration hashes are taken over the file bytes, so every checkout must have the same line endings.
+drizzle/** text eol=lf
