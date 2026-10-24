@@ -19,7 +19,7 @@ App instructions supplement these shared rules. User instructions and explicitly
 | Location | Responsibility |
 | --- | --- |
 | `apps/web/` | React and Vite application, including customer, insurer, and administrator features |
-| `apps/api/` | NestJS API, business rules, integrations, and Prisma schema and migrations |
+| `apps/api/` | NestJS API, business rules, integrations, and Drizzle schema and migrations |
 | `packages/` | Reusable workspace packages with actual consumers |
 | `infra/` | PostgreSQL and Keycloak configuration |
 | `docs/` | Product requirements and technical documentation |
@@ -43,9 +43,22 @@ App instructions supplement these shared rules. User instructions and explicitly
 - Keep one `package-lock.json` at the repository root. Do not introduce per-app lockfiles or a second package manager.
 - Use Node.js 24.15 or newer in the Node 24 LTS line and npm 11.13 or newer in the npm 11 line for the current dependency set.
 - Run shared commands from the root. Use `-w @insurshield/web` or `-w @insurshield/api` for app-specific commands.
-- Keep environment files, credentials, dependency directories, generated Prisma clients, test reports, and build output out of commits. Preserve local environment files during moves.
-- Keep schema migrations under `apps/api/prisma/migrations/`. Build the API Docker image from the repository root with `-f apps/api/Dockerfile`.
+- Keep environment files, credentials, dependency directories, test reports, and build output out of commits. Preserve local environment files during moves.
+- Keep schema migrations under `apps/api/drizzle/`. Build the API Docker image from the repository root with `-f apps/api/Dockerfile`.
 - When changing a workspace path or name, update root commands, the lockfile, Docker paths, launch configuration, and documentation links together.
+
+## Configuration
+
+- Every setting comes from environment variables. No credentials, hosts, ports or database names in code, Compose
+  files or tests; Compose reads them from the root `.env` and refuses to start when one is missing.
+- `.env` files are local and git-ignored. Each `.env.example` documents every variable it needs with `CHANGE_ME`
+  placeholders. A new setting goes in the example file and in the README's Configuration table.
+- Error messages name a variable but never print its value.
+
+## Code and comments
+
+- Keep it plain and idiomatic. No speculative abstractions, no TODOs.
+- Comments only where the code cannot say why.
 
 ## Verification
 
@@ -57,9 +70,11 @@ npm run lint
 npm run test
 npm run build
 npm exec -w @insurshield/api -- tsc --noEmit
+npm run test:e2e -w @insurshield/api
 npm run test:e2e -w @insurshield/web
 ```
 
+- A bug fix starts with a failing test. No `.skip` or `.only`.
 - Run `npm ci` when dependency metadata or workspace layout changes, not before every edit.
 - API integration checks use `npm run test:e2e -w @insurshield/api` and require the configured services. Do not claim they passed when prerequisites were unavailable.
 - For a layout-only change, verify workspace discovery, dependency versions, local links, and packaging paths in addition to application checks.
@@ -67,7 +82,7 @@ npm run test:e2e -w @insurshield/web
 
 ## Commit messages
 
-Follow the Lore protocol whenever making a commit. Lead with why the change was made. Add only the trailers that carry useful decision context:
+Small commits, one change each. Follow the Lore protocol whenever making a commit. Lead with why the change was made. Add only the trailers that carry useful decision context:
 
 ```text
 <intent line>
