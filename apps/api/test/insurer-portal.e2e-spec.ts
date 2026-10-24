@@ -31,7 +31,7 @@ import {
   type BuiltInsurer,
 } from './builders.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
-import { buildNcdApplication } from './builders/insurer-portal.js';
+import { buildNcdApplication } from './builders/customer.js';
 import {
   holdLocks,
   openTestDatabase,
@@ -562,13 +562,8 @@ describe('insurer portal', () => {
         .returning();
       const approved = await buildNcdApplication(
         testApp.db,
-        { insurerId: insurer.insurer.id },
-        {
-          status: 'APPROVED',
-          approvedCodeId: code.code,
-          submittedAt: new Date('2026-10-20T08:00:00.010Z'),
-          decidedAt: new Date('2026-10-21T08:00:00.020Z'),
-        },
+        { insurerId: insurer.insurer.id, approvedCode: code },
+        { submittedAt: new Date('2026-10-20T08:00:00.010Z'), decidedAt: new Date('2026-10-21T08:00:00.020Z') },
       );
       const fresh = await buildNcdApplication(
         testApp.db,
@@ -858,11 +853,16 @@ describe('insurer portal', () => {
 
       const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [request.id]);
       const pending = post(insurer, `quote-requests/${request.id}/quote`, { premium: 500, documentId: document.id });
+      const settled = Promise.allSettled([pending]);
       try {
         await until(async () => (await held.waiters(INSERTING_THE_QUOTE)) === 1, 'the quote insert to wait on the request');
         await held.run(`UPDATE quote_requests SET status = 'EXPIRED' WHERE id = $1`, [request.id]);
       } finally {
-        await held.release();
+        try {
+          await held.release();
+        } finally {
+          await settled;
+        }
       }
       const response = await pending;
 
@@ -1246,12 +1246,17 @@ describe('insurer portal', () => {
       // A share lock on the table lets the application be locked and the code inserted, but stops the link update.
       const held = await lockedBy('LOCK TABLE ncd_applications IN SHARE MODE', []);
       const pending = post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED' });
+      const settled = Promise.allSettled([pending]);
       try {
         await until(async () => (await held.waiters(LINKING_THE_CODE)) === 1, 'the link update to wait on the table');
         // The link update gives up at the lock timeout while the table is still locked.
         await pending;
       } finally {
-        await held.release();
+        try {
+          await held.release();
+        } finally {
+          await settled;
+        }
       }
       const response = await pending;
 

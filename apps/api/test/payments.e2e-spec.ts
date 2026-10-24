@@ -12,7 +12,7 @@ import {
 } from './builders.js';
 import { buildApprovedNcdCode } from './builders/customer.js';
 import { addQuote, buildPayableQuote } from './builders/payments.js';
-import { holdLocks, openTestDatabase, queueBehind, startApp, type TestApp } from './helpers.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, startRepeatableReadApp, type TestApp } from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 import type { customers } from '../src/db/schema.js';
 
@@ -732,6 +732,33 @@ describe('payments', () => {
       expect(responses.find((response) => response.status === 409)?.body.code).toBe('ALREADY_PAID');
       expect(await policiesFor([quoteRequest.id])).toHaveLength(1);
       expect(await paymentsFor([quoteRequest.id])).toHaveLength(1);
+    });
+
+    describe('on a database whose transactions default to repeatable read', () => {
+      let strict: TestApp;
+
+      beforeAll(async () => {
+        strict = await startRepeatableReadApp(4);
+      });
+
+      afterAll(async () => {
+        await strict.close();
+      });
+
+      it('for one request, both held after reading it and before inserting, end in one policy and ALREADY_PAID', async () => {
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+        const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+        const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
+        const payStrictly = async () =>
+          strict.http.post('/api/v1/payments').set(await asCustomer(customer)).set('Idempotency-Key', randomUUID()).send(body);
+
+        const responses = await queueBehind(held, LOCKING_THE_REQUEST, 2, [payStrictly, payStrictly]);
+
+        expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([201, 409]);
+        expect(responses.find((response) => response.status === 409)?.body.code).toBe('ALREADY_PAID');
+        expect(await policiesFor([quoteRequest.id])).toHaveLength(1);
+        expect(await paymentsFor([quoteRequest.id])).toHaveLength(1);
+      });
     });
 
     it('with one key on two requests make one payment; the other is IDEMPOTENCY_KEY_REUSED', async () => {

@@ -1,9 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
+import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
 import { AuthRepository } from './auth.repository.js';
-
-export const ACCOUNT_CLOSED = 'This account has been closed.';
 
 export interface StaffSession {
   id: string;

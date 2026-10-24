@@ -1,6 +1,5 @@
 import {
   consentRecords,
-  ncdApplications,
   piaConfig,
   type customers,
   type payments,
@@ -13,7 +12,6 @@ import {
   buildPayment,
   buildPolicy,
   buildQuoteRequest,
-  unique,
   type BuiltInsurer,
   type Db,
   type Row,
@@ -108,24 +106,4 @@ export async function buildConsent(
     .values({ customerId, privacyVersion: 'privacy-1', termsVersion: 'terms-1', ...overrides })
     .returning();
   return consent;
-}
-
-export async function buildNcdApplication(
-  db: Db,
-  input: { insurerId: string; customerId?: string },
-  overrides: Partial<Omit<Insert<typeof ncdApplications>, 'insurerId' | 'customerId'>> = {},
-) {
-  const [application] = await db
-    .insert(ncdApplications)
-    .values({
-      ...input,
-      applicationNumber: unique('NCD'),
-      policyNumber: unique('POL'),
-      fullName: 'Natasha Zulu',
-      phone: '+260977000000',
-      yearsClaimFree: 3,
-      ...overrides,
-    })
-    .returning();
-  return application;
 }

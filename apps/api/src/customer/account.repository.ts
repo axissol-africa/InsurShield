@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import type { PgTransactionConfig } from 'drizzle-orm/pg-core';
 import type { PolicyStatus } from '../common/domain/enums.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { customers, policies } from '../db/schema.js';
@@ -12,8 +11,8 @@ const IN_FORCE: PolicyStatus[] = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'];
 export class AccountRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  transaction<T>(work: (tx: Transaction) => Promise<T>, config?: PgTransactionConfig): Promise<T> {
-    return this.db.transaction(work, config);
+  transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
+    return this.db.transaction(work);
   }
 
   /** Locks the customer until `tx` ends. A payment writing their policy holds a key share of this row, so it is waited for. */

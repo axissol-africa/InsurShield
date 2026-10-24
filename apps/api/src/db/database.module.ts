@@ -76,7 +76,9 @@ async function runTransaction<T>(
   const client = await pool.connect();
   let failure: Error | undefined;
   try {
-    return await drizzle(client, options).transaction(work, config);
+    // Reads after waiting on a lock must see what the holder committed, which only READ COMMITTED guarantees.
+    const settings = { ...config, isolationLevel: config?.isolationLevel ?? 'read committed' };
+    return await drizzle(client, options).transaction(work, settings);
   } catch (error) {
     // The client may be broken or still in the failed transaction, so the pool discards it.
     if (isDatabaseError(error)) failure = error as Error;

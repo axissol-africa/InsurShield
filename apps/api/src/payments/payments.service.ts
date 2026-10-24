@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
-import { ACCOUNT_CLOSED } from '../auth/auth.service.js';
+import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract, toContract } from '../common/contract.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';

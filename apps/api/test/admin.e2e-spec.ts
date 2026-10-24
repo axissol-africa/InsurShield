@@ -7,11 +7,11 @@ import { buildClaim, buildCustomer, buildInsurer, buildPayment, buildQuoteReques
 import {
   buildConfirmedPayments,
   buildConsent,
-  buildNcdApplication,
   buildPaymentTarget,
   buildSoldPolicy,
   type PaymentTarget,
 } from './builders/admin.js';
+import { buildNcdApplication } from './builders/customer.js';
 import { openTestDatabase, startApp, type TestApp } from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 import type { staffUsers } from '../src/db/schema.js';

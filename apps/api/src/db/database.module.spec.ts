@@ -10,6 +10,8 @@ import * as schema from './schema.js';
 
 type Statement = 'begin' | 'commit' | 'rollback';
 
+const BEGIN = 'begin isolation level read committed';
+
 function fakePool(fail: Partial<Record<Statement, Error>> = {}) {
   const statements: string[] = [];
   const release = vi.fn();
@@ -47,7 +49,7 @@ describe('createDatabase', () => {
     });
 
     expect(result).toBe('done');
-    expect(statements).toEqual(['begin', 'select 1', 'commit']);
+    expect(statements).toEqual([BEGIN, 'select 1', 'commit']);
     expect(released(release)).toBeUndefined();
   });
 
@@ -59,7 +61,7 @@ describe('createDatabase', () => {
 
     expect(error).toBeInstanceOf(DrizzleQueryError);
     expect(work).not.toHaveBeenCalled();
-    expect(statements).toEqual(['begin']);
+    expect(statements).toEqual([BEGIN]);
     expect(released(release)).toBe(error);
   });
 
@@ -74,7 +76,7 @@ describe('createDatabase', () => {
       .catch((rejection: unknown) => rejection);
 
     expect(error).toBe(refusal);
-    expect(statements).toEqual(['begin', 'rollback']);
+    expect(statements).toEqual([BEGIN, 'rollback']);
     expect(released(release)).toBeUndefined();
   });
 
@@ -86,7 +88,7 @@ describe('createDatabase', () => {
       .catch((rejection: unknown) => rejection);
 
     expect(error).toBeInstanceOf(DrizzleQueryError);
-    expect(statements).toEqual(['begin', 'commit', 'rollback']);
+    expect(statements).toEqual([BEGIN, 'commit', 'rollback']);
     expect(released(release)).toBe(error);
   });
 
@@ -101,7 +103,7 @@ describe('createDatabase', () => {
 
     expect(error).toBeInstanceOf(DrizzleQueryError);
     expect((error as Error).cause).toMatchObject({ message: 'rollback refused' });
-    expect(statements).toEqual(['begin', 'rollback']);
+    expect(statements).toEqual([BEGIN, 'rollback']);
     expect(released(release)).toBe(error);
   });
 
@@ -114,7 +116,7 @@ describe('createDatabase', () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it('passes the transaction settings to BEGIN', async () => {
+  it('passes the transaction settings to BEGIN, and an isolation level named there wins', async () => {
     const { pool, statements } = fakePool();
 
     await createDatabase(pool, { schema }).transaction(async () => undefined, {
@@ -125,13 +127,23 @@ describe('createDatabase', () => {
     expect(statements[0]).toBe('begin isolation level serializable read only');
   });
 
+  it('opens a transaction at READ COMMITTED whatever the server defaults to, unless its settings name a level', async () => {
+    const { pool, statements } = fakePool();
+    const db = createDatabase(pool, { schema });
+
+    await db.transaction(async () => undefined);
+    await db.transaction(async () => undefined, { accessMode: 'read only' });
+
+    expect(statements).toEqual([BEGIN, 'commit', `${BEGIN} read only`, 'commit']);
+  });
+
   it("gives the transaction's own handle the same options as the database", async () => {
     const { pool } = fakePool();
     const logQuery = vi.fn();
 
     await createDatabase(pool, { schema, logger: { logQuery } }).transaction(async () => undefined);
 
-    expect(logQuery.mock.calls.map(([query]) => query as string)).toEqual(['begin', 'commit']);
+    expect(logQuery.mock.calls.map(([query]) => query as string)).toEqual([BEGIN, 'commit']);
   });
 
   it('keeps savepoints for nested transactions on the same client', async () => {
@@ -144,7 +156,7 @@ describe('createDatabase', () => {
     });
 
     expect(connect).toHaveBeenCalledTimes(1);
-    expect(statements).toEqual(['begin', 'savepoint sp1', 'select 1', 'release savepoint sp1', 'commit']);
+    expect(statements).toEqual([BEGIN, 'savepoint sp1', 'select 1', 'release savepoint sp1', 'commit']);
     expect(released(release)).toBeUndefined();
   });
 });

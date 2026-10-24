@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Pool } from 'pg';
 import type { Response } from 'supertest';
 import { MAX_KWACHA } from '../src/common/domain/money-limits.js';
 import { testDatabase } from '../src/config/env.js';
-import { createDatabase, DATABASE, type Database } from '../src/db/database.module.js';
+import { createDatabase, DATABASE } from '../src/db/database.module.js';
 import * as schema from '../src/db/schema.js';
 import {
   claimAttachments,
@@ -36,7 +36,16 @@ import {
 } from './builders.js';
 import { buildApprovedNcdCode, buildNcdApplication, buildRenewalRequest } from './builders/customer.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
-import { holdLocks, openTestDatabase, productionPool, queueBehind, startApp, until, type TestApp } from './helpers.js';
+import {
+  holdLocks,
+  openTestDatabase,
+  productionPool,
+  queueBehind,
+  startApp,
+  startRepeatableReadApp,
+  until,
+  type TestApp,
+} from './helpers.js';
 import { bearer, customerToken, staffToken } from './jwks.js';
 
 type Customer = Row<typeof customers>;
@@ -929,6 +938,33 @@ describe('customer', () => {
       expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toHaveLength(1);
     });
 
+    describe('on a database whose transactions default to repeatable read', () => {
+      let strict: TestApp;
+
+      beforeAll(async () => {
+        strict = await startRepeatableReadApp(4);
+      });
+
+      afterAll(async () => {
+        await strict.close();
+      });
+
+      it('starts one renewal when two arrive together, and answers the other RENEWAL_IN_PROGRESS', async () => {
+        const customer = await buildCustomer(testApp.db);
+        const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
+        const held = await holdLocks(side.pool, (db) =>
+          db.select({ policyNumber: policies.policyNumber }).from(policies).where(eq(policies.policyNumber, policy.policyNumber)).for('update'),
+        );
+        const renew = async () => strict.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer));
+
+        const responses = await queueBehind(held, LOCKING_THE_POLICY, 2, [renew, renew]);
+
+        expect(statuses(responses)).toEqual([201, 409]);
+        expect(responses.find((response) => response.status === 409)?.body.code).toBe('RENEWAL_IN_PROGRESS');
+        expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toHaveLength(1);
+      });
+    });
+
     it('answers 404 for another customer’s policy, and 409 when no insurer accepts requests', async () => {
       const other = await buildCustomer(testApp.db);
       const customer = await buildCustomer(testApp.db);
@@ -1379,27 +1415,16 @@ describe('customer', () => {
 
     describe('on a database whose transactions default to repeatable read', () => {
       let strict: TestApp;
-      let pool: Pool;
-      let db: Database;
 
       beforeAll(async () => {
-        pool = productionPool(testDatabase().url, 2);
-        db = createDatabase(pool, { schema });
-        const begin = db.transaction.bind(db);
-        db.transaction = (work, config) => begin(work, config ?? { isolationLevel: 'repeatable read' });
-        strict = await startApp({ override: (builder) => builder.overrideProvider(DATABASE).useValue(db) });
+        strict = await startRepeatableReadApp(4);
       });
 
       afterAll(async () => {
         await strict.close();
-        await pool.end();
       });
 
       it('still waits for a payment creating the customer’s first policy, then refuses', async () => {
-        const { rows } = await db.transaction((tx) =>
-          tx.execute<{ transaction_isolation: string }>(sql`SHOW transaction_isolation`),
-        );
-        expect(rows[0].transaction_isolation).toBe('repeatable read');
         const customer = await buildCustomer(testApp.db);
         const held = await holdLocks(side.pool, (db) => buildPurchasedPolicy(db, { customer }));
         const close = async () => strict.http.delete('/api/v1/account').set(await asCustomer(customer));

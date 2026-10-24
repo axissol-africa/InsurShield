@@ -6,7 +6,7 @@ type Insert<T extends { $inferInsert: unknown }> = T['$inferInsert'];
 /** A customer's NCD application with an insurer; approved when `approvedCode` is given. */
 export async function buildNcdApplication(
   db: Db,
-  input: { customerId: string | null; insurerId: string; approvedCode?: Row<typeof ncdCodes> },
+  input: { customerId?: string | null; insurerId: string; approvedCode?: Row<typeof ncdCodes> },
   overrides: Partial<Omit<Insert<typeof ncdApplications>, 'customerId' | 'insurerId' | 'approvedCodeId'>> = {},
 ) {
   const [application] = await db
@@ -15,7 +15,7 @@ export async function buildNcdApplication(
       applicationNumber: unique('NCDA'),
       insurerId: input.insurerId,
       customerId: input.customerId,
-      policyNumber: 'PA-2023-0045',
+      policyNumber: unique('PA'),
       fullName: 'Chanda Mwale',
       phone: '+260971000000',
       yearsClaimFree: 3,

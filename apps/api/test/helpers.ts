@@ -78,6 +78,28 @@ export function productionPool(connectionString: string, poolSize: number): Pool
   return createPool(config as unknown as ConfigService<Env, true>);
 }
 
+/** The app on its own production pool whose sessions default to REPEATABLE READ, as a server or role set so would. */
+export async function startRepeatableReadApp(poolSize: number): Promise<TestApp> {
+  const pool = productionPool(testDatabase().url, poolSize);
+  (pool as Pool & { options: { options: string } }).options.options +=
+    String.raw` -c default_transaction_isolation=repeatable\ read`;
+  const { rows } = await pool.query<{ level: string }>(`SELECT current_setting('default_transaction_isolation') AS level`);
+  if (rows[0].level !== 'repeatable read') throw new Error(`The pool's sessions default to ${rows[0].level}`);
+  const testApp = await startApp({
+    override: (builder) => builder.overrideProvider(DATABASE).useValue(createDatabase(pool, { schema })),
+  });
+  return {
+    ...testApp,
+    async close() {
+      try {
+        await testApp.close();
+      } finally {
+        await pool.end();
+      }
+    },
+  };
+}
+
 /** Polls `condition` every 50 ms until it holds, failing after 15 s with what was awaited. */
 export async function until(condition: () => Promise<boolean> | boolean, what: string): Promise<void> {
   const deadline = Date.now() + 15_000;
