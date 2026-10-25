@@ -1,15 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { randomInt } from 'node:crypto';
+import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract, toContract } from '../common/contract.js';
-import { PaymentStatus, PolicyStatus } from '../generated/prisma/enums.js';
-import type { PayDto } from './dto/payment.dto.js';
+import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
+import { newReference } from '../common/domain/reference.js';
+import { isUniqueViolation } from '../db/errors.js';
+import {
+  expectedAmountMinor,
+  isQuoteExpired,
+  providerReference,
+  replayOutcome,
+  type PaymentAttempt,
+} from './domain/payment.js';
+import { toReceipt, type ReceiptResponse } from './dto/receipt.dto.js';
+import { PaymentsRepository, type ReceiptRow } from './payments.repository.js';
+import { CHOOSE_A_PAYMENT_METHOD, type PayDto } from './dto/payment.dto.js';
 
-/** How far the amount may differ from the quote before it is refused (rounding only). */
-const AMOUNT_TOLERANCE = 0.01;
-
-const newReference = (prefix: string) =>
-  `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+const IDEMPOTENCY_KEY_CONSTRAINT = 'payments_idempotencyKey_key';
 
 /**
  * Taking payment for an accepted quote.
@@ -24,91 +32,80 @@ const newReference = (prefix: string) =>
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly payments: PaymentsRepository) {}
 
-  async pay(customerId: string, idempotencyKey: string, dto: PayDto) {
-    // A retried POST must never charge twice. The stored key is the guard, so
-    // a repeat returns the original receipt instead of creating a second one.
-    const existing = await this.prisma.payment.findUnique({
-      where: { idempotencyKey },
-      include: { policy: { select: { policyNumber: true } } },
-    });
-    if (existing) {
-      if (existing.customerId !== customerId) throw ApiException.forbidden();
-      this.logger.log(`Replayed payment ${existing.transactionId} for key ${idempotencyKey}`);
-      return this.receipt(existing, existing.policy?.policyNumber ?? null);
-    }
+  async pay(customerId: string, idempotencyKey: string, dto: PayDto): Promise<ReceiptResponse> {
+    const method = fromContract.paymentMethod(dto.method);
+    if (!method) throw new ApiException('BAD_REQUEST', CHOOSE_A_PAYMENT_METHOD);
+    const attempt: PaymentAttempt = {
+      customerId,
+      quoteRequestId: dto.quoteRequestId,
+      insurerName: dto.insurer,
+      amountMinor: kwachaToNgwee(dto.amount),
+      method,
+    };
 
-    const request = await this.prisma.quoteRequest.findFirst({
-      where: { id: dto.quoteRequestId, customerId },
-      include: {
-        vehicle: true,
-        quotes: { include: { insurer: { select: { id: true, name: true } } } },
-        policies: { select: { policyNumber: true } },
-      },
-    });
+    const replayed = await this.replay(idempotencyKey, attempt);
+    if (replayed) return replayed;
+
+    const request = await this.payments.findRequest(customerId, dto.quoteRequestId);
     if (!request) throw ApiException.notFound('Quote request', dto.quoteRequestId);
 
-    if (request.policies.length > 0) {
-      throw ApiException.conflict(
-        'ALREADY_PAID',
-        `This request was already paid; policy ${request.policies[0].policyNumber} exists.`,
-      );
-    }
+    const quote = await this.payments.findQuote(request.id, dto.insurer);
+    if (!quote) throw ApiException.notFound('Quote from', dto.insurer);
 
-    const quote = request.quotes.find((item) => item.insurer.name === dto.insurer);
-    if (!quote) {
-      throw ApiException.notFound('Quote from', dto.insurer);
-    }
-
-    // An offer with a deadline: once it has passed the price is no longer the
-    // insurer's, so the customer re-requests rather than pays a stale figure.
-    if (quote.validUntil <= new Date()) {
-      throw ApiException.conflict(
-        'QUOTE_EXPIRED',
-        `${quote.insurer.name}'s quote expired on ${quote.validUntil.toISOString().slice(0, 10)}. Request fresh quotes to continue.`,
-      );
-    }
-
-    const expected = quote.premium.toNumber() + (dto.rtsaAnniversaryFee ?? 0);
-    if (Math.abs(expected - dto.amount) > AMOUNT_TOLERANCE) {
-      throw ApiException.conflict(
-        'AMOUNT_MISMATCH',
-        'The amount does not match the quoted premium. Reload the quote and try again.',
-        { expected, received: dto.amount },
-      );
-    }
-
-    const method = fromContract.paymentMethod(dto.method)!;
+    const expectedMinor = expectedAmountMinor(quote.premiumMinor, kwachaToNgwee(dto.rtsaAnniversaryFee ?? 0));
     const confirmedAt = new Date();
 
-    // One transaction: money and cover are recorded together or not at all.
-    const { payment, policyNumber } = await this.prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.create({
-        data: {
-          transactionId: newReference('TXN'),
-          status: PaymentStatus.CONFIRMED,
+    let paid: ReceiptRow;
+    try {
+      paid = await this.payments.transaction(async (tx) => {
+        if (!(await this.payments.lockOpenCustomer(tx, customerId))) throw ApiException.forbidden(ACCOUNT_CLOSED);
+        await this.payments.lockRequest(tx, request.id);
+
+        // Inserted before the checks, so a second request with this key waits on the first and replays it.
+        const payment = await this.payments.insertPayment(tx, {
+          transactionId: newReference('TXN', confirmedAt, randomInt),
+          status: 'CONFIRMED',
           method,
-          amount: dto.amount,
+          amountMinor: attempt.amountMinor,
           currency: 'ZMW',
           confirmedAt,
-          providerReference: dto.mobileNumber ? `MM-${dto.mobileNumber.slice(-4)}` : null,
+          providerReference: providerReference(dto.mobileNumber),
           idempotencyKey,
           customerId,
           quoteRequestId: request.id,
           insurerQuoteId: quote.id,
-        },
-      });
+        });
 
-      const policy = await tx.policy.create({
-        data: {
-          policyNumber: newReference('POL'),
-          status: PolicyStatus.AWAITING_INSURER_CERTIFICATE,
-          insurerId: quote.insurer.id,
+        const existingPolicy = await this.payments.findPolicyNumberForRequest(tx, request.id);
+        if (existingPolicy) {
+          throw ApiException.conflict('ALREADY_PAID', `This request was already paid; policy ${existingPolicy} exists.`);
+        }
+        // An offer with a deadline: once it has passed the price is no longer the
+        // insurer's, so the customer re-requests rather than pays a stale figure.
+        if (isQuoteExpired(quote.validUntil, confirmedAt)) {
+          throw ApiException.conflict(
+            'QUOTE_EXPIRED',
+            `${quote.insurerName}'s quote expired on ${quote.validUntil.toISOString().slice(0, 10)}. Request fresh quotes to continue.`,
+          );
+        }
+        if (attempt.amountMinor !== expectedMinor) {
+          throw ApiException.conflict(
+            'AMOUNT_MISMATCH',
+            'The amount does not match the quoted premium. Reload the quote and try again.',
+            { expected: ngweeToKwacha(expectedMinor), received: dto.amount },
+          );
+        }
+
+        const policy = await this.payments.insertPolicy(tx, {
+          policyNumber: newReference('POL', confirmedAt, randomInt),
+          status: 'AWAITING_INSURER_CERTIFICATE',
+          insurerId: quote.insurerId,
           customerId,
           vehicleId: request.vehicleId,
           coverage: toContract.insuranceType(request.insuranceType),
-          premium: dto.amount,
+          premiumMinor: attempt.amountMinor,
           policyStartDate: request.policyStartDate,
           policyEndDate: request.policyEndDate,
           quoteRequestId: request.id,
@@ -117,57 +114,61 @@ export class PaymentsService {
           quoteDocumentId: quote.documentId,
           paymentId: payment.id,
           receivedAt: confirmedAt,
-        },
-      });
-
-      // The code is spent on the policy it discounted, not on the next one.
-      if (request.ncdCode) {
-        await tx.ncdCode.updateMany({
-          where: { code: request.ncdCode, redeemedAt: null },
-          data: { redeemedAt: confirmedAt },
         });
-      }
 
-      return { payment, policyNumber: policy.policyNumber };
-    });
+        // A code discounts only its own insurer's quote, so another insurer's code stays unspent.
+        if (request.ncdCode) {
+          const redeemed = await this.payments.redeemNcdCode(
+            tx,
+            request.ncdCode,
+            { insurerId: quote.insurerId, customerId },
+            confirmedAt,
+          );
+          if (!redeemed && (await this.payments.isNcdCodeIssuedBy(tx, request.ncdCode, quote.insurerId))) {
+            throw ApiException.conflict(
+              'NCD_CODE_UNAVAILABLE',
+              'The no-claim discount code on this request has already been used. Request fresh quotes to continue.',
+            );
+          }
+        }
+        return { ...payment, policyNumber: policy.policyNumber };
+      });
+    } catch (error) {
+      if (isUniqueViolation(error, IDEMPOTENCY_KEY_CONSTRAINT)) {
+        const winner = await this.replay(idempotencyKey, attempt);
+        if (winner) return winner;
+      }
+      throw error;
+    }
 
     this.logger.log(
-      `Payment ${payment.transactionId} confirmed for ${request.id}; policy ${policyNumber} awaits ${quote.insurer.name}'s certificate`,
+      `Payment ${paid.transactionId} confirmed for ${request.id}; policy ${paid.policyNumber} awaits ${quote.insurerName}'s certificate`,
     );
-    return this.receipt(payment, policyNumber);
+    return toReceipt(paid);
+  }
+
+  /** The original receipt when the key was used for this same payment; a refusal when it was used for another. */
+  private async replay(idempotencyKey: string, attempt: PaymentAttempt): Promise<ReceiptResponse | undefined> {
+    const stored = await this.payments.findByKey(idempotencyKey);
+    if (!stored) return undefined;
+    switch (replayOutcome(stored, attempt)) {
+      case 'another-customer':
+        throw ApiException.forbidden();
+      case 'different-payment':
+        throw ApiException.conflict(
+          'IDEMPOTENCY_KEY_REUSED',
+          'This payment key was already used for a different payment. Start the payment again.',
+        );
+      case 'replay':
+        this.logger.log(`Replayed payment ${stored.transactionId} for key ${idempotencyKey}`);
+        return toReceipt(stored);
+    }
   }
 
   /** A receipt the customer can quote, and the policy it created. */
-  async status(customerId: string, transactionId: string) {
-    const payment = await this.prisma.payment.findFirst({
-      where: { transactionId, customerId },
-      include: { policy: { select: { policyNumber: true } } },
-    });
-    if (!payment) throw ApiException.notFound('Payment', transactionId);
-    return this.receipt(payment, payment.policy?.policyNumber ?? null);
-  }
-
-  private receipt(
-    payment: {
-      transactionId: string;
-      status: PaymentStatus;
-      method: Parameters<typeof toContract.paymentMethod>[0];
-      amount: { toNumber(): number };
-      currency: string;
-      confirmedAt: Date | null;
-      quoteRequestId: string;
-    },
-    policyNumber: string | null,
-  ) {
-    return {
-      transactionId: payment.transactionId,
-      status: toContract.paymentStatus(payment.status),
-      method: toContract.paymentMethod(payment.method),
-      amount: payment.amount.toNumber(),
-      currency: payment.currency,
-      confirmedAt: payment.confirmedAt?.toISOString() ?? null,
-      quoteRequestId: payment.quoteRequestId,
-      policyNumber,
-    };
+  async status(customerId: string, transactionId: string): Promise<ReceiptResponse> {
+    const receipt = await this.payments.findReceipt(customerId, transactionId);
+    if (!receipt) throw ApiException.notFound('Payment', transactionId);
+    return toReceipt(receipt);
   }
 }

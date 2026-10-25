@@ -1,5 +1,8 @@
-import { IsIn, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CONTRACT_VALUES } from '../../common/contract.js';
+import { MAX_KWACHA } from '../../common/domain/money-limits.js';
+
+export const CHOOSE_A_PAYMENT_METHOD = 'Choose mobile money or card.';
 
 export class PayDto {
   /** The request being paid for; the quote must belong to it. */
@@ -14,14 +17,19 @@ export class PayDto {
    */
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0.01, { message: 'The amount to pay must be greater than zero.' })
+  @Max(MAX_KWACHA, { message: `The amount to pay must be at most ${MAX_KWACHA}.` })
   amount!: number;
 
-  @IsIn(CONTRACT_VALUES.paymentMethod, { message: 'Choose mobile money or card.' })
+  @IsIn(CONTRACT_VALUES.paymentMethod, { message: CHOOSE_A_PAYMENT_METHOD })
   method!: string;
 
   /** Mobile-money wallet, when that is the method. */
   @IsOptional() @IsString() @MaxLength(24) mobileNumber?: string;
 
   /** Added to the premium when the customer aligns cover to the RTSA anniversary. */
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) rtsaAnniversaryFee?: number;
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_KWACHA, { message: `The RTSA anniversary fee must be at most ${MAX_KWACHA}.` })
+  rtsaAnniversaryFee?: number;
 }

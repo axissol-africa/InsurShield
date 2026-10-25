@@ -40,8 +40,9 @@ docker build -f apps/api/Dockerfile --target migrator -t insurshield-migrator .
 ```
 
 The build uses `turbo prune` to emit a backend-only workspace, so the React
-frontend is never pulled into the API image. The Prisma CLI is kept out of the
-runtime image too — that is what the `migrator` target is for.
+frontend is never pulled into the API image. Both images hold only the
+production dependencies; the `migrator` image adds the migrations in
+`apps/api/drizzle/` and runs the migration entry point instead of the API.
 
 Run migrations as a release step, before the new version takes traffic:
 
@@ -50,12 +51,26 @@ docker run --rm -e DATABASE_URL=... insurshield-migrator
 ```
 
 This maps onto Fly's `release_command`, an ECS one-off task, or a Render
-pre-deploy command. `prisma migrate deploy` only applies committed migrations —
-it never generates one and never prompts.
+pre-deploy command. The image runs `node dist/db/migrate.js`, the build of
+`apps/api/src/db/migrate.ts` that `npm run db:migrate` runs: it applies only
+committed migrations, never generates one and never prompts. It exits 0 when the
+database is up to date and 1, having changed nothing, when it refuses a database
+it does not recognise or a migration fails. It requires PostgreSQL 17.
+
+### A database created by the Prisma build
+
+The migration that introduced Drizzle renames every money and rate column, so the
+Prisma build of the API fails on a database once it is converted. Upgrading such a
+database is an offline cutover: stop every old API process, back up the database,
+run the migrator, then start the new build. Rolling back is restoring the backup.
+If the migrator refuses because of the data, nothing has changed: correct the rows
+of each column it names (the message gives each column and a count, never values)
+and run it again.
 
 ## Environment variables
 
-`apps/api/.env.example` documents all of them. What changes in production:
+`apps/api/.env.example` documents all of them, and the [README's Configuration table](../README.md#configuration)
+lists each with its default. What changes in production:
 
 ```bash
 NODE_ENV=production
@@ -145,17 +160,7 @@ customer login.
 
 ## Dependency advisories
 
-`npm audit` reports high-severity advisories against `mysql2` and
-`deepmerge-ts`. Both arrive through the Prisma **CLI**, which npm installs
-automatically because `@prisma/client` declares it as an optional peer
-dependency. This service is Postgres-only and never loads the MySQL driver.
-
-`npm audit fix --force` would downgrade Prisma from 7.10 to 6.x — a major
-version backwards — so it is deliberately not applied. Instead the runtime image
-drops the CLI entirely (see `apps/api/Dockerfile`), which removes those packages
-from what actually ships. The remaining advisories affect development tooling
-only.
-
-Re-check this when Prisma 8 reaches a stable release; npm's `latest` tag
-currently points at an 8.0 release candidate, which is why the project pins
-7.10.0.
+Run `npm audit --omit=dev` before a release: it lists the advisories in what the
+images ship. Upgrade an affected package in its own change, with the checks run
+again, rather than with `npm audit fix --force`, which may move a package back a
+major version.

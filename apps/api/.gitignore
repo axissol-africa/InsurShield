@@ -7,7 +7,3 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
-
-# Prisma client is generated from prisma/schema.prisma by `npm run db:generate`
-# (and automatically on install). Migrations ARE committed; this output is not.
-src/generated/

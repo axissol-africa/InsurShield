@@ -17,6 +17,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { CONTRACT_VALUES } from '../../common/contract.js';
+import { MAX_KWACHA } from '../../common/domain/money-limits.js';
+
+export const CHOOSE_A_COVER_TYPE = 'Choose Comprehensive or Third Party cover.';
+export const CHOOSE_A_COVER_PERIOD = 'Choose a cover period of 1 to 4 quarters.';
 
 /** The vehicle as the customer confirmed it, from RTSA or typed by hand. */
 export class VehicleDetailsDto {
@@ -52,14 +56,15 @@ export class SubmitQuoteRequestDto {
   /** Declared market value in ZMW; the premium is a percentage of it. */
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(1, { message: 'Enter the current market value of the vehicle.' })
+  @Max(MAX_KWACHA, { message: `The vehicle value must be at most ${MAX_KWACHA}.` })
   vehicleValue!: number;
 
   @IsString() @MinLength(1) @MaxLength(60) vehicleUsage!: string;
 
-  @IsIn(CONTRACT_VALUES.insuranceType, { message: 'Choose Comprehensive or Third Party cover.' })
+  @IsIn(CONTRACT_VALUES.insuranceType, { message: CHOOSE_A_COVER_TYPE })
   insuranceType!: string;
 
-  @IsIn(CONTRACT_VALUES.coverageDuration, { message: 'Choose a cover period of 1 to 4 quarters.' })
+  @IsIn(CONTRACT_VALUES.coverageDuration, { message: CHOOSE_A_COVER_PERIOD })
   coverageDurationId!: string;
 
   @IsOptional() @IsBoolean() matchRtsaAnniversary?: boolean;
@@ -100,7 +105,11 @@ export class NotifyClaimDto {
   @IsString() @MinLength(2) @MaxLength(200) location!: string;
   @IsString() @MinLength(10) @MaxLength(4000) description!: string;
 
-  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) estimatedLoss?: number;
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_KWACHA, { message: `The estimated loss must be at most ${MAX_KWACHA}.` })
+  estimatedLoss?: number;
   @IsOptional() @IsBoolean() policeReport?: boolean;
   @IsOptional() @IsString() @MaxLength(60) policeReportNumber?: string;
   /** Required by the client when the incident falls outside the window. */

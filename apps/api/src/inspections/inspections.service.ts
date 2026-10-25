@@ -1,19 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
+import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { toContract } from '../common/contract.js';
-import { InspectionStatus, InsurerStatus } from '../generated/prisma/enums.js';
+import { newReference } from '../common/domain/reference.js';
 import type { RequestInspectionDto, UpdateInspectionDto } from '../customer/dto/customer.dto.js';
-
-/** Once an inspector is on the job the appointment is no longer the customer's to move. */
-const CUSTOMER_EDITABLE: InspectionStatus[] = [
-  InspectionStatus.REQUESTED,
-  InspectionStatus.SCHEDULED,
-];
-
-const newReference = () =>
-  `INS-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+import { isCustomerEditable } from './domain/inspection.js';
+import { toInspectionResponse, type InspectionPhotoResponse } from './dto/inspection.response.js';
+import { InspectionsRepository, type PhotoRow } from './inspections.repository.js';
 
 /**
  * Scheduled vehicle inspections.
@@ -27,31 +21,34 @@ export class InspectionsService {
   private readonly logger = new Logger(InspectionsService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repository: InspectionsRepository,
     private readonly documents: DocumentsService,
   ) {}
 
   async list(customerId: string) {
-    const inspections = await this.prisma.inspection.findMany({
-      where: { customerId },
-      orderBy: { createdAt: 'desc' },
-      include: { insurer: { select: { name: true } }, photos: { select: { slot: true, documentId: true } } },
-    });
-    return Promise.all(inspections.map((inspection) => this.serialise(inspection)));
+    const inspections = await this.repository.listForCustomer(customerId);
+    const photos = await this.repository.photosOf(inspections.map((inspection) => inspection.id));
+    return Promise.all(
+      inspections.map(async (inspection) =>
+        toInspectionResponse(
+          inspection,
+          await this.photoRecords(photos.filter((photo) => photo.inspectionId === inspection.id)),
+        ),
+      ),
+    );
   }
 
   async request(customerId: string, dto: RequestInspectionDto) {
-    if (dto.insurerId) {
-      const insurer = await this.prisma.insurer.findFirst({
-        where: { id: dto.insurerId, status: InsurerStatus.ACTIVE },
-        select: { id: true },
-      });
-      if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
-    }
+    const inspection = await this.repository.transaction(async (tx) => {
+      let insurerName: string | null = null;
+      if (dto.insurerId) {
+        const insurer = await this.repository.findActiveInsurer(tx, dto.insurerId);
+        if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
+        insurerName = insurer.name;
+      }
 
-    const inspection = await this.prisma.inspection.create({
-      data: {
-        id: newReference(),
+      const created = await this.repository.insert(tx, {
+        id: newReference('INS', new Date(), randomInt),
         customerId,
         insurerId: dto.insurerId ?? null,
         vehiclePlate: dto.vehiclePlate.trim(),
@@ -60,12 +57,12 @@ export class InspectionsService {
         preferredTime: dto.preferredTime?.trim() ?? null,
         preferredLocation: dto.preferredLocation?.trim() ?? null,
         notes: dto.notes?.trim() ?? null,
-      },
-      include: { insurer: { select: { name: true } }, photos: { select: { slot: true, documentId: true } } },
+      });
+      return { ...created, insurerName };
     });
 
     this.logger.log(`Inspection ${inspection.id} requested for ${inspection.vehiclePlate}`);
-    return this.serialise(inspection);
+    return toInspectionResponse(inspection, []);
   }
 
   /**
@@ -74,61 +71,35 @@ export class InspectionsService {
    * from here — and once that work has started, neither are the preferences.
    */
   async update(customerId: string, id: string, dto: UpdateInspectionDto) {
-    const inspection = await this.prisma.inspection.findFirst({ where: { id, customerId } });
-    if (!inspection) throw ApiException.notFound('Inspection', id);
+    // Read before the write, so nothing after its commit can fail; nothing in the API changes photos.
+    const photos = await this.photoRecords(await this.repository.photosOfOwned(customerId, id));
 
-    if (!CUSTOMER_EDITABLE.includes(inspection.status)) {
-      throw ApiException.conflict(
-        'INSPECTION_IN_PROGRESS',
-        `This inspection is ${toContract.inspectionStatus(inspection.status).toLowerCase()}. Contact your insurer to change it.`,
-      );
-    }
+    const updated = await this.repository.transaction(async (tx) => {
+      const inspection = await this.repository.lockOwned(tx, id, customerId);
+      if (!inspection) throw ApiException.notFound('Inspection', id);
 
-    const updated = await this.prisma.inspection.update({
-      where: { id },
-      data: {
+      if (!isCustomerEditable(inspection.status)) {
+        throw ApiException.conflict(
+          'INSPECTION_IN_PROGRESS',
+          `This inspection is ${toContract.inspectionStatus(inspection.status).toLowerCase()}. Contact your insurer to change it.`,
+        );
+      }
+
+      const changed = await this.repository.updatePreferences(tx, id, {
         preferredDate: dto.preferredDate ? new Date(dto.preferredDate) : inspection.preferredDate,
         preferredTime: dto.preferredTime?.trim() ?? inspection.preferredTime,
         preferredLocation: dto.preferredLocation?.trim() ?? inspection.preferredLocation,
         notes: dto.notes?.trim() ?? inspection.notes,
-      },
-      include: { insurer: { select: { name: true } }, photos: { select: { slot: true, documentId: true } } },
+      });
+      return { ...changed, insurerName: inspection.insurerName };
     });
 
-    return this.serialise(updated);
+    return toInspectionResponse(updated, photos);
   }
 
-  private async serialise(
-    inspection: Awaited<ReturnType<InspectionsService['loadRow']>>,
-  ) {
-    return {
-      id: inspection.id,
-      status: toContract.inspectionStatus(inspection.status),
-      insurer: inspection.insurer?.name ?? null,
-      vehiclePlate: inspection.vehiclePlate,
-      vehicleLabel: inspection.vehicleLabel,
-      preferredDate: inspection.preferredDate?.toISOString() ?? null,
-      preferredTime: inspection.preferredTime,
-      preferredLocation: inspection.preferredLocation,
-      scheduledDate: inspection.scheduledDate?.toISOString() ?? null,
-      inspectorName: inspection.inspectorName,
-      inspectorPhone: inspection.inspectorPhone,
-      location: inspection.location,
-      notes: inspection.notes,
-      createdAt: inspection.createdAt.toISOString(),
-      photos: await Promise.all(
-        inspection.photos.map(async (photo) => ({
-          slot: photo.slot,
-          document: await this.documents.record(photo.documentId),
-        })),
-      ),
-    };
-  }
-
-  private loadRow(id: string, customerId: string) {
-    return this.prisma.inspection.findFirstOrThrow({
-      where: { id, customerId },
-      include: { insurer: { select: { name: true } }, photos: { select: { slot: true, documentId: true } } },
-    });
+  private photoRecords(photos: PhotoRow[]): Promise<InspectionPhotoResponse[]> {
+    return Promise.all(
+      photos.map(async (photo) => ({ slot: photo.slot, document: await this.documents.record(photo.documentId) })),
+    );
   }
 }
