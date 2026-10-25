@@ -145,7 +145,11 @@ test('a paid quote needs the insurer certificate before it becomes an active pol
 
   // The demo paid quote is waiting for its certificate and is not yet a policy for the customer.
   await page.goto('/account');
-  await expect(page.getByText('Certificate being prepared')).toBeVisible();
+  await expect(page.getByText('Certificate being prepared').first()).toBeVisible();
+  await page.goto('/account?section=certificates');
+  await expect(page.getByText('QR-1789714666139', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preparing', { exact: true })).toBeVisible();
+  await page.goto('/account?section=policies');
   await expect(page.getByText('Policies you buy through InsurShield will appear here.')).toBeVisible();
 
   await page.goto('/insurer');
@@ -164,6 +168,9 @@ test('a paid quote needs the insurer certificate before it becomes an active pol
 
   await page.goto('/account');
   await expect(page.getByText('Certificate being prepared')).toHaveCount(0);
+  await page.goto('/account?section=certificates');
+  await expect(page.getByText('No paid quotes are waiting for a policy certificate.')).toBeVisible();
+  await page.goto('/account?section=policies');
   await expect(page.getByText('PA-2026-011293')).toBeVisible();
   const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByRole('button', { name: /Policy certificate/ }).click()]);
   expect(popup).toBeTruthy();
