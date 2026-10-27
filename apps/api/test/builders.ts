@@ -21,7 +21,10 @@ import {
 export type Db = Database | Transaction;
 
 type Insert<T extends { $inferInsert: unknown }> = T['$inferInsert'];
-export type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'];
+type KeycloakLinked<R> = Omit<R, 'keycloakId'> & { keycloakId: string };
+export type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'] extends { keycloakId: string | null }
+  ? KeycloakLinked<T['$inferSelect']>
+  : T['$inferSelect'];
 
 const DAY_MS = 86_400_000;
 
@@ -39,6 +42,14 @@ function daysFromNow(days: number): Date {
   return new Date(Date.now() + days * DAY_MS);
 }
 
+function withKeycloakId<T extends { keycloakId: string | null }>(row: T): KeycloakLinked<T> {
+  const { keycloakId } = row;
+  if (keycloakId === null) {
+    throw new Error('A built customer or staff row has no keycloakId.');
+  }
+  return { ...row, keycloakId };
+}
+
 export async function buildCustomer(db: Db, overrides: Partial<Insert<typeof customers>> = {}) {
   const tag = unique('customer');
   const [customer] = await db
@@ -51,7 +62,7 @@ export async function buildCustomer(db: Db, overrides: Partial<Insert<typeof cus
       ...overrides,
     })
     .returning();
-  return customer;
+  return withKeycloakId(customer);
 }
 
 export async function buildStaffUser(db: Db, overrides: Partial<Insert<typeof staffUsers>> = {}) {
@@ -66,7 +77,7 @@ export async function buildStaffUser(db: Db, overrides: Partial<Insert<typeof st
       ...overrides,
     })
     .returning();
-  return staff;
+  return withKeycloakId(staff);
 }
 
 export interface InsurerOverrides {

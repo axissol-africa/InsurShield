@@ -14,6 +14,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  varchar,
   type AnyPgColumn,
   type PgTableExtraConfigValue,
   type UpdateDeleteAction,
@@ -97,6 +98,107 @@ const moneyCheck = (table: string, column: AnyPgColumn) =>
 const rateCheck = (table: string, column: AnyPgColumn) =>
   check(`${table}_${column.name}_check`, withinBounds(column, MIN_RATE_BPS, MAX_RATE_BPS));
 
+// Better Auth's models, with exactly the fields it declares for the configured options.
+
+export const authUsers = pgTable(
+  'auth_users',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    emailVerified: boolean('emailVerified').notNull().default(false),
+    image: text('image'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('auth_users_email_key').on(t.email),
+    check('auth_users_email_check', sql`${t.email} = lower(${t.email})`),
+  ],
+);
+
+export const authSessions = pgTable(
+  'auth_sessions',
+  {
+    id: id(),
+    expiresAt: timestamptz('expiresAt').notNull(),
+    token: text('token').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    ipAddress: text('ipAddress'),
+    userAgent: text('userAgent'),
+    userId: uuid('userId').notNull(),
+  },
+  (t) => [
+    uniqueIndex('auth_sessions_token_key').on(t.token),
+    index('auth_sessions_userId_idx').on(t.userId),
+    fk('auth_sessions_userId_fkey', [t.userId], [authUsers.id], 'cascade'),
+  ],
+);
+
+export const authAccounts = pgTable(
+  'auth_accounts',
+  {
+    id: id(),
+    accountId: text('accountId').notNull(),
+    providerId: text('providerId').notNull(),
+    userId: uuid('userId').notNull(),
+    accessToken: text('accessToken'),
+    refreshToken: text('refreshToken'),
+    idToken: text('idToken'),
+    accessTokenExpiresAt: timestamptz('accessTokenExpiresAt'),
+    refreshTokenExpiresAt: timestamptz('refreshTokenExpiresAt'),
+    scope: text('scope'),
+    password: text('password'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('auth_accounts_providerId_accountId_key').on(t.providerId, t.accountId),
+    index('auth_accounts_userId_idx').on(t.userId),
+    fk('auth_accounts_userId_fkey', [t.userId], [authUsers.id], 'cascade'),
+  ],
+);
+
+export const authVerifications = pgTable(
+  'auth_verifications',
+  {
+    id: id(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: timestamptz('expiresAt').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('auth_verifications_identifier_idx').on(t.identifier)],
+);
+
+export const authRateLimits = pgTable(
+  'auth_rate_limits',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    count: integer('count').notNull(),
+    lastRequest: bigint('lastRequest', { mode: 'number' }).notNull(),
+  },
+  (t) => [uniqueIndex('auth_rate_limits_key_key').on(t.key)],
+);
+
+// Not a Better Auth model: Better Auth prunes auth_rate_limits rows after its longest window.
+export const authSignInFailures = pgTable(
+  'auth_sign_in_failures',
+  {
+    emailKey: varchar('emailKey', { length: 254 }).primaryKey(),
+    attempts: integer('attempts').notNull(),
+    windowStartedAt: timestamptz('windowStartedAt').notNull(),
+    lockedUntil: timestamptz('lockedUntil'),
+  },
+  (t) => [
+    index('auth_sign_in_failures_windowStartedAt_idx').on(t.windowStartedAt),
+    check('auth_sign_in_failures_emailKey_check', sql`${t.emailKey} = lower(${t.emailKey})`),
+  ],
+);
+
 export const customers = pgTable(
   'customers',
   {
@@ -108,13 +210,16 @@ export const customers = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: timestamptz('deletedAt'),
-    keycloakId: text('keycloakId').notNull(),
+    keycloakId: text('keycloakId'),
+    userId: uuid('userId'),
   },
   (t) => [
     uniqueIndex('customers_email_key').on(t.email),
     uniqueIndex('customers_phone_key').on(t.phone),
     uniqueIndex('customers_keycloakId_key').on(t.keycloakId),
+    uniqueIndex('customers_userId_key').on(t.userId),
     index('customers_deletedAt_idx').on(t.deletedAt),
+    fk('customers_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
   ],
 );
 
@@ -147,13 +252,16 @@ export const staffUsers = pgTable(
     lastLoginAt: timestamptz('lastLoginAt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
-    keycloakId: text('keycloakId').notNull(),
+    keycloakId: text('keycloakId'),
+    userId: uuid('userId'),
   },
   (t) => [
     uniqueIndex('staff_users_email_key').on(t.email),
     uniqueIndex('staff_users_keycloakId_key').on(t.keycloakId),
+    uniqueIndex('staff_users_userId_key').on(t.userId),
     index('staff_users_insurerId_idx').on(t.insurerId),
     fk('staff_users_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('staff_users_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
   ],
 );
 
