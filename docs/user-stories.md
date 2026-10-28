@@ -1,8 +1,8 @@
 # InsurShield MVP User Stories
 
 **Document status:** Draft for backlog refinement and stakeholder review  
-**Version:** 0.10  
-**Date:** 26 August 2026  
+**Version:** 0.11  
+**Date:** 28 October 2026  
 **Classification:** Commercial-in-confidence  
 **Related documents:** InsurShield Product Brief; InsurShield MVP Requirements Specification
 
@@ -20,17 +20,18 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 
 - **Must:** Required for MVP acceptance unless removed through approved change control.
 - **Should:** Valuable for MVP completeness but may be scheduled subject to dependency and capacity approval.
+- **Status: Deferred:** Outside the MVP; the priority applies when the scope returns.
 - **Requirement references:** Trace each story to the MVP Requirements Specification.
 - **Acceptance criteria:** Minimum observable behaviour required for product acceptance; security, audit, performance, and accessibility requirements also apply.
 
 ## 3. Backlog summary
 
-| User type | Stories | Must | Should |
-|---|---:|---:|---:|
-| Customer | 26 | 25 | 1 |
-| Insurance vendor | 14 | 12 | 2 |
-| InsurShield administrator | 16 | 15 | 1 |
-| **Total** | **56** | **52** | **4** |
+| User type | Stories | Must | Should | Deferred |
+|---|---:|---:|---:|---:|
+| Customer | 26 | 25 | 1 | 0 |
+| Insurance vendor | 14 | 11 | 2 | 1 |
+| InsurShield administrator | 16 | 14 | 1 | 1 |
+| **Total** | **56** | **50** | **4** | **2** |
 
 ## 4. Customer user stories
 
@@ -55,13 +56,13 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 **Priority:** Must  
 **Requirement references:** FR-CUS-003, FR-TRK-002, NFR-SEC-003
 
-**User story:** As a customer, I want to verify my phone or another approved identity factor so that I can securely access my quotes, policies, claims, NCD applications, and inspections.
+**User story:** As a customer, I want to verify my email address so that I can securely access my quotes, policies, claims, NCD applications, and inspections.
 
 **Acceptance criteria:**
 
-- Given I enter an identifier linked to an eligible record, when I request verification, then an expiring single-purpose OTP is sent through the approved channel.
-- Given I enter the correct unexpired OTP within the allowed attempts, when I submit it, then a time-limited customer session is created.
-- Given I enter an incorrect, expired, or reused OTP, when I submit it, then access is denied without revealing whether another customer's record exists.
+- Given I register with my email, when I submit, then a single-purpose verification link is sent and protected records stay closed until I use it.
+- Given I sign in with a verified email and correct password, then a time-limited session is created.
+- Given a wrong password, an expired or reused link, or an unknown email, then access is denied without revealing whether an account exists.
 - Given attempt or resend limits are exceeded, when I try again, then the platform applies the approved cooldown or recovery process.
 
 #### US-CUS-003 - Accept privacy, terms, and declarations
@@ -140,28 +141,28 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 **Priority:** Must  
 **Requirement references:** FR-VEH-007, FR-PRM-001
 
-**User story:** As a customer, I want to answer only the driver and risk questions relevant to my selected insurers so that quotations are accurate without unnecessary data collection.
+**User story:** As a customer, I want to answer only the driver and risk questions relevant to the products I choose so that quotations are accurate without unnecessary data collection.
 
 **Acceptance criteria:**
 
-- Given my cover, vehicle, usage, and selected insurers are known, when risk questions load, then only the approved applicable questions are displayed.
-- Given required information includes regular driver, licence history, prior claims, parking/location, security, or annual usage, when I leave it incomplete, then the relevant insurer request cannot be submitted.
+- Given I have answered the common questions and chosen my products, when the extra questions load, then only the questions those products require are displayed, each asked once.
+- Given required information includes regular driver, licence history, prior claims, parking/location, security, or annual usage, when I leave it incomplete, then the request cannot be submitted until the products that need it are answered or removed.
 - Given different insurers require different questions, when I provide a shared answer, then it is reused without asking me repeatedly.
 - Given I change an answer that affects eligibility or premium, when I continue, then affected quotations are recalculated or re-requested.
 
-#### US-CUS-009 - View and select eligible insurers
+#### US-CUS-009 - View and select eligible insurer products
 
 **Priority:** Must  
 **Requirement references:** FR-ELG-001, FR-ELG-002, FR-ELG-003
 
-**User story:** As a customer, I want to see and select eligible approved insurers so that I can request competitive quotations from providers able to cover my risk.
+**User story:** As a customer, I want to see and select eligible approved insurer products so that I can request competitive quotations from providers able to cover my risk.
 
 **Acceptance criteria:**
 
 - Given my quote details are complete, when eligibility is evaluated, then only active approved products that support my cover, vehicle, usage, and risk are displayed.
-- Given insurer cards are shown, when I review them, then product, indicative information where permitted, key benefits, inspection requirement, and NCD eligibility use consistent fields.
-- Given I select insurers, when the count is between one and five, then I may continue.
-- Given I attempt to select a sixth insurer, when the limit is reached, then the platform prevents it and explains the limit.
+- Given product cards are shown, when I review them, then product, indicative information where permitted, key benefits, inspection requirement, and NCD eligibility use consistent fields.
+- Given I select products, when the count is between one and five, then I may continue.
+- Given I attempt to select a sixth product, when the limit is reached, then the platform prevents it and explains the limit.
 
 #### US-CUS-010 - Save and resume a quote
 
@@ -188,7 +189,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 
 **Acceptance criteria:**
 
-- Given I reach quote details, when I submit the form, then required contact, start date, duration, vehicle, cover, usage, and selected-insurer information is present.
+- Given I reach quote details, when I submit the form, then required contact, start date, duration, vehicle, cover, usage, and selected-product information is present.
 - Given I select a start date, when it is outside the permitted range, then it is rejected with a clear message.
 - Given I select a duration, when an insurer/product does not support it, then that option is not offered for that request.
 - Given I change date or duration, when premiums are refreshed, then period and expiry information remain consistent.
@@ -198,13 +199,13 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 **Priority:** Must  
 **Requirement references:** FR-QTE-004, FR-QTE-005, FR-INS-003, NFR-SEC-006
 
-**User story:** As a customer, I want to upload the documents and images required for my selected insurers so that my quote can be assessed without avoidable follow-up.
+**User story:** As a customer, I want to upload the documents and images required for the products I chose so that my quote can be assessed without avoidable follow-up.
 
 **Acceptance criteria:**
 
 - Given document rules are known, when the upload step opens, then mandatory and optional documents are clearly distinguished by insurer/product.
 - Given I upload a permitted file, when processing completes, then type, size, malware, integrity, and readability checks return an understandable result.
-- Given mandatory evidence is missing or rejected, when I submit, then only the affected insurer or request is blocked according to the approved rule.
+- Given mandatory evidence is missing or rejected, when I submit, then the product that needs it is named, and I upload it or remove that product before submitting.
 - Given I replace a document, when the new version is accepted, then the prior version remains controlled according to retention/audit rules.
 
 #### US-CUS-013 - Submit and track a quote request
@@ -212,14 +213,14 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 **Priority:** Must  
 **Requirement references:** FR-QTE-006, FR-QTE-007, FR-TRK-001
 
-**User story:** As a customer, I want to submit one request to my selected insurers and track each response so that I know what is ready and what still requires action.
+**User story:** As a customer, I want to submit one request for the products I chose and track each response so that I know what is ready and what still requires action.
 
 **Acceptance criteria:**
 
-- Given the quote is complete, when I submit, then one customer reference and one idempotent request per selected insurer are created.
-- Given submission succeeds, when acknowledgement is returned, then I see the reference, current status, expected next step, and tracking method.
+- Given the quote is complete, when I submit, then one customer reference and one idempotent request per insurer of the chosen products are created.
+- Given submission succeeds, when acknowledgement is returned, then I see the reference, current status and expected next step, and the request appears in my account.
 - Given insurers respond at different times, when I track the request, then ready, pending, declined, timed-out, inspection-required, more-information, and failed states are distinguishable.
-- Given message delivery fails, when the request exists, then the reference remains recoverable and authorised retry is available.
+- Given message delivery fails, when the request exists, then the request stays in my account with its reference and the email is retried.
 
 #### US-CUS-014 - Compare quotations
 
@@ -232,7 +233,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 
 - Given at least one quote is ready, when I open comparison, then insurer/product, final premium, premium components, cover, excess, benefits, exclusions/conditions, inspection status, validity, and terms are shown.
 - Given multiple quotes are ready, when I sort or filter, then I can use final price, cover, excess, inspection, selected benefits/add-ons, and status.
-- Given some selected insurers are pending, when I compare ready quotes, then pending responses remain visible without blocking selection unless the approved rule requires waiting.
+- Given some chosen products are pending, when I compare ready quotes, then pending responses remain visible without blocking selection unless the approved rule requires waiting.
 - Given a value is unavailable, when the comparison is rendered, then it is shown as unavailable rather than replaced by a misleading default.
 
 #### US-CUS-015 - Review add-ons, conditions, and recommendation basis
@@ -258,7 +259,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 
 **Acceptance criteria:**
 
-- Given a valid quote is selected, when payment opens, then the itemised premium, taxes/fees, add-ons, and optional road-tax amount equal the authoritative total.
+- Given a valid quote is selected, when payment opens, then the itemised premium, taxes/fees, and add-ons equal the authoritative total.
 - Given I choose an approved payment method, when I authorise payment, then raw card credentials are handled by the approved provider and are not stored by InsurShield.
 - Given payment is pending, failed, cancelled, duplicated, or delayed, when provider status changes, then the platform shows the correct state without duplicate charge or policy.
 - Given the quote expires before payment authorisation, when I attempt to pay, then payment is blocked and the refresh/requote path is shown.
@@ -327,7 +328,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 #### US-CUS-021 - Request policy service or support
 
 **Priority:** Should  
-**Requirement references:** FR-POL-003, FR-SUP-001, FR-SUP-002, FR-SUP-003
+**Requirement references:** FR-POL-003, FR-SUP-001, FR-SUP-002
 
 **User story:** As a policyholder, I want to request document replacement, policy changes, cancellation, or assistance so that I have a traceable servicing path.
 
@@ -353,7 +354,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given claim type is selected, when the form loads, then the required incident, claimant, police, loss, and evidence fields follow the approved claim rules.
 - Given coverage mismatch, policy ineligibility, or late reporting applies, when I submit, then the approved block/manual-review/late-reason process is enforced without losing my data.
 - Given submission succeeds, when the claim is created, then a reference, initial status, responsible insurer, target date, and timeline event are shown and notified.
-- Given the insurer requests information or changes status, when I track the claim, then I can view the timeline and exchange permitted messages/documents.
+- Given the insurer requests information or changes status, when I track the claim, then I can view the timeline and the insurer's updates.
 
 #### US-CUS-023 - Apply for and use NCD
 
@@ -383,7 +384,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given photo capture is required, when I upload front, rear, left, right, dashboard/mileage, or engine-bay evidence, then file controls and slot completeness are enforced.
 - Given inspection status changes, when I track it, then schedule, current state, assigned inspector where permitted, report status, failure/reinspection action, and notifications are visible.
 
-### Epic C6 - Ratings, reviews, badges, and sponsored content
+### Epic C6 - Ratings, reviews, and badges
 
 #### US-CUS-025 - Rate and review an insurer
 
@@ -400,19 +401,17 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given I edit or withdraw my review within policy, when approved, then version/history, public display, and aggregate rating update correctly.
 - Given my review is rejected/removed or disputed, when I view status, then the approved reason and appeal process are available.
 
-#### US-CUS-026 - Understand performance badges and sponsored placement
+#### US-CUS-026 - Understand performance badges
 
 **Priority:** Must  
-**Requirement references:** FR-BDG-001, FR-ADS-001, FR-ADS-002, BR-012, BR-014, BR-015
+**Requirement references:** FR-BDG-001, BR-012, BR-014
 
-**User story:** As a customer, I want to understand insurer performance badges and recognise sponsored content so that I can distinguish measured performance, paid visibility, and objective quote comparison.
+**User story:** As a customer, I want to understand insurer performance badges so that I can distinguish measured performance from objective quote comparison.
 
 **Acceptance criteria:**
 
 - Given an insurer displays a performance badge, when I open its explanation, then metric, period, data source, threshold, sample/evidence basis, award/expiry, and disclaimer are available.
 - Given a badge lacks the approved evidence threshold or has expired/suspended, when the profile/comparison loads, then the badge is not displayed as active.
-- Given a listing, banner, or placement is paid, when it is shown, then an accessible Sponsored/Advertisement label and advertiser identity are clearly visible.
-- Given sponsored content links to a profile/product, when I follow it, then the destination is approved and any targeting explanation required by policy is available.
 - Given I compare quotations, when objective sorting/ranking is applied, then sponsorship does not change quote values, eligibility, or undisclosed organic order.
 
 ## 5. Insurance vendor user stories
@@ -519,19 +518,19 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given a renewal request is received, when risk changes are reviewed, then I can requote, request information/inspection, decline, or issue according to approved rules.
 - Given duplicate issuance/replay is attempted, when idempotency is checked, then no second policy is created.
 
-#### US-VEN-008 - Process claims and customer messages
+#### US-VEN-008 - Process claims and post updates
 
 **Priority:** Must  
 **Requirement references:** FR-IP-004, FR-IP-009, FR-CLM-001 to FR-CLM-007
 
-**User story:** As a claims officer, I want to review evidence, update claim status, and communicate with the claimant so that claims progress through an approved, auditable process.
+**User story:** As a claims officer, I want to review evidence, update claim status, and post updates the claimant sees so that claims progress through an approved, auditable process.
 
 **Acceptance criteria:**
 
-- Given a claim belongs to my insurer, when I open it, then policy/cover, incident, evidence, timeline, messages, SLA, and current action are visible.
+- Given a claim belongs to my insurer, when I open it, then policy/cover, incident, evidence, timeline, updates, SLA, and current action are visible.
 - Given additional information is required, when I request it, then required evidence, due date, status, and customer notification are recorded.
 - Given I change status, when I submit, then only an approved transition is allowed and actor, reason, note, time, and notification are recorded.
-- Given I send internal notes or customer messages, when saved, then visibility rules prevent internal content from reaching the customer.
+- Given I add internal notes or customer-visible updates, when saved, then internal notes never reach the customer.
 
 #### US-VEN-009 - Review NCD applications and issue codes
 
@@ -591,7 +590,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given finance access and the commercial model is active, when I view finance, then premium, fees/commission, settlement, reconciliation, and exceptions are available.
 - Given I export a report, when generated, then access, filters, generation time, and export event are recorded.
 
-### Epic V4 - Public profile, reputation, and promotion
+### Epic V4 - Public profile, reputation, and promotion (promotion after the MVP, DEC-015)
 
 #### US-VEN-013 - Manage insurer profile and respond to reviews
 
@@ -610,7 +609,8 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 #### US-VEN-014 - Submit and monitor sponsored campaigns
 
 **Priority:** Must  
-**Requirement references:** FR-IP-016, FR-ADS-001, FR-ADS-002
+**Status:** Deferred past the MVP (DEC-015)  
+**Requirement references:** FR-IP-016, DEC-015
 
 **User story:** As an insurer marketing user, I want to submit sponsored listings and advertising campaigns so that approved products gain paid visibility with transparent disclosure and measurable performance.
 
@@ -746,7 +746,7 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 **Priority:** Must  
 **Requirement references:** FR-ADM-011, FR-PAY-003, NFR-REL-003
 
-**User story:** As a finance/operations administrator, I want to reconcile payments, policies, road tax, fees/commission, and vendor settlement so that financial and policy records remain consistent.
+**User story:** As a finance/operations administrator, I want to reconcile payments, policies, fees/commission, and vendor settlement so that financial and policy records remain consistent.
 
 **Acceptance criteria:**
 
@@ -755,18 +755,18 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given a manual adjustment is permitted, when submitted, then required approval, reason, source evidence, before/after values, and audit are recorded.
 - Given settlement is generated, when finalised, then included transactions, fees/commission, totals, period, approval, and export are reproducible.
 
-#### US-ADM-010 - Recover customer tracking access
+#### US-ADM-010 - Help a customer regain access
 
 **Priority:** Must  
 **Requirement references:** FR-ADM-005
 
-**User story:** As an authorised support user, I want to recover and resend a customer's tracking access so that a verified customer can continue without exposing their token.
+**User story:** As an authorised support user, I want to send a verified customer a password-reset email so that they can regain access without anyone seeing a reset token.
 
 **Acceptance criteria:**
 
-- Given a customer requests recovery, when I verify approved identity information, then the matching request can be selected without displaying the existing secret token.
-- Given resend is allowed, when I choose an approved channel, then a new/valid protected link is sent and delivery status is recorded.
-- Given rate limit, fraud flag, or identity mismatch applies, when I attempt resend, then the action is blocked or escalated.
+- Given a customer requests recovery, when I verify approved identity information, then I can send the customer a password-reset email without seeing any token.
+- Given sending is allowed, then the reset email is sent, rate-limited, and actor, reason and delivery status are recorded.
+- Given rate limit, fraud flag, or identity mismatch applies, when I attempt to send a reset, then the action is blocked or escalated.
 - Given recovery is completed, when audited, then actor, customer/request, reason, channel, result, and time are available.
 
 ### Epic A4 - Content, support, compliance, and insight
@@ -785,19 +785,16 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 - Given a notification template is mapped to an event, when that event occurs, then correct version, consent rule, channel, and protected-link behaviour apply.
 - Given delivery exceptions occur, when viewed, then retry state, reason, owner, and affected event are traceable.
 
-#### US-ADM-012 - Manage complaints and support escalations
+#### US-ADM-012 - Link support to InsurShield records
 
 **Priority:** Must  
-**Requirement references:** FR-ADM-012, FR-SUP-003
+**Requirement references:** FR-ADM-012
 
-**User story:** As a support/operations administrator, I want to manage customer complaints and insurer escalations so that issues have ownership, SLA, communication, and closure evidence.
+**User story:** As a support/operations administrator, I want to find the InsurShield records a help-desk ticket refers to so that support can act on the right record, and every support action in InsurShield is audited.
 
 **Acceptance criteria:**
 
-- Given a complaint/support item is created, when saved, then category, customer, related record, insurer, severity, SLA, and owner are captured.
-- Given the issue is escalated to an insurer or internal specialist, when assigned, then required action, due date, messages, and status are visible to authorised parties.
-- Given internal notes are added, when the customer views the item, then internal-only content is not exposed.
-- Given an item is resolved/closed, when closure occurs, then resolution, customer communication, outcome, reason, and dates are recorded.
+- Given a customer contacts support, when the help desk ticket is raised, then it quotes the InsurShield record reference, and any support action in InsurShield is audited.
 
 #### US-ADM-013 - Review audit, privacy, and retention activity
 
@@ -845,7 +842,8 @@ The stories define product behaviour and acceptance, not sprint commitments. The
 #### US-ADM-016 - Approve and govern sponsored placements
 
 **Priority:** Must  
-**Requirement references:** FR-ADM-019, FR-ADS-001, FR-ADS-002, BR-015
+**Status:** Deferred past the MVP (DEC-015)  
+**Requirement references:** FR-ADM-019, DEC-015
 
 **User story:** As an authorised advertising/commercial administrator, I want to approve and govern sponsored campaigns so that paid visibility is compliant, transparent, limited, measurable, and commercially reconcilable.
 
@@ -871,15 +869,17 @@ The following enablers support all three user types and should be planned alongs
 - EN-008: Automated unit, calculation, contract, integration, end-to-end, security, accessibility, performance, and recovery testing.
 - EN-009: Customer account, profile, portfolio, device/session security, recovery, and data-lifecycle services.
 - EN-010: Review eligibility, moderation, abuse detection, rating calculation, badge calculation, appeals, and public-reputation publishing.
-- EN-011: Sponsored campaign, inventory, placement, disclosure, targeting/frequency, event measurement, attribution, billing, and ranking-separation services.
+- EN-011: Sponsored campaign, inventory, placement, disclosure, targeting/frequency, event measurement, attribution, billing, and ranking-separation services. Deferred past the MVP (DEC-015).
 
 ## 8. Recommended delivery slices
+
+The roadmap's batches replace the slices as the delivery order.
 
 ### Slice 0 - Foundations and controlled catalogue
 
 - Identity, roles, tenancy, audit, persistence, documents, events, notifications, and observability.
 - Administrator insurer onboarding, vendor access, product/rule submission, approval, and comparison taxonomy.
-- Customer account/profile/portfolio foundations and administrator review/rating/badge/sponsorship governance.
+- Customer account/profile/portfolio foundations and administrator review/rating/badge governance; sponsorship governance after the MVP.
 - RTSA, insurer, payment, messaging, and document-provider sandbox contracts.
 
 ### Slice 1 - Quote to policy
@@ -891,15 +891,15 @@ The following enablers support all three user types and should be planned alongs
 
 ### Slice 2 - Customer account, portfolio, reputation, and renewal
 
-- Customer registration/sign-in/recovery, profile, portfolio, notification centre, document access, renewal, service requests, verified reviews, and sponsored-content disclosure.
-- Vendor renewal processing, public profile, review responses/appeals, sponsored campaigns, and basic reports.
-- Administrator content, support, review moderation, rating/badge methodology, sponsored placement, and exception management.
+- Customer registration/sign-in/recovery, profile, portfolio, notification centre, document access, renewal, service requests, and verified reviews; sponsored-content disclosure after the MVP.
+- Vendor renewal processing, public profile, review responses/appeals, and basic reports; sponsored campaigns after the MVP.
+- Administrator content, support, review moderation, rating/badge methodology, and exception management; sponsored placement after the MVP.
 
 ### Slice 3 - Claims, NCD, and inspections
 
 - Customer claim, NCD, and inspection journeys.
 - Vendor claims, NCD, and inspection queues.
-- Administrator complaint, audit/privacy, reporting, and manual-review workflows.
+- Administrator audit/privacy, reporting, and manual-review workflows; the complaint workflow after the MVP.
 
 ## 9. Definition of Ready
 
@@ -932,9 +932,9 @@ The following decisions affect story refinement and estimation:
 4. Comprehensive/TPO, usage, duration, excess, and rating rules.
 5. Quote authority, response SLA, expiry, and partial-response behaviour.
 6. NCD scale, portability, validity, and use rules.
-7. RTSA ownership and road-tax service scope.
+7. RTSA ownership (road tax after the MVP).
 8. Payment providers, ZMW/multi-currency, settlement, refunds, and commission.
 9. Customer account registration, authentication, recovery, profile, portfolio history, service-request, retention, and data-lifecycle scope.
-10. Claims, inspections, support/live chat, privacy/retention, and regulatory reporting rules.
+10. Claims, inspections, help-desk record references, privacy/retention, and regulatory reporting rules.
 11. Review eligibility, moderation, prohibited content, appeals, rating calculation, insurer responses, performance metrics, badge thresholds, minimum sample, and display period.
-12. Sponsored placement inventory, approval, disclosure, targeting/frequency, measurement/attribution, pricing/billing, complaints, and ranking separation.
+12. Sponsored placement scope (after the MVP, DEC-015).

@@ -1,8 +1,8 @@
 # InsurShield MVP Requirements Specification
 
 **Document status:** Draft for stakeholder review and sign-off  
-**Version:** 0.10  
-**Date:** 26 August 2026  
+**Version:** 0.11  
+**Date:** 28 October 2026  
 **Classification:** Commercial-in-confidence  
 **Related document:** InsurShield Product Brief
 
@@ -18,7 +18,7 @@ The MVP is a responsive, Zambia-focused web application supporting:
 
 - Comprehensive and Third-Party motor insurance.
 - Customer quote, comparison, purchase, policy, renewal, claim, NCD, inspection, tracking, and support journeys.
-- Full customer accounts, profiles, portfolios, verified ratings/reviews, insurer performance badges, and clearly disclosed sponsored content.
+- Full customer accounts, profiles, portfolios, verified ratings/reviews, and insurer performance badges.
 - Insurer quotation, claim, NCD, and basic product-management workflows.
 - InsurShield insurer/product administration, operational monitoring, content control, and audit.
 - RTSA, insurer, payment, messaging, document-storage, and policy-issuance integrations required for the agreed launch journey.
@@ -30,7 +30,7 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | Customer | Request quotes, compare, pay, receive policy, renew, claim, apply for NCD, request inspection, track requests | May access only records verified as belonging to the customer or an authorised representative. |
 | Insurer operator | Respond to quotes, manage insurer-owned claims and NCD applications | Restricted to the operator's insurer and assigned permissions. |
 | Insurer administrator | Maintain insurer users and submit products/rates for approval | Restricted to the operator's insurer; publication requires InsurShield approval. |
-| InsurShield support/operations | Assist customers, recover tracking links, monitor operational queues | Restricted by role and purpose; sensitive actions are audited. |
+| InsurShield support/operations | Assist customers, send password resets, monitor operational queues | Restricted by role and purpose; sensitive actions are audited. |
 | InsurShield administrator | Onboard insurers, approve products/rates, manage configuration and access | Privileged access with strong authentication and complete audit history. |
 | Compliance/reporting stakeholder | Review approved audit and reporting information | Read-only access to approved datasets and reports. |
 
@@ -42,7 +42,7 @@ The MVP is a responsive, Zambia-focused web application supporting:
 |---|---|---|---|
 | FR-CUS-001 | Must | The platform shall allow a customer to start a new quote, recover an existing quote, renew a policy, submit/track a claim, apply/track NCD, request/track an inspection, or contact an insurer. | Each journey is available from clear navigation and opens without exposing another customer's data. |
 | FR-CUS-002 | Must | The platform shall collect only the customer information required for the selected journey. | Required fields are defined by purpose; optional fields are clearly identified; validation errors are specific and accessible. |
-| FR-CUS-003 | Must | The platform shall verify the customer's phone or another approved identity factor before exposing protected records or completing sensitive actions. | Issued OTP/token is time-limited, single-purpose, rate-limited, and validated by the server. |
+| FR-CUS-003 | Must | The platform shall verify the customer's email address before exposing protected records or completing sensitive actions. | Verification and reset tokens are time-limited, single-purpose, rate-limited, and validated by the server. |
 | FR-CUS-004 | Must | The platform shall present approved privacy, terms, declarations, and data-sharing notices before the relevant action. | Acceptance records include notice type, version, actor/session, timestamp, and selected purpose. |
 | FR-CUS-005 | Must | A customer acting for a registered owner shall confirm authority to arrange insurance. | Quote submission is blocked until the authority declaration is accepted; evidence requirements follow the approved business rule. |
 
@@ -55,7 +55,6 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | FR-VEH-003 | Must | The platform shall provide a controlled manual-entry fallback when RTSA lookup is unavailable or permitted. | Required fields include registration where applicable, chassis/VIN, make, model, year, engine number where required, and colour; fallback use is recorded. |
 | FR-VEH-004 | Must | The customer shall declare the vehicle's current market value in ZMW. | Value must be positive and within configurable validation thresholds; customer accepts the approved valuation warning. |
 | FR-VEH-005 | Must | The customer shall select the vehicle's primary usage from approved private and commercial categories. | Eligibility and rating are recalculated when usage changes; unsupported uses cannot continue. |
-| FR-VEH-006 | Should | The platform shall offer road-tax renewal when RTSA confirms expiry and the service is enabled. | Authoritative amount and status are shown; customer explicitly opts in; payment and RTSA confirmation are reconciled. |
 | FR-VEH-007 | Must | The customer shall provide the approved driver and risk information required by participating insurers. | Dynamic questions capture regular driver, licence details/history, prior claims, vehicle parking/location, security devices, annual use, and other approved inputs without asking irrelevant questions. |
 
 ### 4.3 Eligibility, insurer selection, and declarations
@@ -63,7 +62,7 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | ID | Priority | Requirement | Acceptance criteria |
 |---|---|---|---|
 | FR-ELG-001 | Must | The platform shall determine eligible insurers/products using cover type, usage, vehicle details/value, regulatory rules, insurer status, and product rules. | Only active, approved, eligible products appear. |
-| FR-ELG-002 | Must | The customer shall be able to select one to five eligible insurers for a quote request. | Zero selections block submission; a sixth selection is not permitted. |
+| FR-ELG-002 | Must | The customer shall be able to select one to five eligible insurer products for a quote request. | Zero selections block submission; a sixth selection is not permitted. |
 | FR-ELG-003 | Must | The platform shall display insurer, product, indicative pricing where allowed, core benefits, inspection requirement, timing, and NCD eligibility before selection. | The same approved comparison fields are used for all insurers. |
 | FR-ELG-004 | Must | The customer shall individually acknowledge the approved quote declarations. | Submission is blocked until every mandatory declaration is accepted and recorded. |
 
@@ -71,13 +70,13 @@ The MVP is a responsive, Zambia-focused web application supporting:
 
 | ID | Priority | Requirement | Acceptance criteria |
 |---|---|---|---|
-| FR-QTE-001 | Must | The quote request shall capture customer contact details, vehicle, cover, usage, declared value, selected insurers, policy start date, duration, declarations, and supporting documents. | A complete request is stored as one versioned record with a unique reference. |
+| FR-QTE-001 | Must | The quote request shall capture customer contact details, vehicle, cover, usage, declared value, selected insurer products, policy start date, duration, declarations, and supporting documents. | A complete request is stored as one versioned record with a unique reference. |
 | FR-QTE-002 | Must | Supported policy durations shall be configurable by product and insurer. | The initial options may include 1, 2, 3, 6, 9, and 12 months; unsupported combinations cannot be selected. |
 | FR-QTE-003 | Must | Policy start date shall be today or a permitted future date. | Invalid/past dates are rejected; calculated end date follows the approved day-count rule. |
 | FR-QTE-004 | Must | White Book and driver's licence shall be collected when required by the approved product/KYC rules. | Missing mandatory documents block submission; uploaded files pass security and format checks. |
-| FR-QTE-005 | Must | Conditional documents and inspection photos shall be enforced using insurer/product rules. | The platform blocks only the affected insurer/product or the whole request according to the approved orchestration rule. |
-| FR-QTE-006 | Must | The platform shall distribute one idempotent quote request to each selected insurer. | Each insurer request has its own status, correlation ID, response deadline, retry record, and error state. |
-| FR-QTE-007 | Must | The customer shall receive a secure request reference and tracking link through an approved channel. | Delivery status is recorded; failed delivery can be retried or recovered by authorised staff. |
+| FR-QTE-005 | Must | Conditional documents and inspection photos shall be enforced using insurer/product rules. | Missing or rejected evidence blocks only the product that needs it; the customer uploads it or removes that product before submitting. |
+| FR-QTE-006 | Must | The platform shall distribute one idempotent quote request to the insurer of each selected product, one per insurer, listing that insurer's selected products. | Each insurer request has its own status, correlation ID, response deadline, retry record, and error state. |
+| FR-QTE-007 | Must | The customer shall receive a request reference in their account and by email. | Delivery status is recorded; failed delivery is retried. |
 | FR-QTE-008 | Must | The customer shall be able to save and resume an incomplete quote through secure recovery. | The latest complete draft is restored after identity verification; expired drafts follow the approved retention rule. |
 
 ### 4.5 Premium and NCD calculation
@@ -96,8 +95,8 @@ The MVP is a responsive, Zambia-focused web application supporting:
 
 | ID | Priority | Requirement | Acceptance criteria |
 |---|---|---|---|
-| FR-TRK-001 | Must | The platform shall show per-insurer quote status and allow partial quote availability. | Ready, pending, declined, timed out, inspection-required, and failed responses are distinguishable. |
-| FR-TRK-002 | Must | A customer shall recover a quote request using approved identifiers and OTP verification. | Invalid identifiers or OTPs reveal no request data; expiry and attempt limits are enforced. |
+| FR-TRK-001 | Must | The platform shall show the quote status of each selected product and allow partial quote availability. | Ready, pending, declined, timed out, inspection-required, and failed responses are distinguishable. |
+| FR-TRK-002 | Must | A signed-in customer shall see every quote request they made; access is recovered by password reset. | No other customer's request is shown; reset requests reveal no account data and are rate-limited. |
 | FR-CMP-001 | Must | Ready quotations shall be shown in a consistent comparison format. | Comparison includes insurer/product, final premium, premium components, benefits, exclusions/conditions, inspection status, validity period, and policy documents/terms. |
 | FR-CMP-002 | Must | Any recommendation, ranking, or badge shall use an approved and disclosed rule. | Sponsored placement is not mixed with objective ranking in MVP; ties and missing responses are handled consistently. |
 | FR-CMP-003 | Must | The customer shall select one valid quotation for payment. | Expired, withdrawn, declined, or superseded quotations cannot be purchased. |
@@ -109,12 +108,12 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | ID | Priority | Requirement | Acceptance criteria |
 |---|---|---|---|
 | FR-PAY-001 | Must | The platform shall support approved Zambian mobile-money providers and payment cards. | Payment details are tokenised by an approved provider; InsurShield does not store raw card data. |
-| FR-PAY-002 | Must | The payable amount shall equal the selected quote plus approved taxes, fees, and optional road-tax amount. | Customer sees an itemised total before authorisation; server and provider amounts match. |
+| FR-PAY-002 | Must | The payable amount shall equal the selected quote plus approved taxes and fees. | Customer sees an itemised total before authorisation; server and provider amounts match. |
 | FR-PAY-003 | Must | Payment processing shall be idempotent and reconciled. | Duplicate/replayed callbacks do not create duplicate charges or policies; failure and pending states are recoverable. |
 | FR-PAY-004 | Must | Policy issuance shall begin only after authoritative payment success and insurer acceptance. | Each successful purchase creates one policy or a controlled issuance exception requiring resolution/refund. |
 | FR-POL-001 | Must | The issued policy shall include policy number, insurer/product, customer, vehicle, cover, dates, premium, status, and approved policy document. | Customer can view and download the authoritative policy certificate. |
 | FR-POL-002 | Must | The customer shall receive policy/payment confirmation by approved channels. | Delivery status and retries are recorded; sensitive documents use protected links. |
-| FR-POL-003 | Should | A policyholder shall submit a service request for permitted policy changes, document replacement, cancellation, or insurer assistance. | Request is routed to the responsible insurer/operations queue with status, messages, and audit history; direct policy mutation is not permitted without insurer approval. |
+| FR-POL-003 | Should | A policyholder shall submit a service request for permitted policy changes, document replacement, cancellation, or insurer assistance. | Request is routed to the responsible insurer/operations queue with status, the insurer's updates, and audit history; direct policy mutation is not permitted without insurer approval. |
 
 ### 4.8 Renewal
 
@@ -131,9 +130,9 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | FR-CLM-001 | Must | A customer shall initiate a claim against a verified active/eligible policy. | Plate/policy lookup returns the responsible insurer and cover without exposing unrelated data. |
 | FR-CLM-002 | Must | Claim intake shall capture claimant/contact, policy/vehicle, claim type, incident date/location/description, estimated loss, police-report information, and required supporting evidence. | Requirements vary by claim type; incomplete mandatory evidence is clearly identified. |
 | FR-CLM-003 | Must | Coverage mismatch or policy ineligibility shall block or route the claim according to the approved rule. | Customer receives a clear reason and assistance path without silently losing entered data. |
-| FR-CLM-004 | Must | Claims outside the approved reporting window shall require the configured late-submission process. | Late reason is captured and insurer discretion/manual-review status is explicit. |
+| FR-CLM-004 | Must | Claims outside the approved reporting window shall require the configured late-submission process; a claim against an insurer no longer on InsurShield is refused with the help-desk contact. | Late reason is captured and insurer discretion/manual-review status is explicit. A refused claim shows the help-desk contact and the record reference, and the entered data is not lost. |
 | FR-CLM-005 | Must | Successful submission shall create a unique reference, responsible insurer, initial status, target date, and timeline event. | Customer receives the reference on-screen and through an approved channel. |
-| FR-CLM-006 | Must | Customer and authorised insurer operators shall exchange claim messages and documents. | Messages record sender role, time, delivery status, and attachment controls. |
+| FR-CLM-006 | Must | Authorised insurer operators shall record their claim reference and post status updates that the customer sees on the claim; the customer uploads the evidence an update asks for. | Updates and uploads record author role and time, attachment controls apply, and the customer is notified of each update. |
 | FR-CLM-007 | Must | Claim status shall follow the approved transition model. | Invalid transitions are rejected; every transition records actor, note, time, and notification. |
 
 ### 4.10 Vehicle inspections
@@ -151,7 +150,7 @@ The MVP is a responsive, Zambia-focused web application supporting:
 |---|---|---|---|
 | FR-SUP-001 | Must | The platform shall provide an approved insurer directory with call, WhatsApp, email, address, contact person, and operating hours where available. | Entries have an owner, verification date, active status, and controlled publication. |
 | FR-SUP-002 | Must | The platform shall provide approved FAQs and regulator/escalation information. | Content is versioned, reviewed, and may be unpublished when expired or unverified. |
-| FR-SUP-003 | Should | The platform shall support a customer-support ticket or managed-chat workflow if included in the signed MVP. | Scope must define intake, assignment, SLA, insurer escalation, messages, notes, closure, and reporting. |
+| FR-SUP-003 | Should | The platform shall support a customer-support ticket or managed-chat workflow if included in the signed MVP. Not included in the MVP (DEC-012: external help desk). | Scope must define intake, assignment, SLA, insurer escalation, messages, notes, closure, and reporting. |
 
 ### 4.12 Customer self-service and notifications
 
@@ -165,7 +164,7 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | FR-SELF-006 | Must | The customer shall manage an approved profile containing identity/contact, drivers, vehicles, communication preferences, security settings, and consent history. | Profile fields use purpose-based permissions; sensitive changes are re-verified and all changes are auditable. |
 | FR-SELF-007 | Must | The customer portfolio shall retain permitted historical quotes, policies, payments, renewals, claims, NCD applications, inspections, reviews, service requests, and documents. | Portfolio records are searchable/filterable, use approved retention rules, and link to the authoritative record/status. |
 
-### 4.13 Ratings, reviews, badges, and sponsored disclosure
+### 4.13 Ratings, reviews, and badges
 
 | ID | Priority | Requirement | Acceptance criteria |
 |---|---|---|---|
@@ -173,8 +172,6 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | FR-REV-002 | Must | The customer shall edit or withdraw a review within the approved policy and see moderation/appeal status. | Edit history is retained, published calculations refresh correctly, and removed content follows retention/legal rules. |
 | FR-REV-003 | Must | Public insurer ratings shall disclose the calculation method, review count, period, and verified-review basis. | Ratings are reproducible, meet minimum sample rules, and are not shown as statistically meaningful when thresholds are unmet. |
 | FR-BDG-001 | Must | Insurer performance badges shall use approved measurable criteria and defined periods. | Badge name, criteria, threshold, period, data source, minimum evidence, award/expiry, and disclaimer are available and auditable. |
-| FR-ADS-001 | Must | Sponsored listings, homepage advertising, and paid insurer placement shall be clearly labelled to customers. | Sponsored content is visually distinct, accessible, approved, time-bound, and never changes quote values, eligibility, or undisclosed objective ranking. |
-| FR-ADS-002 | Must | Customers shall be able to understand why sponsored content is shown and access the advertiser's approved profile/product page. | Disclosure, advertiser identity, destination, and applicable targeting explanation are available without exposing sensitive targeting data. |
 
 ## 5. Insurance vendor features and requirements
 
@@ -195,7 +192,6 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | FR-IP-013 | Should | Vendor finance users shall view approved commission, fee, settlement, and reconciliation records. | Records match the agreed commercial model and can be exported with access controls. |
 | FR-IP-014 | Must | Vendor administrators shall maintain an approved public insurer profile. | Brand, description, contacts, service information, products, licence/verification status, ratings, badges, and profile version follow admin approval and publication controls. |
 | FR-IP-015 | Must | Authorised vendor users shall respond publicly to eligible customer reviews and privately appeal moderation decisions. | Public responses are moderated, cannot reveal customer/policy data, preserve history, and are visibly identified as insurer responses. |
-| FR-IP-016 | Must | Vendor marketing users shall submit sponsored-listing and advertising campaigns for approval and view campaign performance. | Creative, destination, placement, dates, targeting, budget/commercial reference, disclosure, status, impressions, clicks, quote starts, and conversions follow approved access and reporting rules. |
 
 ## 6. Administrator features and requirements
 
@@ -205,21 +201,20 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | FR-ADM-002 | Must | Administrators shall approve and publish products, benefits, rates, NCD rules, inspection rules, documents, and validity periods. | Each published version has approver, effective dates, and rollback/history. |
 | FR-ADM-003 | Must | Administrators shall manage approved regulatory/platform rules through controlled configuration. | Two-person approval is required for high-risk financial or regulatory changes where agreed. |
 | FR-ADM-004 | Must | Administrators shall monitor operational status across quote, payment, policy, claim, NCD, inspection, and notification workflows. | Dashboard metrics link to traceable records and exception queues. |
-| FR-ADM-005 | Must | Authorised staff shall recover and resend customer tracking links after identity checks. | Resend is rate-limited, records actor/reason/channel, and never exposes the token in logs. |
+| FR-ADM-005 | Must | Authorised support staff shall send a customer a password-reset email after identity checks. | Sending is rate-limited, records actor, reason and channel, and never exposes the token in logs. |
 | FR-ADM-006 | Must | Administrators shall manage approved directory, FAQ, legal, and notification content. | Draft, review, publish, expire, and history states are available. |
 | FR-ADM-007 | Must | Administrators shall capture insurer licence/compliance evidence, approval status, effective date, and renewal/expiry date. | Expired, suspended, or unapproved insurers/products are automatically prevented from new customer presentation. |
 | FR-ADM-008 | Must | Administrators shall manage the canonical comparison taxonomy and insurer field mappings. | Price, cover, excess, exclusions, add-ons, documents, and conditions are normalised consistently across vendors. |
 | FR-ADM-009 | Must | Administrators shall manage platform roles, permissions, user status, and high-risk access reviews. | Privilege changes are approved and audited; dormant/terminated access is removed according to policy. |
 | FR-ADM-010 | Must | Administrators shall manage integration configuration and monitor RTSA, insurer, payment, messaging, document, and identity service health. | Current status, latency, failures, retries, callbacks, and exception ownership are visible; secrets are protected. |
-| FR-ADM-011 | Must | Administrators shall manage payment, policy, road-tax, insurer-response, notification, commission/fee, and settlement reconciliation queues. | Unmatched or failed transactions have owner, reason, ageing, evidence, and controlled resolution. |
-| FR-ADM-012 | Must | Administrators shall review customer complaints and escalations and route them to the responsible vendor or internal owner. | SLA, messages, internal notes, evidence, resolution, and closure reason are tracked. |
+| FR-ADM-011 | Must | Administrators shall manage payment, policy, insurer-response, notification, commission/fee, and settlement reconciliation queues. | Unmatched or failed transactions have owner, reason, ageing, evidence, and controlled resolution. |
+| FR-ADM-012 | Must | Customer complaints and escalations shall be handled in the approved external help desk; InsurShield shall give customers a contact entry point and staff the record references they need. | Every customer-facing record has a reference support can search; support actions in InsurShield are audited. |
 | FR-ADM-013 | Must | Administrators shall manage notification templates, events, channels, consent rules, and delivery exceptions. | Only approved active templates are sent; every send is traceable to event and template version. |
 | FR-ADM-014 | Must | Administrators shall access immutable audit history and approved operational/regulatory reports. | Filters and exports respect permissions and privacy controls; high-risk events cannot be edited or deleted. |
 | FR-ADM-015 | Should | Administrators shall manage privacy requests, retention holds, and approved deletion/anonymisation workflows. | Every request records identity verification, legal decision, affected records, action, and completion evidence. |
 | FR-ADM-016 | Should | Administrators shall manage fraud/risk flags and manual-review queues generated by approved rules. | Flags never make an unreviewed adverse decision; outcome, reviewer, reason, and evidence are recorded. |
 | FR-ADM-017 | Must | Administrators/moderators shall manage review eligibility, moderation, abuse/fraud flags, evidence, edits/removals, insurer responses, customer/vendor appeals, and publication status. | Every moderation action uses approved reasons, separation of duties where required, SLA, notification, and immutable history. |
 | FR-ADM-018 | Must | Administrators shall configure rating calculation and performance-badge methodology. | Metric definitions, sources, weights where permitted, minimum samples, windows, thresholds, recalculation, award/expiry, version, and disclosure are approved and reproducible. |
-| FR-ADM-019 | Must | Administrators shall approve, schedule, publish, pause, expire, and reconcile sponsored campaigns and placements. | Inventory limits, advertiser eligibility, creative/destination approval, disclosure, targeting, frequency, dates, measurement, commercial reference, and separation from objective ranking are enforced. |
 
 ## 7. Business rules requiring approval
 
@@ -233,13 +228,11 @@ The MVP is a responsive, Zambia-focused web application supporting:
 | BR-006 | NCD | Approved tiers, portability, issuing insurer, vehicle/policy binding, validity, use, and reversal. |
 | BR-007 | Inspection | Required/optional status, method, timing, blocking stage, report, failure, and reinspection. |
 | BR-008 | Claims | Reporting window, late submission, policy/coverage eligibility, evidence, states, and appeals. |
-| BR-009 | Road tax | Eligibility, authoritative amount, payment, RTSA confirmation, refund, and receipt. |
 | BR-010 | Renewal | Eligibility window, reminder schedule, repricing, inspections, and changed-risk data. |
 | BR-011 | Currency | ZMW-only MVP or approved multi-currency pricing, exchange rate, rounding, and settlement. |
 | BR-012 | Ranking | Objective comparison order, recommendation basis, sponsorship separation, and disclosure. |
 | BR-013 | Ratings and reviews | Eligible interactions, one-review rule, rating scale, edits/withdrawals, moderation, evidence, prohibited content, insurer response, appeals, publication, retention, and calculation. |
 | BR-014 | Performance badges | Metrics, data sources, thresholds, minimum sample, period, award/expiry, recalculation, disclosure, and suspension. |
-| BR-015 | Sponsored placement | Inventory, advertiser eligibility, creative, placement, targeting, labelling, frequency, dates, pricing/billing, measurement, ranking separation, and complaints. |
 
 ## 8. Workflow states
 
@@ -253,9 +246,9 @@ Exception states shall include: `Verification Required`, `Inspection Required`, 
 
 The baseline claim model is:
 
-`Submitted → Under Review → Additional Information Required → Approved → Settled`
+`Submitted → Received by Insurer → Under Review → Additional Information Required → Approved or Declined → Closed`. Settlement happens in the insurer's system; InsurShield shows the insurer's updates.
 
-`Rejected`, `Withdrawn`, `Closed`, and dispute/appeal handling must be approved before implementation. The final model shall define every permitted transition, role, side effect, SLA, and customer notification.
+`Withdrawn` and dispute/appeal handling must be approved before implementation; `Declined` replaces `Rejected`, and `Closed` is part of the model above. The final model shall define every permitted transition, role, side effect, SLA, and customer notification.
 
 ### 8.3 NCD application
 
@@ -273,20 +266,16 @@ The baseline claim model is:
 
 `Appeal Submitted`, `Under Appeal`, and `Reinstated` shall be included where approved.
 
-### 8.6 Sponsored campaign
-
-`Draft → Submitted → Under Review → Approved → Scheduled → Active → Paused | Completed | Rejected | Cancelled`
-
 ## 9. Integration requirements
 
 | Integration | MVP responsibility | Minimum acceptance |
 |---|---|---|
-| RTSA | Vehicle/ownership/registration verification and optional road-tax services | Authenticated contract, consent/legal basis, field mapping, availability/error states, audit, and reconciliation for paid services. |
+| RTSA | Vehicle/ownership/registration verification | Authenticated contract, consent/legal basis, field mapping, availability/error states, audit, and reconciliation for paid services. |
 | Insurer systems | Quote distribution/response, policy issuance, claims/NCD/inspection exchange where supported | Versioned contract, authentication, idempotency, timeout/retry, signed callbacks, correlation IDs, and manual fallback. |
 | Payment provider | Mobile money and card authorisation | Tokenisation, signed callbacks, idempotency, reconciliation, pending/failure/refund support, and settlement reporting. |
-| SMS/email | OTP, tracking, quote, payment, policy, claim, NCD, inspection, and renewal notices | Approved templates, consent, delivery receipts, retries, rate limits, and protected document links. |
+| SMS/email | Email verification, password reset, quote, payment, policy, claim, NCD, inspection, and renewal notices (email; SMS after the MVP) | Approved templates, consent, delivery receipts, retries, rate limits, and protected document links. |
 | Document storage | Customer uploads, insurer documents, policy certificates, claim and inspection evidence | Encryption, malware scanning, type/size validation, checksums, access control, signed links, retention, and deletion. |
-| Identity/authentication | Staff identity and customer verification | Secure sessions, MFA for staff, OTP/token controls for customers, role/tenant enforcement, and audit. |
+| Identity/authentication | Staff identity and customer verification | Secure sessions, MFA for staff, verification and reset token controls for customers, role/tenant enforcement, and audit. |
 
 ## 10. Data requirements
 
@@ -301,14 +290,13 @@ The MVP shall maintain authoritative records for:
 - Documents and evidence metadata.
 - Payment, settlement, reconciliation, refund, and provider references.
 - Policy and certificate.
-- Claim, timeline, evidence, messages, and decisions.
+- Claim, timeline, evidence, insurer updates, and decisions.
 - NCD application, decision, protected code, eligibility, and redemption.
 - Inspection, schedule, evidence, report, and status timeline.
 - Notification, template version, channel, destination, delivery, and retries.
 - Staff role/permission and immutable audit events.
 - Review eligibility, rating, review content, moderation, insurer response, appeals, calculation snapshots, and publication history.
 - Performance metric definitions, badge rules, awards, expiry, and evidence snapshots.
-- Sponsored campaign, creative, placement, disclosure, targeting rules, schedule, commercial reference, impressions, clicks, quote starts, conversions, and reconciliation.
 
 Data ownership, retention, residency, deletion, and reporting rules shall be approved before production release.
 
@@ -318,20 +306,20 @@ Data ownership, retention, residency, deletion, and reporting rules shall be app
 
 - NFR-SEC-001: All protected actions shall be authenticated and authorised server-side.
 - NFR-SEC-002: Staff access shall use MFA, least privilege, session expiry, lockout, and organisation tenancy.
-- NFR-SEC-003: Customer OTPs/tokens shall be random, expiring, rate-limited, single-purpose, and resistant to enumeration.
+- NFR-SEC-003: Customer verification and reset tokens shall be random, expiring, rate-limited, single-purpose, and resistant to enumeration.
 - NFR-SEC-004: Data shall be encrypted in transit and at rest using approved standards.
 - NFR-SEC-005: The platform shall not store raw payment-card credentials.
 - NFR-SEC-006: Uploads shall be validated, malware scanned, access controlled, and served using protected links.
 - NFR-SEC-007: Privileged, financial, consent, quote, policy, claim, NCD, inspection, and configuration actions shall be auditable.
 - NFR-SEC-008: Customer accounts shall support secure registration, password/passkey or approved authentication, verification, recovery, session/device control, rate limiting, and compromised-account response.
 - NFR-PRI-001: Privacy notices, legal basis/consent, sharing, retention, data-subject requests, and breach response shall comply with the approved Zambian legal and regulatory position.
-- NFR-TRU-001: Reviews, ratings, badges, and advertising shall implement abuse prevention, moderation, appeals, transparency, accessibility, and privacy-by-design controls.
+- NFR-TRU-001: Reviews, ratings, and badges shall implement abuse prevention, moderation, appeals, transparency, accessibility, and privacy-by-design controls.
 
 ### 11.2 Reliability and consistency
 
 - NFR-REL-001: Financial and external workflow operations shall be idempotent.
 - NFR-REL-002: Each asynchronous workflow shall expose pending, success, partial success, failure, timeout, retry, and manual-review states.
-- NFR-REL-003: Payment, policy, road-tax, and insurer responses shall be reconciled against provider records.
+- NFR-REL-003: Payment, policy, and insurer responses shall be reconciled against provider records.
 - NFR-REL-004: Invalid or stale state transitions shall be rejected.
 - NFR-REL-005: Backup, recovery, RPO, and RTO targets shall be approved before release.
 
@@ -364,7 +352,7 @@ The MVP may be accepted for production release only when:
 
 1. All Must requirements have passed agreed functional acceptance tests.
 2. Launch insurers, products, rates, rules, benefits, contacts, and policy documents are approved.
-3. Premium, NCD, date, tax/fee, road-tax, claim, and inspection rule matrices are approved and automated.
+3. Premium, NCD, date, tax/fee, claim, and inspection rule matrices are approved and automated.
 4. Staff routes and APIs enforce authentication, MFA, permissions, and insurer tenancy.
 5. Customer identity and recovery journeys resist enumeration, replay, brute force, and cross-customer access.
 6. Payment and policy issuance pass duplicate, delayed, failed, reversed, and reconciliation scenarios.
@@ -376,7 +364,6 @@ The MVP may be accepted for production release only when:
 12. Client/UAT sign-off and operational go-live approval are complete.
 13. Customer registration, sign-in, recovery, profile, portfolio, and cross-device tracking pass functional, privacy, security, and access-control tests.
 14. Verified-review eligibility, moderation, insurer response, appeals, rating calculations, badge calculations, and disclosure pass approved test scenarios.
-15. Sponsored content passes advertiser approval, placement, labelling, targeting, frequency, measurement, ranking-separation, billing/reconciliation, and complaint tests.
 
 ## 13. Out of scope for MVP
 
@@ -386,6 +373,9 @@ The MVP may be accepted for production release only when:
 - Regulator self-service dashboard and automated quarterly reporting.
 - Microinsurance products.
 - AI-driven recommendation or underwriting features.
+- Sponsored placements and paid promotion (deferred, DEC-015; FR-ADS-001, FR-ADS-002, FR-IP-016, FR-ADM-019, BR-015).
+- Road-tax renewal and payment (deferred, DEC-007; FR-VEH-006, BR-009).
+- Customer-support ticketing and live chat (external help desk, DEC-012; FR-SUP-003).
 
 ## 14. Assumptions and dependencies
 
@@ -401,21 +391,23 @@ The MVP may be accepted for production release only when:
 
 | Decision ID | Decision required | Owner | Due date | Approved outcome |
 |---|---|---|---|---|
-| DEC-001 | MVP channel: responsive web vs native applications | Client sponsor/Product owner |  |  |
+| DEC-001 | MVP channel: responsive web vs native applications | Client sponsor/Product owner |  | Responsive web; native apps after the MVP. |
 | DEC-002 | Launch insurers and motor products | Product owner |  |  |
-| DEC-003 | Regulatory premium-floor formula and discount ordering | Compliance/Product owner |  |  |
-| DEC-004 | Comprehensive/TPO and usage rating rules | Product owner/Insurers |  |  |
-| DEC-005 | Quote authority, SLA, expiry, and partial-response rules | Product owner/Insurers |  |  |
-| DEC-006 | Approved NCD scale and lifecycle | Product owner/Insurers |  |  |
-| DEC-007 | RTSA and road-tax integration scope | Product owner/Technical lead |  |  |
+| DEC-003 | Regulatory premium-floor formula and discount ordering | Compliance/Product owner |  | The server enforces the regulatory floor; the formula is still to be approved. |
+| DEC-004 | Comprehensive/TPO and usage rating rules | Product owner/Insurers |  | The insurer types the premium; InsurShield shows an estimate from approved rates and enforces the regulatory floor. The customer sees every product that covers them, each with an estimate, and sends one quote request to one to five products; each chosen insurer confirms or adjusts the price. Two products of one insurer may share a request: that insurer gets one delivery listing its chosen products and returns one quote per product version. Cover periods are 3, 6, 9 and 12 months, starting from today up to 60 days ahead. Rule values insurers have not supplied are admin-maintained, versioned and audited settings with provisional defaults; release is blocked while any is provisional. |
+| DEC-005 | Quote authority, SLA, expiry, and partial-response rules | Product owner/Insurers |  | Each chosen insurer confirms or adjusts the price of each chosen product within the quote reply deadline (an admin setting); quotes expire on the date the insurer sets; responses are shown as they arrive. |
+| DEC-006 | Approved NCD scale and lifecycle | Product owner/Insurers |  | Provisional: admin-maintained, versioned and audited settings with provisional defaults; release is blocked while any is provisional. |
+| DEC-007 | RTSA and road-tax integration scope | Product owner/Technical lead |  | RTSA is reached through an adapter with a local stand-in; production refuses to start on a stand-in. Road tax is deferred past the MVP; payment covers the premium plus approved taxes and fees. |
 | DEC-008 | Payment providers, currency, settlement, and refunds | Finance/Product owner |  |  |
-| DEC-009 | Customer account, identity, profile, portfolio, recovery, and data lifecycle model | Product owner/Security |  |  |
-| DEC-010 | Claims and inspection operating rules | Product owner/Insurers |  |  |
+| DEC-009 | Customer account, identity, profile, portfolio, recovery, and data lifecycle model | Product owner/Security |  | Customers verify their email address; there is no phone OTP. Guest tracking links are dropped; support triggers an audited password reset. Quote drafts are kept on the server for signed-in customers for 30 days. |
+| DEC-010 | Claims and inspection operating rules | Product owner/Insurers |  | Claims are a first notice plus insurer updates: the server checks policy, cover and reporting window; the insurer acknowledges with its reference and posts status updates the customer sees; there is no customer–insurer messaging; settlement stays in the insurer's system. The insurer moves inspections in the portal; the customer uploads photos. |
 | DEC-011 | Privacy, hosting, retention, security, and audit obligations | Legal/Compliance/Security |  |  |
-| DEC-012 | Support ticketing/live chat in MVP | Product owner |  |  |
+| DEC-012 | Support ticketing/live chat in MVP | Product owner |  | External help desk; InsurShield gives a contact entry point and record references. |
 | DEC-013 | Commercial model and insurer settlement | Client sponsor/Finance |  |  |
-| DEC-014 | Review eligibility, moderation, appeals, rating calculation, and performance-badge methodology | Product owner/Compliance |  |  |
-| DEC-015 | Sponsored inventory, disclosure, targeting, measurement, pricing/billing, and ranking separation | Client sponsor/Product owner/Compliance |  |  |
+| DEC-014 | Review eligibility, moderation, appeals, rating calculation, and performance-badge methodology | Product owner/Compliance |  | Reviews, ratings and badges in full at launch (BR-013, BR-014); the methodology is still to be approved. |
+| DEC-015 | Sponsored inventory, disclosure, targeting, measurement, pricing/billing, and ranking separation | Client sponsor/Product owner/Compliance |  | Deferred past the MVP. |
+| DEC-016 | Every quote request to all insurers | Product owner/Insurers |  | Superseded by DEC-004: the customer sends one quote request to the one to five products they choose. |
+| DEC-019 | Policy issuance on payment | Finance/Product owner |  | Payment alone never issues a policy. |
 
 ## 16. Change control
 
