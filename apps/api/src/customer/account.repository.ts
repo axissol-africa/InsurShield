@@ -16,8 +16,13 @@ export class AccountRepository {
   }
 
   /** Locks the customer until `tx` ends. A payment writing their policy holds a key share of this row, so it is waited for. */
-  async lockCustomer(tx: Transaction, customerId: string): Promise<void> {
-    await tx.select({ id: customers.id }).from(customers).where(eq(customers.id, customerId)).for('update');
+  async lockCustomer(tx: Transaction, customerId: string): Promise<{ userId: string | null } | undefined> {
+    const [customer] = await tx
+      .select({ userId: customers.userId })
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .for('update');
+    return customer;
   }
 
   /**

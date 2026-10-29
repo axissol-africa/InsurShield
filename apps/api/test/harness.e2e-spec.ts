@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { Body, Controller, Post } from '@nestjs/common';
 import { IsString } from 'class-validator';
 import { eq, sql } from 'drizzle-orm';
-import { inject } from 'vitest';
-import { KeycloakVerifier } from '../src/common/auth/keycloak.verifier.js';
 import { Public } from '../src/common/auth/auth.guard.js';
 import { testDatabase } from '../src/config/env.js';
 import { documents, policies } from '../src/db/schema.js';
@@ -18,10 +16,11 @@ import {
   buildInsurer,
   buildNcdCode,
   buildPurchasedPolicy,
+  buildStaffUser,
 } from './builders.js';
 import { assertCurrentBuild, resetTestDatabase } from './global-setup.js';
 import { startApp, type TestApp } from './helpers.js';
-import { customerToken, signToken, staffToken } from './jwks.js';
+import { signIn, trustedOrigin } from './sessions.js';
 import { createScratchDatabase } from './scratch-database.js';
 
 const WEB_ORIGIN = 'https://web.insurshield.invalid';
@@ -44,7 +43,7 @@ describe('the e2e app', () => {
   let testApp: TestApp;
 
   beforeAll(async () => {
-    testApp = await startApp({ controllers: [ProbeController], settings: { CORS_ORIGINS: [WEB_ORIGIN] } });
+    testApp = await startApp({ controllers: [ProbeController], env: { CORS_ORIGINS: WEB_ORIGIN } });
   });
 
   afterAll(async () => {
@@ -101,47 +100,46 @@ describe('the e2e app', () => {
   });
 });
 
-describe('e2e tokens', () => {
+describe('e2e sessions', () => {
   let testApp: TestApp;
-  let verifier: KeycloakVerifier;
 
   beforeAll(async () => {
     testApp = await startApp();
-    verifier = testApp.app.get(KeycloakVerifier);
   });
 
   afterAll(async () => {
     await testApp.close();
   });
 
-  it('points the app at the JWKS server of this run', () => {
-    expect(process.env.KEYCLOAK_ISSUER).toBe(inject('jwks').issuer);
-    expect(new URL(inject('jwks').issuer).hostname).toBe('127.0.0.1');
+  it('runs the app with the limiter off and no trusted proxy, as the global setup sets them', () => {
+    expect(process.env.AUTH_RATE_LIMIT).toBe('off');
+    expect(process.env.TRUST_PROXY_HOPS).toBe('0');
   });
 
-  it('signs customer and staff tokens that the real verifier accepts', async () => {
+  it('signs in a built customer with the test password, from the run’s trusted origin', async () => {
     const customer = await buildCustomer(testApp.db);
-    await expect(verifier.verify(await customerToken(customer))).resolves.toMatchObject({
-      subject: customer.keycloakId,
-      email: customer.email,
-      realmRoles: [],
-    });
-    const { staff } = await buildInsurer(testApp.db);
-    await expect(verifier.verify(await staffToken(staff, ['insurer_user']))).resolves.toMatchObject({
-      subject: staff.keycloakId,
-      realmRoles: ['insurer_user'],
-    });
+
+    const session = await signIn(testApp.http, customer);
+
+    expect(session.Origin).toBe(trustedOrigin());
+    const me = await testApp.http.get('/api/v1/auth/me').set(session).expect(200);
+    expect(me.body.customer.id).toBe(customer.id);
   });
 
-  it.each([
-    ['another key', { foreignKey: true }],
-    ['another issuer', { issuer: 'http://127.0.0.1:1/realms/elsewhere' }],
-    ['another audience', { audience: 'another-client' }],
-    ['a past expiry', { expiresAt: Math.floor(Date.now() / 1000) - 60 }],
-  ])('makes tokens with %s, which the verifier refuses', async (_case, options) => {
-    await expect(verifier.verify(await signToken({ sub: 'someone' }, options))).rejects.toMatchObject({
-      status: 401,
-    });
+  it.each(['SUPER_ADMIN', 'ADMIN', 'INSURER_USER'] as const)('signs in a built %s', async (role) => {
+    const staff =
+      role === 'INSURER_USER' ? (await buildInsurer(testApp.db)).staff : await buildStaffUser(testApp.db, { role });
+
+    const me = await testApp.http.get('/api/v1/auth/me').set(await signIn(testApp.http, staff)).expect(200);
+
+    expect(me.body.staffSession.id).toBe(staff.id);
+  });
+
+  it('builds a row with no login when told to, which cannot sign in', async () => {
+    const customer = await buildCustomer(testApp.db, { userId: null });
+
+    expect(customer.userId).toBeNull();
+    await expect(signIn(testApp.http, customer)).rejects.toThrow('answered 401');
   });
 });
 

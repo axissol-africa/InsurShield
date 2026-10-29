@@ -1,6 +1,7 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha, sumToKwacha } from '../../common/money.js';
 import type { ConsentRow, CustomerMatch, OverviewCounts, RecentPolicyRow } from '../admin.repository.js';
+import { shownPhone } from '../../common/auth/phone.js';
 
 export function toOverviewResponse(counts: OverviewCounts) {
   return {
@@ -46,7 +47,7 @@ export function toCustomerLookupResponse(customer: CustomerMatch, consent: Conse
     id: customer.id,
     fullName: customer.fullName,
     email: customer.email,
-    phone: customer.phone.startsWith('pending:') ? null : customer.phone,
+    phone: shownPhone(customer.phone),
     createdAt: customer.createdAt.toISOString(),
     consent: consent ? { noticeVersion: consent.privacyVersion, acceptedAt: consent.acceptedAt.toISOString() } : null,
     counts: {

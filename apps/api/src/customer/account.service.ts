@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { AuthService } from '../auth/auth.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { AccountRepository } from './account.repository.js';
 
@@ -6,7 +7,10 @@ import { AccountRepository } from './account.repository.js';
 export class AccountService {
   private readonly logger = new Logger(AccountService.name);
 
-  constructor(private readonly repository: AccountRepository) {}
+  constructor(
+    private readonly repository: AccountRepository,
+    private readonly auth: AuthService,
+  ) {}
 
   /**
    * Closes the account.
@@ -14,14 +18,14 @@ export class AccountService {
    * Refused while cover is in force: a customer with a policy, active or paid
    * and awaiting its certificate, still has a live insurance contract, and the
    * records behind it must stay reachable. Otherwise the row is soft-deleted,
-   * so the guard refuses the token from then on, and quotes, claims and
+   * its sessions end with the closing transaction, and quotes, claims and
    * payments remain for audit and regulatory retention rather than being
    * destroyed.
    */
   async close(customerId: string): Promise<{ closed: true; closedAt: string }> {
     const closedAt = new Date();
     await this.repository.transaction(async (tx) => {
-      await this.repository.lockCustomer(tx, customerId);
+      const customer = await this.repository.lockCustomer(tx, customerId);
       const inForce = (await this.repository.policiesInForce(tx, customerId)).length;
       if (inForce > 0) {
         throw ApiException.conflict(
@@ -30,6 +34,7 @@ export class AccountService {
         );
       }
       await this.repository.close(tx, customerId, closedAt);
+      if (customer?.userId) await this.auth.revokeSessions(tx, customer.userId);
     });
 
     this.logger.log(`Customer ${customerId} closed their account`);
