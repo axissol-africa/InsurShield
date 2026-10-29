@@ -2,7 +2,7 @@ import { HttpStatus, Logger, type ArgumentsHost } from '@nestjs/common';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
 import { DatabaseConnectionError } from '../../db/errors.js';
-import { ApiException } from '../errors/api.exception.js';
+import { ApiException, errorBody } from '../errors/api.exception.js';
 import { ApiExceptionFilter } from './api-exception.filter.js';
 
 function respond(exception: unknown) {
@@ -158,5 +158,12 @@ describe('ApiExceptionFilter', () => {
     expect(response.body).toEqual({ code: 'IDEMPOTENCY_KEY_REUSED', message: 'Used.', details: null });
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it('writes exactly the body errorBody builds, which the middleware in front of Nest sends too', () => {
+    const response = respond(new ApiException('NOT_FOUND', 'Not found.', HttpStatus.NOT_FOUND));
+
+    expect(JSON.stringify(response.body)).toBe(JSON.stringify(errorBody('NOT_FOUND', 'Not found.')));
+    expect(JSON.stringify(errorBody('NOT_FOUND', 'Not found.'))).toBe('{"code":"NOT_FOUND","message":"Not found.","details":null}');
   });
 });

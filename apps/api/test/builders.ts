@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createCredentialUser, normalizeEmail } from '../src/auth/credential-user.js';
 import type { Database, Transaction } from '../src/db/database.module.js';
 import {
   claimNotifications,
@@ -21,10 +22,7 @@ import {
 export type Db = Database | Transaction;
 
 type Insert<T extends { $inferInsert: unknown }> = T['$inferInsert'];
-type KeycloakLinked<R> = Omit<R, 'keycloakId'> & { keycloakId: string };
-export type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'] extends { keycloakId: string | null }
-  ? KeycloakLinked<T['$inferSelect']>
-  : T['$inferSelect'];
+export type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'];
 
 const DAY_MS = 86_400_000;
 
@@ -42,42 +40,38 @@ function daysFromNow(days: number): Date {
   return new Date(Date.now() + days * DAY_MS);
 }
 
-function withKeycloakId<T extends { keycloakId: string | null }>(row: T): KeycloakLinked<T> {
-  const { keycloakId } = row;
-  if (keycloakId === null) {
-    throw new Error('A built customer or staff row has no keycloakId.');
-  }
-  return { ...row, keycloakId };
+/** The password every built customer and staff member signs in with. */
+export const TEST_PASSWORD = 'e2e-password-0';
+
+/**
+ * A Better Auth login for a built row, unless the overrides set `userId` themselves (`null` builds a row that
+ * cannot sign in, like one created before Better Auth).
+ */
+async function loginFor(db: Db, email: string, name: string, overrides: { userId?: string | null }) {
+  if ('userId' in overrides) return overrides.userId ?? null;
+  return (await createCredentialUser(db, { email, name, password: TEST_PASSWORD })).id;
 }
 
 export async function buildCustomer(db: Db, overrides: Partial<Insert<typeof customers>> = {}) {
-  const tag = unique('customer');
+  const email = normalizeEmail(overrides.email ?? `${unique('customer')}@example.invalid`);
+  const fullName = overrides.fullName ?? 'Chanda Mwale';
+  const userId = await loginFor(db, email, fullName, overrides);
   const [customer] = await db
     .insert(customers)
-    .values({
-      fullName: 'Chanda Mwale',
-      email: `${tag}@example.invalid`,
-      phone: uniquePhone(),
-      keycloakId: randomUUID(),
-      ...overrides,
-    })
+    .values({ fullName, phone: uniquePhone(), ...overrides, email, userId })
     .returning();
-  return withKeycloakId(customer);
+  return customer;
 }
 
 export async function buildStaffUser(db: Db, overrides: Partial<Insert<typeof staffUsers>> = {}) {
-  const tag = unique('staff');
+  const email = normalizeEmail(overrides.email ?? `${unique('staff')}@example.invalid`);
+  const fullName = overrides.fullName ?? 'Mutale Banda';
+  const userId = await loginFor(db, email, fullName, overrides);
   const [staff] = await db
     .insert(staffUsers)
-    .values({
-      email: `${tag}@example.invalid`,
-      fullName: 'Mutale Banda',
-      role: 'ADMIN',
-      keycloakId: randomUUID(),
-      ...overrides,
-    })
+    .values({ role: 'ADMIN', ...overrides, email, fullName, userId })
     .returning();
-  return withKeycloakId(staff);
+  return staff;
 }
 
 export interface InsurerOverrides {

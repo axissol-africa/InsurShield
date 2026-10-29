@@ -72,6 +72,12 @@ function urlParameterNames(value: string): string[] {
   return start < 0 ? [] : [...new URLSearchParams(beforeFragment.slice(start + 1)).keys()];
 }
 
+function isHttpOrigin(value: string): boolean {
+  if (!URL.canParse(value)) return false;
+  const url = new URL(value);
+  return (url.protocol === 'http:' || url.protocol === 'https:') && value.replace(/\/$/, '') === url.origin;
+}
+
 const databaseUrlSetting = z.string().superRefine((value, context) => {
   const problem = databaseUrlProblem(value);
   if (problem) {
@@ -80,7 +86,8 @@ const databaseUrlSetting = z.string().superRefine((value, context) => {
 });
 
 export const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /** Required: the identity mail routes and the relaxed limits must never be on by default. */
+  NODE_ENV: z.enum(['development', 'test', 'production']),
   PORT: wholeNumber(1, 65535),
   API_PREFIX: z.string().default('api/v1'),
   /** Comma-separated list of browser origins allowed to call the API. */
@@ -98,17 +105,15 @@ export const envSchema = z.object({
     .default('false')
     .transform((value) => value === 'true'),
 
-  // ── Identity (Keycloak) ─────────────────────────────────────────────
-  /**
-   * The realm's issuer URL. Tokens are accepted only if their `iss` matches
-   * this exactly, and their signature verifies against the realm's JWKS.
-   */
-  KEYCLOAK_ISSUER: z.string().url(),
-  /** The audience this API expects in an access token. */
-  KEYCLOAK_AUDIENCE: z.string().min(1),
-  /** Confidential client used for administrative user management. */
-  KEYCLOAK_CLIENT_ID: z.string().min(1),
-  KEYCLOAK_CLIENT_SECRET: z.string().min(1),
+  // ── Identity (Better Auth) ──────────────────────────────────────────
+  /** Signs the session cookies. */
+  BETTER_AUTH_SECRET: z.string().min(32, 'must be at least 32 characters'),
+  /** The API's public origin; the identity routes live under it. */
+  BETTER_AUTH_URL: z.string().refine(isHttpOrigin, 'must be an http or https origin, such as http://localhost:4000'),
+  /** The number of proxies in front of the API, so the client address is read past exactly these. */
+  TRUST_PROXY_HOPS: wholeNumber(0, 10),
+  /** The identity routes' rate limits. */
+  AUTH_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
 
   /** Unset in production so the AWS SDK talks to real S3. */
   S3_ENDPOINT: z.string().url().optional(),
@@ -130,6 +135,10 @@ export const envSchema = z.object({
   S3_SSE_KMS_KEY_ID: z.string().optional(),
 
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(3 * 1024 * 1024),
+}).superRefine((env, context) => {
+  if (env.AUTH_RATE_LIMIT === 'off' && env.NODE_ENV !== 'test') {
+    context.addIssue({ code: 'custom', path: ['AUTH_RATE_LIMIT'], message: 'may be off only when NODE_ENV is test' });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;
