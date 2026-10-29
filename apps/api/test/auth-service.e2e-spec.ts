@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { consentRecords } from '../src/db/schema.js';
-import { buildInsurer, buildStaffUser } from './builders.js';
+import { buildCustomer, buildInsurer, buildStaffUser } from './builders.js';
 import { startApp, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 
 const ME = '/api/v1/auth/me';
 const CONSENT = '/api/v1/auth/consent';
@@ -20,11 +20,9 @@ describe('the auth service', () => {
     await testApp.close();
   });
 
-  async function signedInCustomer() {
-    const keycloakId = randomUUID();
-    const headers = bearer(await customerToken({ keycloakId, email: `${keycloakId}@example.test`, fullName: 'Mutale Phiri' }));
-    const me = await testApp.http.get(ME).set(headers).expect(200);
-    return { headers, id: me.body.customer.id as string, email: `${keycloakId}@example.test` };
+  async function signedInCustomer(overrides: Parameters<typeof buildCustomer>[1] = {}) {
+    const customer = await buildCustomer(testApp.db, { fullName: 'Mutale Phiri', ...overrides });
+    return { headers: await signIn(testApp.http, customer), id: customer.id, email: customer.email, customer };
   }
 
   describe('me, for a customer', () => {
@@ -34,10 +32,19 @@ describe('the auth service', () => {
       const response = await testApp.http.get(ME).set(customer.headers).expect(200);
 
       expect(response.body).toEqual({
-        customer: { id: customer.id, fullName: 'Mutale Phiri', email: customer.email, phone: null },
+        userId: customer.customer.userId,
+        customer: { id: customer.id, fullName: 'Mutale Phiri', email: customer.email, phone: customer.customer.phone },
         consent: { accepted: false, noticeVersion: null, acceptedAt: null },
         staffSession: null,
       });
+    });
+
+    it('shows no phone for a customer still holding the old placeholder', async () => {
+      const customer = await signedInCustomer({ phone: `pending:${randomUUID()}` });
+
+      const response = await testApp.http.get(ME).set(customer.headers).expect(200);
+
+      expect(response.body.customer.phone).toBeNull();
     });
   });
 
@@ -45,31 +52,37 @@ describe('the auth service', () => {
     it('returns an insurer user’s session with the insurer name', async () => {
       const { insurer, staff } = await buildInsurer(testApp.db);
 
-      const response = await testApp.http.get(ME).set(bearer(await staffToken(staff, ['insurer_user']))).expect(200);
+      const response = await testApp.http.get(ME).set(await signIn(testApp.http, staff)).expect(200);
 
       expect(response.body).toEqual({
+        userId: staff.userId,
         customer: null,
         staffSession: {
           id: staff.id,
           name: staff.fullName,
           email: staff.email,
           role: 'insurer',
+          isSuperAdmin: false,
           insurerId: insurer.id,
           insurerName: insurer.name,
         },
       });
     });
 
-    it('returns an admin’s session with no insurer', async () => {
-      const staff = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+    it.each([
+      ['SUPER_ADMIN', true],
+      ['ADMIN', false],
+    ] as const)('returns a %s’s session with no insurer', async (role, isSuperAdmin) => {
+      const staff = await buildStaffUser(testApp.db, { role });
 
-      const response = await testApp.http.get(ME).set(bearer(await staffToken(staff, ['super_admin']))).expect(200);
+      const response = await testApp.http.get(ME).set(await signIn(testApp.http, staff)).expect(200);
 
       expect(response.body.staffSession).toEqual({
         id: staff.id,
         name: staff.fullName,
         email: staff.email,
         role: 'admin',
+        isSuperAdmin,
         insurerId: null,
         insurerName: null,
       });
@@ -82,7 +95,7 @@ describe('the auth service', () => {
 
       const response = await testApp.http
         .post(CONSENT)
-        .set(bearer(await staffToken(staff, ['admin'])))
+        .set(await signIn(testApp.http, staff))
         .send({ noticeVersion: '2026-10' })
         .expect(403);
 

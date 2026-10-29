@@ -37,7 +37,7 @@ import { AuthGuard } from './common/auth/auth.guard.js';
   controllers: [AppController, HealthController],
   providers: [
     AppService,
-    // Every route requires a token unless it opts out with @Public().
+    // Every route requires a session unless it opts out with @Public() or @OptionalAuth().
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
 })

@@ -1,5 +1,16 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 
+export interface ErrorBody {
+  code: string;
+  message: string;
+  details: unknown;
+}
+
+/** The body of every error the API returns, from Nest's filter and from the middleware in front of Nest. */
+export function errorBody(code: string, message: string, details: unknown = null): ErrorBody {
+  return { code, message, details };
+}
+
 /**
  * Every error the API returns has a stable machine-readable `code` alongside
  * the human message, because the client raises `ApiError` from it and branches
@@ -12,7 +23,7 @@ export class ApiException extends HttpException {
     status: HttpStatus = HttpStatus.BAD_REQUEST,
     readonly details: unknown = null,
   ) {
-    super({ code, message, details }, status);
+    super(errorBody(code, message, details), status);
   }
 
   static notFound(resource: string, reference?: string): ApiException {

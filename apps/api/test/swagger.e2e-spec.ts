@@ -1,7 +1,7 @@
 import { startApp, type TestApp } from './helpers.js';
 
-async function withSwagger(enabled: boolean, check: (app: TestApp) => Promise<void>) {
-  const app = await startApp({ settings: { SWAGGER_ENABLED: enabled } });
+async function withSwagger(enabled: boolean, check: (app: TestApp) => Promise<void>, env?: Record<string, string>) {
+  const app = await startApp({ settings: { SWAGGER_ENABLED: enabled }, env });
   try {
     await check(app);
   } finally {
@@ -26,6 +26,22 @@ describe('API docs', () => {
       expect(Object.keys(body.paths)).toContain('/api/v1/insurers');
       await http.get('/api/v1/docs-json').expect(404);
     });
+  });
+
+  it.each([
+    ['http://localhost:4000', 'insurshield.session_token'],
+    ['https://api.insurshield.invalid', '__Secure-insurshield.session_token'],
+  ])('describes the session cookie as the only security scheme, under %s', async (url, cookie) => {
+    await withSwagger(
+      true,
+      async ({ http }) => {
+        const { body } = await http.get('/docs-json').expect(200);
+        expect(body.components.securitySchemes).toEqual({
+          [cookie]: expect.objectContaining({ type: 'apiKey', in: 'cookie', name: cookie }),
+        });
+      },
+      { BETTER_AUTH_URL: url },
+    );
   });
 
   it('takes SWAGGER_ENABLED from the configuration, which the e2e config sets to false', async () => {

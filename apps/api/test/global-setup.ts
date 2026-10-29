@@ -3,15 +3,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client, type ClientConfig } from 'pg';
 import { parseIntoClientConfig } from 'pg-connection-string';
-import type { TestProject } from 'vitest/node';
 import { TEST_DATABASE_SUFFIX, testDatabase } from '../src/config/env.js';
 import { migrateDatabase } from '../src/db/migrator.js';
-import { startJwksServer } from './jwks.js';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BUILD_COMMAND = 'npm run build -w @insurshield/api';
 
-export default async function setup(project: TestProject) {
+export default async function setup() {
   assertCatalogRegenerationAllowed(process.env);
   assertCurrentBuild();
   const test = testDatabase();
@@ -19,11 +17,10 @@ export default async function setup(project: TestProject) {
   const migrate = process.env.REGENERATE_CATALOGS !== '1';
   await resetTestDatabase(parseIntoClientConfig(test.url), test.name, { migrate });
 
-  const jwks = await startJwksServer();
-  // Spec workers start after this and inherit it, so the app's verifier fetches this run's key.
-  process.env.KEYCLOAK_ISSUER = jwks.issuer;
-  project.provide('jwks', { issuer: jwks.issuer, signingKey: jwks.signingKey });
-  return () => jwks.close();
+  // Spec workers start after this and inherit these. Specs that test the limiter or proxies build
+  // their app with `startApp({ env })`.
+  process.env.AUTH_RATE_LIMIT = 'off';
+  process.env.TRUST_PROXY_HOPS = '0';
 }
 
 // A CI run that rewrote a drifted catalog would pass instead of failing on the drift.

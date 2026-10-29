@@ -6,10 +6,8 @@ import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
 
 /**
- * Sign-in and sign-up are handled by Keycloak through the OIDC Authorization
- * Code flow with PKCE, so this API issues no tokens and never sees a password.
- * What remains is resolving the caller behind a verified token, and recording
- * the consent that authenticating does not itself imply.
+ * Sign-in, sign-out and registration are Better Auth routes under `/identity`. What remains here is
+ * resolving the caller behind the session, and recording the consent that signing in does not imply.
  */
 @Controller('auth')
 export class AuthController {

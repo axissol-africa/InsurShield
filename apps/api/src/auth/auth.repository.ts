@@ -1,14 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { desc, eq } from 'drizzle-orm';
-import { DATABASE, type Database } from '../db/database.module.js';
-import { consentRecords, customers, insurers, staffUsers } from '../db/schema.js';
-
-export interface NewCustomer {
-  keycloakId: string;
-  email: string;
-  fullName: string;
-  phone: string;
-}
+import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
+import { authSessions, consentRecords, customers, insurers, staffUsers } from '../db/schema.js';
 
 export interface NewConsent {
   customerId: string;
@@ -22,36 +15,11 @@ export interface NewConsent {
 export class AuthRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  async findStaffByKeycloakId(keycloakId: string) {
-    const [staff] = await this.db
-      .select({
-        id: staffUsers.id,
-        email: staffUsers.email,
-        insurerId: staffUsers.insurerId,
-        isActive: staffUsers.isActive,
-      })
-      .from(staffUsers)
-      .where(eq(staffUsers.keycloakId, keycloakId));
-    return staff;
-  }
-
-  async findCustomerByKeycloakId(keycloakId: string) {
-    const [customer] = await this.db
-      .select({ id: customers.id, email: customers.email, deletedAt: customers.deletedAt })
-      .from(customers)
-      .where(eq(customers.keycloakId, keycloakId));
-    return customer;
-  }
-
-  /** No conflict target, so every unique index arbitrates and a clash on any of them inserts nothing. */
-  async insertCustomerIfAbsent(customer: NewCustomer): Promise<void> {
-    await this.db.insert(customers).values(customer).onConflictDoNothing();
-  }
-
   async findStaffSession(staffId: string) {
     const [staff] = await this.db
       .select({
         id: staffUsers.id,
+        userId: staffUsers.userId,
         fullName: staffUsers.fullName,
         email: staffUsers.email,
         insurerId: staffUsers.insurerId,
@@ -67,6 +35,7 @@ export class AuthRepository {
     const [customer] = await this.db
       .select({
         id: customers.id,
+        userId: customers.userId,
         fullName: customers.fullName,
         email: customers.email,
         phone: customers.phone,
@@ -95,5 +64,9 @@ export class AuthRepository {
         acceptedAt: consentRecords.acceptedAt,
       });
     return record;
+  }
+
+  async deleteSessions(tx: Transaction, userId: string): Promise<void> {
+    await tx.delete(authSessions).where(eq(authSessions.userId, userId));
   }
 }
