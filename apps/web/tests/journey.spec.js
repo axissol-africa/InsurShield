@@ -49,7 +49,7 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   await expect(page).toHaveURL(/quote-request/);
   await expect(page.getByText('Indicative premiums for your vehicle')).toBeVisible();
   await expect(page.getByText('ZMW 14,400.00')).toBeVisible(); // 250 000 × 4.5 % × taxi factor
-  await page.getByRole('button', { name: /Send request to 5 insurers/ }).click();
+  await page.getByRole('button', { name: /See cover guides from 5 insurers/ }).click();
   await expect(page.getByText('Add your White Book')).toBeVisible();
   await expect(page.getByText('Capture 7 more inspection photos.')).toBeVisible();
   await expect(page.getByText('Accept the declaration')).toBeVisible();
@@ -67,29 +67,20 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   for (let index = 1; index <= 7; index += 1) await inputs.nth(index).setInputFiles(vehiclePhoto(`shot-${index}.png`));
   await expect(page.getByText('7 of 7 captured')).toBeVisible();
   await page.getByText('I confirm the vehicle and contact information').click();
-  await page.getByRole('button', { name: /Send request to 5 insurers/ }).click();
+  await page.getByRole('button', { name: /See cover guides from 5 insurers/ }).click();
 
   // Compare → pay → confirm
   await expect(page).toHaveURL(/quotes-comparison/);
+  await expect(page.getByRole('heading', { name: 'Choose cover guides' })).toBeVisible();
+  const guideChoices = page.getByRole('checkbox', { name: /cover guide$/ });
+  await expect(guideChoices).toHaveCount(5);
+  await expect(page.getByRole('button', { name: /^Request . final quote/ })).toBeDisabled();
+  for (let index = 0; index < 5; index += 1) await guideChoices.nth(index).check();
+  await page.getByRole('button', { name: 'Request 5 final quotes' }).click();
   await expect(page.getByRole('heading', { name: 'Compare your quotes' })).toBeVisible();
-  await expect(page.getByText('0 of 5 insurers have replied')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' }).first()).toBeDisabled();
 
-  // Payment is only available after the insurer sends a final quote.
-  await page.evaluate(() => {
-    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
-    const request = store.state.quoteRequests.find((item) => item.id === store.state.activeQuoteRequestId);
-    request.insurerQuotes = {
-      'Prestige Assurance': {
-        premium: 14400,
-        sentAt: new Date().toISOString(),
-        validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      },
-    };
-    localStorage.setItem('insurshield-storage', JSON.stringify(store));
-  });
-  await page.reload();
-  await expect(page.getByText('1 of 5 insurers have replied')).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'All insurers have sent their final quotes.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' })).toHaveCount(0);
   await page.getByRole('button', { name: /Choose Prestige/ }).first().click();
 
   await expect(page).toHaveURL(/payment/);
@@ -114,16 +105,17 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   });
   await page.goto('/insurer');
   await page.getByRole('link', { name: 'Paid policies', exact: true }).click();
-  await page.getByRole('button', { name: /Review & issue policy/ }).first().click();
+  await page.getByRole('row').filter({ hasText: 'BAA 1234' }).getByRole('button', { name: /Review & issue policy/ }).click();
   await page.locator('input[type="file"]').setInputFiles(tinyImage('certificate.png'));
   await page.getByRole('button', { name: /Issue active policy/ }).click();
   await expect(page.getByText('Official policy issued').first()).toBeVisible();
 
   // Customer now holds an active policy with the certificate
-  await page.goto('/account');
-  await expect(page.getByText('Policies', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Prestige Assurance', { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /Policy certificate/ })).toBeVisible();
+  await page.goto('/account?section=policies');
+  const newPolicy = page.getByRole('listitem').filter({ hasText: 'BAA 1234' });
+  await expect(newPolicy.getByText('Prestige Assurance', { exact: true })).toBeVisible();
+  await expect(newPolicy.getByText('Active', { exact: true })).toBeVisible();
+  await expect(newPolicy.getByRole('button', { name: /Policy certificate/ })).toBeVisible();
 });
 
 test('insurer reply replaces the estimate on the comparison page', async ({ page }) => {
@@ -150,6 +142,32 @@ test('insurer reply replaces the estimate on the comparison page', async ({ page
   await expect(page.getByText('ZMW 10,900.00').first()).toBeVisible();
   await expect(page.getByText('Final quote from insurer').first()).toBeVisible();
   await expect(page.getByText('Includes windscreen').first()).toBeVisible();
+});
+
+test('no quote can be paid for before any insurer has replied', async ({ page }) => {
+  await page.goto('/');
+  // Mock mode answers every request at once, so a request still waiting on its insurers can only be stored.
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage') || '{"state":{}}');
+    Object.assign(store.state, {
+      customer: { fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm', phone: '0970123456' },
+      isAuthenticated: true, consentAccepted: true,
+      quoteRequests: [{
+        id: 'QR-WAITING', status: 'Submitted', guideSelectionPending: false, submittedAt: new Date().toISOString(),
+        customer: { email: 'mwiza.banda@insurshield.zm' },
+        insurers: ['Prestige Assurance', 'Global Guard Insurance', 'ValueDirect Insurance', 'Metro Safe Assurance', 'Madison General'],
+        insurerIds: ['1', '2', '3', '4', '5'], insurerQuotes: {},
+        vehicle: '2020 Toyota Hilux', vehicleValue: 250000, vehicleUsage: 'Individual', coverageDurationId: '4q', policyDates: null,
+      }],
+      activeQuoteRequestId: 'QR-WAITING',
+    });
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+  await page.goto('/quotes-comparison');
+  await expect(page.getByText(/0 of 5 insurers have replied/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' })).toHaveCount(5);
+  for (const button of await page.getByRole('button', { name: 'Awaiting insurer quote' }).all()) await expect(button).toBeDisabled();
+  await expect(page.getByRole('button', { name: /^Choose / })).toHaveCount(0);
 });
 
 test('a claim produces a claim number and the insurer contact', async ({ page }) => {
@@ -325,7 +343,7 @@ test('the cover guide stays with the policy after it is paid for', async ({ page
 
   // Choose the quote and pay for it.
   await page.goto('/quotes-comparison');
-  await page.getByRole('button', { name: /^Choose Prestige/ }).first().click();
+  await page.getByRole('button', { name: 'Continue to payment' }).click();
   await expect(page).toHaveURL(/payment/);
   await page.getByRole('button', { name: /^Pay ZMW/ }).click();
   await expect(page).toHaveURL(/confirmation/, { timeout: 15000 });
@@ -335,8 +353,28 @@ test('the cover guide stays with the policy after it is paid for', async ({ page
   await expect(page.getByRole('heading', { name: 'Comprehensive Gold Plan' })).toBeVisible();
   await page.getByRole('button', { name: 'Close' }).click();
 
-  // And it is still there later, attached to the policy itself.
-  await page.goto('/account');
+  // While the insurer prepares the certificate, the guide stays readable from the paid quote.
+  await page.goto('/account?section=certificates');
+  const paidQuote = page.getByRole('listitem').filter({ hasText: 'QR-PAID' });
+  await expect(paidQuote).toHaveCount(1);
+  await paidQuote.getByRole('button', { name: 'Cover guide' }).click();
+  await expect(page.getByRole('heading', { name: 'Comprehensive Gold Plan' })).toBeVisible();
+  await expect(page.getByText('Own damage — market value')).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).click();
+
+  // Once the insurer issues the certificate the policy is listed, and the guide is still attached to it.
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
+    store.state.staffSession = { role: 'insurer', name: 'Prestige Assurance' };
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+  await page.goto('/insurer');
+  await page.getByRole('link', { name: 'Paid policies', exact: true }).click();
+  await page.getByRole('row').filter({ hasText: 'QR-PAID' }).getByRole('button', { name: /Review & issue policy/ }).click();
+  await page.locator('input[type="file"]').setInputFiles(tinyImage('certificate.png'));
+  await page.getByRole('button', { name: /Issue active policy/ }).click();
+  await expect(page.getByText('Official policy issued').first()).toBeVisible();
+  await page.goto('/account?section=policies');
   await page.getByRole('button', { name: 'Cover guide' }).first().click();
   await expect(page.getByRole('heading', { name: 'Comprehensive Gold Plan' })).toBeVisible();
   await expect(page.getByText('Own damage — market value')).toBeVisible();

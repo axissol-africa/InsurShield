@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,7 @@ import { readCatalog } from '../src/db/catalog.js';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DRIZZLE_KIT = join(dirname(createRequire(import.meta.url).resolve('drizzle-kit')), 'bin.cjs');
+export const DRIZZLE_FOLDER = fileURLToPath(new URL('../drizzle/', import.meta.url));
 
 export interface ScratchDatabase {
   name: string;
@@ -83,11 +85,30 @@ export async function createScratchDatabase(spec: string): Promise<ScratchDataba
   };
 }
 
+/** The expected catalog file of a migration tag, or of `prisma-era`. */
+export function catalogPath(tag: string): string {
+  return join(DRIZZLE_FOLDER, 'catalog', `${tag}.json`);
+}
+
+/** The tags of the Drizzle migrations in drizzle/meta/_journal.json, oldest first. */
+export function migrationTags(): string[] {
+  const journal = JSON.parse(readFileSync(join(DRIZZLE_FOLDER, 'meta', '_journal.json'), 'utf8')) as {
+    entries: { tag: string }[];
+  };
+  return journal.entries.map((entry) => entry.tag);
+}
+
+/** The names, without .sql, of the SQL files at the top of drizzle/, in name order. */
+export function migrationFileTags(): string[] {
+  return readdirSync(DRIZZLE_FOLDER)
+    .filter((name) => name.endsWith('.sql'))
+    .map((name) => name.slice(0, -'.sql'.length))
+    .sort();
+}
+
 /** Runs the statements of the first `count` Drizzle migrations directly, recording no history. */
 export async function applyMigrationFiles(client: ClientBase, count?: number) {
-  const migrations = readMigrationFiles({
-    migrationsFolder: fileURLToPath(new URL('../drizzle/', import.meta.url)),
-  });
+  const migrations = readMigrationFiles({ migrationsFolder: DRIZZLE_FOLDER });
   for (const migration of migrations.slice(0, count)) {
     for (const statement of migration.sql) {
       await client.query(statement);
@@ -110,9 +131,7 @@ export async function drizzleKit(
 
 /** Records the first `count` Drizzle migrations as applied, as an older db:migrate run left them. */
 export async function recordDrizzleHistory(client: ClientBase, count: number) {
-  const migrations = readMigrationFiles({
-    migrationsFolder: fileURLToPath(new URL('../drizzle/', import.meta.url)),
-  });
+  const migrations = readMigrationFiles({ migrationsFolder: DRIZZLE_FOLDER });
   await client.query('CREATE SCHEMA IF NOT EXISTS drizzle');
   await client.query(
     'CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)',

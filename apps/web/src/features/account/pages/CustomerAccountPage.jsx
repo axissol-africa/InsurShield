@@ -233,9 +233,9 @@ export default function CustomerAccountPage() {
             </CardHeader>
             <CardContent>
               {pendingPolicies.length ? (
-                <div className="grid gap-3 md:grid-cols-2">
+                <ul className="grid gap-3 md:grid-cols-2">
                   {pendingPolicies.map((policy) => (
-                    <div key={policy.policyNumber} className="flex min-w-0 items-start gap-3 rounded-xl border border-border bg-muted/40 p-4">
+                    <li key={policy.policyNumber} className="flex min-w-0 items-start gap-3 rounded-xl border border-border bg-muted/40 p-4">
                       <span className="material-symbols-outlined rounded-lg bg-background p-2 text-[18px] text-primary" aria-hidden="true">description</span>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -246,15 +246,25 @@ export default function CustomerAccountPage() {
                           <Badge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Preparing</Badge>
                         </div>
                         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">We will place the official certificate under Policies as soon as your insurer issues it.</p>
-                        {policy.quoteDocument && (
-                          <Button type="button" variant="outline" size="sm" onClick={() => openDocument(policy.quoteDocument)} className="mt-3">
-                            <span className="material-symbols-outlined" aria-hidden="true">open_in_new</span>Quotation
-                          </Button>
+                        {/* The certificate can take days; what the customer has already paid for is readable meanwhile. */}
+                        {(policy.coverGuide?.planName || policy.quoteDocument) && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {policy.coverGuide?.planName && (
+                              <Button type="button" variant="outline" size="sm" onClick={() => setReadingGuide(policy)}>
+                                <span className="material-symbols-outlined" aria-hidden="true">description</span>Cover guide
+                              </Button>
+                            )}
+                            {policy.quoteDocument && (
+                              <Button type="button" variant="outline" size="sm" onClick={() => openDocument(policy.quoteDocument)}>
+                                <span className="material-symbols-outlined" aria-hidden="true">open_in_new</span>Quotation
+                              </Button>
+                            )}
+                          </div>
                         )}
                       </div>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               ) : <Empty text="No paid quotes are waiting for a policy certificate." />}
             </CardContent>
           </Card>

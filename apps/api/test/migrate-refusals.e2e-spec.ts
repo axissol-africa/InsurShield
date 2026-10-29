@@ -13,17 +13,22 @@ import {
 } from './fixtures/prisma-era/prisma-era.js';
 import {
   applyMigrationFiles,
+  catalogPath,
   createScratchDatabase,
   databaseState,
+  migrationTags,
   recordDrizzleHistory,
   type ScratchDatabase,
 } from './scratch-database.js';
 
 type Build = (client: ClientBase) => Promise<unknown>;
 
+const TAGS = migrationTags();
+const HEAD = TAGS[TAGS.length - 1];
 const FINAL_CATALOG = JSON.parse(
-  readFileSync(new URL('../drizzle/catalog/0001_minor_units_timestamptz.json', import.meta.url), 'utf8'),
+  readFileSync(catalogPath(HEAD), 'utf8'),
 ) as string[];
+const applied = (count: number) => `Drizzle history: ${count} of ${TAGS.length} migrations applied`;
 
 const created: ScratchDatabase[] = [];
 
@@ -76,7 +81,7 @@ async function catalogOf(db: ScratchDatabase) {
 const prismaEra: Build = (client) => buildPrismaEraDatabase(client);
 const managed: Build = async (client) => {
   await applyMigrationFiles(client);
-  await recordDrizzleHistory(client, 2);
+  await recordDrizzleHistory(client, TAGS.length);
 };
 const then =
   (base: Build, ...statements: string[]): Build =>
@@ -104,7 +109,7 @@ describe('db:migrate refuses every state outside the decision table, changing no
     [
       'the final schema without a history',
       (client) => applyMigrationFiles(client),
-      /Prisma history: absent\n {2}Drizzle history: none\n {2}Catalog of public: the schema after 0001/,
+      new RegExp(`Prisma history: absent\\n {2}Drizzle history: none\\n {2}Catalog of public: the schema after ${HEAD}`),
     ],
     [
       'a Drizzle history behind its schema',
@@ -112,7 +117,7 @@ describe('db:migrate refuses every state outside the decision table, changing no
         await applyMigrationFiles(client);
         await recordDrizzleHistory(client, 1);
       },
-      /Drizzle history: 1 of 2 migrations applied\n {2}Catalog of public: the schema after 0001/,
+      new RegExp(`${applied(1)}\\n {2}Catalog of public: the schema after ${HEAD}`),
     ],
     [
       'a Drizzle history ahead of its schema',
@@ -120,7 +125,7 @@ describe('db:migrate refuses every state outside the decision table, changing no
         await applyMigrationFiles(client, 1);
         await recordDrizzleHistory(client, 2);
       },
-      /Drizzle history: 2 of 2 migrations applied\n {2}Catalog of public: the Prisma schema and the schema after 0000/,
+      new RegExp(`${applied(2)}\\n {2}Catalog of public: the Prisma schema and the schema after 0000`),
     ],
     [
       'a valid Prisma history over an empty public',
@@ -133,7 +138,7 @@ describe('db:migrate refuses every state outside the decision table, changing no
         await applyMigrationFiles(client);
         await recordPrismaHistory(client);
       },
-      /Prisma history: valid\n {2}Drizzle history: none\n {2}Catalog of public: the schema after 0001/,
+      new RegExp(`Prisma history: valid\\n {2}Drizzle history: none\\n {2}Catalog of public: the schema after ${HEAD}`),
     ],
     [
       'both histories on a Prisma-era database',
@@ -141,7 +146,7 @@ describe('db:migrate refuses every state outside the decision table, changing no
         await prismaEra(client);
         await recordDrizzleHistory(client, 1);
       },
-      /Prisma history: valid\n {2}Drizzle history: 1 of 2 migrations applied/,
+      new RegExp(`Prisma history: valid\\n {2}${applied(1)}`),
     ],
     [
       'both histories on a Drizzle-managed database',
@@ -149,7 +154,7 @@ describe('db:migrate refuses every state outside the decision table, changing no
         await managed(client);
         await recordPrismaHistory(client);
       },
-      /Prisma history: valid\n {2}Drizzle history: 2 of 2 migrations applied/,
+      new RegExp(`Prisma history: valid\\n {2}${applied(TAGS.length)}`),
     ],
     [
       'a public holding only _prisma_migrations with a failed row',
@@ -244,12 +249,12 @@ describe('db:migrate refuses every state outside the decision table, changing no
     [
       'a Drizzle-managed database whose public was dropped',
       then(managed, 'DROP SCHEMA public CASCADE'),
-      /Drizzle history: 2 of 2 migrations applied\n {2}Catalog of public: empty/,
+      new RegExp(`${applied(TAGS.length)}\\n {2}Catalog of public: empty`),
     ],
     [
       'a Drizzle-managed database whose public drifted',
       then(managed, 'ALTER TABLE public.payments ADD COLUMN note text'),
-      /closest is the schema after 0001_minor_units_timestamptz, with 1 differences:\n {4}extra column public\.payments\.note$/,
+      new RegExp(`closest is the schema after ${HEAD}, with 1 differences:\\n {4}extra column public\\.payments\\.note$`),
     ],
   ])('%s', async (_case, build, message) => {
     await expectRefused(build, message);

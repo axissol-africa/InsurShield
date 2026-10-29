@@ -1,19 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ClientBase } from 'pg';
 import { PRISMA_MIGRATIONS } from '../../../src/db/migrator.js';
+import { DRIZZLE_FOLDER } from '../../scratch-database.js';
 
-const PRISMA_ERA = new URL('../../../drizzle/prisma-era/', import.meta.url);
+const PRISMA_ERA = join(DRIZZLE_FOLDER, 'prisma-era');
 const FIXTURES = new URL('./', import.meta.url);
 
 export { PRISMA_MIGRATIONS };
 
 export function prismaMigrationSql(name: string): string {
-  return readFileSync(new URL(`${name}/migration.sql`, PRISMA_ERA), 'utf8');
+  return readFileSync(join(PRISMA_ERA, name, 'migration.sql'), 'utf8');
 }
 
 export function prismaChecksum(name: string): string {
-  return createHash('sha256').update(readFileSync(new URL(`${name}/migration.sql`, PRISMA_ERA))).digest('hex');
+  return createHash('sha256').update(readFileSync(join(PRISMA_ERA, name, 'migration.sql'))).digest('hex');
 }
 
 export interface PrismaHistoryRow {

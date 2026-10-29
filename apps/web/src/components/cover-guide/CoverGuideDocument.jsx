@@ -1,4 +1,4 @@
-import { COVER_TYPE_LABELS, asLines, sectionsFor } from '@/domain/coverGuide';
+import { COVER_TYPE_LABELS, asLines, fieldAnswered, sectionsFor } from '@/domain/coverGuide';
 import Meta from '@/components/ui/Meta';
 
 /**
@@ -16,9 +16,11 @@ import Meta from '@/components/ui/Meta';
 
 /** How one answer is written out, by the kind of question it answered. */
 const written = (field, value) => {
-  if (field.kind === 'days') return `${value} day${Number(value) === 1 ? '' : 's'}`;
   if (field.kind === 'boolean') return value ? 'Accepted' : 'Not accepted';
-  return String(value ?? '').trim() || 'Not stated';
+  const text = fieldAnswered(field, value) ? String(value).trim() : '';
+  if (!text) return 'Not stated';
+  if (field.kind === 'days') return `${text} day${Number(text) === 1 ? '' : 's'}`;
+  return text;
 };
 
 export default function CoverGuideDocument({ guide, coverType, insurerName, className = '', embedded = false }) {

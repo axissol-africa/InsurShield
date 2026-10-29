@@ -32,19 +32,23 @@ import {
 import { buildPrismaEraDatabase, PRISMA_MIGRATIONS } from './fixtures/prisma-era/prisma-era.js';
 import {
   applyMigrationFiles,
+  catalogPath,
   createScratchDatabase,
   databaseState,
+  DRIZZLE_FOLDER,
   drizzleKit,
+  migrationFileTags,
+  migrationTags,
   recordDrizzleHistory,
   scratchClientConfig,
   type ScratchDatabase,
 } from './scratch-database.js';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
-const ALL = ['0000_baseline', '0001_minor_units_timestamptz'];
-const FINAL_CATALOG = JSON.parse(
-  readFileSync(new URL('../drizzle/catalog/0001_minor_units_timestamptz.json', import.meta.url), 'utf8'),
-) as string[];
+const ALL = migrationTags();
+const catalogFile = (tag: string) =>
+  JSON.parse(readFileSync(catalogPath(tag), 'utf8')) as string[];
+const FINAL_CATALOG = catalogFile(ALL[ALL.length - 1]);
 
 const BUILT_ENTRY_POINT = 'dist/db/migrate.js';
 const SENTINEL = 'p1sentinel';
@@ -240,7 +244,7 @@ describe('the built entry point', () => {
       });
       const fresh = await scratch();
       expect((await runBuiltEntryPoint(fresh.url, entryPoint)).stdout).toContain(
-        'empty database; applied 0000_baseline, 0001_minor_units_timestamptz.',
+        `empty database; applied ${ALL.join(', ')}.`,
       );
       expect(await query(fresh, readCatalog)).toEqual(FINAL_CATALOG);
     } finally {
@@ -379,7 +383,7 @@ describe('db:migrate recognises each accepted state and leaves it Drizzle-manage
 
     const { stdout } = await runEntryPoint(db);
 
-    expect(stdout).toContain('Prisma-era database, adopted; applied 0001_minor_units_timestamptz.');
+    expect(stdout).toContain(`Prisma-era database, adopted; applied ${ALL.slice(1).join(', ')}.`);
     await query(db, async (client) => {
       expect((await client.query(json)).rows[0]).toEqual(before);
       const { rows: archive } = await client.query(
@@ -389,7 +393,7 @@ describe('db:migrate recognises each accepted state and leaves it Drizzle-manage
       const { rows: prisma } = await client.query(`SELECT to_regclass('public._prisma_migrations') AS t`);
       expect(prisma[0].t).toBeNull();
       const { rows: history } = await client.query(`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`);
-      expect(history[0].n).toBe(2);
+      expect(history[0].n).toBe(ALL.length);
       const { rows: loss } = await client.query(
         `SELECT "claimNumber", "estimatedLossMinor" FROM claim_notifications ORDER BY 1`,
       );
@@ -407,7 +411,7 @@ describe('db:migrate recognises each accepted state and leaves it Drizzle-manage
     const db = await scratch();
 
     expect((await runEntryPoint(db)).stdout).toContain(
-      'empty database; applied 0000_baseline, 0001_minor_units_timestamptz.',
+      `empty database; applied ${ALL.join(', ')}.`,
     );
     expect((await runEntryPoint(db)).stdout).toContain('Drizzle-managed database; nothing to apply.');
     expect(await query(db, readCatalog)).toEqual(FINAL_CATALOG);
@@ -459,8 +463,14 @@ describe('a catalog refusal names the records that differ, never their definitio
   });
 });
 
+describe('the migration folder', () => {
+  it('holds one SQL file per journal entry, in journal order', () => {
+    expect(migrationFileTags()).toEqual(migrationTags());
+  });
+});
+
 describe('the Prisma-era migration folder', () => {
-  const folder = new URL('../drizzle/prisma-era/', import.meta.url);
+  const folder = join(DRIZZLE_FOLDER, 'prisma-era');
 
   it('holds exactly the six Prisma migrations as folders', () => {
     const folders = readdirSync(folder, { withFileTypes: true })
@@ -475,7 +485,7 @@ describe('the Prisma-era migration folder', () => {
     const db = await scratch(prismaEra);
     const copy = mkdtempSync(join(tmpdir(), 'migrations-'));
     try {
-      cpSync(join(API_ROOT, 'drizzle'), copy, { recursive: true });
+      cpSync(DRIZZLE_FOLDER, copy, { recursive: true });
       writeFileSync(join(copy, 'prisma-era', '.DS_Store'), '');
 
       expect(await migrateDatabase(db.config, { migrationsFolder: copy })).toEqual({
@@ -622,7 +632,7 @@ describe('rows that would break the new constraints', () => {
   });
 
   it('counts the columns and bounds of the CHECKs 0001 adds, as money-limits.ts defines them', () => {
-    const checks = FINAL_CATALOG.filter((record) => / type=c /.test(record)).map((record) => {
+    const checks = catalogFile('0001_minor_units_timestamptz').filter((record) => / type=c /.test(record)).map((record) => {
       const match =
         /^constraint "(\w+)_(\w+)_check" on public\.(\w+) type=c CHECK \(\(\("(\w+)" >= (\d+)\) AND \("\4" <= '?(\d+)'?(?:::bigint)?\)\)\)$/.exec(
           record,

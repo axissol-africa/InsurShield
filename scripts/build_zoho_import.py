@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "user-stories.md"
-OUTPUT = ROOT / "output" / "zoho" / "InsurShield_MVP_Backlog_v0.10_Zoho_Import.csv"
+DEFERRED_PATTERN = re.compile(r"Deferred past the MVP \(DEC-\d+\)\.?")
 
 
 MILESTONES = {
@@ -40,7 +40,21 @@ def clean(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip())
 
 
-def parse_stories(lines: list[str]) -> list[dict[str, str]]:
+def read_version(lines: list[str]) -> str:
+    for line in lines:
+        match = re.fullmatch(r"\*\*Version:\*\*\s+(\d+(?:\.\d+)+)", line.strip())
+        if match:
+            return match.group(1)
+    raise ValueError("Missing or invalid **Version:** value in user stories")
+
+
+def delivery_fields(deferred: bool, milestone: str) -> tuple[str, str, str]:
+    if deferred:
+        return "Deferred", "Deferred", "Post-MVP"
+    return "Open", "MVP", milestone
+
+
+def parse_stories(lines: list[str], version: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     current_role = ""
     current_epic_code = ""
@@ -68,12 +82,18 @@ def parse_stories(lines: list[str]) -> list[dict[str, str]]:
             priority = ""
             requirements = ""
             user_story = ""
+            deferred = False
             acceptance: list[str] = []
             j = i + 1
             while j < len(lines) and not lines[j].strip().startswith(("#### US-", "### Epic ", "## ")):
                 item = lines[j].strip()
                 if item.startswith("**Priority:**"):
                     priority = item.split(":**", 1)[1].strip()
+                elif item.startswith("**Status:**"):
+                    status = item.split(":**", 1)[1].strip()
+                    if not DEFERRED_PATTERN.fullmatch(status):
+                        raise ValueError(f"Unrecognised Status for {story_id}: {status}")
+                    deferred = True
                 elif item.startswith("**Requirement references:**"):
                     requirements = item.split(":**", 1)[1].strip()
                 elif item.startswith("**User story:**"):
@@ -83,6 +103,7 @@ def parse_stories(lines: list[str]) -> list[dict[str, str]]:
                 j += 1
 
             milestone = V2_MILESTONES.get(story_id) or MILESTONES.get(current_epic_code, "")
+            status, scope_tag, milestone = delivery_fields(deferred, milestone)
             task_list = f"{current_epic_code} - {current_epic_name}"
             description_parts = [
                 f"User type: {current_role}",
@@ -99,9 +120,9 @@ def parse_stories(lines: list[str]) -> list[dict[str, str]]:
                     "Task Name": f"{story_id} - {title}",
                     "Task List Name": task_list,
                     "Description": "\n".join(description_parts),
-                    "Status": "Open",
+                    "Status": status,
                     "Priority": "High" if priority == "Must" else "Medium",
-                    "Tags": f"MVP, {current_role}, {current_epic_code}, v0.10",
+                    "Tags": f"{scope_tag}, {current_role}, {current_epic_code}, v{version}",
                     "Proposed Milestone": milestone,
                     "Requirement References": requirements,
                 }
@@ -111,7 +132,7 @@ def parse_stories(lines: list[str]) -> list[dict[str, str]]:
     return rows
 
 
-def parse_enablers(lines: list[str]) -> list[dict[str, str]]:
+def parse_enablers(lines: list[str], version: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     in_enablers = False
     for raw in lines:
@@ -127,7 +148,10 @@ def parse_enablers(lines: list[str]) -> list[dict[str, str]]:
         if not match:
             continue
         enabler_id, title = match.groups()
-        milestone = "M0 - Foundations & Controlled Catalogue"
+        deferred = any(DEFERRED_PATTERN.fullmatch(sentence) for sentence in title.split(". "))
+        if not deferred and "deferred" in title.lower():
+            raise ValueError(f"Unrecognised deferral for {enabler_id}: {title}")
+        status, scope_tag, milestone = delivery_fields(deferred, "M0 - Foundations & Controlled Catalogue")
         rows.append(
             {
                 "Task Name": f"{enabler_id} - {title}",
@@ -139,9 +163,9 @@ def parse_enablers(lines: list[str]) -> list[dict[str, str]]:
                     "Completion must be demonstrated through the applicable security, integration, "
                     "data, accessibility, observability, testing, and operational acceptance evidence."
                 ),
-                "Status": "Open",
+                "Status": status,
                 "Priority": "High",
-                "Tags": "MVP, Platform, Enabler, v0.10",
+                "Tags": f"{scope_tag}, Platform, Enabler, v{version}",
                 "Proposed Milestone": milestone,
                 "Requirement References": "Cross-cutting NFRs and Definition of Done",
             }
@@ -151,8 +175,10 @@ def parse_enablers(lines: list[str]) -> list[dict[str, str]]:
 
 def main() -> None:
     lines = SOURCE.read_text(encoding="utf-8").splitlines()
-    rows = parse_stories(lines) + parse_enablers(lines)
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    version = read_version(lines)
+    rows = parse_stories(lines, version) + parse_enablers(lines, version)
+    output = ROOT / "output" / "zoho" / f"InsurShield_MVP_Backlog_v{version}_Zoho_Import.csv"
+    output.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "Task Name",
         "Task List Name",
@@ -163,11 +189,11 @@ def main() -> None:
         "Proposed Milestone",
         "Requirement References",
     ]
-    with OUTPUT.open("w", encoding="utf-8-sig", newline="") as handle:
+    with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
-    print(f"Created {OUTPUT}")
+    print(f"Created {output}")
     print(f"Rows: {len(rows)}")
     print(f"Task lists: {len(set(row['Task List Name'] for row in rows))}")
 

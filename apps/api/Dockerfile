@@ -20,8 +20,9 @@ RUN npx --yes turbo@2.11.3 prune @insurshield/api --docker
 FROM node:24-alpine AS prod-deps
 WORKDIR /app
 COPY --from=pruner /app/out/json/ ./
-# --omit=peer drops auto-installed optional peers that nothing at runtime loads.
-RUN npm ci --omit=dev --omit=peer --ignore-scripts && npm cache clean --force
+# Omits every optional and devOptional package: better-auth's optional peers (vitest, drizzle-kit) are devOptional and
+# survive --omit=dev alone. A runtime dependency that ships its platform binary as an optional dependency needs this revisited.
+RUN npm ci --omit=dev --omit=peer --omit=optional --ignore-scripts && npm cache clean --force
 
 # ── build ───────────────────────────────────────────────────────────────
 FROM node:24-alpine AS build
