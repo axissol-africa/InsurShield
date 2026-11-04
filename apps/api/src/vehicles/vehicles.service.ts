@@ -1,10 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { Principal } from '../common/auth/auth.types.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { comparablePlate, displayPlate } from './domain/plate.js';
 import { VehiclesRepository } from './vehicles.repository.js';
-
-/** Only this many of the most recently updated vehicles are searched for a known plate. */
-const KNOWN_VEHICLE_CANDIDATES = 50;
 
 /**
  * The reference vehicle the RTSA stand-in returns for any plate it has never
@@ -25,10 +23,9 @@ const STAND_IN = {
 /**
  * Vehicle identification.
  *
- * A plate the platform has already insured is answered from our own records;
- * anything else falls back to the RTSA stand-in. When the real registry is
- * connected only `lookupFromRegistry` changes — callers and the response shape
- * stay as they are.
+ * A customer can recover the most recent vehicle they have previously
+ * submitted or insured. Everyone else receives the registry response; platform
+ * records are never a public vehicle registry.
  */
 @Injectable()
 export class VehiclesService {
@@ -36,15 +33,15 @@ export class VehiclesService {
 
   constructor(private readonly repository: VehiclesRepository) {}
 
-  async lookup(plate: string) {
+  async lookup(plate: string, principal?: Principal) {
     const trimmed = plate?.trim() ?? '';
     if (trimmed.length < 3) {
       throw new ApiException('INVALID_PLATE', 'Enter the vehicle’s licence plate number.');
     }
 
-    const known = await this.findKnownVehicle(trimmed);
+    const known = principal?.kind === 'customer' ? await this.findKnownVehicle(trimmed, principal.id) : null;
     if (known) {
-      this.logger.log(`Plate ${displayPlate(trimmed)} matched a vehicle already on the platform`);
+      this.logger.log(`Plate ${displayPlate(trimmed)} matched the customer’s own platform vehicle`);
       return known;
     }
 
@@ -52,26 +49,32 @@ export class VehiclesService {
   }
 
   /**
-   * A vehicle we have quoted or insured before. Reusing it keeps one plate to
-   * one record, so a returning customer sees the details they confirmed last
-   * time rather than a fresh guess.
+   * The customer’s latest matching request or policy. We compare compacted
+   * plates after the server-side customer filter so older spacing is harmless.
    */
-  private async findKnownVehicle(plate: string) {
+  private async findKnownVehicle(plate: string, customerId: string) {
     const compact = comparablePlate(plate);
-    const candidates = await this.repository.findLatest(KNOWN_VEHICLE_CANDIDATES);
-    const match = candidates.find((vehicle) => comparablePlate(vehicle.plateNumber) === compact);
+    const candidates = await this.repository.findKnownForCustomer(customerId, compact.slice(0, 3));
+    const match = candidates
+      .filter(({ vehicle }) => comparablePlate(vehicle.plateNumber) === compact)
+      .reduce<(typeof candidates)[number] | undefined>(
+        (latest, candidate) => (!latest || candidate.observedAt > latest.observedAt ? candidate : latest),
+        undefined,
+      );
     if (!match) return null;
 
+    const { vehicle } = match;
+
     return {
-      plateNumber: match.plateNumber,
-      make: match.make,
-      model: match.model,
-      year: match.year,
-      color: match.color,
-      chassisNumber: match.chassisNumber,
-      engineNumber: match.engineNumber,
-      registrationDate: match.registrationDate?.toISOString() ?? null,
-      rtsaAnniversaryDate: match.rtsaAnniversaryDate?.toISOString() ?? null,
+      plateNumber: vehicle.plateNumber,
+      make: vehicle.make,
+      model: vehicle.model,
+      year: vehicle.year,
+      color: vehicle.color,
+      chassisNumber: vehicle.chassisNumber,
+      engineNumber: vehicle.engineNumber,
+      registrationDate: vehicle.registrationDate?.toISOString() ?? null,
+      rtsaAnniversaryDate: vehicle.rtsaAnniversaryDate?.toISOString() ?? null,
       source: 'PLATFORM' as const,
     };
   }

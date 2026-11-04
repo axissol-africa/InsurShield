@@ -1,8 +1,16 @@
 import { randomBytes } from 'node:crypto';
-import { inArray } from 'drizzle-orm';
-import { vehicles } from '../src/db/schema.js';
-import { buildVehicle } from './builders.js';
+import {
+  buildCustomer,
+  buildInsurer,
+  buildInsurerQuote,
+  buildPayment,
+  buildPolicy,
+  buildQuoteRequest,
+  buildStaffUser,
+  buildVehicle,
+} from './builders.js';
 import { startApp, type TestApp } from './helpers.js';
+import { signIn, type SessionHeaders } from './sessions.js';
 
 const LOOKUP_KEYS = [
   'chassisNumber',
@@ -16,8 +24,6 @@ const LOOKUP_KEYS = [
   'source',
   'year',
 ];
-
-const minutesFromNow = (minutes: number) => new Date(Date.now() + minutes * 60_000);
 
 const letters = (count: number) =>
   Array.from(randomBytes(count), (byte) => String.fromCharCode(65 + (byte % 26))).join('');
@@ -33,9 +39,13 @@ describe('GET /vehicles/lookup', () => {
     await testApp.close();
   });
 
-  const lookup = (plate: string) => testApp.http.get('/api/v1/vehicles/lookup').query({ plate });
+  const lookup = (plate: string, session?: SessionHeaders) => {
+    const request = testApp.http.get('/api/v1/vehicles/lookup').query({ plate });
+    return session ? request.set(session) : request;
+  };
 
-  it('answers a plate already on the platform from its record, with the stored values and exact keys', async () => {
+  it('returns the registry stand-in to a guest, even when the plate is on the platform', async () => {
+    const customer = await buildCustomer(testApp.db);
     const prefix = letters(4);
     const vehicle = await buildVehicle(testApp.db, {
       plateNumber: `${prefix} 4821`,
@@ -43,83 +53,111 @@ describe('GET /vehicles/lookup', () => {
       model: 'Navara',
       year: '2018',
       color: 'Silver',
-      chassisNumber: 'CH-123',
-      engineNumber: 'EN-456',
-      registrationDate: new Date('2018-04-05T10:11:12.345Z'),
-      rtsaAnniversaryDate: null,
+      chassisNumber: 'CHASSIS-PRIVATE',
+      engineNumber: 'ENGINE-PRIVATE',
     });
+    await buildQuoteRequest(testApp.db, { customerId: customer.id, insurerIds: [], vehicleId: vehicle.id });
 
     const response = await lookup(`${prefix} 4821`).expect(200);
 
     expect(Object.keys(response.body).sort()).toEqual(LOOKUP_KEYS);
-    expect(response.body).toEqual({
-      plateNumber: vehicle.plateNumber,
-      make: 'Nissan',
-      model: 'Navara',
-      year: '2018',
-      color: 'Silver',
-      chassisNumber: 'CH-123',
-      engineNumber: 'EN-456',
-      registrationDate: '2018-04-05T10:11:12.345Z',
-      rtsaAnniversaryDate: null,
+    expect(response.body).toMatchObject({ plateNumber: `${prefix} 4821`, source: 'RTSA_STAND_IN' });
+    expect(response.body.chassisNumber).not.toBe(vehicle.chassisNumber);
+    expect(response.body.engineNumber).not.toBe(vehicle.engineNumber);
+  });
+
+  it('returns the signed-in customer’s latest submitted matching vehicle', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const prefix = letters(4);
+    const plate = `${prefix} 7310`;
+    const older = await buildVehicle(testApp.db, { plateNumber: plate, make: 'Older', chassisNumber: 'OLD-CHASSIS' });
+    const latest = await buildVehicle(testApp.db, {
+      plateNumber: `${prefix.toLowerCase()}7310`,
+      make: 'Latest',
+      model: 'Hilux',
+      year: '2025',
+      color: 'Black',
+      chassisNumber: 'LATEST-CHASSIS',
+      engineNumber: 'LATEST-ENGINE',
+    });
+    await buildQuoteRequest(
+      testApp.db,
+      { customerId: customer.id, insurerIds: [], vehicleId: older.id },
+      { submittedAt: new Date('2026-01-01T00:00:00.000Z') },
+    );
+    await buildQuoteRequest(
+      testApp.db,
+      { customerId: customer.id, insurerIds: [], vehicleId: latest.id },
+      { submittedAt: new Date('2026-02-01T00:00:00.000Z') },
+    );
+
+    const response = await lookup(` ${prefix.toLowerCase()}  7310 `, await signIn(testApp.http, customer)).expect(200);
+
+    expect(Object.keys(response.body).sort()).toEqual(LOOKUP_KEYS);
+    expect(response.body).toMatchObject({
+      plateNumber: latest.plateNumber,
+      make: 'Latest',
+      chassisNumber: 'LATEST-CHASSIS',
+      engineNumber: 'LATEST-ENGINE',
       source: 'PLATFORM',
     });
   });
 
-  it('matches a plate whatever its letter case and spacing', async () => {
+  it('returns a customer’s policy vehicle even when no request refers to that vehicle', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const { insurer, staff } = await buildInsurer(testApp.db);
+    const linkedRequest = await buildQuoteRequest(testApp.db, { customerId: customer.id, insurerIds: [insurer.id] });
+    const { quote } = await buildInsurerQuote(testApp.db, {
+      quoteRequestId: linkedRequest.quoteRequest.id,
+      insurerId: insurer.id,
+      staffId: staff.id,
+    });
+    const payment = await buildPayment(testApp.db, {
+      customerId: customer.id,
+      quoteRequestId: linkedRequest.quoteRequest.id,
+      insurerQuoteId: quote.id,
+    });
     const prefix = letters(4);
-    await buildVehicle(testApp.db, { plateNumber: `${prefix} 7310` });
+    const policyVehicle = await buildVehicle(testApp.db, {
+      plateNumber: `${prefix} 6042`,
+      make: 'Mazda',
+      model: 'BT-50',
+      chassisNumber: 'POLICY-CHASSIS',
+    });
+    await buildPolicy(testApp.db, {
+      insurerId: insurer.id,
+      customerId: customer.id,
+      vehicleId: policyVehicle.id,
+      paymentId: payment.id,
+    });
 
-    for (const typed of [prefix.toLowerCase() + '7310', ` ${prefix.toLowerCase()}  7310 `, `${prefix[0]} ${prefix.slice(1)} 73 10`]) {
-      const response = await lookup(typed).expect(200);
-      expect(response.body).toMatchObject({ plateNumber: `${prefix} 7310`, source: 'PLATFORM' });
-    }
+    const response = await lookup(`${prefix}6042`, await signIn(testApp.http, customer)).expect(200);
+
+    expect(response.body).toMatchObject({
+      plateNumber: policyVehicle.plateNumber,
+      make: 'Mazda',
+      chassisNumber: 'POLICY-CHASSIS',
+      source: 'PLATFORM',
+    });
   });
 
-  it('matches a stored plate written in lower case or without its space', async () => {
+  it('returns the registry stand-in to customers without the plate and to all staff', async () => {
+    const owner = await buildCustomer(testApp.db);
+    const otherCustomer = await buildCustomer(testApp.db);
+    const staff = await buildStaffUser(testApp.db);
     const prefix = letters(4);
-    await buildVehicle(testApp.db, { plateNumber: `${prefix.toLowerCase()}5520` });
+    const vehicle = await buildVehicle(testApp.db, {
+      plateNumber: `${prefix} 5520`,
+      chassisNumber: 'OWNER-CHASSIS',
+      engineNumber: 'OWNER-ENGINE',
+    });
+    await buildQuoteRequest(testApp.db, { customerId: owner.id, insurerIds: [], vehicleId: vehicle.id });
 
-    const response = await lookup(`${prefix} 5520`).expect(200);
-
-    expect(response.body).toMatchObject({ plateNumber: `${prefix.toLowerCase()}5520`, source: 'PLATFORM' });
-  });
-
-  it('answers the most recently updated of two records for one plate', async () => {
-    const prefix = letters(4);
-    await buildVehicle(testApp.db, { plateNumber: `${prefix} 1001`, make: 'Older', updatedAt: minutesFromNow(1) });
-    await buildVehicle(testApp.db, { plateNumber: `${prefix}1001`, make: 'Newer', updatedAt: minutesFromNow(2) });
-
-    const response = await lookup(`${prefix}1001`).expect(200);
-
-    expect(response.body).toMatchObject({ make: 'Newer', source: 'PLATFORM' });
-  });
-
-  it('searches only the 50 most recently updated vehicles, and answers the stand-in for a plate beyond them', async () => {
-    const prefix = letters(4);
-    const known = await buildVehicle(testApp.db, { plateNumber: `${prefix} 9090`, make: 'Mazda', updatedAt: minutesFromNow(60) });
-    const later: string[] = [];
-    const updateAnother = async (index: number) => {
-      const vehicle = await buildVehicle(testApp.db, { plateNumber: `${letters(4)} ${index}`, updatedAt: minutesFromNow(120) });
-      later.push(vehicle.id);
-    };
-    try {
-      for (let index = 0; index < 49; index += 1) await updateAnother(index);
-
-      const fiftieth = await lookup(`${prefix}9090`).expect(200);
-      expect(fiftieth.body).toMatchObject({ plateNumber: `${prefix} 9090`, make: 'Mazda', source: 'PLATFORM' });
-
-      await updateAnother(49);
-
-      const beyond = await lookup(`${prefix}9090`).expect(200);
-      expect(beyond.body).toMatchObject({
-        plateNumber: `${prefix} 9090`,
-        make: 'Toyota',
-        chassisNumber: 'JTEH1234560012345',
-        source: 'RTSA_STAND_IN',
-      });
-    } finally {
-      await testApp.db.delete(vehicles).where(inArray(vehicles.id, [known.id, ...later]));
+    for (const session of [await signIn(testApp.http, otherCustomer), await signIn(testApp.http, staff)]) {
+      const response = await lookup(`${prefix} 5520`, session).expect(200);
+      expect(response.body).toMatchObject({ plateNumber: `${prefix} 5520`, source: 'RTSA_STAND_IN' });
+      expect(response.body.chassisNumber).not.toBe('OWNER-CHASSIS');
+      expect(response.body.engineNumber).not.toBe('OWNER-ENGINE');
     }
   });
 

@@ -9,7 +9,6 @@ import { newReference } from '../common/domain/reference.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS } from './domain/cover-period.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
-import { findVehicleByPlate, plateSearchPrefix } from './domain/plate-match.js';
 import { CHOOSE_A_COVER_PERIOD, CHOOSE_A_COVER_TYPE, type SubmitQuoteRequestDto, type VehicleDetailsDto } from './dto/customer.dto.js';
 import { toQuoteRequestResponse, type QuoteRequestResponse, type QuoteWithDocument } from './dto/quote-request.response.js';
 import {
@@ -60,7 +59,7 @@ export class QuoteRequestsService {
     const response = await this.repository.transaction(async (tx) => {
       const insurerIds = await this.activeInsurerIds(tx);
       await this.documents.assertAttachable(tx, customer, shots.map((shot) => shot.documentId), 'INSPECTION_PHOTO');
-      const vehicle = await this.upsertVehicle(tx, dto.vehicleDetails);
+      const vehicle = await this.createVehicle(tx, dto.vehicleDetails);
       const ncd = await this.usableNcdCode(tx, customer.id, dto.ncdCode);
       return this.distribute(
         tx,
@@ -166,12 +165,11 @@ export class QuoteRequestsService {
   }
 
   /**
-   * One row per plate, so a returning customer's vehicle keeps its history
-   * instead of accumulating near-duplicates. The details the customer just
-   * confirmed win, because they have seen them and the stored copy may predate
-   * a respray or a re-registration.
+   * A submission owns an immutable vehicle row. A later customer can submit
+   * the same plate with newly confirmed details without rewriting their own
+   * earlier request, someone else’s request, or an already-issued policy.
    */
-  private async upsertVehicle(tx: Transaction, details: VehicleDetailsDto): Promise<VehicleRow> {
+  private async createVehicle(tx: Transaction, details: VehicleDetailsDto): Promise<VehicleRow> {
     const vehicle: NewVehicle = {
       plateNumber: details.plateNumber.trim(),
       make: details.make.trim(),
@@ -184,11 +182,7 @@ export class QuoteRequestsService {
       registrationDate: details.registrationDate ? new Date(details.registrationDate) : null,
       rtsaAnniversaryDate: details.rtsaAnniversaryDate ? new Date(details.rtsaAnniversaryDate) : null,
     };
-    const candidates = await this.repository.vehicleCandidates(tx, plateSearchPrefix(vehicle.plateNumber));
-    const existing = findVehicleByPlate(candidates, vehicle.plateNumber);
-    return existing
-      ? this.repository.updateVehicle(tx, existing.id, vehicle)
-      : this.repository.insertVehicle(tx, vehicle);
+    return this.repository.insertVehicle(tx, vehicle);
   }
 
   /** The customer's own code behind `ncdCode`, if it is still usable; anything else is dropped. */

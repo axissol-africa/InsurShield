@@ -1,6 +1,8 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import type { Principal } from '../common/auth/auth.types.js';
+import { CurrentUser } from '../common/auth/current-user.decorator.js';
+import { OptionalAuth } from '../common/auth/auth.guard.js';
 import { VehiclesService } from './vehicles.service.js';
-import { Public } from '../common/auth/auth.guard.js';
 
 @Controller('vehicles')
 export class VehiclesController {
@@ -9,12 +11,12 @@ export class VehiclesController {
   /**
    * Identify a vehicle from its licence plate.
    *
-   * Public: a guest identifies their vehicle before an account exists, which
-   * is the whole point of letting people explore before signing up.
+   * Guests can identify a vehicle before an account exists. A signed-in
+   * customer may also recover only their own previously submitted details.
    */
-  @Public()
+  @OptionalAuth()
   @Get('lookup')
-  lookup(@Query('plate') plate: string) {
-    return this.vehicles.lookup(plate);
+  lookup(@Query('plate') plate: string, @CurrentUser() principal?: Principal) {
+    return this.vehicles.lookup(plate, principal);
   }
 }

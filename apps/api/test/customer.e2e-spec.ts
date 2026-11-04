@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { Pool } from 'pg';
 import type { Response } from 'supertest';
 import { MAX_KWACHA } from '../src/common/domain/money-limits.js';
@@ -199,6 +199,7 @@ describe('customer', () => {
     testApp.db.select().from(quoteRequests).where(eq(quoteRequests.customerId, customerId));
   const claimsOf = (customerId: string) =>
     testApp.db.select().from(claimNotifications).where(eq(claimNotifications.customerId, customerId));
+  const vehicleRows = () => testApp.db.select().from(vehicles).orderBy(asc(vehicles.id));
 
   const submission = (plate: string, overrides: Record<string, unknown> = {}) => ({
     vehicleDetails: { plateNumber: plate, make: 'Toyota', model: 'Hilux', year: '2020', color: 'White' },
@@ -445,23 +446,104 @@ describe('customer', () => {
       expect((await storedRequest(response.body.id)).coverageDays).toBe(daysTotal);
     });
 
-    it('reuses the vehicle already on file for that plate, however it is spaced, and takes the confirmed details', async () => {
-      const customer = await buildCustomer(testApp.db);
-      await buildInsurer(testApp.db);
-      const plate = unique('bad').replace('-', '');
-      const existing = await buildVehicle(testApp.db, { plateNumber: plate.toLowerCase(), color: 'Red' });
+    it('creates a new immutable vehicle for a matching plate without changing another customer’s request, policy or lookup', async () => {
+      const owner = await buildCustomer(testApp.db);
+      const purchaser = await buildPurchasedPolicy(testApp.db, { customer: owner });
+      const [ownerVehicle] = await testApp.db.select().from(vehicles).where(eq(vehicles.id, purchaser.quoteRequest.vehicleId));
+      const originalRequest = await testApp.http
+        .get(`/api/v1/quote-requests/${purchaser.quoteRequest.id}`)
+        .set(await asCustomer(owner))
+        .expect(200);
+      const originalPolicy = await testApp.http
+        .get(`/api/v1/policies/${purchaser.policy.policyNumber}`)
+        .set(await asCustomer(owner))
+        .expect(200);
+      const originalLookup = await testApp.http
+        .get('/api/v1/vehicles/lookup')
+        .query({ plate: ownerVehicle.plateNumber })
+        .set(await asCustomer(owner))
+        .expect(200);
+      const other = await buildCustomer(testApp.db);
 
       const response = await testApp.http
         .post('/api/v1/quote-requests')
-        .set(await asCustomer(customer))
-        .send(submission(`${plate.slice(0, 3).toUpperCase()} ${plate.slice(3)}`))
+        .set(await asCustomer(other))
+        .send(
+          submission(ownerVehicle.plateNumber, {
+            vehicleDetails: {
+              plateNumber: ownerVehicle.plateNumber,
+              make: 'Ford',
+              model: 'Ranger',
+              year: '2025',
+              color: 'Blue',
+              chassisNumber: 'OTHER-CUSTOMER-CHASSIS',
+              engineNumber: 'OTHER-CUSTOMER-ENGINE',
+            },
+          }),
+        )
         .expect(201);
 
       const stored = await storedRequest(response.body.id);
-      expect(stored.vehicleId).toBe(existing.id);
-      const [vehicle] = await testApp.db.select().from(vehicles).where(eq(vehicles.id, existing.id));
-      expect(vehicle).toMatchObject({ plateNumber: `${plate.slice(0, 3).toUpperCase()} ${plate.slice(3)}`, color: 'White' });
-      expect(response.body.vehicleDetails.plateNumber).toBe(`${plate.slice(0, 3).toUpperCase()} ${plate.slice(3)}`);
+      expect(stored.vehicleId).not.toBe(ownerVehicle.id);
+      const [storedOwnerVehicle] = await testApp.db.select().from(vehicles).where(eq(vehicles.id, ownerVehicle.id));
+      expect(storedOwnerVehicle).toEqual(ownerVehicle);
+      expect(response.body.vehicleDetails).toMatchObject({
+        make: 'Ford',
+        model: 'Ranger',
+        chassisNumber: 'OTHER-CUSTOMER-CHASSIS',
+        engineNumber: 'OTHER-CUSTOMER-ENGINE',
+      });
+
+      const ownerRequest = await testApp.http
+        .get(`/api/v1/quote-requests/${purchaser.quoteRequest.id}`)
+        .set(await asCustomer(owner))
+        .expect(200);
+      const ownerPolicy = await testApp.http
+        .get(`/api/v1/policies/${purchaser.policy.policyNumber}`)
+        .set(await asCustomer(owner))
+        .expect(200);
+      const ownerLookup = await testApp.http
+        .get('/api/v1/vehicles/lookup')
+        .query({ plate: ownerVehicle.plateNumber })
+        .set(await asCustomer(owner))
+        .expect(200);
+      const otherLookup = await testApp.http
+        .get('/api/v1/vehicles/lookup')
+        .query({ plate: ownerVehicle.plateNumber })
+        .set(await asCustomer(other))
+        .expect(200);
+
+      expect(ownerRequest.body.vehicleDetails).toEqual(originalRequest.body.vehicleDetails);
+      expect(ownerPolicy.body.vehicleDetails).toEqual(originalPolicy.body.vehicleDetails);
+      expect(ownerLookup.body).toEqual(originalLookup.body);
+      expect(otherLookup.body).toMatchObject({ make: 'Ford', model: 'Ranger', source: 'PLATFORM' });
+    });
+
+    it('does not update an existing vehicle when submitting, requoting or renewing', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const purchase = await buildPurchasedPolicy(testApp.db, { customer });
+      const before = await vehicleRows();
+
+      const submitted = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('BAD').toUpperCase()))
+        .expect(201);
+      const afterSubmit = await vehicleRows();
+      expect(afterSubmit).toHaveLength(before.length + 1);
+      expect(afterSubmit.filter((vehicle) => before.some((original) => original.id === vehicle.id))).toEqual(before);
+
+      await testApp.http
+        .post(`/api/v1/quote-requests/${submitted.body.id}/requote`)
+        .set(await asCustomer(customer))
+        .expect(201);
+      expect(await vehicleRows()).toEqual(afterSubmit);
+
+      await testApp.http
+        .post(`/api/v1/policies/${purchase.policy.policyNumber}/renew`)
+        .set(await asCustomer(customer))
+        .expect(201);
+      expect(await vehicleRows()).toEqual(afterSubmit);
     });
 
     it('refuses a value above the supported maximum with 400 and stores nothing', async () => {
@@ -667,6 +749,7 @@ describe('customer', () => {
 
       const original = await testApp.http.get(`/api/v1/quote-requests/${quoteRequest.id}`).set(await asCustomer(customer)).expect(200);
       expect(original.body.requotedAs).toBe(response.body.id);
+      expect(response.body.vehicleDetails).toEqual(original.body.vehicleDetails);
 
       const again = await testApp.http
         .post(`/api/v1/quote-requests/${quoteRequest.id}/requote`)
@@ -852,6 +935,10 @@ describe('customer', () => {
         .set({ vehicleValueMinor: 320_000_00, vehicleUsage: 'Commercial', insuranceType: 'THIRD_PARTY', coverageDuration: 'Q2', matchRtsaAnniversary: true })
         .where(eq(quoteRequests.id, quoteRequest.id));
       await testApp.db.update(policies).set({ policyEndDate: endDate }).where(eq(policies.policyNumber, policy.policyNumber));
+      const originalRequest = await testApp.http
+        .get(`/api/v1/quote-requests/${quoteRequest.id}`)
+        .set(await asCustomer(customer))
+        .expect(200);
 
       const response = await testApp.http
         .post(`/api/v1/policies/${policy.policyNumber}/renew`)
@@ -877,6 +964,7 @@ describe('customer', () => {
         policyStartDate: endDate,
         policyEndDate: null,
       });
+      expect(response.body.vehicleDetails).toEqual(originalRequest.body.vehicleDetails);
 
       const again = await testApp.http
         .post(`/api/v1/policies/${policy.policyNumber}/renew`)

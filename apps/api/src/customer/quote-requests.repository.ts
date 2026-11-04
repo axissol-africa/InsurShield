@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, ilike, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   customers,
@@ -65,11 +65,6 @@ const PARTIES = {
   customer: { fullName: customers.fullName, email: customers.email, phone: customers.phone },
   vehicle: vehicles,
 };
-
-const VEHICLE_CANDIDATES = 50;
-
-/** The prefix is matched literally, so a pattern character typed in a plate searches for itself. */
-const escapeLike = (text: string) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
 
 @Injectable()
 export class QuoteRequestsRepository {
@@ -169,22 +164,9 @@ export class QuoteRequestsRepository {
     return rows.map((insurer) => insurer.id);
   }
 
-  vehicleCandidates(tx: Transaction, platePrefix: string): Promise<VehicleRow[]> {
-    return tx
-      .select()
-      .from(vehicles)
-      .where(ilike(vehicles.plateNumber, `%${escapeLike(platePrefix)}%`))
-      .limit(VEHICLE_CANDIDATES);
-  }
-
   async insertVehicle(tx: Transaction, vehicle: NewVehicle): Promise<VehicleRow> {
     const [created] = await tx.insert(vehicles).values(vehicle).returning();
     return created;
-  }
-
-  async updateVehicle(tx: Transaction, id: string, vehicle: NewVehicle): Promise<VehicleRow> {
-    const [updated] = await tx.update(vehicles).set(vehicle).where(eq(vehicles.id, id)).returning();
-    return updated;
   }
 
   /** The code only when it was issued on this customer's own application. */
