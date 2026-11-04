@@ -1,6 +1,5 @@
 import { causes, describeDatabaseError } from '../src/db/errors.js';
 import { failureReason } from '../src/db/migrator.js';
-import { KeycloakAdminError } from './keycloak-admin.js';
 
 /** The seed's own failure, whose message is printed as it is, so it never holds a value it was given. */
 export class SeedError extends Error {
@@ -30,10 +29,10 @@ export function describeSeedFailure(error: unknown): SeedFailure {
   if (error instanceof SeedError) {
     return { message: `db:seed failed: ${error.message}`, details: {} };
   }
-  if (error instanceof KeycloakAdminError) {
-    return { message: `db:seed failed: ${error.message}`, details: error.code ? { code: error.code } : {} };
-  }
-  return { message: `db:seed failed: ${unexpectedReason(error)}`, details: describeDatabaseError(error) };
+  return {
+    message: `db:seed failed: ${unexpectedReason(error)}`,
+    details: describeDatabaseError(error),
+  };
 }
 
 function unexpectedReason(error: unknown): string {
@@ -41,6 +40,11 @@ function unexpectedReason(error: unknown): string {
     const reason = failureReason(current);
     if (!reason.startsWith(UNEXPECTED)) return reason;
   }
-  const name = error instanceof Error ? (ERROR_NAME.test(error.name) ? error.name : 'Error') : typeof error;
+  const name =
+    error instanceof Error
+      ? ERROR_NAME.test(error.name)
+        ? error.name
+        : 'Error'
+      : typeof error;
   return `${UNEXPECTED} (${name})`;
 }

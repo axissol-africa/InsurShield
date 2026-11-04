@@ -10,7 +10,6 @@ import { kwachaToNgwee } from '../src/common/money.js';
 import type { Transaction } from '../src/db/database.module.js';
 import {
   claimNotifications,
-  customers,
   documents,
   insurerQuotes,
   insurers,
@@ -26,24 +25,49 @@ import {
 import { INSURERS } from './reference-data.js';
 import { SeedDataError } from './seed-errors.js';
 
-const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000);
-const daysAhead = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+const hoursAgo = (hours: number) =>
+  new Date(Date.now() - hours * 60 * 60 * 1000);
+const daysAhead = (days: number) =>
+  new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
-const CUSTOMER = {
-  keycloakId: 'demo-customer-bwalya',
+export const DEMO_CUSTOMER = {
   fullName: 'Bwalya Mutale',
   email: 'bwalya.mutale@example.zm',
   phone: '+260 97 612 3456',
 };
 
 const VEHICLES = [
-  { key: 'demo-hilux', plateNumber: 'BAZ 9901', make: 'Toyota', model: 'Hilux', year: '2024', chassisNumber: 'JTEH1234560012345' },
-  { key: 'demo-x5', plateNumber: 'BAD 4412', make: 'BMW', model: 'X5', year: '2022', chassisNumber: 'WBAKJ4C50BC123456' },
+  {
+    key: 'demo-hilux',
+    plateNumber: 'BAZ 9901',
+    make: 'Toyota',
+    model: 'Hilux',
+    year: '2024',
+    chassisNumber: 'JTEH1234560012345',
+  },
+  {
+    key: 'demo-x5',
+    plateNumber: 'BAD 4412',
+    make: 'BMW',
+    model: 'X5',
+    year: '2022',
+    chassisNumber: 'WBAKJ4C50BC123456',
+  },
 ];
 
 const REQUEST_IDS = ['QR-DEMO-0001', 'QR-DEMO-0002', 'QR-DEMO-0003'];
-const SEEDED_NCD_CODES = INSURERS.flatMap((insurer) => insurer.ncdCodes.map((ncd) => ncd.code));
-const SHOT_KEYS = ['insp_front', 'insp_back', 'insp_left', 'insp_right', 'insp_dashboard', 'insp_chassis', 'insp_stereo'];
+const SEEDED_NCD_CODES = INSURERS.flatMap((insurer) =>
+  insurer.ncdCodes.map((ncd) => ncd.code),
+);
+const SHOT_KEYS = [
+  'insp_front',
+  'insp_back',
+  'insp_left',
+  'insp_right',
+  'insp_dashboard',
+  'insp_chassis',
+  'insp_stereo',
+];
 
 /**
  * Removes the demo records so the next seed recreates them with nothing done
@@ -53,34 +77,42 @@ const SHOT_KEYS = ['insp_front', 'insp_back', 'insp_left', 'insp_right', 'insp_d
 export async function resetDemoData(tx: Transaction): Promise<void> {
   await tx.delete(policies).where(like(policies.policyNumber, 'POL-DEMO-%'));
   await tx.delete(payments).where(like(payments.transactionId, 'TXN-DEMO-%'));
-  await tx.delete(insurerQuotes).where(inArray(insurerQuotes.quoteRequestId, REQUEST_IDS));
-  await tx.delete(claimNotifications).where(like(claimNotifications.claimNumber, 'CLM-DEMO-%'));
-  await tx.delete(ncdApplications).where(like(ncdApplications.applicationNumber, 'NCDA-DEMO-%'));
+  await tx
+    .delete(insurerQuotes)
+    .where(inArray(insurerQuotes.quoteRequestId, REQUEST_IDS));
+  await tx
+    .delete(claimNotifications)
+    .where(like(claimNotifications.claimNumber, 'CLM-DEMO-%'));
+  await tx
+    .delete(ncdApplications)
+    .where(like(ncdApplications.applicationNumber, 'NCDA-DEMO-%'));
   // Requests created by re-requesting a demo one carry its id forward, so
   // they belong to the demo set too and must go with it.
-  await tx.delete(quoteRequests).where(inArray(quoteRequests.requotedFromId, REQUEST_IDS));
+  await tx
+    .delete(quoteRequests)
+    .where(inArray(quoteRequests.requotedFromId, REQUEST_IDS));
   await tx.delete(quoteRequests).where(inArray(quoteRequests.id, REQUEST_IDS));
   await tx.delete(documents).where(like(documents.storageKey, '%/QR-DEMO-%'));
-  await tx.update(ncdCodes).set({ redeemedAt: null }).where(inArray(ncdCodes.code, SEEDED_NCD_CODES));
+  await tx
+    .update(ncdCodes)
+    .set({ redeemedAt: null })
+    .where(inArray(ncdCodes.code, SEEDED_NCD_CODES));
 }
 
-export function demoVehicleId(vehicleIds: ReadonlyMap<string, string>, key: string): string {
+export function demoVehicleId(
+  vehicleIds: ReadonlyMap<string, string>,
+  key: string,
+): string {
   const id = vehicleIds.get(key);
   if (!id) throw new SeedDataError(`The demo vehicle ${key} is missing`);
   return id;
 }
 
-export async function seedDemoData(tx: Transaction, log: (line: string) => void): Promise<void> {
-  // Keyed on email, not keycloakId: once this demo customer is linked to a
-  // real Keycloak user its `sub` changes, and an upsert on keycloakId would
-  // then try to insert and collide on the unique email.
-  const [customer] = await tx
-    .insert(customers)
-    .values(CUSTOMER)
-    // keycloakId is deliberately not updated, so a real linkage survives.
-    .onConflictDoUpdate({ target: customers.email, set: { fullName: CUSTOMER.fullName, deletedAt: null } })
-    .returning({ id: customers.id });
-
+export async function seedDemoData(
+  tx: Transaction,
+  log: (line: string) => void,
+  customerId: string,
+): Promise<void> {
   const vehicleIds = new Map<string, string>();
   for (const { key, ...vehicle } of VEHICLES) {
     const [existing] = await tx
@@ -89,7 +121,11 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
       .where(eq(vehicles.plateNumber, vehicle.plateNumber))
       .orderBy(asc(vehicles.createdAt), asc(vehicles.id))
       .limit(1);
-    const record = existing ?? (await tx.insert(vehicles).values(vehicle).returning({ id: vehicles.id }))[0];
+    const record =
+      existing ??
+      (
+        await tx.insert(vehicles).values(vehicle).returning({ id: vehicles.id })
+      )[0];
     vehicleIds.set(key, record.id);
   }
   const vehicleId = (key: string) => demoVehicleId(vehicleIds, key);
@@ -100,12 +136,26 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
     .where(eq(insurers.status, 'ACTIVE'))
     .orderBy(asc(insurers.name));
   if (active.length === 0) return;
-  const prestige = active.find((insurer) => insurer.name === 'Prestige Assurance') ?? active[0];
+  const prestige =
+    active.find((insurer) => insurer.name === 'Prestige Assurance') ??
+    active[0];
 
   // ── Quote requests, fanned out to every active insurer ──────────
   const requests = [
-    { id: 'QR-DEMO-0001', vehicleKey: 'demo-hilux', value: 520000, usage: 'Individual', hours: 2 },
-    { id: 'QR-DEMO-0002', vehicleKey: 'demo-x5', value: 685000, usage: 'Commercial (Cars for Hire)', hours: 15 },
+    {
+      id: 'QR-DEMO-0001',
+      vehicleKey: 'demo-hilux',
+      value: 520000,
+      usage: 'Individual',
+      hours: 2,
+    },
+    {
+      id: 'QR-DEMO-0002',
+      vehicleKey: 'demo-x5',
+      value: 685000,
+      usage: 'Commercial (Cars for Hire)',
+      hours: 15,
+    },
   ];
 
   for (const request of requests) {
@@ -117,7 +167,7 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
         status: 'SUBMITTED',
         submittedAt,
         expiresAt: daysAhead(7),
-        customerId: customer.id,
+        customerId,
         vehicleId: vehicleId(request.vehicleKey),
         vehicleValueMinor: kwachaToNgwee(request.value),
         vehicleUsage: request.usage,
@@ -173,7 +223,7 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
       status: 'QUOTED',
       submittedAt: hoursAgo(48),
       expiresAt: daysAhead(5),
-      customerId: customer.id,
+      customerId,
       vehicleId: vehicleId('demo-hilux'),
       vehicleValueMinor: kwachaToNgwee(300000),
       vehicleUsage: 'Individual',
@@ -227,7 +277,7 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
         amountMinor: premiumMinor,
         confirmedAt: paidAt,
         idempotencyKey: 'demo-payment-0003',
-        customerId: customer.id,
+        customerId,
         quoteRequestId: paidRequestId,
         insurerQuoteId: quote.id,
       })
@@ -237,7 +287,7 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
       policyNumber: 'POL-DEMO-0003',
       status: 'AWAITING_INSURER_CERTIFICATE',
       insurerId: prestige.id,
-      customerId: customer.id,
+      customerId,
       vehicleId: vehicleId('demo-hilux'),
       coverage: 'Comprehensive Gold Plan',
       premiumMinor,
@@ -254,8 +304,18 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
 
   // ── Claim notifications ─────────────────────────────────────────
   const claims = [
-    { claimNumber: 'CLM-DEMO-0001', type: 'Accident / Collision', status: 'NOTIFIED' as const, hours: 26 },
-    { claimNumber: 'CLM-DEMO-0002', type: 'Theft', status: 'RECEIVED_BY_INSURER' as const, hours: 96 },
+    {
+      claimNumber: 'CLM-DEMO-0001',
+      type: 'Accident / Collision',
+      status: 'NOTIFIED' as const,
+      hours: 26,
+    },
+    {
+      claimNumber: 'CLM-DEMO-0002',
+      type: 'Theft',
+      status: 'RECEIVED_BY_INSURER' as const,
+      hours: 96,
+    },
   ];
   for (const claim of claims) {
     await tx
@@ -264,29 +324,43 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
         claimNumber: claim.claimNumber,
         status: claim.status,
         insurerId: prestige.id,
-        customerId: customer.id,
-        fullName: CUSTOMER.fullName,
-        phone: CUSTOMER.phone,
-        email: CUSTOMER.email,
+        customerId,
+        fullName: DEMO_CUSTOMER.fullName,
+        phone: DEMO_CUSTOMER.phone,
+        email: DEMO_CUSTOMER.email,
         plate: 'BAZ 9901',
         vehicleLabel: '2024 Toyota Hilux',
         type: claim.type,
         incidentDate: hoursAgo(claim.hours + 12),
         location: 'Great East Road, Lusaka',
-        description: 'Rear-ended at a junction; both vehicles drivable. No injuries reported.',
+        description:
+          'Rear-ended at a junction; both vehicles drivable. No injuries reported.',
         estimatedLossMinor: kwachaToNgwee(18500),
         policeReport: true,
         policeReportNumber: 'LSK/2026/44812',
         submittedAt: hoursAgo(claim.hours),
-        receivedAt: claim.status === 'RECEIVED_BY_INSURER' ? hoursAgo(claim.hours - 4) : null,
+        receivedAt:
+          claim.status === 'RECEIVED_BY_INSURER'
+            ? hoursAgo(claim.hours - 4)
+            : null,
       })
       .onConflictDoNothing({ target: claimNotifications.claimNumber });
   }
 
   // ── NCD applications awaiting a decision ────────────────────────
   const pending = [
-    { applicationNumber: 'NCDA-DEMO-0001', fullName: 'Mwiza Banda', years: 2, status: 'SUBMITTED' as const },
-    { applicationNumber: 'NCDA-DEMO-0002', fullName: 'Thandiwe Zulu', years: 3, status: 'UNDER_REVIEW' as const },
+    {
+      applicationNumber: 'NCDA-DEMO-0001',
+      fullName: 'Mwiza Banda',
+      years: 2,
+      status: 'SUBMITTED' as const,
+    },
+    {
+      applicationNumber: 'NCDA-DEMO-0002',
+      fullName: 'Thandiwe Zulu',
+      years: 3,
+      status: 'UNDER_REVIEW' as const,
+    },
   ];
   for (const application of pending) {
     await tx
@@ -294,10 +368,10 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
       .values({
         applicationNumber: application.applicationNumber,
         insurerId: prestige.id,
-        customerId: customer.id,
+        customerId,
         policyNumber: 'PA-2023-0045',
         fullName: application.fullName,
-        phone: CUSTOMER.phone,
+        phone: DEMO_CUSTOMER.phone,
         yearsClaimFree: application.years,
         status: application.status,
       })
@@ -307,7 +381,11 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
   // ── Approved applications behind the seeded NCD codes ───────────
   // A payment redeems a code only when it was issued on the payer's own application.
   const seededCodes = await tx
-    .select({ code: ncdCodes.code, insurerId: ncdCodes.insurerId, yearsClaimFree: ncdCodes.yearsClaimFree })
+    .select({
+      code: ncdCodes.code,
+      insurerId: ncdCodes.insurerId,
+      yearsClaimFree: ncdCodes.yearsClaimFree,
+    })
     .from(ncdCodes)
     .where(inArray(ncdCodes.code, SEEDED_NCD_CODES));
   const codeOrder = (code: string) => SEEDED_NCD_CODES.indexOf(code);
@@ -319,10 +397,10 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
       .values({
         applicationNumber: `NCDA-DEMO-${number}`,
         insurerId: ncd.insurerId,
-        customerId: customer.id,
+        customerId,
         policyNumber: `CF-DEMO-${number}`,
-        fullName: CUSTOMER.fullName,
-        phone: CUSTOMER.phone,
+        fullName: DEMO_CUSTOMER.fullName,
+        phone: DEMO_CUSTOMER.phone,
         yearsClaimFree: ncd.yearsClaimFree,
         status: 'APPROVED',
         approvedCodeId: ncd.code,
@@ -334,7 +412,6 @@ export async function seedDemoData(tx: Transaction, log: (line: string) => void)
 
   log(
     `Demo data ready for ${prestige.name}: 3 quote requests, 1 paid policy, 2 claims, 2 NCD applications, ` +
-      `${seededCodes.length} approved NCD codes for ${CUSTOMER.email}`,
+      `${seededCodes.length} approved NCD codes for ${DEMO_CUSTOMER.email}`,
   );
 }
-

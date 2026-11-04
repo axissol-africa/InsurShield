@@ -26,33 +26,45 @@ describe('describeSeedFailure', () => {
   });
 
   it('prints the seed configuration message', () => {
-    const error = caught(() =>
-      seedOptionsFromEnv({ KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/insurshield', KEYCLOAK_CLIENT_SECRET: 'x' }),
-    );
+    const error = caught(() => seedOptionsFromEnv({}));
 
     expect(describeSeedFailure(error).message).toBe(
-      'db:seed failed: SEED_STAFF_PASSWORD must be set to provision staff accounts',
+      'db:seed failed: SEED_STAFF_PASSWORD must be set to seed staff and demo accounts',
     );
   });
 
   it('prints the message of a demo record the seed expected but did not find', () => {
     const error = caught(() => demoVehicleId(new Map(), 'demo-hilux'));
 
-    expect(describeSeedFailure(error).message).toBe('db:seed failed: The demo vehicle demo-hilux is missing');
+    expect(describeSeedFailure(error).message).toBe(
+      'db:seed failed: The demo vehicle demo-hilux is missing',
+    );
   });
 
   it('prints which database setting is wrong, without its value', () => {
-    vi.stubEnv('DATABASE_URL', `postgresql://user:${SECRET}-CHANGE_ME@localhost:5432/insurshield`);
+    vi.stubEnv(
+      'DATABASE_URL',
+      `postgresql://user:${SECRET}-CHANGE_ME@localhost:5432/insurshield`,
+    );
 
     const line = printed(caught(() => seedDatabaseUrl()));
 
-    expect(line).toContain('DATABASE_URL still contains the CHANGE_ME placeholder');
+    expect(line).toContain(
+      'DATABASE_URL still contains the CHANGE_ME placeholder',
+    );
     expect(line).not.toContain(SECRET);
   });
 
   it('prints neither the statement nor its parameters when a query cannot reach the database', () => {
-    const refused = Object.assign(new Error(`connect ECONNREFUSED 10.0.0.5:5432 ${SECRET}`), { code: 'ECONNREFUSED' });
-    const error = new DrizzleQueryError('insert into "staff_users" ("email") values ($1)', [SECRET], refused);
+    const refused = Object.assign(
+      new Error(`connect ECONNREFUSED 10.0.0.5:5432 ${SECRET}`),
+      { code: 'ECONNREFUSED' },
+    );
+    const error = new DrizzleQueryError(
+      'insert into "staff_users" ("email") values ($1)',
+      [SECRET],
+      refused,
+    );
 
     const line = printed(error);
 
@@ -63,12 +75,19 @@ describe('describeSeedFailure', () => {
   });
 
   it('prints the SQLSTATE and constraint of a failed statement, never its detail or values', () => {
-    const server = Object.assign(new DatabaseError(`duplicate key ${SECRET}`, 0, 'error'), {
-      code: '23505',
-      constraint: 'staff_users_email_key',
-      detail: `Key (email)=(${SECRET}) already exists.`,
-    });
-    const error = new DrizzleQueryError('insert into "staff_users" ("email") values ($1)', [SECRET], server);
+    const server = Object.assign(
+      new DatabaseError(`duplicate key ${SECRET}`, 0, 'error'),
+      {
+        code: '23505',
+        constraint: 'staff_users_email_key',
+        detail: `Key (email)=(${SECRET}) already exists.`,
+      },
+    );
+    const error = new DrizzleQueryError(
+      'insert into "staff_users" ("email") values ($1)',
+      [SECRET],
+      server,
+    );
 
     const line = printed(error);
 
@@ -79,7 +98,9 @@ describe('describeSeedFailure', () => {
   });
 
   it('prints only the name and code of an error the seed did not raise itself', () => {
-    const error = Object.assign(new TypeError(`cannot read ${SECRET}`), { code: 'ERR_INVALID_ARG_TYPE' });
+    const error = Object.assign(new TypeError(`cannot read ${SECRET}`), {
+      code: 'ERR_INVALID_ARG_TYPE',
+    });
 
     const line = printed(error);
 
