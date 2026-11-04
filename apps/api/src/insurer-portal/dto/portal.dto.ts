@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsIn,
@@ -11,7 +12,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { NCD_STATUSES, type NcdStatus } from '../../common/domain/enums.js';
+import { CONTRACT_VALUES, fromContract, type NcdDecisionStatus } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
 
 export class SubmitQuoteDto {
@@ -54,8 +55,9 @@ export class AcknowledgeClaimDto {
 }
 
 export class NcdDecisionDto {
-  @IsIn(NCD_STATUSES, { message: 'Decision must be Under Review, Approved or Rejected.' })
-  status!: NcdStatus;
+  @Transform(({ value }) => (typeof value === 'string' ? (fromContract.ncdDecision(value) ?? value) : value))
+  @IsIn(CONTRACT_VALUES.ncdDecision, { message: 'Decision must be Under Review, Approved or Rejected.' })
+  status!: NcdDecisionStatus;
 
   /** Set when approving to override the automatic percentage. */
   @IsOptional() @IsInt() @Min(0) @Max(100) percentage?: number;

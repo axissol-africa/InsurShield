@@ -1,8 +1,6 @@
+import { toContract } from '../../common/contract.js';
 import { bpsToPercent } from '../../common/money.js';
-import type { InsurerStatus } from '../../common/domain/enums.js';
 import type { ContactRow, InsurerRow, PublicInsurerRow } from '../insurers.repository.js';
-
-const STATUS_LABEL: Record<InsurerStatus, string> = { ACTIVE: 'Active', INACTIVE: 'Inactive', DELETED: 'Deleted' };
 
 function toContactResponse(contact: ContactRow) {
   return {
@@ -24,7 +22,7 @@ export function toPublicInsurerResponse(insurer: PublicInsurerRow) {
     id: insurer.id,
     name: insurer.name,
     tradingName: insurer.tradingName,
-    status: STATUS_LABEL[insurer.status],
+    status: toContract.insurerStatus(insurer.status),
     ratePercentage: bpsToPercent(insurer.rateBps),
     quoteValidityDays: insurer.quoteValidityDays,
     coverage: insurer.coverage,
