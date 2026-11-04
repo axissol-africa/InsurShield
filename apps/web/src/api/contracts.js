@@ -22,7 +22,7 @@
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
- *  insurers    GET  /insurers · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · GET /insurers/directory
+ *  insurers    GET  /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
  *  payments    POST /payments · GET /payments/:id
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
@@ -183,6 +183,7 @@
  * @property {string} [licenceExpiry]
  * @property {string} [logoUrl]
  * @property {Object} contact                claims desk: contactPerson, role, phone, mobile, whatsapp, email, address, hours
+ * @property {string|null} [deletedAt]       set only while a super admin has removed the insurer
  */
 
 export {};

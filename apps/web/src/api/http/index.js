@@ -51,12 +51,13 @@ export const quotes = {
 };
 
 export const insurers = {
-  list: () => apiClient.get('/insurers'),
+  list: (query = {}) => apiClient.get('/insurers', { params: query }),
   get: (id) => apiClient.get(`/insurers/${id}`),
   create: (insurer) => apiClient.post('/insurers', insurer),
   update: (id, updates) => apiClient.patch(`/insurers/${id}`, updates),
   setStatus: (id, status) => apiClient.patch(`/insurers/${id}/status`, { status }),
   remove: (id) => apiClient.delete(`/insurers/${id}`),
+  restore: (id) => apiClient.post(`/insurers/${id}/restore`),
   directory: () => apiClient.get('/insurers/directory'),
 };
 

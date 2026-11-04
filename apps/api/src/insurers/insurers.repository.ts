@@ -81,6 +81,16 @@ export class InsurersRepository {
       .orderBy(asc(insurers.name));
   }
 
+  /** Deleted insurers stay out of the normal admin list until a super admin asks to restore one. */
+  async listDeleted() {
+    return this.db
+      .select({ ...staffColumns, contact: contactColumns })
+      .from(insurers)
+      .leftJoin(insurerContacts, eq(insurerContacts.insurerId, insurers.id))
+      .where(eq(insurers.status, 'DELETED'))
+      .orderBy(asc(insurers.name));
+  }
+
   async find(id: string, executor: Executor = this.db) {
     const [row] = await executor
       .select({ ...staffColumns, contact: contactColumns })
@@ -105,6 +115,19 @@ export class InsurersRepository {
       .update(insurers)
       .set({ ...changes, updatedAt: new Date() })
       .where(and(eq(insurers.id, id), ne(insurers.status, 'DELETED')))
+      .returning(staffColumns);
+    return row;
+  }
+
+  /**
+   * Restore only the currently deleted record. The condition makes concurrent
+   * restores deterministic: exactly one request changes its state.
+   */
+  async restoreDeleted(tx: Transaction, id: string) {
+    const [row] = await tx
+      .update(insurers)
+      .set({ status: 'INACTIVE', deletedAt: null, updatedAt: new Date() })
+      .where(and(eq(insurers.id, id), eq(insurers.status, 'DELETED')))
       .returning(staffColumns);
     return row;
   }

@@ -92,13 +92,24 @@ export const quotes = {
 };
 
 export const insurers = {
-  list: () => call((s) => s.insurersList),
+  list: ({ status } = {}) => call((s) => (
+    status === 'deleted'
+      ? s.insurersList.filter((insurer) => insurer.status === 'Deleted')
+      : s.insurersList.filter((insurer) => insurer.status !== 'Deleted')
+  )),
   get: (id) => call((s) => s.insurersList.find((i) => i.id === id) || null),
   create: (insurer) => call((s) => { s.addInsurer(insurer); return state().insurersList.at(-1); }),
   update: (id, updates) => call((s) => { s.updateInsurer(id, updates); return state().insurersList.find((i) => i.id === id); }),
   setStatus: (id, status) => call((s) => { s.setInsurerStatus(id, status); return state().insurersList.find((i) => i.id === id); }),
   remove: (id) => call((s) => { s.deleteInsurer(id); return { ok: true }; }),
-  directory: () => call((s) => s.insurersList.filter((i) => i.status !== 'Deleted')),
+  restore: (id) => call((s) => {
+    const insurer = s.insurersList.find((entry) => entry.id === id);
+    if (!insurer) throw new Error('Insurer was not found.');
+    if (insurer.status !== 'Deleted') throw new Error('This insurer has not been deleted.');
+    s.updateInsurer(id, { status: 'Inactive', deletedAt: null });
+    return state().insurersList.find((entry) => entry.id === id);
+  }),
+  directory: () => call((s) => s.insurersList.filter((insurer) => !insurer.status || insurer.status === 'Active')),
 };
 
 export const payments = {

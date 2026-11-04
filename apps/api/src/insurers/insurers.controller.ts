@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { InsurersService } from './insurers.service.js';
 import { CreateInsurerDto, SetInsurerStatusDto, UpdateInsurerDto } from './dto/insurer.dto.js';
+import { InsurerListQuery } from './dto/insurer-list.query.js';
 import { Public, Roles } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
@@ -23,8 +24,18 @@ export class InsurersController {
   /** Every insurer in full, including onboarding details. Staff only. */
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Get()
-  list() {
-    return this.insurers.list();
+  list(
+    @Query() query: InsurerListQuery,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.list(query.status, principal.role);
+  }
+
+  @Roles('SUPER_ADMIN')
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/restore')
+  restore(@Param('id', ParseUUIDPipe) id: string) {
+    return this.insurers.restore(id);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')

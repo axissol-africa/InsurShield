@@ -8,7 +8,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, auth } from './index';
+import { account, auth, insurers } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -29,5 +29,13 @@ describe('Better Auth HTTP adapter', () => {
 
     expect(transport.get).toHaveBeenCalledWith('/auth/me', { identity: 'omit' });
     expect(transport.delete).toHaveBeenCalledWith('/account');
+  });
+
+  it('requests deleted insurers and restores one through the dedicated endpoint', () => {
+    insurers.list({ status: 'deleted' });
+    insurers.restore('insurer-1');
+
+    expect(transport.get).toHaveBeenCalledWith('/insurers', { params: { status: 'deleted' } });
+    expect(transport.post).toHaveBeenCalledWith('/insurers/insurer-1/restore');
   });
 });
