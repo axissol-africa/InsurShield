@@ -19,9 +19,12 @@ const live = () => env.apiMode === 'http';
 const load = async (label, fetcher, apply) => {
   if (!live()) return false;
   try {
-    apply(await fetcher());
+    const result = await fetcher();
+    if (useStore.getState().leaving) return false;
+    apply(result);
     return true;
   } catch (error) {
+    if (useStore.getState().leaving) return false;
     console.error(`Could not load ${label}`, error);
     return false;
   }

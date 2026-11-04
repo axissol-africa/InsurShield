@@ -4,6 +4,9 @@ import { motion } from 'framer-motion';
 import { BadgePercent, FileCheck2, FileText, HeartPulse, LayoutDashboard, LifeBuoy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '@/store';
 import { hydrateCustomer } from '@/api/sync';
+import { api } from '@/api';
+import { env } from '@/config/env';
+import { requestIdentityTransition } from '@/app/identity';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
 import { coverPeriod } from '@/domain/coverPeriod';
@@ -69,6 +72,7 @@ export default function CustomerAccountPage() {
   // Your records come from the server when one is configured; a no-op otherwise.
   useEffect(() => { void hydrateCustomer(); }, []);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const [accountError, setAccountError] = useState('');
   const [readingGuide, setReadingGuide] = useState(null); // the policy whose cover guide is open
   const isDemoAccount = customer?.email === DEMO_CUSTOMER_ACCOUNT.email;
   const requestedSection = searchParams.get('section');
@@ -110,7 +114,18 @@ export default function CustomerAccountPage() {
     requoteFromRequest(request.id);
     navigate('/quote-request');
   };
-  const removeAccount = () => {
+  const removeAccount = async () => {
+    setAccountError('');
+    if (env.apiMode === 'http') {
+      try {
+        await api.account.close();
+        requestIdentityTransition({ landing: '/', userId: null, announce: true });
+      } catch (error) {
+        setConfirmingRemoval(false);
+        setAccountError(error instanceof Error ? error.message : 'We could not close your account. Please try again.');
+      }
+      return;
+    }
     setConfirmingRemoval(false);
     deleteCurrentAccount(); // CustomerRoute sends the visitor home once the session ends
   };
@@ -481,6 +496,7 @@ export default function CustomerAccountPage() {
               </div>
               <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingRemoval(true)} className="text-primary hover:bg-primary/10 hover:text-primary">Close account</Button>
             </CardHeader>
+            {accountError && <CardContent className="pt-0"><p role="alert" className="text-sm text-primary">{accountError}</p></CardContent>}
           </Card>
         )}
           </div>

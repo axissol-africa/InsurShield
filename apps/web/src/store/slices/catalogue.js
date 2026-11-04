@@ -5,7 +5,7 @@ import { NOW, newReference, updateById, withTimestamp } from '../shared';
 /** Platform configuration owned by the InsurShield administrator: the insurer catalogue and the PIA premium floor. */
 export const createCatalogueSlice = (set, get) => ({
   piaConfig: { ...PIA_CONFIG },
-  setPiaConfig: (config) => set((state) => ({ piaConfig: { ...state.piaConfig, ...config } })),
+  setPiaConfig: (config) => set((state) => (state.leaving ? state : { piaConfig: { ...state.piaConfig, ...config } })),
 
   // With a backend the catalogue is loaded from it; the built-in list is the
   // standalone demo's own.
@@ -14,7 +14,7 @@ export const createCatalogueSlice = (set, get) => ({
   // usable before an insurer administrator has made any local changes.
   insurersList: env.apiMode === 'mock' ? INSURER_RATES.map((insurer) => ({ ...insurer, coverGuides: demoCoverGuides(insurer) })) : [],
   /** Replaces the catalogue with the backend's list. */
-  setInsurers: (insurersList) => set({ insurersList }),
+  setInsurers: (insurersList) => set((state) => (state.leaving ? state : { insurersList })),
   addInsurer: (insurer) => set((state) => ({ insurersList: [...state.insurersList, { ...insurer, id: newReference('INS') }] })),
   updateInsurer: (insurerId, updates) =>
     set((state) => ({ insurersList: updateById(state.insurersList, insurerId, (insurer) => withTimestamp({ ...insurer, ...updates })) })),

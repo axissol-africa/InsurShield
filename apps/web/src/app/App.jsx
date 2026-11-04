@@ -1,8 +1,10 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { CustomerRoute, StaffRoute } from './guards';
+import IdentitySessionBoundary from './IdentitySessionBoundary';
 import LandingPage from '@/features/home/pages/LandingPage';
 import CreateAccountPage from '@/features/auth/pages/CreateAccountPage';
+import ResetPasswordPage from '@/features/auth/pages/ResetPasswordPage';
 import InsuranceTypePage from '@/features/quote-journey/pages/InsuranceTypePage';
 import VehicleIdentificationPage from '@/features/quote-journey/pages/VehicleIdentificationPage';
 import VehicleUsagePage from '@/features/quote-journey/pages/VehicleUsagePage';
@@ -25,11 +27,13 @@ const customerOnly = (page) => <CustomerRoute>{page}</CustomerRoute>;
 export default function App() {
   return (
     <Router>
+      <IdentitySessionBoundary>
       <Routes>
         <Route path="/" element={<MainLayout />}>
           {/* Public: guests can explore and prepare a quote */}
           <Route index element={<LandingPage />} />
           <Route path="create-account" element={<CreateAccountPage />} />
+          <Route path="reset-password" element={<ResetPasswordPage />} />
           <Route path="insurance-type" element={<InsuranceTypePage />} />
           <Route path="vehicle-identification" element={<VehicleIdentificationPage />} />
           <Route path="vehicle-usage" element={<VehicleUsagePage />} />
@@ -55,6 +59,7 @@ export default function App() {
         </Route>
         <Route path="/insurer" element={<StaffRoute roles={['insurer']}><InsurerDashboard /></StaffRoute>} />
       </Routes>
+      </IdentitySessionBoundary>
     </Router>
   );
 }

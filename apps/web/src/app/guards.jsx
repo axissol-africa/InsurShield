@@ -14,7 +14,7 @@ import { env } from '@/config/env';
 export function CustomerRoute({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAuthenticated, consentAccepted } = useStore();
+  const { isAuthenticated, consentAccepted, staffSession } = useStore();
   // The QR capture code is a short-lived bearer credential in the local demo
   // relay. It lets a customer finish the same journey on their phone without
   // requiring a second local browser account. This is intentionally disabled
@@ -24,8 +24,15 @@ export function CustomerRoute({ children }) {
   const [hadAccessOnMount] = useState(allowed);
 
   useEffect(() => {
-    if (hadAccessOnMount && !allowed) navigate('/', { replace: true });
-  }, [allowed, hadAccessOnMount, navigate]);
+    if (!staffSession && hadAccessOnMount && !allowed) navigate('/', { replace: true });
+  }, [allowed, hadAccessOnMount, navigate, staffSession]);
+
+  // A Better Auth session can belong to staff even when the person arrives at
+  // a customer URL (for example from a saved link). It is not an identity
+  // transition, so route that same signed-in person to their workspace.
+  if (env.apiMode === 'http' && staffSession) {
+    return <Navigate to={staffSession.role === 'insurer' ? '/insurer' : '/admin'} replace />;
+  }
 
   if (allowed) return children;
   if (hadAccessOnMount) return null;

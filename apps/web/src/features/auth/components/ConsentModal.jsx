@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import Meta from '@/components/ui/Meta';
 
-const NOTICE_VERSION = '2026.09.07';
+export const NOTICE_VERSION = '2026.09.07';
 
 const DOCUMENTS = {
   privacy: {
@@ -40,6 +40,8 @@ export default function ConsentModal({ onAccept, onDecline }) {
   const [marketing, setMarketing] = useState(false);
   const [expanded, setExpanded] = useState('privacy');
   const [showValidation, setShowValidation] = useState(false);
+  const [submissionError, setSubmissionError] = useState('');
+  const [saving, setSaving] = useState(false);
   const firstCheckbox = useRef(null);
 
   const requiredComplete = Object.values(accepted).every(Boolean);
@@ -57,12 +59,21 @@ export default function ConsentModal({ onAccept, onDecline }) {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [onDecline]);
 
-  const continueFlow = () => {
+  const continueFlow = async () => {
     if (!requiredComplete) return setShowValidation(true);
     const record = { noticeVersion: NOTICE_VERSION, acceptedAt: new Date().toISOString(), requiredItems: accepted, marketing };
-    setConsent(true, record);
-    // The caller persists this against the account.
-    return onAccept?.(record);
+    setSubmissionError('');
+    setSaving(true);
+    try {
+      // The caller persists this against the account in HTTP mode; mock mode
+      // retains the existing in-browser behaviour.
+      const accepted = await onAccept?.(record);
+      if (accepted !== false) setConsent(true, record);
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'We could not record your consent. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -201,6 +212,7 @@ export default function ConsentModal({ onAccept, onDecline }) {
                 Accept the {remaining} remaining required item{remaining === 1 ? '' : 's'} to continue.
               </p>
             )}
+            {submissionError && <p role="alert" className="mt-4 text-sm text-primary">{submissionError}</p>}
           </div>
         </div>
 
@@ -216,10 +228,11 @@ export default function ConsentModal({ onAccept, onDecline }) {
           <button
             type="button"
             onClick={continueFlow}
+            disabled={saving}
             className="group relative inline-flex min-h-[50px] flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary px-6 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <span className="beam pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-white/20" aria-hidden="true" />
-            <span className="relative">Accept and continue</span>
+            <span className="relative">{saving ? 'Saving…' : 'Accept and continue'}</span>
             <span className="material-symbols-outlined relative text-[18px] transition-transform duration-200 ease-out group-hover:translate-x-1" aria-hidden="true">arrow_forward</span>
           </button>
         </footer>

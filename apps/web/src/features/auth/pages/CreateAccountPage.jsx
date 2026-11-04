@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { DEMO_CUSTOMER_ACCOUNT, useStore } from '@/store';
+import { api } from '@/api';
+import { env } from '@/config/env';
+import { adoptOwnIdentity, safeApplicationPath } from '@/app/identity';
 import { fieldClass, labelClass } from '@/components/ui/field';
 import Meta from '@/components/ui/Meta';
 import ConsentModal from '@/features/auth/components/ConsentModal';
@@ -62,6 +65,7 @@ export default function CreateAccountPage() {
     resetCustomerPassword, seedDemoAccount, setConsent,
     isAuthenticated, consentAccepted,
   } = useStore();
+  const httpMode = env.apiMode === 'http';
 
   const next = searchParams.get('next') || '/account';
   const resumeContext =
@@ -81,7 +85,7 @@ export default function CreateAccountPage() {
   const [resendIn, setResendIn] = useState(RESEND_COOLDOWN_SECONDS);
   const codeInputs = useRef([]);
 
-  useEffect(() => { seedDemoAccount(); }, [seedDemoAccount]);
+  useEffect(() => { if (!httpMode) seedDemoAccount(); }, [httpMode, seedDemoAccount]);
 
   // Already signed in and consented: there is nothing to do on this page.
   // A just-created account is the exception — it has both, and sending it
@@ -89,6 +93,10 @@ export default function CreateAccountPage() {
   useEffect(() => {
     if (isAuthenticated && consentAccepted && stage !== 'done') navigate(next, { replace: true });
   }, [isAuthenticated, consentAccepted, navigate, next, stage]);
+
+  // A returning HTTP user may have signed in before accepting the latest
+  // notice. Authentication alone never grants access to customer routes.
+  const needsReturningConsent = httpMode && isAuthenticated && !consentAccepted && stage === 'form';
 
   useEffect(() => {
     if (stage !== 'code') return undefined;
@@ -128,19 +136,52 @@ export default function CreateAccountPage() {
     event.preventDefault();
     if (form.password.length < MIN_PASSWORD_LENGTH) return setError(`Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.`);
     if (form.password !== form.confirmPassword) return setError('The two passwords do not match.');
+    if (httpMode) {
+      setError('');
+      return setStage('consent');
+    }
     return sendCode(form.phone || form.email);
   };
 
-  const submitLogin = (event) => {
+  const submitLogin = async (event) => {
     event.preventDefault();
+    if (httpMode) {
+      setError('');
+      try {
+        const signIn = await api.auth.signIn(identifier.trim(), form.password);
+        const profile = await api.auth.me();
+        const userId = profile?.userId || signIn?.user?.id;
+        if (!userId) throw new Error('We could not confirm the account that signed in. Please try again.');
+        const destination = profile.staffSession ? (profile.staffSession.role === 'insurer' ? '/insurer' : '/admin') : safeApplicationPath(next);
+        const outcome = adoptOwnIdentity({ userId, profile, landing: destination });
+        if (!outcome.transitioned && profile.staffSession) navigate(destination, { replace: true });
+        else if (!outcome.transitioned && profile.consent?.accepted) navigate(destination, { replace: true });
+        return;
+      } catch (error) {
+        return setError(error instanceof Error ? error.message : 'We could not sign you in. Please try again.');
+      }
+    }
     if (!authenticateCustomer(identifier.trim(), form.password)) {
       return setError('Those details did not match an account. Check them, or reset your password.');
     }
     return navigate(next, { replace: true });
   };
 
-  const submitRecovery = (event) => {
+  const submitRecovery = async (event) => {
     event.preventDefault();
+    if (httpMode) {
+      setError('');
+      try {
+        await api.auth.requestPasswordReset(identifier.trim(), `${window.location.origin}/reset-password`);
+        setMode('login');
+        setStage('form');
+        setError('');
+        setNotice('If this email address can be used, a reset link has been prepared. In local development, your team can open it from the API log.');
+        return;
+      } catch (error) {
+        return setError(error instanceof Error ? error.message : 'We could not start the password reset. Please try again.');
+      }
+    }
     sendCode(identifier);
   };
 
@@ -163,7 +204,38 @@ export default function CreateAccountPage() {
     return setStage(findAccount(identifier) ? 'password' : 'guidance');
   };
 
-  const acceptConsent = (record) => {
+  const acceptConsent = async (record) => {
+    if (httpMode) {
+      if (mode === 'create') {
+        const registration = await api.auth.register({
+          fullName: form.fullName.trim(),
+          email: form.email.trim(),
+          phone: form.phone.trim(),
+          password: form.password,
+          noticeVersion: record.noticeVersion,
+        });
+        if (!registration?.signedIn) {
+          setNotice('Your account was created. Sign in with the email address and password you chose to continue.');
+          setStage('guidance');
+          return false;
+        }
+        const profile = {
+          userId: registration.userId,
+          customer: { fullName: form.fullName.trim(), email: form.email.trim(), phone: form.phone.trim() },
+          consent: { accepted: true, noticeVersion: record.noticeVersion, acceptedAt: record.acceptedAt },
+          staffSession: null,
+        };
+        const outcome = adoptOwnIdentity({ userId: registration.userId, profile, landing: safeApplicationPath(next) });
+        if (!outcome.transitioned) setStage('done');
+        return true;
+      }
+      const accepted = await api.auth.acceptConsent(record.noticeVersion);
+      setConsent(true, accepted);
+      navigate(safeApplicationPath(next), { replace: true });
+      // The server response is the consent record for HTTP mode. Keep the
+      // modal from replacing it with its client-side timestamp on close.
+      return false;
+    }
     registerCustomerAccount({
       fullName: form.fullName,
       email: form.email,
@@ -171,8 +243,8 @@ export default function CreateAccountPage() {
       password: form.password,
       consentTimestamp: record?.acceptedAt || new Date().toISOString(),
     });
-    setConsent(true, record);
     setStage('done');
+    return true;
   };
 
   const savePassword = (event) => {
@@ -227,8 +299,8 @@ export default function CreateAccountPage() {
         <div>
           {stage === 'form' && mode === 'login' && (
             <form onSubmit={submitLogin} className="space-y-5">
-              <Field label="Email address or mobile number">
-                <input required value={identifier} onChange={(event) => setIdentifier(event.target.value)} className={fieldClass} placeholder="name@email.com or 0970 123 456" autoComplete="username" />
+              <Field label={httpMode ? 'Email address' : 'Email address or mobile number'}>
+                <input required type={httpMode ? 'email' : 'text'} value={identifier} onChange={(event) => setIdentifier(event.target.value)} className={fieldClass} placeholder={httpMode ? 'name@email.com' : 'name@email.com or 0970 123 456'} autoComplete="username" />
               </Field>
               <Field label="Password">
                 <input required type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className={fieldClass} placeholder="Your password" autoComplete="current-password" />
@@ -236,7 +308,7 @@ export default function CreateAccountPage() {
               <Alert text={error} />
               <Alert text={notice} tone="notice" />
 
-              <div className="rounded-xl border border-dashed border-line-strong bg-canvas-2 p-4">
+              {!httpMode && <div className="rounded-xl border border-dashed border-line-strong bg-canvas-2 p-4">
                 <Meta className="text-ink-muted">Prototype account</Meta>
                 <dl className="mt-3 space-y-1 text-[13px] text-ink">
                   <div className="flex gap-2"><dt className="text-ink-muted">Email</dt><dd className="break-all font-mono">{DEMO_CUSTOMER_ACCOUNT.email}</dd></div>
@@ -254,7 +326,7 @@ export default function CreateAccountPage() {
                 >
                   Fill them in
                 </button>
-              </div>
+              </div>}
 
               <Submit>Sign in</Submit>
               <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -290,10 +362,10 @@ export default function CreateAccountPage() {
           {stage === 'form' && mode === 'recover' && (
             <form onSubmit={submitRecovery} className="space-y-5">
               <p className="text-[15px] leading-[1.6] text-ink-muted">
-                Enter the email address or mobile number on the account. If it can be used for recovery, a code is sent to it.
+                Enter the {httpMode ? 'email address' : 'email address or mobile number'} on the account. If it can be used for recovery, we will prepare the next step.
               </p>
-              <Field label="Email address or mobile number">
-                <input required value={identifier} onChange={(event) => setIdentifier(event.target.value)} className={fieldClass} placeholder="name@email.com or 0970 123 456" />
+              <Field label={httpMode ? 'Email address' : 'Email address or mobile number'}>
+                <input required type={httpMode ? 'email' : 'text'} value={identifier} onChange={(event) => setIdentifier(event.target.value)} className={fieldClass} placeholder={httpMode ? 'name@email.com' : 'name@email.com or 0970 123 456'} />
               </Field>
               <Alert text={error} />
               <Submit>Send a code</Submit>
@@ -387,14 +459,13 @@ export default function CreateAccountPage() {
           </CardContent>
           {stage !== 'done' && (
           <CardFooter className="border-t pt-5 text-xs leading-relaxed text-muted-foreground">
-            Accounts are held in this browser while InsurShield is a prototype. Nothing you enter
-            here leaves the device.
+            {httpMode ? 'Your session is kept in a secure browser cookie. We do not store your password in this device.' : 'Accounts are held in this browser while InsurShield is a prototype. Nothing you enter here leaves the device.'}
           </CardFooter>
           )}
         </Card>
       </motion.div>
 
-      {stage === 'consent' && <ConsentModal onAccept={acceptConsent} onDecline={() => navigate('/', { replace: true })} />}
+      {(stage === 'consent' || needsReturningConsent) && <ConsentModal onAccept={acceptConsent} onDecline={() => navigate('/', { replace: true })} />}
     </main>
   );
 }

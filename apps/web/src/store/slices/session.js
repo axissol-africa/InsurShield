@@ -1,4 +1,5 @@
 import { DEMO_CUSTOMER_ACCOUNT } from '../demoSeed';
+import { env } from '@/config/env';
 
 /**
  * Customer accounts, the staff/insurer portal session and data-protection consent.
@@ -13,13 +14,16 @@ const toCustomerProfile = (account) => ({ fullName: account.fullName, email: acc
 const matchesIdentifier = (account, identifier) =>
   account.email.toLowerCase() === identifier.toLowerCase() || account.phone === identifier;
 
-const SIGNED_OUT = { customer: null, isAuthenticated: false, authToken: null, consentAccepted: false, consentTimestamp: null, consentRecord: null };
+const SIGNED_OUT = { customer: null, isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null, staffSession: null };
 
 export const createSessionSlice = (set, get) => ({
   // ─── Customer account ────────────────────────────────────
   customer: null,
   isAuthenticated: false,
-  registeredAccounts: [DEMO_CUSTOMER_ACCOUNT],
+  registeredAccounts: env.apiMode === 'mock' ? [DEMO_CUSTOMER_ACCOUNT] : [],
+  identityReady: env.apiMode !== 'http',
+  identityFailure: null,
+  leaving: false,
 
   seedDemoAccount: () =>
     set((state) =>
@@ -66,10 +70,6 @@ export const createSessionSlice = (set, get) => ({
       ...SIGNED_OUT,
     })),
 
-  // ─── Backend session token ───────────────────────────────
-  authToken: null,
-  setAuthToken: (authToken) => set({ authToken }),
-
   /**
    * Adopts a customer resolved elsewhere — a backend session, or an identity
    * service if one is reintroduced — with the consent held against that
@@ -79,6 +79,7 @@ export const createSessionSlice = (set, get) => ({
     set({
       customer: { fullName: customer.fullName, email: customer.email, phone: customer.phone ?? null },
       isAuthenticated: true,
+      staffSession: null,
       consentAccepted: Boolean(consent?.accepted),
       consentTimestamp: consent?.acceptedAt ?? null,
       consentRecord: consent?.accepted ? { noticeVersion: consent.noticeVersion, acceptedAt: consent.acceptedAt } : null,
@@ -87,9 +88,16 @@ export const createSessionSlice = (set, get) => ({
   /** Clears everything tied to the person, leaving prototype catalogue data. */
   clearCustomerSession: () => set(SIGNED_OUT),
 
+  /** HTTP boot has no session; mock mode continues using its local account. */
+  clearHttpSession: () => set(SIGNED_OUT),
+  setIdentityReady: (identityReady) => set({ identityReady, identityFailure: null }),
+  setIdentityFailure: (identityFailure) => set({ identityFailure, identityReady: false }),
+  beginIdentityTransition: () => set({ leaving: true, identityReady: false, identityFailure: null }),
+
   // ─── Staff / insurer portal session ──────────────────────
   staffSession: null, // { role: 'admin' | 'support' | 'insurer', name }
   startStaffSession: (session) => set({ staffSession: session }),
+  applyStaffSession: (staffSession) => set({ ...SIGNED_OUT, staffSession }),
   endStaffSession: () => set({ staffSession: null }),
 
   // ─── Data-protection consent ─────────────────────────────

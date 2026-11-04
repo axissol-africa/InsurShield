@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
+import { api } from '@/api';
+import { env } from '@/config/env';
+import { adoptOwnIdentity, requestIdentityTransition } from '@/app/identity';
 import { fieldClass as inputClass } from '@/components/ui/field';
 import Meta from '@/components/ui/Meta';
 
@@ -32,25 +35,50 @@ const CREDENTIALS = {
 
 
 export default function AdminLogin() {
+  const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('admin');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => (searchParams.get('reason') === 'not-staff' ? 'This is not a staff account. Sign in through customer access instead.' : ''));
   const [showPwd, setShowPwd] = useState(false);
   const navigate = useNavigate();
   const startStaffSession = useStore((state) => state.startStaffSession);
+  const httpMode = env.apiMode === 'http';
 
   const handleRoleSelect = (next) => {
     setRole(next);
     setError('');
-    setEmail(CREDENTIALS[next].email);
-    setPassword(CREDENTIALS[next].password);
+    if (!httpMode) {
+      setEmail(CREDENTIALS[next].email);
+      setPassword(CREDENTIALS[next].password);
+    }
   };
 
-  const handleLogin = (event) => {
+  const handleLogin = async (event) => {
     event.preventDefault();
     setError('');
+    if (httpMode) {
+      setLoading(true);
+      try {
+        const signIn = await api.auth.signIn(email.trim(), password);
+        const profile = await api.auth.me();
+        const userId = profile?.userId || signIn?.user?.id;
+        if (!userId || !profile?.staffSession) {
+          await api.auth.signOut();
+          requestIdentityTransition({ landing: '/admin-login?reason=not-staff', userId: null, announce: true });
+          return;
+        }
+        const destination = profile.staffSession.role === 'insurer' ? '/insurer' : '/admin';
+        const outcome = adoptOwnIdentity({ userId, profile, landing: '/admin-login' });
+        if (!outcome.transitioned) navigate(destination, { replace: true });
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'We could not sign you in. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     const expected = CREDENTIALS[role];
     if (email.trim() !== expected.email || password !== expected.password) {
       setError('Those details do not match. Use the prototype credentials shown below.');
@@ -158,7 +186,7 @@ export default function AdminLogin() {
             <input
               type="email"
               autoComplete="username"
-              placeholder={CREDENTIALS[role].email}
+              placeholder={httpMode ? 'name@company.zm' : CREDENTIALS[role].email}
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               required
@@ -213,7 +241,7 @@ export default function AdminLogin() {
 
         {/* Nothing is verified off the device, so the credentials are
             stated plainly rather than implied. */}
-        <div className="mt-8 border border-dashed border-line-strong p-4">
+        {!httpMode && <div className="mt-8 border border-dashed border-line-strong p-4">
           <div className="flex items-center gap-2.5">
             <span className="material-symbols-outlined text-[16px] text-primary" aria-hidden="true">info</span>
             <Meta className="text-ink-muted">Prototype credentials</Meta>
@@ -232,7 +260,7 @@ export default function AdminLogin() {
             These accounts exist only in this browser and grant no access to real data.
             Staff sign-in moves behind the backend before anyone outside the team uses it.
           </p>
-        </div>
+        </div>}
       </main>
     </motion.div>
   );
