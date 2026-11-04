@@ -153,7 +153,8 @@ rather than the only protection.
 
 Point the load balancer at `GET /health` — it is cheap and touches nothing.
 Use `GET /health/ready` for deploy gates and alerting; it verifies Postgres and
-the document bucket and returns `"status":"down"` if either is unreachable.
+the document bucket, returning `200` only when both are reachable. If either is
+unreachable, it returns `503` with `"status":"down"` and the state of each dependency.
 
 Both paths sit outside the `API_PREFIX`, so they are `/health`, not
 `/api/v1/health`.
