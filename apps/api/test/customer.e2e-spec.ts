@@ -46,7 +46,7 @@ import {
   until,
   type TestApp,
 } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 
 type Customer = Row<typeof customers>;
 type DocumentRow = Row<typeof documentsTable>;
@@ -178,8 +178,7 @@ describe('customer', () => {
     await side.close();
   });
 
-  const asCustomer = async (customer: Customer) =>
-    bearer(await customerToken({ keycloakId: customer.keycloakId, email: customer.email }));
+  const asCustomer = (customer: Customer) => signIn(testApp.http, customer);
 
   const documentResponse = async (document: DocumentRow) => ({
     id: document.id,
@@ -241,7 +240,7 @@ describe('customer', () => {
     const staff = await buildStaffUser(testApp.db);
     const response = await testApp.http
       .get('/api/v1/quote-requests')
-      .set(bearer(await staffToken(staff, ['admin'])))
+      .set(await signIn(testApp.http, staff))
       .expect(403);
     expect(response.body.code).toBe('FORBIDDEN');
   });
@@ -1437,18 +1436,19 @@ describe('customer', () => {
       });
     });
 
-    it('closes an account without policies and refuses the token afterwards', async () => {
+    it('closes an account without policies and refuses its session afterwards', async () => {
       const customer = await buildCustomer(testApp.db);
       const { quoteRequest } = await buildQuoteRequest(testApp.db, { customerId: customer.id, insurerIds: [] });
+      const session = await asCustomer(customer);
 
-      const response = await closeAccount(customer);
+      const response = await testApp.http.delete('/api/v1/account').set(session);
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({ closed: true, closedAt: expect.stringMatching(ISO_MS) });
       const [row] = await testApp.db.select().from(customers).where(and(eq(customers.id, customer.id), isNull(customers.deletedAt)));
       expect(row).toBeUndefined();
       expect((await storedRequest(quoteRequest.id)).customerId).toBe(customer.id);
-      await testApp.http.get('/api/v1/policies').set(await asCustomer(customer)).expect(403);
+      await testApp.http.get('/api/v1/policies').set(session).expect(401);
     });
   });
 });

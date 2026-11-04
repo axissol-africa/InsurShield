@@ -42,7 +42,7 @@ import {
   until,
   type TestApp,
 } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 import { FAKE_STORAGE_ORIGIN } from './storage-fake.js';
 
 const DAY_MS = 86_400_000;
@@ -148,8 +148,7 @@ describe('insurer portal', () => {
     await side.close();
   });
 
-  const asStaff = async (staff: { keycloakId: string; email: string }) =>
-    bearer(await staffToken(staff, ['insurer_user']));
+  const asStaff = (staff: { email: string }) => signIn(testApp.http, staff);
 
   const get = async (insurer: BuiltInsurer, path: string) =>
     testApp.http.get(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff));
@@ -761,9 +760,9 @@ describe('insurer portal', () => {
       const admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const callers: [string, Record<string, string>, number][] = [
-        ['customer', bearer(await customerToken(customer)), 403],
-        ['admin', bearer(await staffToken(admin, ['admin'])), 403],
-        ['super admin', bearer(await staffToken(superAdmin, ['super_admin'])), 403],
+        ['customer', await signIn(testApp.http, customer), 403],
+        ['admin', await signIn(testApp.http, admin), 403],
+        ['super admin', await signIn(testApp.http, superAdmin), 403],
         ['anonymous', {}, 401],
       ];
 

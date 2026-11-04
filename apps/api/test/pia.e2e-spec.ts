@@ -3,7 +3,7 @@ import { piaConfig } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, buildStaffUser } from './builders.js';
 import { buildPiaConfig } from './builders/admin.js';
 import { openTestDatabase, startApp, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 const PATH = '/api/v1/config/pia';
@@ -29,7 +29,7 @@ describe('PIA minimum rate', () => {
 
   const asAdmin = async (fullName = 'Admin Person') => {
     const staff = await buildStaffUser(testApp.db, { role: 'ADMIN', fullName });
-    return bearer(await staffToken(staff, ['admin']));
+    return signIn(testApp.http, staff);
   };
 
   it('answers the regulatory default when no rate is stored', async () => {
@@ -115,8 +115,8 @@ describe('PIA minimum rate', () => {
     const { staff } = await buildInsurer(testApp.db);
     await buildPiaConfig(testApp.db, { piaRateBps: 400 });
 
-    await testApp.http.put(PATH).set(bearer(await customerToken(customer))).send({ piaRatePercentage: 1 }).expect(403);
-    await testApp.http.put(PATH).set(bearer(await staffToken(staff, ['insurer_user']))).send({ piaRatePercentage: 1 }).expect(403);
+    await testApp.http.put(PATH).set(await signIn(testApp.http, customer)).send({ piaRatePercentage: 1 }).expect(403);
+    await testApp.http.put(PATH).set(await signIn(testApp.http, staff)).send({ piaRatePercentage: 1 }).expect(403);
     await testApp.http.put(PATH).send({ piaRatePercentage: 1 }).expect(401);
 
     expect((await storedRow()).piaRateBps).toBe(400);

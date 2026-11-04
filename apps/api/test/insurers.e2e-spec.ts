@@ -4,7 +4,7 @@ import type { Response } from 'supertest';
 import { insurerContacts, insurers } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, buildStaffUser, unique, type Row } from './builders.js';
 import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn, type SessionHeaders } from './sessions.js';
 import type { staffUsers } from '../src/db/schema.js';
 
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -55,13 +55,13 @@ describe('insurers', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
   let admin: Row<typeof staffUsers>;
-  let asAdmin: { Authorization: string };
+  let asAdmin: SessionHeaders;
 
   beforeAll(async () => {
     testApp = await startApp();
     side = openTestDatabase();
     admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
-    asAdmin = bearer(await staffToken(admin, ['admin']));
+    asAdmin = await signIn(testApp.http, admin);
   });
 
   afterAll(async () => {
@@ -78,7 +78,7 @@ describe('insurers', () => {
   const create = (body: Record<string, unknown>) => testApp.http.post('/api/v1/insurers').set(asAdmin).send(body);
   const update = (id: string, body: Record<string, unknown>) =>
     testApp.http.patch(`/api/v1/insurers/${id}`).set(asAdmin).send(body);
-  const setStatus = (id: string, status: string, as: { Authorization: string }) =>
+  const setStatus = (id: string, status: string, as: SessionHeaders) =>
     testApp.http.patch(`/api/v1/insurers/${id}/status`).set(as).send({ status });
 
   describe('wire values (T-HTTP1)', () => {
@@ -195,7 +195,7 @@ describe('insurers', () => {
     it('keeps staff routes from customers and insurer users, and deletion for super admins', async () => {
       const { insurer, staff } = await buildInsurer(testApp.db);
       const customer = await buildCustomer(testApp.db);
-      const tokens = [bearer(await customerToken(customer)), bearer(await staffToken(staff, ['insurer_user']))];
+      const tokens = [await signIn(testApp.http, customer), await signIn(testApp.http, staff)];
 
       for (const token of tokens) {
         await testApp.http.get('/api/v1/insurers').set(token).expect(403);
@@ -509,7 +509,7 @@ describe('insurers', () => {
 
     it('sets DELETED through PATCH status for a super admin, with deletedAt, and then answers 404', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
-      const asSuperAdmin = bearer(await staffToken(superAdmin, ['super_admin']));
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
       const { insurer } = await buildInsurer(testApp.db);
 
       const deleted = await setStatus(insurer.id, 'DELETED', asSuperAdmin).expect(200);
@@ -540,7 +540,7 @@ describe('insurers', () => {
 
       const response = await testApp.http
         .delete(`/api/v1/insurers/${insurer.id}`)
-        .set(bearer(await staffToken(superAdmin, ['super_admin'])))
+        .set(await signIn(testApp.http, superAdmin))
         .expect(200);
 
       expect(response.body).toEqual({ id: insurer.id, status: 'Deleted' });

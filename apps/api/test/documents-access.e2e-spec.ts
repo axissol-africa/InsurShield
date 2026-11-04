@@ -23,13 +23,11 @@ import {
   buildInspectionShot,
 } from './builders/documents.js';
 import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn, type SessionHeaders } from './sessions.js';
 import type { customers, staffUsers } from '../src/db/schema.js';
 
 type Customer = Row<typeof customers>;
 type Staff = Row<typeof staffUsers>;
-
-const REALM_ROLE = { SUPER_ADMIN: 'super_admin', ADMIN: 'admin', INSURER_USER: 'insurer_user' } as const;
 
 function deferred() {
   let resolve!: () => void;
@@ -53,13 +51,12 @@ describe('documents', () => {
     await side.close();
   });
 
-  const asCustomer = async (customer: Customer) =>
-    bearer(await customerToken({ keycloakId: customer.keycloakId, email: customer.email }));
-  const asStaff = async (staff: Staff) => bearer(await staffToken(staff, [REALM_ROLE[staff.role]]));
+  const asCustomer = (customer: Customer) => signIn(testApp.http, customer);
+  const asStaff = (staff: Staff) => signIn(testApp.http, staff);
 
   describe('GET /documents/:id', () => {
     const docs: Record<string, string> = {};
-    const principals: Record<string, { Authorization: string }> = {};
+    const principals: Record<string, SessionHeaders> = {};
 
     beforeAll(async () => {
       const db = testApp.db;
