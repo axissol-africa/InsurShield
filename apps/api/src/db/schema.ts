@@ -210,13 +210,11 @@ export const customers = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: timestamptz('deletedAt'),
-    keycloakId: text('keycloakId'),
     userId: uuid('userId'),
   },
   (t) => [
     uniqueIndex('customers_email_key').on(t.email),
     uniqueIndex('customers_phone_key').on(t.phone),
-    uniqueIndex('customers_keycloakId_key').on(t.keycloakId),
     uniqueIndex('customers_userId_key').on(t.userId),
     index('customers_deletedAt_idx').on(t.deletedAt),
     fk('customers_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
@@ -252,12 +250,10 @@ export const staffUsers = pgTable(
     lastLoginAt: timestamptz('lastLoginAt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
-    keycloakId: text('keycloakId'),
     userId: uuid('userId'),
   },
   (t) => [
     uniqueIndex('staff_users_email_key').on(t.email),
-    uniqueIndex('staff_users_keycloakId_key').on(t.keycloakId),
     uniqueIndex('staff_users_userId_key').on(t.userId),
     index('staff_users_insurerId_idx').on(t.insurerId),
     fk('staff_users_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
@@ -509,6 +505,7 @@ export const payments = pgTable(
     status: paymentStatus('status').notNull().default('PENDING'),
     method: paymentMethod('method').notNull(),
     amountMinor: ngwee('amountMinor').notNull(),
+    rtsaAnniversaryFeeMinor: ngwee('rtsaAnniversaryFeeMinor').notNull().default(0),
     currency: text('currency').notNull().default('ZMW'),
     confirmedAt: timestamptz('confirmedAt'),
     failureReason: text('failureReason'),
@@ -529,6 +526,7 @@ export const payments = pgTable(
     fk('payments_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'restrict'),
     fk('payments_insurerQuoteId_fkey', [t.insurerQuoteId], [insurerQuotes.id], 'restrict'),
     moneyCheck('payments', t.amountMinor),
+    moneyCheck('payments', t.rtsaAnniversaryFeeMinor),
   ],
 );
 

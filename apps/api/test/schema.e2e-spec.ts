@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClientBase } from 'pg';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
 import { MAX_NGWEE } from '../src/common/domain/money-limits.js';
 import { readCatalog, type Catalog } from '../src/db/catalog.js';
 import { CONVERTED_COLUMNS, migrateDatabase } from '../src/db/migrator.js';
@@ -55,6 +56,14 @@ async function query<T>(db: ScratchDatabase, run: (client: ClientBase) => Promis
 const catalogOf = (db: ScratchDatabase) => query(db, readCatalog);
 
 const asFile = (catalog: Catalog) => `${JSON.stringify(catalog, null, 2)}\n`;
+
+async function applyMigration(client: ClientBase, index: number) {
+  const migration = readMigrationFiles({ migrationsFolder: DRIZZLE_FOLDER })[index];
+  if (!migration) throw new Error(`Migration ${index} is missing`);
+  for (const statement of migration.sql) {
+    await client.query(statement);
+  }
+}
 
 async function pushed(): Promise<ScratchDatabase> {
   const db = await scratch();
@@ -235,13 +244,22 @@ describe('0002_better_auth', () => {
     await recordDrizzleHistory(client, 2);
     await keycloakEraRows(client);
   };
-  const atHeadWithKeycloakRows = async (client: ClientBase) => {
-    await applyMigrationFiles(client);
+  const atBetterAuthWithKeycloakRows = async (client: ClientBase) => {
+    await applyMigrationFiles(client, 3);
+    await recordDrizzleHistory(client, 3);
     await keycloakEraRows(client);
   };
-  const domainRows = async (client: ClientBase) => ({
-    customers: (await client.query(`SELECT * FROM customers ORDER BY id`)).rows,
-    staff: (await client.query(`SELECT * FROM staff_users ORDER BY id`)).rows,
+  const keycloakEraDomainRows = async (client: ClientBase) => ({
+    customers: (
+      await client.query(
+        `SELECT id, "fullName", email, phone, "keycloakId", "userId" FROM customers ORDER BY id`,
+      )
+    ).rows,
+    staff: (
+      await client.query(
+        `SELECT id, email, "fullName", role, "keycloakId", "userId" FROM staff_users ORDER BY id`,
+      )
+    ).rows,
     consents: (await client.query(`SELECT * FROM consent_records ORDER BY id`)).rows,
   });
 
@@ -271,13 +289,21 @@ describe('0002_better_auth', () => {
   const countFor = async (client: ClientBase, table: string, userId: string) =>
     (await client.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE "userId" = $1`, [userId])).rows[0].n;
 
-  it('applies on a database at 0001 holding Keycloak-era rows, which keep every value with a null userId', async () => {
+  it('M1 applies on a database at 0001 holding Keycloak-era rows, which keep every value with a null userId', async () => {
     const db = await scratch(atFirstWithKeycloakRows);
-    const before = await query(db, domainRows);
+    const before = await query(db, async (client) => ({
+      customers: (
+        await client.query(`SELECT id, "fullName", email, phone, "keycloakId" FROM customers ORDER BY id`)
+      ).rows,
+      staff: (
+        await client.query(`SELECT id, email, "fullName", role, "keycloakId" FROM staff_users ORDER BY id`)
+      ).rows,
+      consents: (await client.query(`SELECT * FROM consent_records ORDER BY id`)).rows,
+    }));
 
-    expect(await migrateDatabase(db.config)).toEqual({ state: 'managed', applied: TAGS.slice(2) });
+    await query(db, (client) => applyMigration(client, 2));
 
-    const after = await query(db, domainRows);
+    const after = await query(db, keycloakEraDomainRows);
     expect(before.customers).toHaveLength(2);
     expect(before.staff).toHaveLength(2);
     expect(after.customers).toEqual(before.customers.map((row) => ({ ...row, userId: null })));
@@ -286,7 +312,7 @@ describe('0002_better_auth', () => {
   });
 
   it("accepts the Keycloak build's writes: a keycloakId and no userId", async () => {
-    const db = await scratch(atHeadWithKeycloakRows);
+    const db = await scratch(atBetterAuthWithKeycloakRows);
 
     await query(db, async (client) => {
       const insert = (keycloakId: string, email: string) =>
@@ -311,7 +337,7 @@ describe('0002_better_auth', () => {
     ['customers', CUSTOMERS],
     ['staff_users', STAFF],
   ])('links a user from at most one row of %s', async (table, ids) => {
-    const db = await scratch(atHeadWithKeycloakRows);
+    const db = await scratch(atBetterAuthWithKeycloakRows);
 
     await query(db, async (client) => {
       const user = await insertUser(client);
@@ -322,7 +348,7 @@ describe('0002_better_auth', () => {
   });
 
   it('refuses to delete a user a customer or staff row links, keeping its sessions and accounts', async () => {
-    const db = await scratch(atHeadWithKeycloakRows);
+    const db = await scratch(atBetterAuthWithKeycloakRows);
 
     await query(db, async (client) => {
       const user = await insertUser(client, { sessions: 1, accounts: 1 });
@@ -378,7 +404,7 @@ describe('0002_better_auth', () => {
   });
 
   it("deletes an unlinked user's sessions and accounts with it, and no one else's", async () => {
-    const db = await scratch(atHeadWithKeycloakRows);
+    const db = await scratch(atBetterAuthWithKeycloakRows);
 
     await query(db, async (client) => {
       const deleted = await insertUser(client, { sessions: 2, accounts: 2 });
@@ -390,6 +416,92 @@ describe('0002_better_auth', () => {
       expect(await countFor(client, 'auth_accounts', deleted)).toBe(0);
       expect(await countFor(client, 'auth_sessions', kept)).toBe(1);
       expect(await countFor(client, 'auth_accounts', kept)).toBe(1);
+    });
+  });
+});
+
+describe('0003_drop_keycloak_ids', () => {
+  it('removes the retired columns and indexes without changing the Better Auth links or domain rows', async () => {
+    const customerId = randomUUID();
+    const staffId = randomUUID();
+    const db = await scratch(async (client) => {
+      await applyMigrationFiles(client, 3);
+      await client.query(
+        `INSERT INTO customers (id, "fullName", email, phone, "keycloakId", "updatedAt")
+         VALUES ($1, 'Chanda Mwale', 'chanda@example.invalid', '+260970000001', 'kc-chanda', CURRENT_TIMESTAMP)`,
+        [customerId],
+      );
+      await client.query(
+        `INSERT INTO staff_users (id, email, "fullName", role, "keycloakId", "updatedAt")
+         VALUES ($1, 'mutale@example.invalid', 'Mutale Banda', 'ADMIN', 'kc-mutale', CURRENT_TIMESTAMP)`,
+        [staffId],
+      );
+    });
+
+    await query(db, async (client) => {
+      await applyMigration(client, 3);
+
+      expect(
+        (
+          await client.query(
+            `SELECT id, "fullName", email, phone, "userId" FROM customers WHERE id = $1`,
+            [customerId],
+          )
+        ).rows,
+      ).toEqual([
+        { id: customerId, fullName: 'Chanda Mwale', email: 'chanda@example.invalid', phone: '+260970000001', userId: null },
+      ]);
+      expect(
+        (
+          await client.query(
+            `SELECT id, email, "fullName", role, "userId" FROM staff_users WHERE id = $1`,
+            [staffId],
+          )
+        ).rows,
+      ).toEqual([
+        { id: staffId, email: 'mutale@example.invalid', fullName: 'Mutale Banda', role: 'ADMIN', userId: null },
+      ]);
+      expect(
+        (
+          await client.query(
+            `SELECT to_regclass('public."customers_keycloakId_key"') AS customer_index,
+                    to_regclass('public."staff_users_keycloakId_key"') AS staff_index`,
+          )
+        ).rows,
+      ).toEqual([{ customer_index: null, staff_index: null }]);
+      await expect(client.query(`SELECT "keycloakId" FROM customers`)).rejects.toMatchObject({ code: '42703' });
+      await expect(client.query(`SELECT "keycloakId" FROM staff_users`)).rejects.toMatchObject({ code: '42703' });
+    });
+  });
+});
+
+describe('0004_payment_rtsa_fee', () => {
+  it('defaults the fee to zero for existing payments and enforces the ngwee money bounds', async () => {
+    const db = await scratch(async (client) => {
+      await buildPrismaEraDatabase(client, { data: true });
+      await applyMigration(client, 1);
+      await applyMigration(client, 2);
+      await applyMigration(client, 3);
+    });
+
+    await query(db, async (client) => {
+      await applyMigration(client, 4);
+
+      expect(
+        (await client.query(`SELECT "rtsaAnniversaryFeeMinor"::text AS fee FROM payments ORDER BY id`)).rows,
+      ).toEqual([{ fee: '0' }]);
+
+      const setFee = (fee: bigint) =>
+        client.query(`UPDATE payments SET "rtsaAnniversaryFeeMinor" = $1`, [fee.toString()]);
+      await expect(setFee(-1n)).rejects.toMatchObject({
+        code: '23514',
+        constraint: 'payments_rtsaAnniversaryFeeMinor_check',
+      });
+      expect((await setFee(MAX_NGWEE)).rowCount).toBe(1);
+      await expect(setFee(MAX_NGWEE + 1n)).rejects.toMatchObject({
+        code: '23514',
+        constraint: 'payments_rtsaAnniversaryFeeMinor_check',
+      });
     });
   });
 });
@@ -447,6 +559,9 @@ describe('the final schema', () => {
       const column = columns.find((candidate) => candidate.name === `${table}.${renamedTo}`);
       expect(column?.type, `${table}.${renamedTo}`).toBe(max === MAX_NGWEE ? 'bigint' : 'integer');
     }
+    expect(columns.find((column) => column.name === 'payments.rtsaAnniversaryFeeMinor')).toMatchObject({
+      type: 'bigint',
+    });
   });
 
   it('refuses an amount or rate outside its bounds in every converted column, and accepts each bound', async () => {

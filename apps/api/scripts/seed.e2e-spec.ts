@@ -234,7 +234,7 @@ describe('seed', () => {
     await assertSeededAccountCanSignIn('admin@insurshield.zm', after.userId);
   });
 
-  it('relinks a Keycloak-era staff row by email without creating a duplicate', async () => {
+  it('relinks a legacy staff row by email without creating a duplicate', async () => {
     await db.transaction((tx) => seedReferenceData(tx, () => {}));
     const [legacy] = await db
       .insert(schema.staffUsers)
@@ -242,7 +242,6 @@ describe('seed', () => {
         email: 'admin@insurshield.zm',
         fullName: 'InsurShield Administrator',
         role: 'SUPER_ADMIN',
-        keycloakId: 'legacy-keycloak-admin',
       })
       .returning({ id: schema.staffUsers.id });
 
