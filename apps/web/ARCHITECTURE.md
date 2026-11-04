@@ -20,6 +20,8 @@ apps/web/
 │   │                          (the icon font itself is declared in index.html so it loads before the bundle)
 │   ├── app/                   Composition root
 │   │   ├── App.jsx            Router and route table
+│   │   ├── IdentitySessionBoundary.jsx  HTTP-session boot and transition gate
+│   │   └── identity.js        Per-tab identity binding and cross-tab notifications
 │   │   └── guards.jsx         CustomerRoute / StaffRoute
 │   ├── config/
 │   │   └── env.js             Runtime config from VITE_* variables (frozen object)
@@ -39,11 +41,11 @@ apps/web/
 │   ├── store/                 Client state (Zustand + persist)
 │   │   ├── index.js           Public entry: useStore, selectors, DEMO_CUSTOMER_ACCOUNT
 │   │   ├── store.js           Composes the slices with persistence
-│   │   ├── slices/session.js  Customer account, staff session, consent, auth token
+│   │   ├── slices/session.js  Customer account, staff session, consent and identity boot state
 │   │   ├── slices/journey.js  The quote journey in progress
 │   │   ├── slices/catalogue.js Insurers and PIA config (admin-owned)
 │   │   ├── slices/records.js  Quote requests, policies, claims, NCD, inspections
-│   │   ├── persistence.js     Storage key/version, migrations, merge, partialize
+│   │   ├── persistence.js     Storage key/version, migrations, merge, partialize; per-tab in HTTP mode
 │   │   ├── selectors.js       Derived reads (active insurers, "belongs to customer" …)
 │   │   ├── demoSeed.js        Demo account and demo records
 │   │   └── shared.js          Small helpers used by the slices
@@ -85,7 +87,8 @@ features ──► api ──► lib/apiClient
 
 - `domain/` imports nothing from React, the store or the API. It is plain functions and constants and is the easiest code to unit-test.
 - `store/` may import `domain/`; it never imports features or the API.
-- `api/http` never touches the store except through `apiClient` (to read the auth token). `api/mock` is the one place allowed to call store actions on behalf of "the backend".
+- `api/http` never touches the store except through `apiClient` (to add the current tab's identity precondition).
+  `api/mock` is the one place allowed to call store actions on behalf of "the backend".
 - `features/` never call `axios`, `fetch` or `localStorage` directly — they go through `api` and `useStore`.
 - `app/` is the only place that knows the route table.
 
@@ -99,10 +102,18 @@ Imports use the `@/` alias for anything outside the current folder (`@/domain/pr
 
 Today the mock adapter is complete and two flows are already routed through `api` (vehicle lookup, payment). Store actions for records (`addInsurerQuote`, `issuePolicyCertificate`, `addClaim`, …) are still called directly by some pages; each one has a matching `api` function ready, so wiring a page to the backend is a local change to that page.
 
+In HTTP mode, `IdentitySessionBoundary` restores the database-backed Better Auth session from `GET /auth/me` before
+rendering person-bound routes. A tab binds itself to the returned user id in `sessionStorage`; API calls include that
+binding as an identity precondition, while authentication itself remains the browser's HTTP-only cookie. A
+`BroadcastChannel` tells other signed-in tabs to discard person-bound state after sign-in, sign-out or account
+closure. Mock mode deliberately keeps the prototype's local browser behaviour.
+
 ## Connecting the backend
 
 1. Implement the endpoints in `src/api/contracts.js`. Request and response shapes are the JSDoc typedefs in that file; the backend owns them from here on and the frontend follows.
-2. Set `VITE_API_MODE=http` and `VITE_API_BASE_URL` in `.env.local` (see `.env.example`). `apiClient` sends JSON, credentials, and `Authorization: Bearer <token>` when `session.authToken` is set (`setAuthToken` after login).
+2. Set `VITE_API_MODE=http` and `VITE_API_BASE_URL` in `.env.local` (see `.env.example`). `apiClient` sends JSON and
+   credentialed cookie requests; it never sends a bearer token. In HTTP mode the frontend and API must be same-site,
+   and `VITE_API_BASE_URL` points to the API's public origin.
 3. Errors must be JSON `{ code, message, details? }` with a proper HTTP status; the client turns them into `ApiError` so pages can show `error.message`.
 4. `POST`s that create money or policy records carry an `Idempotency-Key` header — replaying the same key must not create a second record.
 5. Documents (quotations, certificates, photos) become multipart uploads returning a `DocumentRecord` with a signed `url`; the pages already handle either `url` or `dataUrl`.

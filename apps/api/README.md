@@ -14,7 +14,7 @@ every `CHANGE_ME` (the [root README](../../README.md#configuration) lists each v
 
 ```bash
 cp .env.example .env && cp apps/api/.env.example apps/api/.env
-npm run setup      # install, start Postgres + MinIO + Keycloak, migrate, seed
+npm run setup      # install, start Postgres + MinIO, migrate, seed
 npm run dev:api    # http://localhost:4000
 ```
 
@@ -45,12 +45,11 @@ it never touches a dependency.
 | Postgres | `127.0.0.1:<POSTGRES_PORT>` | `POSTGRES_USER` / `POSTGRES_PASSWORD`, database `POSTGRES_DB` |
 | MinIO API | `127.0.0.1:<MINIO_API_PORT>` | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
 | MinIO console | `http://127.0.0.1:<MINIO_CONSOLE_PORT>` | same as above |
-| Keycloak | `http://127.0.0.1:<KEYCLOAK_PORT>` | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` |
 
 All are defined in [`docker-compose.yml`](../../docker-compose.yml) at the repo root and take their values from
-the root `.env`. The `S3_BUCKET` bucket is created private on first boot. A data volume from an earlier checkout
-keeps the passwords and the Keycloak client secret it was created with (see the
-[root README](../../README.md#configuration)).
+the root `.env`. The `S3_BUCKET` bucket is created private on first boot. See the
+[root README's development-database reset](../../README.md#resetting-a-development-database-for-better-auth) before
+switching an existing checkout to Better Auth.
 
 ## Database commands
 
@@ -59,7 +58,7 @@ Run from `apps/api/`, or with `-w @insurshield/api` from the root.
 | Command | What it does |
 | --- | --- |
 | `npm run db:migrate` | Apply the migrations in `drizzle/` through [`src/db/migrate.ts`](src/db/migrate.ts), in development and production alike |
-| `npm run db:seed` | Load the PIA rate, insurers and NCD codes; with Keycloak, also the staff accounts and demo records ([`scripts/seed.ts`](scripts/seed.ts)). Idempotent |
+| `npm run db:seed` | Load reference data, credential users, staff accounts and demo records ([`scripts/seed.ts`](scripts/seed.ts)). Idempotent |
 | `npm run db:studio` | Open Drizzle Studio to browse the data |
 
 `db:migrate` recognises an empty database, a Drizzle-managed one with pending migrations, and one the earlier
@@ -93,51 +92,35 @@ Never edit an applied migration.
 
 ## Identity
 
-Sign-in and sign-up run on [Keycloak](https://www.keycloak.org/), self-hosted
-alongside the API. This API issues no tokens and never sees a password: it
-verifies Keycloak's access tokens against the realm's JWKS, pinning both the
-issuer and the audience.
+[Better Auth](https://www.better-auth.com/) runs inside this API and stores email-and-password credentials and
+database-backed sessions in PostgreSQL. The identity endpoints live below
+`/<API_PREFIX>/identity`; the application endpoints remain `GET /auth/me` and `POST /auth/consent`.
+`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `TRUST_PROXY_HOPS` and an explicit `NODE_ENV` are required at startup.
+See [the root configuration table](../../README.md#configuration) for every setting and the deployment guide for the
+same-site and proxy requirements.
 
-Keycloak owns credentials, sessions and realm roles. This service owns the
-domain rows and joins to them on the token's `sub`, stored as `keycloakId`.
+The browser authenticates with the HTTP-only session cookie that Better Auth sets. It is `SameSite=Lax`, becomes
+`Secure` on HTTPS, and has a fixed seven-day lifetime. The API does not accept a browser bearer token. The cookie
+is sent only with credentialed requests to a same-site API origin, so the deployed frontend and API must be under the
+same site and the API's `CORS_ORIGINS` must include the frontend origin.
 
 | Concern | Lives in |
 | --- | --- |
-| Password, session, MFA, password reset | Keycloak |
-| Realm roles (`super_admin`, `admin`, `insurer_user`, `customer`) | Keycloak |
-| `staff_users.insurerId`, consent records, everything domain | Postgres |
+| Credential hash, session, account recovery token and rate-limit records | PostgreSQL Better Auth tables |
+| Staff role and insurer tenancy | `staff_users` in PostgreSQL |
+| Customer profile, consent records and all product data | PostgreSQL domain tables |
 
-The realm is defined in [`infra/keycloak/realm-insurshield.json`](../../infra/keycloak/realm-insurshield.json)
-and imported on boot, so every environment is reproducible. Its
-`_productionNotes` list what must change before this leaves localhost.
+`customers.userId` and `staff_users.userId` link the domain rows to the Better Auth user. A user with no matching
+domain row, or more than one, is refused; roles are never inferred from a browser request. The seed creates the
+staff and demo credential users from `SEED_STAFF_PASSWORD` and only links rows it created itself.
 
-| Service | URL | Credentials |
-| --- | --- | --- |
-| Keycloak admin console | `http://127.0.0.1:<KEYCLOAK_PORT>` | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` |
-| Realm | `insurshield` | |
-| Seeded staff | `admin@insurshield.zm` | `SEED_STAFF_PASSWORD` |
-| Seeded insurer portals | `insurer@<insurer>.zm` | `SEED_STAFF_PASSWORD` |
+### Verification and recovery — deferred delivery
 
-Staff are provisioned by the seed through Keycloak's Admin API using the API's
-own service account, then linked to a `staff_users` row. Customers are different:
-they sign up in Keycloak directly, and their `customers` row is created on their
-first authenticated call. A staff role in a token with no matching row is
-refused rather than honoured, so an account cannot promote itself.
-
-### Phone verification — parked
-
-Keycloak provides TOTP but **not SMS OTP**, and the customer flow calls for an
-SMS code to a Zambian mobile at registration and password reset. That work is
-parked: the `OtpChallenge` table, the `OtpPurpose` enum and
-`customers.phoneVerifiedAt` were dropped from the database and are not in
-[`src/db/schema.ts`](src/db/schema.ts).
-
-Until it returns, a customer provisioned from Keycloak gets a placeholder
-`phone` of `pending:<keycloak-sub>`, namespaced so the unique constraint holds.
-Nothing reads it as a real number.
-
-To restore: add them to the schema with a new migration, and decide
-between handling OTP in this API or deploying an SMS SPI into Keycloak.
+The application has no email or SMS provider configured yet. Password-reset and email-verification links are
+available only in local development and test flows; production keeps those routes unavailable until a delivery
+provider and verified sender are configured. Sign-in does not currently require verified email or phone ownership.
+Adding either channel later requires a new design for registration, verification, recovery and abandoned contact
+reservations rather than a source-only toggle.
 
 ## Browsing the database
 

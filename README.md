@@ -11,7 +11,7 @@ This is a monorepo managed with [npm workspaces](https://docs.npmjs.com/cli/usin
 | [`packages/`](packages/) | Shared packages consumed by both apps (currently empty). |
 | [`docs/`](docs/) | [Deployment](docs/DEPLOYMENT.md), [insurer system integration](docs/INSURER_API_INTEGRATION.md), [customer entry / identity / consent flow](docs/CUSTOMER_ENTRY_IDENTITY_CONSENT_FLOW.md). |
 | [`design/`](design/) | Original design references: the Stitch screen exports (`screens/<screen>/code.html` + `screen.png`) and the original design-system notes. The live design tokens are in `apps/web/src/index.css` and `apps/web/DESIGN.md`. |
-| [`infra/`](infra/) | Local infrastructure configuration for PostgreSQL and Keycloak. Docker Compose remains at the repository root. |
+| [`infra/`](infra/) | Local infrastructure configuration for PostgreSQL. Docker Compose remains at the repository root. |
 | [`output/`](output/) | Versioned Word documents and Zoho backlog exports. |
 | [`scripts/`](scripts/) | Repository scripts, including the Zoho backlog generator. |
 
@@ -19,7 +19,7 @@ This is a monorepo managed with [npm workspaces](https://docs.npmjs.com/cli/usin
 
 Use Node.js 24.15 or newer in the Node 24 LTS line, npm 11.13 or newer in the npm 11 line, and Docker. Copy both
 environment files and replace every `CHANGE_ME` (see [Configuration](#configuration)); then one command installs every
-workspace, starts Postgres, MinIO and Keycloak, applies migrations and loads reference data:
+workspace, starts Postgres and MinIO, applies migrations and loads reference data:
 
 ```bash
 cp .env.example .env && cp apps/api/.env.example apps/api/.env   # then replace every CHANGE_ME
@@ -62,12 +62,12 @@ Every command below runs across all workspaces via Turborepo, which caches resul
 
 ### Local infrastructure
 
-Postgres, MinIO and Keycloak run in Docker ([`docker-compose.yml`](docker-compose.yml)), with the settings in the root `.env`.
+Postgres and MinIO run in Docker ([`docker-compose.yml`](docker-compose.yml)), with the settings in the root `.env`.
 
 | Command | What it does |
 | --- | --- |
 | `npm run setup` | Install, start the services, migrate and seed — the one-shot first run |
-| `npm run infra:up` | Start Postgres, MinIO and Keycloak |
+| `npm run infra:up` | Start Postgres and MinIO |
 | `npm run infra:down` | Stop them (add `-v` to the compose command to drop the data) |
 | `npm run infra:logs` | Tail the service logs |
 | `npm run db:migrate` | Apply the migrations in `apps/api/drizzle/` (`apps/api/src/db/migrate.ts`) |
@@ -78,7 +78,6 @@ Postgres, MinIO and Keycloak run in Docker ([`docker-compose.yml`](docker-compos
 | --- | --- | --- |
 | Postgres | `127.0.0.1:<POSTGRES_PORT>` | `POSTGRES_USER` / `POSTGRES_PASSWORD` from the root `.env` |
 | MinIO console | `http://127.0.0.1:<MINIO_CONSOLE_PORT>` | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` |
-| Keycloak console | `http://127.0.0.1:<KEYCLOAK_PORT>` | `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` |
 
 Target a single workspace with Turbo's filter, or npm's `-w`:
 
@@ -107,7 +106,7 @@ Error messages name a variable but never print its value.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `NODE_ENV` | no (`development`) | `development`, `test` or `production` |
+| `NODE_ENV` | yes | Explicitly `development`, `test` or `production`; the API has no default |
 | `PORT` | yes | Port the API listens on, 1–65535 |
 | `API_PREFIX` | no (`api/v1`) | Route prefix; `/health` and `/health/ready` stay outside it |
 | `CORS_ORIGINS` | yes | Comma-separated browser origins allowed to call the API |
@@ -115,10 +114,10 @@ Error messages name a variable but never print its value.
 | `DATABASE_POOL_SIZE` | yes | Connections in the API's pool, 2–100 |
 | `TEST_DATABASE_URL` | for e2e tests | A different database whose name ends in `_test`; the e2e and migration tests drop and recreate it |
 | `SWAGGER_ENABLED` | no (`false`) | `true` serves Swagger UI at `/docs` |
-| `KEYCLOAK_ISSUER` | yes | The realm's issuer URL; a token's `iss` must match it exactly |
-| `KEYCLOAK_AUDIENCE` | yes | The audience the API expects in an access token |
-| `KEYCLOAK_CLIENT_ID` | yes | Confidential client for administrative user management |
-| `KEYCLOAK_CLIENT_SECRET` | yes | That client's secret; the same value as the root `.env` |
+| `BETTER_AUTH_SECRET` | yes | At least 32 random characters used to sign session cookies; keep it in a secret manager |
+| `BETTER_AUTH_URL` | yes | Public API origin used by the identity routes, for example `https://api.insurshield.zm` |
+| `TRUST_PROXY_HOPS` | yes | Exact number of trusted proxies in front of the API: `0` locally, otherwise set for the deployed path |
+| `AUTH_RATE_LIMIT` | no (`on`) | Identity-route rate limiting; `off` is accepted only in the test environment |
 | `S3_ENDPOINT` | no | Object storage endpoint (MinIO locally); unset for AWS S3 |
 | `S3_FORCE_PATH_STYLE` | no (`false`) | `true` for MinIO |
 | `S3_REGION` | no (`us-east-1`) | Bucket region |
@@ -133,28 +132,49 @@ Error messages name a variable but never print its value.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `SEED_STAFF_PASSWORD` | when Keycloak is configured | Password given to new staff accounts; `CHANGE_ME` is refused |
+| `SEED_STAFF_PASSWORD` | yes | Password given to the seeded staff and demo accounts; `CHANGE_ME` is refused |
 | `SEED_DEMO_DATA` | no (on) | `false` skips the demo records; never seed them in production |
 | `SEED_RESET_DEMO` | no | `true` deletes the demo records and seeds them again, and frees the seeded NCD codes |
 | `SEED_RESET_PASSWORDS` | no | `true` sets `SEED_STAFF_PASSWORD` on existing staff accounts too |
 
-Without `KEYCLOAK_ISSUER` and `KEYCLOAK_CLIENT_SECRET` the seed loads only the reference data (PIA rate, insurers,
-NCD codes) and skips the staff accounts and demo records. With them set but Keycloak unreachable, it loads the
-reference data and then fails; run it again once Keycloak is up and it completes the rest.
+The seed creates credential users in the application database and then links the staff and demo rows it owns. It is
+idempotent. Setting `SEED_RESET_PASSWORDS=true` deliberately replaces those seeded credentials and revokes their
+existing sessions; use it only when that consequence is intended.
 
 ### Local services (root `.env`, read by Compose)
 
-`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_TEST_DB`, `KEYCLOAK_DB`, `POSTGRES_PORT`,
-`MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `S3_BUCKET`, `MINIO_API_PORT`, `MINIO_CONSOLE_PORT`, `KEYCLOAK_ADMIN_USER`,
-`KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_CLIENT_SECRET` and `KEYCLOAK_PORT`, each described in
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_TEST_DB`, `POSTGRES_PORT`, `MINIO_ROOT_USER`,
+`MINIO_ROOT_PASSWORD`, `S3_BUCKET`, `MINIO_API_PORT` and `MINIO_CONSOLE_PORT`, each described in
 [`.env.example`](.env.example). Compose refuses to start while one is missing.
 
-**Existing volumes keep their old credentials.** Postgres sets its password, and creates the test and Keycloak
-databases, only when its data volume is new; Keycloak imports the realm, with its client secret, only when its
-database is new. A `postgres-data` volume from an earlier checkout therefore still has the old Postgres password and
-an old Keycloak database with the old `insurshield-api` client secret. Either put those old values in both `.env`
-files, change them in Postgres (`ALTER ROLE`) and in the Keycloak admin console, or remove the volume
-(`docker compose down -v`, which deletes all local data) and start again.
+**Existing volumes keep their old credentials.** Postgres creates the test database only when its data volume is new.
+Keep the root `.env` values compatible with an existing volume, or deliberately recreate the local volume when no
+local data must be kept.
+
+### Resetting a development database for Better Auth
+
+Better Auth does not take over unlinked identity rows from the earlier local setup. Because this project is not in
+production, reset the **development** database once when switching an existing checkout: back it up, verify the
+backup, recreate only the application database, then migrate and seed. Do not use these commands for production or
+for the isolated `_test` database.
+
+```bash
+# Create and verify a backup inside the Postgres container, then copy it out.
+docker compose down --remove-orphans  # removes the retired local identity container; keeps volumes
+docker compose up -d
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB" > /tmp/insurshield-before-better-auth.dump && pg_restore --list /tmp/insurshield-before-better-auth.dump >/dev/null'
+mkdir -p backups
+docker compose cp postgres:/tmp/insurshield-before-better-auth.dump backups/insurshield-before-better-auth.dump
+
+# Reset only POSTGRES_DB, then rebuild its schema and seed the demo accounts.
+docker compose exec -T postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+npm run db:migrate
+npm run db:seed
+```
+
+An existing local Postgres volume can also retain an obsolete identity database. It is no longer used. After a
+verified backup, reclaim that local-only database manually if desired; it is never dropped automatically by this
+project.
 
 ## Data and storage
 
