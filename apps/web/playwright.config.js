@@ -1,6 +1,10 @@
 // @ts-check
 import { defineConfig, devices } from '@playwright/test';
 
+const serviceWorkerOnly = process.argv.some((argument, index) => (
+  argument === '--project=service-worker' || (argument === 'service-worker' && process.argv[index - 1] === '--project')
+));
+
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
@@ -38,6 +42,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: ['service-worker.spec.js'],
+    },
+    {
+      // Service-worker checks need a production build and their own same-origin
+      // API fixture, so they must not run against the mock-mode dev server.
+      name: 'service-worker',
+      testMatch: 'service-worker.spec.js',
+      use: { ...devices['Desktop Chrome'] },
     },
 
     // {
@@ -72,7 +84,7 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: {
+  webServer: serviceWorkerOnly ? undefined : {
     command: 'npm run dev -- --port 5180 --strictPort',
     url: 'http://localhost:5180',
     reuseExistingServer: !process.env.CI,
