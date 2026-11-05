@@ -6,13 +6,20 @@ import { apiClient } from '@/lib/apiClient';
 import { newIdempotencyKey } from '../shared';
 
 export const auth = {
-  register: (account) => apiClient.post('/auth/register', account),
-  login: (identifier, password) => apiClient.post('/auth/login', { identifier, password }),
-  requestOtp: (phone) => apiClient.post('/auth/otp', { phone }),
-  verifyOtp: (phone, code) => apiClient.post('/auth/otp/verify', { phone, code }),
-  resetPassword: (identifier, password, otp) => apiClient.post('/auth/password-reset', { identifier, password, otp }),
-  staffLogin: (email, password) => apiClient.post('/auth/staff/login', { email, password }),
-  me: () => apiClient.get('/auth/me'),
+  register: (account) => apiClient.post('/identity/register', account),
+  signIn: (email, password) => apiClient.post('/identity/sign-in/email', { email, password }),
+  signOut: () => apiClient.post('/identity/sign-out'),
+  revokeSessions: () => apiClient.post('/identity/revoke-sessions'),
+  changePassword: (currentPassword, newPassword) => apiClient.post('/identity/change-password', { currentPassword, newPassword, revokeOtherSessions: true }),
+  requestPasswordReset: (email, redirectTo) => apiClient.post('/identity/request-password-reset', { email, redirectTo }),
+  resetPassword: (token, newPassword) => apiClient.post('/identity/reset-password', { token, newPassword }),
+  sendVerificationEmail: (callbackURL) => apiClient.post('/identity/send-verification-email', { callbackURL }),
+  me: ({ boot = false } = {}) => apiClient.get('/auth/me', { identity: boot ? 'omit' : undefined }),
+  acceptConsent: (noticeVersion) => apiClient.post('/auth/consent', { noticeVersion }),
+};
+
+export const account = {
+  close: () => apiClient.delete('/account'),
 };
 
 /**
@@ -44,12 +51,13 @@ export const quotes = {
 };
 
 export const insurers = {
-  list: () => apiClient.get('/insurers'),
+  list: (query = {}) => apiClient.get('/insurers', { params: query }),
   get: (id) => apiClient.get(`/insurers/${id}`),
   create: (insurer) => apiClient.post('/insurers', insurer),
   update: (id, updates) => apiClient.patch(`/insurers/${id}`, updates),
   setStatus: (id, status) => apiClient.patch(`/insurers/${id}/status`, { status }),
   remove: (id) => apiClient.delete(`/insurers/${id}`),
+  restore: (id) => apiClient.post(`/insurers/${id}/restore`),
   directory: () => apiClient.get('/insurers/directory'),
 };
 

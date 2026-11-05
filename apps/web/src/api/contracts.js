@@ -7,18 +7,22 @@
  *
  * Conventions
  *  - Base URL: `VITE_API_BASE_URL` (default `/api/v1`). JSON bodies, ISO-8601 timestamps, ZMW amounts as numbers.
- *  - Auth: `Authorization: Bearer <token>` from `POST /auth/login`; staff and insurer users get role claims.
+ *  - Auth: Better Auth's HTTP-only cookie session. HTTP mode adds the tab's
+ *    `X-InsurShield-User` binding to prevent a stale tab acting as another user.
  *  - Errors: `{ code, message, details? }` with an HTTP status; the client raises `ApiError`.
  *  - Idempotency: `POST` calls that create money or policy records send an `Idempotency-Key` header.
  *  - Documents (quotations, certificates, photos): uploaded as multipart and referenced by `DocumentRecord`.
  *
  * Endpoints
- *  auth        GET  /auth/me · POST /auth/consent
+ *  auth        POST /identity/register · POST /identity/sign-in/email · POST /identity/sign-out
+ *              POST /identity/revoke-sessions · POST /identity/change-password
+ *              POST /identity/request-password-reset · POST /identity/reset-password
+ *              GET /auth/me · POST /auth/consent
  *  account     DELETE /account
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
- *  insurers    GET  /insurers · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · GET /insurers/directory
+ *  insurers    GET  /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
  *  payments    POST /payments · GET /payments/:id
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
@@ -179,6 +183,7 @@
  * @property {string} [licenceExpiry]
  * @property {string} [logoUrl]
  * @property {Object} contact                claims desk: contactPerson, role, phone, mobile, whatsapp, email, address, hours
+ * @property {string|null} [deletedAt]       set only while a super admin has removed the insurer
  */
 
 export {};

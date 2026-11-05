@@ -26,15 +26,15 @@ function withParameter(url: string, parameter: string, value: string): string {
 }
 
 const valid = {
+  NODE_ENV: 'development',
   PORT: '4000',
   CORS_ORIGINS: 'http://localhost:5173',
   DATABASE_URL: `postgresql://user:${SECRET}@localhost:5432/insurshield`,
   DATABASE_POOL_SIZE: '10',
   S3_BUCKET: 'insurshield-documents',
-  KEYCLOAK_ISSUER: 'http://localhost:8080/realms/insurshield',
-  KEYCLOAK_AUDIENCE: 'insurshield-api',
-  KEYCLOAK_CLIENT_ID: 'insurshield-api',
-  KEYCLOAK_CLIENT_SECRET: 'a-test-client-secret',
+  BETTER_AUTH_SECRET: 'a-test-secret-of-at-least-32-characters',
+  BETTER_AUTH_URL: 'http://localhost:4000',
+  TRUST_PROXY_HOPS: '0',
 };
 
 function problems(raw: Record<string, unknown>): string {
@@ -50,7 +50,6 @@ describe('validateEnv', () => {
   it('applies the defaults the API expects when only the essentials are set', () => {
     const env = validateEnv(valid);
 
-    expect(env.NODE_ENV).toBe('development');
     expect(env.PORT).toBe(4000);
     expect(env.API_PREFIX).toBe('api/v1');
     expect(env.DATABASE_POOL_SIZE).toBe(10);
@@ -61,10 +60,63 @@ describe('validateEnv', () => {
     expect(env.S3_SSE).toBeUndefined();
   });
 
-  it('rejects an issuer that is not a URL, since tokens are pinned to it', () => {
-    expect(() => validateEnv({ ...valid, KEYCLOAK_ISSUER: 'not-a-url' })).toThrow(
-      /KEYCLOAK_ISSUER/,
+  it.each([
+    ['missing', undefined, /- BETTER_AUTH_SECRET:/],
+    ['shorter than 32 characters', SECRET, /- BETTER_AUTH_SECRET: must be at least 32 characters/],
+    ['the placeholder', 'CHANGE_ME', /- BETTER_AUTH_SECRET: still contains the CHANGE_ME placeholder/],
+  ])('refuses a BETTER_AUTH_SECRET that is %s, naming it without its value', (_case, value, message) => {
+    const { BETTER_AUTH_SECRET: _omitted, ...without } = valid;
+    const refused = problems(value === undefined ? without : { ...valid, BETTER_AUTH_SECRET: value });
+    expect(refused).toMatch(message);
+    expect(refused).not.toContain(SECRET);
+  });
+
+  it('accepts a BETTER_AUTH_SECRET of exactly 32 characters', () => {
+    expect(validateEnv({ ...valid, BETTER_AUTH_SECRET: 'k'.repeat(32) }).BETTER_AUTH_SECRET).toHaveLength(32);
+  });
+
+  it.each(['not-a-url', 'ftp://localhost:4000', 'http://localhost:4000/api'])(
+    'refuses a BETTER_AUTH_URL that is not an http or https origin',
+    (value) => {
+      expect(problems({ ...valid, BETTER_AUTH_URL: value })).toMatch(/- BETTER_AUTH_URL: must be an http or https origin/);
+    },
+  );
+
+  it.each(['', '-1', '1.5', 'one', 'CHANGE_ME'])('refuses TRUST_PROXY_HOPS %j, naming it', (value) => {
+    const refused = problems({ ...valid, TRUST_PROXY_HOPS: value });
+    expect(refused).toMatch(/- TRUST_PROXY_HOPS:/);
+  });
+
+  it('refuses a missing TRUST_PROXY_HOPS, naming it', () => {
+    const { TRUST_PROXY_HOPS: _omitted, ...without } = valid;
+    expect(problems(without)).toMatch(/- TRUST_PROXY_HOPS:/);
+  });
+
+  it('refuses a missing NODE_ENV, naming it', () => {
+    const { NODE_ENV: _omitted, ...without } = valid;
+    expect(problems(without)).toMatch(/- NODE_ENV:/);
+  });
+
+  it('reads TRUST_PROXY_HOPS as the number of proxies in front of the API', () => {
+    expect(validateEnv({ ...valid, TRUST_PROXY_HOPS: '2' }).TRUST_PROXY_HOPS).toBe(2);
+  });
+
+  it('keeps the sign-in limiter on unless told otherwise', () => {
+    expect(validateEnv(valid).AUTH_RATE_LIMIT).toBe('on');
+  });
+
+  it.each(['development', 'production'])('refuses AUTH_RATE_LIMIT=off when NODE_ENV is %s', (nodeEnv) => {
+    expect(problems({ ...valid, NODE_ENV: nodeEnv, AUTH_RATE_LIMIT: 'off' })).toMatch(
+      /- AUTH_RATE_LIMIT: may be off only when NODE_ENV is test/,
     );
+  });
+
+  it('allows AUTH_RATE_LIMIT=off when NODE_ENV is test', () => {
+    expect(validateEnv({ ...valid, NODE_ENV: 'test', AUTH_RATE_LIMIT: 'off' }).AUTH_RATE_LIMIT).toBe('off');
+  });
+
+  it('refuses an AUTH_RATE_LIMIT other than on or off', () => {
+    expect(problems({ ...valid, AUTH_RATE_LIMIT: 'false' })).toMatch(/- AUTH_RATE_LIMIT:/);
   });
 
   it.each([
@@ -72,10 +124,9 @@ describe('validateEnv', () => {
     'CORS_ORIGINS',
     'DATABASE_URL',
     'DATABASE_POOL_SIZE',
-    'KEYCLOAK_ISSUER',
-    'KEYCLOAK_AUDIENCE',
-    'KEYCLOAK_CLIENT_ID',
-    'KEYCLOAK_CLIENT_SECRET',
+    'BETTER_AUTH_SECRET',
+    'BETTER_AUTH_URL',
+    'TRUST_PROXY_HOPS',
     'S3_BUCKET',
   ])('requires %s, with no default host, port or name in code', (name) => {
     const { [name as keyof typeof valid]: _omitted, ...without } = valid;
@@ -124,7 +175,7 @@ describe('validateEnv', () => {
 
   it.each([
     ['DATABASE_URL', `postgresql://user:CHANGE_ME@localhost:5432/insurshield`],
-    ['KEYCLOAK_CLIENT_SECRET', 'CHANGE_ME'],
+    ['TRUST_PROXY_HOPS', 'CHANGE_ME'],
     ['S3_SECRET_ACCESS_KEY', `${SECRET}-CHANGE_ME`],
     ['CORS_ORIGINS', 'https://CHANGE_ME.example'],
   ])('refuses the CHANGE_ME placeholder in %s', (name, value) => {
@@ -177,7 +228,10 @@ describe('validateEnv', () => {
       PORT: SECRET,
       DATABASE_POOL_SIZE: SECRET,
       SWAGGER_ENABLED: SECRET,
-      KEYCLOAK_ISSUER: SECRET,
+      BETTER_AUTH_SECRET: SECRET,
+      BETTER_AUTH_URL: SECRET,
+      TRUST_PROXY_HOPS: SECRET,
+      AUTH_RATE_LIMIT: SECRET,
       S3_ENDPOINT: SECRET,
       S3_SSE: SECRET,
       S3_SIGNED_URL_TTL_SECONDS: SECRET,
@@ -188,10 +242,13 @@ describe('validateEnv', () => {
 
   it('reports every problem at once so a misconfigured deploy is fixed in one pass', () => {
     expect(() => validateEnv({ NODE_ENV: 'staging', PORT: 'abc' })).toThrow(
-      /NODE_ENV[\s\S]*PORT[\s\S]*DATABASE_URL[\s\S]*KEYCLOAK_ISSUER[\s\S]*S3_BUCKET/,
+      /NODE_ENV[\s\S]*PORT[\s\S]*DATABASE_URL[\s\S]*BETTER_AUTH_SECRET[\s\S]*TRUST_PROXY_HOPS[\s\S]*S3_BUCKET/,
     );
   });
 });
+
+// A placeholder whose setting is a number needs a number in its place.
+const FILLERS: Record<string, string> = { TRUST_PROXY_HOPS: '0' };
 
 describe('.env.example', () => {
   const documented = readFileSync(new URL('../../.env.example', import.meta.url), 'utf8');
@@ -206,7 +263,7 @@ describe('.env.example', () => {
   it('is refused until every placeholder is replaced, and valid after', () => {
     expect(problems(example)).toContain('still contains the CHANGE_ME placeholder');
     const filled = Object.fromEntries(
-      Object.entries(example).map(([name, value]) => [name, value?.replaceAll('CHANGE_ME', 'x')]),
+      Object.entries(example).map(([name, value]) => [name, value?.replaceAll('CHANGE_ME', FILLERS[name] ?? 'x')]),
     );
     expect(() => validateEnv(filled)).not.toThrow();
   });
@@ -301,10 +358,10 @@ describe('the test database', () => {
   it('refuses to start the tests when another setting is invalid', () => {
     useEnvironment({
       ...valid,
-      KEYCLOAK_CLIENT_SECRET: 'CHANGE_ME',
+      BETTER_AUTH_SECRET: 'CHANGE_ME',
       TEST_DATABASE_URL: `postgresql://user:${SECRET}@db/insurshield_test`,
     });
-    expect(() => useTestDatabase()).toThrow(/KEYCLOAK_CLIENT_SECRET/);
+    expect(() => useTestDatabase()).toThrow(/BETTER_AUTH_SECRET/);
   });
 
   it('reads DATABASE_URL with the same rules', () => {

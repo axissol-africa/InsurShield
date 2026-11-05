@@ -13,7 +13,7 @@ import {
 } from './builders/admin.js';
 import { buildNcdApplication } from './builders/customer.js';
 import { openTestDatabase, startApp, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn, type SessionHeaders } from './sessions.js';
 import type { staffUsers } from '../src/db/schema.js';
 
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -45,13 +45,13 @@ describe('admin console', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
   let admin: Row<typeof staffUsers>;
-  let asAdmin: { Authorization: string };
+  let asAdmin: SessionHeaders;
 
   beforeAll(async () => {
     testApp = await startApp();
     side = openTestDatabase();
     admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
-    asAdmin = bearer(await staffToken(admin, ['admin']));
+    asAdmin = await signIn(testApp.http, admin);
   });
 
   afterAll(async () => {
@@ -74,8 +74,8 @@ describe('admin console', () => {
       async (path) => {
         const customer = await buildCustomer(testApp.db);
         const { staff } = await buildInsurer(testApp.db);
-        const asCustomer = bearer(await customerToken(customer));
-        const asInsurer = bearer(await staffToken(staff, ['insurer_user']));
+        const asCustomer = await signIn(testApp.http, customer);
+        const asInsurer = await signIn(testApp.http, staff);
 
         const refused = [
           await testApp.http.get(`/api/v1/admin/${path}`).set(asCustomer),
@@ -91,7 +91,7 @@ describe('admin console', () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       await testApp.http
         .get('/api/v1/admin/overview')
-        .set(bearer(await staffToken(superAdmin, ['super_admin'])))
+        .set(await signIn(testApp.http, superAdmin))
         .expect(200);
     });
   });

@@ -21,14 +21,14 @@ const years = (count, unit = 'yr') => `${count} ${unit}${count === 1 ? '' : 's'}
 const applicationNumber = (application) => application.applicationNumber || application.id;
 const reviewButtonId = (application) => `ncd-review-${application.id}`;
 const applied = (application) => (application.submittedAt ? `Applied ${timeAgo(application.submittedAt)}` : null);
+const isReopenableNcdApplication = (application) => isOpenNcdApplication(application) || application.status === 'Rejected';
 /** The discount the claimed years would give; a rejected application carries none, so none is shown beside it. */
 const discountNote = (application) => (application.status === 'Rejected' ? null : `${ncdDiscountForYears(application.yearsClaimFree)}% discount`);
 
 /**
- * What the insurer can decide, each with what it does. Approving and
- * rejecting close the application for good; rejection is deliberately not
- * styled as an emergency — it is a routine outcome. An application already
- * under review is not offered that outcome again.
+ * What the insurer can decide, each with what it does. Approval is final;
+ * rejection remains reopenable if the insurer later needs to check again.
+ * An application already under review is not offered that outcome again.
  */
 const decisionsFor = (application) => [
   {
@@ -50,10 +50,10 @@ const decisionsFor = (application) => [
   {
     value: 'Rejected',
     title: 'Reject',
-    description: 'Closes the application without a discount code. This cannot be undone here.',
+    description: 'Closes the application without a discount code. You can reopen it later if your records change.',
     confirm: 'Reject application',
     done: 'Application rejected',
-    doneDetail: 'It is listed under Decided.',
+    doneDetail: 'It remains available to review again if needed.',
   },
 ].filter((decision) => decision.value !== application.status);
 
@@ -86,7 +86,9 @@ const Outcome = ({ application }) => (
     <StatusBadge status={application.status} />
     {application.approvedCode
       ? <Detail>Code issued: <span className="font-mono font-medium text-foreground">{application.approvedCode}</span></Detail>
-      : isOpenNcdApplication(application) && applied(application) && <Detail>{applied(application)}</Detail>}
+      : application.status === 'Rejected'
+        ? <Detail>Reopenable — you can decide again.</Detail>
+        : isReopenableNcdApplication(application) && applied(application) && <Detail>{applied(application)}</Detail>}
   </div>
 );
 
@@ -116,8 +118,8 @@ function ApplicationCard({ application, children }) {
  * insurer has to check its own records before any outcome.
  */
 export default function NcdTab({ applications }) {
-  const open = applications.filter(isOpenNcdApplication).sort(waitingLongestFirst((application) => application.submittedAt));
-  const decided = applications.filter((application) => !isOpenNcdApplication(application));
+  const open = applications.filter(isReopenableNcdApplication).sort(waitingLongestFirst((application) => application.submittedAt));
+  const decided = applications.filter((application) => !isReopenableNcdApplication(application));
   const [list, setList] = useWorkList('open', 'decided', open.length > 0);
   const lists = useRef(null);
   const [reviewingId, setReviewingId] = useState(null);

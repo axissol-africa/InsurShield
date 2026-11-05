@@ -19,21 +19,43 @@ const mine = (records) => records.filter(belongsToCustomer(state().customer));
 const insurerName = () => state().staffSession?.name;
 
 export const auth = {
-  register: (account) => call((s) => { s.registerCustomerAccount(account); return { customer: s.customer, token: null }; }),
-  login: (identifier, password) => call((s) => {
+  register: (account) => call((s) => {
+    s.registerCustomerAccount(account);
+    return { signedIn: true, userId: `mock:${s.customer.email}`, customer: s.customer };
+  }),
+  signIn: (identifier, password) => call((s) => {
+    if (identifier.startsWith('insurer@') || identifier.startsWith('admin@')) {
+      const role = identifier.startsWith('insurer@') ? 'insurer' : 'admin';
+      const staffSession = { role, name: role === 'insurer' ? 'Prestige Assurance' : 'Admin', isSuperAdmin: role === 'admin' };
+      s.applyStaffSession(staffSession);
+      return { user: { id: `mock:${identifier}`, email: identifier }, staffSession };
+    }
     if (!s.authenticateCustomer(identifier, password)) throw new Error('Incorrect email/phone or password.');
-    return { customer: state().customer, token: null };
+    return { user: { id: `mock:${state().customer.email}`, email: state().customer.email }, customer: state().customer };
   }),
-  requestOtp: (phone) => call(() => ({ phone, sent: true, expiresInSeconds: 300 })),
-  verifyOtp: (phone, code) => call(() => ({ phone, verified: /^\d{4,6}$/.test(code) })),
-  resetPassword: (identifier, password) => call((s) => { s.resetCustomerPassword(identifier, password); return { ok: true }; }),
-  staffLogin: (email) => call((s) => {
-    const role = email.startsWith('insurer') ? 'insurer' : 'admin';
-    const session = { role, name: role === 'insurer' ? 'Prestige Assurance' : 'Admin' };
-    s.startStaffSession(session);
-    return { session, token: null };
+  signOut: () => call((s) => { s.clearCustomerSession(); return { ok: true }; }),
+  revokeSessions: () => call(() => ({ ok: true })),
+  changePassword: (_currentPassword, newPassword) => call((s) => { s.resetCustomerPassword(s.customer?.email, newPassword); return { ok: true }; }),
+  requestPasswordReset: (email) => call(() => ({ email, sent: true })),
+  resetPassword: (_token, newPassword) => call((s) => { s.resetCustomerPassword(s.customer?.email, newPassword); return { ok: true }; }),
+  sendVerificationEmail: () => call(() => ({ sent: true })),
+  acceptConsent: (noticeVersion) => call((s) => {
+    const record = { accepted: true, noticeVersion, acceptedAt: new Date().toISOString() };
+    s.setConsent(true, record);
+    return record;
   }),
-  me: () => call((s) => ({ customer: s.customer, staffSession: s.staffSession })),
+  me: () => call((s) => ({
+    userId: s.staffSession ? `mock:${s.staffSession.role}` : (s.customer ? `mock:${s.customer.email}` : null),
+    customer: s.customer,
+    consent: { accepted: s.consentAccepted, noticeVersion: s.consentRecord?.noticeVersion ?? null, acceptedAt: s.consentTimestamp },
+    staffSession: s.staffSession,
+  })),
+  // Existing demo tests and external prototype callers used these names.
+  login: (identifier, password) => auth.signIn(identifier, password),
+};
+
+export const account = {
+  close: () => call((s) => { s.deleteCurrentAccount(); return { ok: true }; }),
 };
 
 /**
@@ -70,13 +92,24 @@ export const quotes = {
 };
 
 export const insurers = {
-  list: () => call((s) => s.insurersList),
+  list: ({ status } = {}) => call((s) => (
+    status === 'deleted'
+      ? s.insurersList.filter((insurer) => insurer.status === 'Deleted')
+      : s.insurersList.filter((insurer) => insurer.status !== 'Deleted')
+  )),
   get: (id) => call((s) => s.insurersList.find((i) => i.id === id) || null),
   create: (insurer) => call((s) => { s.addInsurer(insurer); return state().insurersList.at(-1); }),
   update: (id, updates) => call((s) => { s.updateInsurer(id, updates); return state().insurersList.find((i) => i.id === id); }),
   setStatus: (id, status) => call((s) => { s.setInsurerStatus(id, status); return state().insurersList.find((i) => i.id === id); }),
   remove: (id) => call((s) => { s.deleteInsurer(id); return { ok: true }; }),
-  directory: () => call((s) => s.insurersList.filter((i) => i.status !== 'Deleted')),
+  restore: (id) => call((s) => {
+    const insurer = s.insurersList.find((entry) => entry.id === id);
+    if (!insurer) throw new Error('Insurer was not found.');
+    if (insurer.status !== 'Deleted') throw new Error('This insurer has not been deleted.');
+    s.updateInsurer(id, { status: 'Inactive', deletedAt: null });
+    return state().insurersList.find((entry) => entry.id === id);
+  }),
+  directory: () => call((s) => s.insurersList.filter((insurer) => !insurer.status || insurer.status === 'Active')),
 };
 
 export const payments = {

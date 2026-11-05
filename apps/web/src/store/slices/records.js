@@ -16,11 +16,13 @@ import { NOW, updateById, withTimestamp } from '../shared';
  * NCD applications and inspections. Demo records are seeded so the portal is
  * never empty; they behave exactly like customer-submitted ones.
  */
+const applyUnlessLeaving = (set, update) => set((state) => (state.leaving ? state : update(state)));
+
 export const createRecordsSlice = (set) => ({
   // ─── Replacing a collection wholesale ────────────────────
   // Used when the backend is the source of truth: a load answers with the
   // authoritative list, which replaces whatever the device was holding.
-  setQuoteRequests: (quoteRequests) => set({ quoteRequests }),
+  setQuoteRequests: (quoteRequests) => applyUnlessLeaving(set, () => ({ quoteRequests })),
 
   /**
    * Stores one request the server has just confirmed and opens it for
@@ -28,15 +30,15 @@ export const createRecordsSlice = (set) => ({
    * versions of the same id behind.
    */
   receiveQuoteRequest: (request) =>
-    set((state) => ({
+    applyUnlessLeaving(set, (state) => ({
       quoteRequests: [request, ...state.quoteRequests.filter((item) => item.id !== request.id)],
       activeQuoteRequestId: request.id,
       requotedFromId: null,
     })),
-  setPolicies: (policies) => set({ policies }),
-  setClaims: (claims) => set({ claims }),
-  setNcdApplications: (ncdApplications) => set({ ncdApplications }),
-  setInspections: (inspections) => set({ inspections }),
+  setPolicies: (policies) => applyUnlessLeaving(set, () => ({ policies })),
+  setClaims: (claims) => applyUnlessLeaving(set, () => ({ claims })),
+  setNcdApplications: (ncdApplications) => applyUnlessLeaving(set, () => ({ ncdApplications })),
+  setInspections: (inspections) => applyUnlessLeaving(set, () => ({ inspections })),
 
   // ─── Quote requests and insurer replies ─────────────────
   quoteRequests: seed(SEED_QUOTE_REQUESTS),

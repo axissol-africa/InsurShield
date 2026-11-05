@@ -42,7 +42,7 @@ import {
   until,
   type TestApp,
 } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 import { FAKE_STORAGE_ORIGIN } from './storage-fake.js';
 
 const DAY_MS = 86_400_000;
@@ -148,8 +148,7 @@ describe('insurer portal', () => {
     await side.close();
   });
 
-  const asStaff = async (staff: { keycloakId: string; email: string }) =>
-    bearer(await staffToken(staff, ['insurer_user']));
+  const asStaff = (staff: { email: string }) => signIn(testApp.http, staff);
 
   const get = async (insurer: BuiltInsurer, path: string) =>
     testApp.http.get(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff));
@@ -689,7 +688,7 @@ describe('insurer portal', () => {
         [`quote-requests/${quoted.id}/extend`, { extraDays: 3 }],
         [`policies/${policy.policyNumber}/certificate`, { certificateDocumentId: certificate.id }],
         [`claims/${claim.claimNumber}/received`, {}],
-        [`ncd/applications/${application.id}/decision`, { status: 'APPROVED' }],
+        [`ncd/applications/${application.id}/decision`, { status: 'Approved' }],
       ];
       for (const [path, body] of calls) {
         const response = await post(other, path, body);
@@ -761,9 +760,9 @@ describe('insurer portal', () => {
       const admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const callers: [string, Record<string, string>, number][] = [
-        ['customer', bearer(await customerToken(customer)), 403],
-        ['admin', bearer(await staffToken(admin, ['admin'])), 403],
-        ['super admin', bearer(await staffToken(superAdmin, ['super_admin'])), 403],
+        ['customer', await signIn(testApp.http, customer), 403],
+        ['admin', await signIn(testApp.http, admin), 403],
+        ['super admin', await signIn(testApp.http, superAdmin), 403],
         ['anonymous', {}, 401],
       ];
 
@@ -1202,6 +1201,24 @@ describe('insurer portal', () => {
   });
 
   describe('NCD decisions', () => {
+    it.each([
+      ['readable', 'Approved', 'APPROVED', 'Approved'],
+      ['readable', 'Under Review', 'UNDER_REVIEW', 'Under Review'],
+      ['readable', 'Rejected', 'REJECTED', 'Rejected'],
+      ['stored', 'APPROVED', 'APPROVED', 'Approved'],
+      ['stored', 'UNDER_REVIEW', 'UNDER_REVIEW', 'Under Review'],
+      ['stored', 'REJECTED', 'REJECTED', 'Rejected'],
+    ])('accepts the %s NCD decision %s', async (_kind, input, stored, wire) => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+
+      const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status: input });
+
+      expect(response.status).toBe(200);
+      expect(response.body.status).toBe(wire);
+      expect((await applicationRow(application.id)).status).toBe(stored);
+    });
+
     it('refuses to decide an approved application again with 409 ALREADY_DECIDED', async () => {
       const insurer = await buildInsurer(testApp.db);
       const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
@@ -1276,15 +1293,19 @@ describe('insurer portal', () => {
       expect(response.body.status).toBe('Approved');
     });
 
-    it('refuses an unknown decision with 400', async () => {
-      const insurer = await buildInsurer(testApp.db);
-      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+    it.each(['Submitted', 'SUBMITTED', 'Verification Required', 'not a decision'])(
+      'refuses %s with the readable decision list',
+      async (status) => {
+        const insurer = await buildInsurer(testApp.db);
+        const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
 
-      const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'Approved' });
+        const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status });
 
-      expect(response.status).toBe(400);
-      expect((await applicationRow(application.id)).status).toBe('SUBMITTED');
-    });
+        expect(response.status).toBe(400);
+        expect(response.body.details.fields).toEqual(['Decision must be Under Review, Approved or Rejected.']);
+        expect((await applicationRow(application.id)).status).toBe('SUBMITTED');
+      },
+    );
   });
 
   describe('when a drawn NCD code is already taken', () => {

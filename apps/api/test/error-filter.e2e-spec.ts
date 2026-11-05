@@ -1,5 +1,5 @@
 import { createServer, type AddressInfo, type Server } from 'node:net';
-import { Controller, Get, Headers, Inject, Param, Post } from '@nestjs/common';
+import { Controller, Get, Headers, Inject, Logger, Param, Post } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DatabaseError, Pool, type PoolClient } from 'pg';
 import { Public } from '../src/common/auth/auth.guard.js';
@@ -10,7 +10,7 @@ import * as schema from '../src/db/schema.js';
 import { customers } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, unique } from './builders.js';
 import { openTestDatabase, productionPool, RecordingLogger, startApp, type TestApp } from './helpers.js';
-import { bearer, signToken } from './jwks.js';
+import { signIn } from './sessions.js';
 
 // Values only the failing statements carry: none may reach a response or a log line.
 const SECRET_NAME = 'Secret Name 7f3a';
@@ -37,7 +37,11 @@ class ErrorProbeController {
   @Post('copy-email-of/:id')
   async copyEmailOf(@Param('id') id: string) {
     const [existing] = await this.db.select().from(customers).where(eq(customers.id, id));
-    await buildCustomer(this.db, { email: existing.email, fullName: SECRET_NAME });
+    await this.db.insert(customers).values({
+      email: existing.email,
+      fullName: SECRET_NAME,
+      phone: '+260971234567',
+    });
   }
 
   @Post('negative-rate')
@@ -220,6 +224,7 @@ describe.each([
   let pool: Pool;
   let address: string;
   let closeListener: () => Promise<void>;
+  let warningLog: ReturnType<typeof vi.spyOn>;
 
   beforeAll(async () => {
     const listener = await listen();
@@ -233,31 +238,38 @@ describe.each([
       logger,
       override: (builder) => builder.overrideProvider(DATABASE).useValue(createDatabase(pool, { schema })),
     });
+    warningLog = vi.spyOn(Logger.prototype, 'warn');
   });
 
   afterAll(async () => {
     await testApp.close();
     await pool.end();
     await closeListener();
+    warningLog.mockRestore();
   });
 
   beforeEach(() => {
     logger.lines.length = 0;
+    warningLog.mockClear();
   });
 
-  it('answers a query behind the auth guard with 503 TRY_AGAIN, logging neither the query nor its parameters', async () => {
-    const subject = unique('subject-marker');
-    const token = await signToken({ sub: subject, email: `${subject}@example.test`, name: 'Mutale Banda' });
+  const warningText = () => JSON.stringify(warningLog.mock.calls);
 
-    const response = await testApp.http.get('/api/v1/auth/me').set(bearer(token)).expect(503);
+  it('answers a query behind the auth guard with 503 TRY_AGAIN, logging neither the query nor its parameters', async () => {
+    const working = await startApp();
+    const customer = await buildCustomer(working.db);
+    const session = await signIn(working.http, customer);
+    await working.close();
+
+    const response = await testApp.http.get('/api/v1/auth/me').set(session).expect(503);
 
     expect(response.headers['retry-after']).toBe('1');
     expect(response.body).toEqual({ code: 'TRY_AGAIN', message: expect.any(String), details: null });
-    expect(JSON.stringify(response.body)).not.toContain(subject);
-    expect(logger.text).toContain('warn GET /api/v1/auth/me -> 503 TRY_AGAIN');
-    expect(logger.text).not.toContain(subject);
-    expectNoStatement(logger.text, 'from "customers"');
-    expectNothingOfTheConnectionLogged(logger.text, address);
+    expect(JSON.stringify(response.body)).not.toContain(customer.userId ?? '');
+    expect(warningText()).toContain('GET /api/v1/auth/me -> 503 TRY_AGAIN');
+    expect(warningText()).not.toContain(customer.userId ?? '');
+    expectNoStatement(warningText(), 'from "customers"');
+    expectNothingOfTheConnectionLogged(warningText(), address);
   });
 
   it('answers a transaction with 503 TRY_AGAIN, logging no stack', async () => {
@@ -267,11 +279,11 @@ describe.each([
 
     expect(response.headers['retry-after']).toBe('1');
     expect(response.body).toEqual({ code: 'TRY_AGAIN', message: expect.any(String), details: null });
-    expect(logger.text).toContain('warn POST /api/v1/error-probe/transaction -> 503 TRY_AGAIN');
-    expect(logger.text).toContain('503 TRY_AGAIN');
-    expect(logger.text).not.toContain(marker);
-    expectNoStatement(logger.text, 'from "customers"');
-    expectNothingOfTheConnectionLogged(logger.text, address);
+    expect(warningText()).toContain('POST /api/v1/error-probe/transaction -> 503 TRY_AGAIN');
+    expect(warningText()).toContain('503 TRY_AGAIN');
+    expect(warningText()).not.toContain(marker);
+    expectNoStatement(warningText(), 'from "customers"');
+    expectNothingOfTheConnectionLogged(warningText(), address);
   });
 });
 

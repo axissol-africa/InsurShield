@@ -22,6 +22,20 @@
       "when": 1792938491027,
       "tag": "0002_better_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793799692117,
+      "tag": "0003_drop_keycloak_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793799708923,
+      "tag": "0004_payment_rtsa_fee",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Building2, ChevronLeft, ChevronsLeft, ChevronsRight, CircleDollarSign, FileCheck2, Gavel, Plus, ShieldAlert, ShieldCheck, UsersRound } from 'lucide-react';
 import { useStore, useActiveInsurers } from '@/store';
@@ -201,16 +201,43 @@ export default function AdminDashboard() {
 
   useEffect(() => { void hydrateAdmin(); }, []);
   const activeInsurers = useActiveInsurers();
+  const managedInsurers = insurersList.filter((insurer) => insurer.status !== 'Deleted');
   const piaRate = piaConfig?.piaRatePercentage ?? 4;
   const agentName = staffSession?.name || 'Admin';
   const agentRole = staffSession?.role || 'admin';
+  const isSuperAdmin = staffSession?.isSuperAdmin === true;
 
   const [view, setView] = useState('dashboard');
   const [editingInsurer, setEditingInsurer] = useState(null);
   const [viewingInsurer, setViewingInsurer] = useState(null);
   // The insurer awaiting a delete confirmation, if any.
   const [pendingDelete, setPendingDelete] = useState(null);
-  const [showDeleted, setShowDeleted] = useState(false);
+  const [deletedInsurers, setDeletedInsurers] = useState([]);
+  const [deletedInsurersLoading, setDeletedInsurersLoading] = useState(false);
+  const [deletedInsurersError, setDeletedInsurersError] = useState(null);
+
+  const loadDeletedInsurers = useCallback(async () => {
+    if (!isSuperAdmin) {
+      setDeletedInsurers([]);
+      setDeletedInsurersError(null);
+      return;
+    }
+
+    setDeletedInsurersLoading(true);
+    setDeletedInsurersError(null);
+    try {
+      setDeletedInsurers(await api.insurers.list({ status: 'deleted' }));
+    } catch (error) {
+      setDeletedInsurers([]);
+      setDeletedInsurersError(error instanceof Error ? error.message : 'Removed insurers could not be loaded.');
+    } finally {
+      setDeletedInsurersLoading(false);
+    }
+  }, [isSuperAdmin]);
+
+  const refreshInsurers = useCallback(async () => {
+    await Promise.all([hydrateAdmin(), loadDeletedInsurers()]);
+  }, [loadDeletedInsurers]);
 
   useEffect(() => { window.scrollTo({ top: 0 }); }, [view]);
 
@@ -224,11 +251,16 @@ export default function AdminDashboard() {
   const peakMonth = Math.max(...revenue.map((month) => month.total), 0);
   const recentPolicies = [...policies].sort((first, second) => policyDate(second) - policyDate(first)).slice(0, 6);
 
-  const showInsurers = () => { setEditingInsurer(null); setViewingInsurer(null); setView('manage_insurers'); };
+  const showInsurers = () => {
+    setEditingInsurer(null);
+    setViewingInsurer(null);
+    setView('manage_insurers');
+    void loadDeletedInsurers();
+  };
   const saveInsurer = async (insurer) => {
     if (editingInsurer) await api.insurers.update(editingInsurer.id, insurer);
     else await api.insurers.create(insurer);
-    await hydrateAdmin();
+    await refreshInsurers();
     showInsurers();
   };
   // Removal is soft: the insurer stops receiving requests but its history
@@ -237,19 +269,18 @@ export default function AdminDashboard() {
   const confirmDelete = (insurer) => setPendingDelete(insurer);
   const runDelete = async () => {
     await api.insurers.remove(pendingDelete.id);
-    await hydrateAdmin();
+    await refreshInsurers();
     setPendingDelete(null);
-    setShowDeleted(true);
   };
   const restoreInsurer = async (insurer) => {
-    await api.insurers.setStatus(insurer.id, 'Active');
-    await hydrateAdmin();
+    await api.insurers.restore(insurer.id);
+    await refreshInsurers();
   };
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Overview', icon: 'dashboard', hint: 'Platform totals', matches: ['dashboard'] },
     { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policies.length, matches: ['recent_policies'] },
-    { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: insurersList.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
+    { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
@@ -258,6 +289,7 @@ export default function AdminDashboard() {
   const selectSection = (id) => {
     // Onboarding always starts a new insurer rather than resuming an edit.
     if (id === 'add_insurer') setEditingInsurer(null);
+    if (id === 'manage_insurers') void loadDeletedInsurers();
     if (id !== 'view_insurer') setViewingInsurer(null);
     setView(id);
   };
@@ -285,37 +317,46 @@ export default function AdminDashboard() {
       </>
     );
   } else if (view === 'manage_insurers') {
-    const removed = insurersList.filter((insurer) => insurer.status === 'Deleted');
-    const visibleInsurers = showDeleted ? insurersList : insurersList.filter((insurer) => insurer.status !== 'Deleted');
     const addButton = <Button type="button" size="lg" onClick={() => { setEditingInsurer(null); setView('add_insurer'); }}><Plus aria-hidden="true" />Add insurer</Button>;
     content = (
       <>
-        <SubPageHeader title="Manage insurers" description="View, update, deactivate or restore companies in the marketplace." onBack={() => setView('dashboard')} action={addButton} />
-        {removed.length > 0 && (
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted/40 px-5 py-4">
-            <p className="text-sm text-muted-foreground">
-              {removed.length} removed {removed.length === 1 ? 'insurer is' : 'insurers are'} hidden.
-              Their quotes, policies and claims are kept.
-            </p>
-            <Button
-              type="button" variant="ghost" size="sm"
-              onClick={() => setShowDeleted((current) => !current)}
-              className="text-primary hover:bg-primary/10 hover:text-primary"
-            >
-              {showDeleted ? 'Hide removed' : 'Show removed'}
-            </Button>
-          </div>
-        )}
+        <SubPageHeader title="Manage insurers" description={isSuperAdmin ? 'View, update, deactivate, or restore companies in the marketplace.' : 'View, update, or deactivate companies in the marketplace.'} onBack={() => setView('dashboard')} action={addButton} />
         <InsurerTable
-          insurers={visibleInsurers}
-          onRestore={restoreInsurer}
+          insurers={managedInsurers}
           piaRatePercentage={piaRate}
           onView={(insurer) => { setViewingInsurer(insurer); setView('view_insurer'); }}
           onEdit={(insurer) => { setEditingInsurer(insurer); setView('edit_insurer'); }}
           onRateChange={async (id, ratePercentage) => { await api.insurers.update(id, { ratePercentage }); await hydrateAdmin(); }}
           onStatusChange={async (id, status) => { await api.insurers.setStatus(id, status); await hydrateAdmin(); }}
           onDelete={confirmDelete}
+          canRemove={isSuperAdmin}
         />
+        {isSuperAdmin && (
+          <Card className="mt-6 border-border shadow-none">
+            <CardHeader className="border-b border-border pb-5">
+              <CardTitle className="text-lg">Removed insurers</CardTitle>
+              <p className="text-sm leading-relaxed text-muted-foreground">Removed companies do not receive new quote requests. Their records remain available until you restore them as inactive.</p>
+            </CardHeader>
+            <CardContent className="pt-6">
+              {deletedInsurersLoading && <p className="text-sm text-muted-foreground">Loading removed insurers…</p>}
+              {deletedInsurersError && <p role="alert" className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{deletedInsurersError}</p>}
+              {!deletedInsurersLoading && !deletedInsurersError && deletedInsurers.length === 0 && <p className="text-sm text-muted-foreground">No insurers are currently removed.</p>}
+              {!deletedInsurersLoading && !deletedInsurersError && deletedInsurers.length > 0 && (
+                <InsurerTable
+                  insurers={deletedInsurers}
+                  piaRatePercentage={piaRate}
+                  onView={() => {}}
+                  onEdit={() => {}}
+                  onRateChange={() => {}}
+                  onStatusChange={() => {}}
+                  onDelete={() => {}}
+                  onRestore={restoreInsurer}
+                  canRestore
+                />
+              )}
+            </CardContent>
+          </Card>
+        )}
       </>
     );
   } else if (view === 'recent_policies') {

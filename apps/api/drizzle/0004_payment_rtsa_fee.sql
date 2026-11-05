@@ -1,0 +1,2 @@
+ALTER TABLE "payments" ADD COLUMN "rtsaAnniversaryFeeMinor" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "payments" ADD CONSTRAINT "payments_rtsaAnniversaryFeeMinor_check" CHECK ("payments"."rtsaAnniversaryFeeMinor" >= 0 AND "payments"."rtsaAnniversaryFeeMinor" <= 99999999999999);

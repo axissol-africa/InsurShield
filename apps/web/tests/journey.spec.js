@@ -32,8 +32,8 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   await expect(page).toHaveURL(/create-account\?next=%2Fquote-request/);
   await expect(page.getByText('Your vehicle details are saved')).toBeVisible();
 
-  // Signing in happens on Keycloak's own pages, outside this application, so
-  // the test takes the session as given and returns where it was sent from.
+  // Creating the account is covered by its own test, so this one takes the
+  // session as given and returns where the gate sent it from.
   await page.evaluate(() => {
     const store = JSON.parse(localStorage.getItem('insurshield-storage'));
     Object.assign(store.state, {

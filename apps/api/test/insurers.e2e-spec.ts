@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { Response } from 'supertest';
-import { insurerContacts, insurers } from '../src/db/schema.js';
+import { insurerContacts, insurers, staffUsers } from '../src/db/schema.js';
+import { InsurersService } from '../src/insurers/insurers.service.js';
 import { buildCustomer, buildInsurer, buildStaffUser, unique, type Row } from './builders.js';
-import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
-import type { staffUsers } from '../src/db/schema.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, until, type TestApp } from './helpers.js';
+import { signIn, type SessionHeaders } from './sessions.js';
 
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
@@ -55,13 +55,13 @@ describe('insurers', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
   let admin: Row<typeof staffUsers>;
-  let asAdmin: { Authorization: string };
+  let asAdmin: SessionHeaders;
 
   beforeAll(async () => {
     testApp = await startApp();
     side = openTestDatabase();
     admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
-    asAdmin = bearer(await staffToken(admin, ['admin']));
+    asAdmin = await signIn(testApp.http, admin);
   });
 
   afterAll(async () => {
@@ -78,8 +78,9 @@ describe('insurers', () => {
   const create = (body: Record<string, unknown>) => testApp.http.post('/api/v1/insurers').set(asAdmin).send(body);
   const update = (id: string, body: Record<string, unknown>) =>
     testApp.http.patch(`/api/v1/insurers/${id}`).set(asAdmin).send(body);
-  const setStatus = (id: string, status: string, as: { Authorization: string }) =>
+  const setStatus = (id: string, status: string, as: SessionHeaders) =>
     testApp.http.patch(`/api/v1/insurers/${id}/status`).set(as).send({ status });
+  const restore = (id: string, as: SessionHeaders) => testApp.http.post(`/api/v1/insurers/${id}/restore`).set(as);
 
   describe('wire values (T-HTTP1)', () => {
     it('sends the directory with the public keys only, rate as a percentage and NULL benefits as []', async () => {
@@ -195,7 +196,7 @@ describe('insurers', () => {
     it('keeps staff routes from customers and insurer users, and deletion for super admins', async () => {
       const { insurer, staff } = await buildInsurer(testApp.db);
       const customer = await buildCustomer(testApp.db);
-      const tokens = [bearer(await customerToken(customer)), bearer(await staffToken(staff, ['insurer_user']))];
+      const tokens = [await signIn(testApp.http, customer), await signIn(testApp.http, staff)];
 
       for (const token of tokens) {
         await testApp.http.get('/api/v1/insurers').set(token).expect(403);
@@ -509,7 +510,7 @@ describe('insurers', () => {
 
     it('sets DELETED through PATCH status for a super admin, with deletedAt, and then answers 404', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
-      const asSuperAdmin = bearer(await staffToken(superAdmin, ['super_admin']));
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
       const { insurer } = await buildInsurer(testApp.db);
 
       const deleted = await setStatus(insurer.id, 'DELETED', asSuperAdmin).expect(200);
@@ -528,7 +529,7 @@ describe('insurers', () => {
       const response = await testApp.http
         .patch(`/api/v1/insurers/${insurer.id}/status`)
         .set(asAdmin)
-        .send({ status: 'Active' })
+        .send({ status: 'Enabled' })
         .expect(400);
 
       expect(response.body.details.fields).toEqual(['Status must be Active, Inactive or Deleted.']);
@@ -540,7 +541,7 @@ describe('insurers', () => {
 
       const response = await testApp.http
         .delete(`/api/v1/insurers/${insurer.id}`)
-        .set(bearer(await staffToken(superAdmin, ['super_admin'])))
+        .set(await signIn(testApp.http, superAdmin))
         .expect(200);
 
       expect(response.body).toEqual({ id: insurer.id, status: 'Deleted' });
@@ -548,6 +549,104 @@ describe('insurers', () => {
       expect(row.status).toBe('DELETED');
       expect(row.deletedAt).toBeInstanceOf(Date);
       expect(contact).toBeDefined();
+    });
+  });
+
+  describe('restore (T-D6–T-D10)', () => {
+    it.each(['ADMIN', 'INSURER_USER'] as const)('refuses direct service restore by %s without changing the insurer', async (role) => {
+      const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const service = testApp.app.get(InsurersService);
+      const before = await stored(insurer.id);
+
+      await expect(service.restore(insurer.id, role)).rejects.toMatchObject({ status: 403 });
+      await expect(service.restore(randomUUID(), role)).rejects.toMatchObject({ status: 403 });
+
+      expect(await stored(insurer.id)).toEqual(before);
+    });
+
+    it('restores a deleted insurer as inactive without losing its staff or product details', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const { insurer, staff } = await buildInsurer(testApp.db, {
+        insurer: {
+          status: 'DELETED',
+          deletedAt: new Date('2026-10-01T00:00:00.000Z'),
+          plan: 'Comprehensive Gold',
+          benefits: ['Roadside assistance'],
+        },
+      });
+
+      const response = await restore(insurer.id, await signIn(testApp.http, superAdmin)).expect(200);
+
+      expect(keysOf(response.body)).toEqual(ADMIN_KEYS);
+      expect(response.body).toMatchObject({ status: 'Inactive', plan: 'Comprehensive Gold', benefits: ['Roadside assistance'] });
+      const { row } = await stored(insurer.id);
+      expect(row).toMatchObject({ status: 'INACTIVE', deletedAt: null, plan: 'Comprehensive Gold', benefits: ['Roadside assistance'] });
+      const [storedStaff] = await side.db.select().from(staffUsers).where(eq(staffUsers.id, staff.id));
+      expect(storedStaff).toMatchObject({ id: staff.id, insurerId: insurer.id });
+    });
+
+    it('refuses restore for admins and insurer users, returns 404 for unknown insurers, and returns 409 unless deleted', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const { insurer, staff } = await buildInsurer(testApp.db, { insurer: { status: 'INACTIVE' } });
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
+      const asInsurerUser = await signIn(testApp.http, staff);
+
+      await restore(insurer.id, asAdmin).expect(403);
+      await restore(insurer.id, asInsurerUser).expect(403);
+      await restore(randomUUID(), asSuperAdmin).expect(404);
+      const response = await restore(insurer.id, asSuperAdmin).expect(409);
+      expect(response.body).toEqual({
+        code: 'INSURER_NOT_DELETED',
+        message: 'This insurer has not been deleted.',
+        details: null,
+      });
+    });
+
+    it('allows exactly one of two simultaneous restore requests', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
+
+      const held = await holdLocks(side.pool, (_db, client) =>
+        client.query('SELECT id FROM insurers WHERE id = $1 FOR UPDATE', [insurer.id]),
+      );
+      const responses = await queueBehind(held, '%update "insurers"%', 2, [
+        async () => restore(insurer.id, asSuperAdmin),
+        async () => restore(insurer.id, asSuperAdmin),
+      ]);
+
+      expect(responses.map((response) => response.status).sort((first, second) => first - second)).toEqual([200, 409]);
+      expect(responses.find((response) => response.status === 409)?.body.code).toBe('INSURER_NOT_DELETED');
+      expect((await stored(insurer.id)).row).toMatchObject({ status: 'INACTIVE', deletedAt: null });
+    });
+
+    it('keeps a restored insurer out of the public directory until a super admin activates it', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
+
+      await restore(insurer.id, asSuperAdmin).expect(200);
+      const { body } = await testApp.http.get('/api/v1/insurers/directory').expect(200);
+
+      expect(body.map((entry: { id: string }) => entry.id)).not.toContain(insurer.id);
+    });
+
+    it('lists only deleted insurers for a super admin and never exposes them to other staff', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const { insurer: deleted } = await buildInsurer(testApp.db, {
+        insurer: { status: 'DELETED', deletedAt: new Date('2026-10-01T00:00:00.000Z') },
+      });
+      const { insurer: active, staff } = await buildInsurer(testApp.db);
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
+      const asInsurerUser = await signIn(testApp.http, staff);
+
+      await testApp.http.get('/api/v1/insurers?status=deleted').set(asAdmin).expect(403);
+      await testApp.http.get('/api/v1/insurers?status=deleted').set(asInsurerUser).expect(403);
+      const { body } = await testApp.http.get('/api/v1/insurers?status=deleted').set(asSuperAdmin).expect(200);
+
+      expect(body.map((entry: { id: string }) => entry.id)).toContain(deleted.id);
+      expect(body.map((entry: { id: string }) => entry.id)).not.toContain(active.id);
+      expect(body.every((entry: { status: string }) => entry.status === 'Deleted')).toBe(true);
     });
   });
 

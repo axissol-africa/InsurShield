@@ -2,6 +2,10 @@ import { Fragment, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Building2, LogOut, X } from 'lucide-react';
 import { useStore } from '@/store';
+import { api } from '@/api';
+import { env } from '@/config/env';
+import { requestIdentityTransition } from '@/app/identity';
+import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import { PORTAL_CONTENT_ID, portalPath } from '@/features/insurer-portal/portal';
 import {
@@ -28,7 +32,16 @@ export default function InsurerShell({ insurerName, insurerLogo, sections, activ
   const triggerRef = useRef(null);
   const endStaffSession = useStore((state) => state.endStaffSession);
 
-  function signOut() {
+  async function signOut() {
+    if (env.apiMode === 'http') {
+      try {
+        await api.auth.signOut();
+        requestIdentityTransition({ landing: '/admin-login', userId: null, announce: true });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
+      }
+      return;
+    }
     endStaffSession();
     navigate('/admin-login');
   }

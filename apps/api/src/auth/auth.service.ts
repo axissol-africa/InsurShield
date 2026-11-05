@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ApiException } from '../common/errors/api.exception.js';
-import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
-import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
+import type { Principal } from '../common/auth/auth.types.js';
+import { shownPhone } from '../common/auth/phone.js';
+import type { Transaction } from '../db/database.module.js';
 import { AuthRepository } from './auth.repository.js';
 
 export interface StaffSession {
@@ -9,6 +10,7 @@ export interface StaffSession {
   name: string;
   email: string;
   role: 'admin' | 'insurer' | 'support';
+  isSuperAdmin: boolean;
   insurerId: string | null;
   insurerName: string | null;
 }
@@ -24,62 +26,9 @@ const PORTAL_ROLE = {
 export class AuthService {
   constructor(private readonly repository: AuthRepository) {}
 
-  /**
-   * Staff are pre-provisioned, because `insurerId` is a relationship this
-   * service owns and Keycloak knows nothing about. A token carrying a staff
-   * role with no matching row is refused rather than silently upgraded.
-   */
-  async resolveStaff(keycloakId: string, email: string, role: StaffRoleName): Promise<Principal> {
-    const staff = await this.repository.findStaffByKeycloakId(keycloakId);
-    if (!staff || !staff.isActive) {
-      throw ApiException.forbidden('This staff account is not active on InsurShield.');
-    }
-    return {
-      kind: 'staff',
-      id: staff.id,
-      email: staff.email || email,
-      // The realm is the authority on the role; the row only carries the link.
-      role,
-      insurerId: staff.insurerId,
-    };
-  }
-
-  /**
-   * Customers are created on first call, so signup lives entirely in Keycloak.
-   * The web fires several requests at sign-in, so the first ones race to create the row.
-   */
-  async resolveCustomer(keycloakId: string, email: string, name: string): Promise<Principal> {
-    const existing = await this.repository.findCustomerByKeycloakId(keycloakId);
-    if (existing) return this.customerPrincipal(existing);
-
-    if (!email) {
-      throw ApiException.unauthorized('Your account is missing an email address.');
-    }
-
-    await this.repository.insertCustomerIfAbsent({
-      keycloakId,
-      email: email.toLowerCase(),
-      fullName: name || email,
-      // Keycloak's signup does not collect a phone number, so this placeholder,
-      // namespaced by the Keycloak id, satisfies the unique constraint on `phone`.
-      phone: `pending:${keycloakId}`,
-    });
-
-    const created = await this.repository.findCustomerByKeycloakId(keycloakId);
-    if (!created) {
-      throw ApiException.conflict(
-        'ACCOUNT_CONFLICT',
-        'Another InsurShield account already uses this email address or phone number.',
-      );
-    }
-    return this.customerPrincipal(created);
-  }
-
-  /**
-   * Who the caller is. Authentication itself happens against Keycloak — this
-   * returns the domain record behind the verified token.
-   */
+  /** Who the caller is: the domain record behind the session, and the Better Auth user the session belongs to. */
   async me(principal: Principal): Promise<{
+    userId: string | null;
     customer: unknown;
     consent?: { accepted: boolean; noticeVersion: string | null; acceptedAt: string | null };
     staffSession: StaffSession | null;
@@ -89,12 +38,14 @@ export class AuthService {
       if (!staff) throw ApiException.unauthorized();
 
       return {
+        userId: staff.userId,
         customer: null,
         staffSession: {
           id: staff.id,
           name: staff.fullName,
           email: staff.email,
           role: PORTAL_ROLE[principal.role],
+          isSuperAdmin: principal.role === 'SUPER_ADMIN',
           insurerId: staff.insurerId,
           insurerName: staff.insurerName,
         },
@@ -107,12 +58,12 @@ export class AuthService {
     const consent = await this.repository.findLatestConsent(principal.id);
 
     return {
+      userId: profile.userId,
       customer: {
         id: profile.id,
         fullName: profile.fullName,
         email: profile.email,
-        // The placeholder set at provisioning time is not a real number.
-        phone: profile.phone.startsWith('pending:') ? null : profile.phone,
+        phone: shownPhone(profile.phone),
       },
       // Consent belongs to the customer, not the browser session, so signing
       // out and back in must not ask for it again.
@@ -152,8 +103,8 @@ export class AuthService {
     };
   }
 
-  private customerPrincipal(customer: { id: string; email: string; deletedAt: Date | null }): Principal {
-    if (customer.deletedAt) throw ApiException.forbidden(ACCOUNT_CLOSED);
-    return { kind: 'customer', id: customer.id, email: customer.email };
+  /** Ends every session of the user, in the caller's transaction. */
+  async revokeSessions(tx: Transaction, userId: string): Promise<void> {
+    await this.repository.deleteSessions(tx, userId);
   }
 }

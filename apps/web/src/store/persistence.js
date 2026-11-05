@@ -3,6 +3,7 @@ import { DEFAULT_QUOTE_VALIDITY_DAYS, REQUEST_VALIDITY_DAYS, addDays } from '@/d
 import { DEMO_CUSTOMER_ACCOUNT, SEED_CLAIMS, SEED_NCD_APPLICATIONS, SEED_POLICIES, SEED_QUOTE_REQUESTS, answeredByInsurers, withSeed } from './demoSeed';
 import { env } from '@/config/env';
 import { EMPTY_DOCUMENTS, TODAY } from './shared';
+import { createJSONStorage } from 'zustand/middleware';
 
 /**
  * Browser persistence for the prototype store: what is saved, how older
@@ -10,7 +11,43 @@ import { EMPTY_DOCUMENTS, TODAY } from './shared';
  */
 
 export const STORAGE_KEY = 'insurshield-storage';
-export const STORAGE_VERSION = 7;
+export const STORAGE_VERSION = 8;
+
+let httpPersistenceSuspended = false;
+
+const browserStorage = () => (env.apiMode === 'http' ? window.sessionStorage : window.localStorage);
+
+/**
+ * Browser-record state is private to the tab in HTTP mode. When an identity
+ * transition starts, writes must stop before a delayed response can recreate
+ * the just-removed state for the next person using that tab.
+ */
+export const storeStorage = createJSONStorage(() => ({
+  getItem: (name) => browserStorage().getItem(name),
+  setItem: (name, value) => {
+    if (env.apiMode !== 'http' || !httpPersistenceSuspended) browserStorage().setItem(name, value);
+  },
+  removeItem: (name) => browserStorage().removeItem(name),
+}));
+
+export const suspendHttpPersistence = () => {
+  if (env.apiMode === 'http') httpPersistenceSuspended = true;
+};
+
+export const resumeHttpPersistence = () => {
+  if (env.apiMode === 'http') httpPersistenceSuspended = false;
+};
+
+export const clearHttpPersistence = () => {
+  if (env.apiMode !== 'http') return;
+  window.sessionStorage.removeItem(STORAGE_KEY);
+};
+
+// A pre-Better-Auth browser save must never decide an HTTP session. It is
+// removed before Zustand hydrates from the tab-local store.
+if (env.apiMode === 'http' && typeof window !== 'undefined') {
+  window.localStorage.removeItem(STORAGE_KEY);
+}
 
 /** Keys from the v1 "select up to five insurers" model plus support-ticket and chat state. */
 const LEGACY_KEYS = ['selectedInsurers', 'quoteStatus', 'quoteRulesAgreed', 'quoteRulesTimestamp', 'supportTickets', 'chatMessages', 'userPhone'];
@@ -25,7 +62,12 @@ const PERSISTED_KEYS = [
 ];
 
 /** Only data is persisted, never actions. */
-export const partialize = (state) => Object.fromEntries(PERSISTED_KEYS.map((key) => [key, state[key]]));
+export const partialize = (state) => {
+  const keys = env.apiMode === 'http'
+    ? PERSISTED_KEYS.filter((key) => !['authToken', 'registeredAccounts'].includes(key))
+    : PERSISTED_KEYS;
+  return Object.fromEntries(keys.map((key) => [key, state[key]]));
+};
 
 /**
  * Requests saved before quote validity existed get a deadline from the reply's
@@ -90,6 +132,13 @@ export const migrate = (persisted, version) => {
   // demo customers are left open, or the insurer's own queue would be empty.
   if (version < 7 && env.apiMode === 'mock') {
     state.quoteRequests = withSeed(state.quoteRequests, SEED_QUOTE_REQUESTS).map(answeredByInsurers);
+  }
+  // v8: HTTP mode is per-tab and gets identity only from GET /auth/me. The
+  // old browser-wide save was already removed before hydration.
+  if (version < 8 && env.apiMode === 'http') {
+    delete state.authToken;
+    delete state.registeredAccounts;
+    Object.assign(state, { customer: null, isAuthenticated: false, staffSession: null, consentAccepted: false, consentTimestamp: null, consentRecord: null });
   }
   return state;
 };

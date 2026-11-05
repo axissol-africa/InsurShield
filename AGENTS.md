@@ -21,7 +21,7 @@ App instructions supplement these shared rules. User instructions and explicitly
 | `apps/web/` | React and Vite application, including customer, insurer, and administrator features |
 | `apps/api/` | NestJS API, business rules, integrations, and Drizzle schema and migrations |
 | `packages/` | Reusable workspace packages with actual consumers |
-| `infra/` | PostgreSQL and Keycloak configuration |
+| `infra/` | PostgreSQL local infrastructure configuration |
 | `docs/` | Product requirements and technical documentation |
 | `design/` | Design references and screen exports |
 | `output/` | Versioned document and backlog exports |
@@ -53,6 +53,9 @@ App instructions supplement these shared rules. User instructions and explicitly
   files or tests; Compose reads them from the root `.env` and refuses to start when one is missing.
 - `.env` files are local and git-ignored. Each `.env.example` documents every variable it needs with `CHANGE_ME`
   placeholders. A new setting goes in the example file and in the README's Configuration table.
+- The API requires an explicit `NODE_ENV`; it has no implicit environment. Better Auth uses a secret held outside the
+  repository and PostgreSQL-backed cookie sessions, so a deployed API stays same-site with the web app and is reached
+  only through the proxies named by `TRUST_PROXY_HOPS`.
 - Error messages name a variable but never print its value.
 
 ## Code and comments

@@ -9,9 +9,9 @@ change of environment variables, not a change of code.
 | --- | --- | --- |
 | Database | Postgres 17 in Docker | Amazon RDS for PostgreSQL 17 |
 | Documents | MinIO (S3-compatible) | Amazon S3 |
-| Identity | Keycloak in Docker (dev mode, H2-free, Postgres-backed) | Keycloak container, same VPC, Postgres on RDS |
+| Identity | Better Auth inside the API, sessions in Postgres | Better Auth inside the API, sessions in RDS PostgreSQL |
 | API | `npm run dev:api` | Container on ECS / App Runner / Fly.io / Render |
-| Frontend | Vite dev server | Static build on S3 + CloudFront, or any static host |
+| Frontend | Vite dev server | Static build at the same-site application hostname, for example S3 + CloudFront at `app.insurshield.zm` |
 
 ## Before going live
 
@@ -70,12 +70,21 @@ and run it again.
 ## Environment variables
 
 `apps/api/.env.example` documents all of them, and the [README's Configuration table](../README.md#configuration)
-lists each with its default. What changes in production:
+lists them. `NODE_ENV` is required—there is no application default. What changes in production:
 
 ```bash
 NODE_ENV=production
 PORT=4000
 CORS_ORIGINS=https://app.insurshield.zm      # the real frontend origin, not localhost
+
+# Cookie-session identity. Generate a distinct, high-entropy secret for each
+# environment and store it in the secret manager.
+BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters
+BETTER_AUTH_URL=https://api.insurshield.zm
+# 1 for one load balancer; 2 only when CloudFront is in front of that load
+# balancer. The API must be reachable only through those trusted proxies.
+TRUST_PROXY_HOPS=1
+AUTH_RATE_LIMIT=on
 
 # RDS requires TLS.
 DATABASE_URL=postgresql://USER:PASSWORD@db.xxxx.af-south-1.rds.amazonaws.com:5432/insurshield?sslmode=require
@@ -94,6 +103,31 @@ S3_SSE=AES256                                 # MinIO rejects this; S3 requires 
 Hold the database password and any insurer client secrets in AWS Secrets
 Manager or SSM Parameter Store and inject them at task start. Never bake them
 into an image or commit them.
+
+## Identity and reverse proxy
+
+Better Auth runs inside the API and stores its sessions in PostgreSQL. The browser receives an HTTP-only,
+`SameSite=Lax` session cookie from `/<API_PREFIX>/identity`. In production it is a secure cookie, so the web app and
+API must be served on the **same site** (for example `https://app.insurshield.zm` and
+`https://api.insurshield.zm`) over HTTPS. An unrelated frontend domain is not supported: its browser requests would
+not reliably carry the session cookie.
+
+`VITE_API_MODE=http` and `VITE_API_BASE_URL=https://api.insurshield.zm` must be set when building the frontend.
+Set `CORS_ORIGINS` to the exact frontend origin and ensure credentialed CORS requests are allowed. Do not add a
+wildcard origin.
+
+The reverse proxy or load balancer must:
+
+- Forward `/<API_PREFIX>/identity/*` unchanged, including the original HTTP method, request body and
+  `Content-Length` header. Do not buffer, strip or rewrite identity request bodies.
+- Forward `Cookie`, `Origin` and `X-InsurShield-User` request headers, and pass every `Set-Cookie` response header
+  back to the browser without rewriting away its security attributes.
+- Set the standard forwarding headers itself. The API trusts precisely `TRUST_PROXY_HOPS` proxy hops to derive the
+  client address for consent records and identity rate limits; it must not be publicly reachable around those
+  proxies. Set `0` only for direct local development.
+
+The identity session has a fixed seven-day lifetime; API reads do not silently renew it. Password-reset and
+email-verification delivery must stay disabled in production until a verified mail provider and sender are available.
 
 ### The one deliberate local/production difference
 
@@ -119,7 +153,8 @@ rather than the only protection.
 
 Point the load balancer at `GET /health` — it is cheap and touches nothing.
 Use `GET /health/ready` for deploy gates and alerting; it verifies Postgres and
-the document bucket and returns `"status":"down"` if either is unreachable.
+the document bucket, returning `200` only when both are reachable. If either is
+unreachable, it returns `503` with `"status":"down"` and the state of each dependency.
 
 Both paths sit outside the `API_PREFIX`, so they are `/health`, not
 `/api/v1/health`.
@@ -127,36 +162,12 @@ Both paths sit outside the `API_PREFIX`, so they are `/health`, not
 ## Frontend
 
 The frontend is a static build (`npm run build -w @insurshield/web` → `apps/web/dist`).
-Set `VITE_API_MODE=http` and point `VITE_API_BASE_URL` at the deployed API. Any
-static host works; S3 + CloudFront keeps it in the same account as the rest.
+Set `VITE_API_MODE=http` and point `VITE_API_BASE_URL` at the deployed API. Serve it at a hostname on the same site
+as the API (for example `app.insurshield.zm` with `api.insurshield.zm`); S3 + CloudFront is one way to do that.
 
 Note that the frontend currently defaults to `VITE_API_MODE=mock`, which serves
 everything from browser storage. It must be switched to `http` for a real
 deployment.
-
-## Keycloak
-
-Keycloak is self-hosted, which is what makes the data-residency question
-answerable: customer identity data stays in your VPC and your region, unlike a
-hosted identity provider.
-
-Before it leaves localhost, work through `_productionNotes` in
-[`infra/keycloak/realm-insurshield.json`](../infra/keycloak/realm-insurshield.json).
-The ones that matter most:
-
-- `sslRequired` must become `all`, with TLS terminated in front of Keycloak.
-- Turn off `directAccessGrantsEnabled` on `insurshield-web`. It exists only so
-  local scripts can fetch a token with a password; browsers use Authorization
-  Code with PKCE.
-- Replace the `insurshield-api` client secret with a generated value in Secrets
-  Manager.
-- Point `redirectUris` and `webOrigins` at the real frontend origin. A wildcard
-  host is an open redirect.
-- Configure `smtpServer`, or password reset and email verification silently fail.
-
-Run Keycloak against its own database (`KC_DB=postgres`), separate from the
-application database, and back it up: losing the realm means losing every
-customer login.
 
 ## Dependency advisories
 

@@ -7,7 +7,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { appSettings, configureApp, type AppSettings } from '../src/app.setup.js';
 import type { Env } from '../src/config/env.js';
-import { testDatabase } from '../src/config/env.js';
+import { testDatabase, validateEnv } from '../src/config/env.js';
 import { createDatabase, createPool, DATABASE, type Database } from '../src/db/database.module.js';
 import * as schema from '../src/db/schema.js';
 import { StorageService } from '../src/storage/storage.service.js';
@@ -18,6 +18,8 @@ export type Http = ReturnType<typeof request>;
 export interface StartOptions {
   /** Replaces the settings `configureApp` reads from the environment. */
   settings?: Partial<AppSettings>;
+  /** Environment variables over the run's own, validated as at boot, for the whole app. */
+  env?: Record<string, string>;
   /** Test-only controllers and their providers, registered in the testing module. */
   controllers?: Type<unknown>[];
   providers?: Provider[];
@@ -45,6 +47,11 @@ export async function startApp(options: StartOptions = {}): Promise<TestApp> {
   })
     .overrideProvider(StorageService)
     .useValue(storage);
+  if (options.env) {
+    builder = builder
+      .overrideProvider(ConfigService)
+      .useValue(new ConfigService(validateEnv({ ...process.env, ...options.env })));
+  }
   if (options.override) builder = options.override(builder);
   const moduleRef = await builder.compile();
 

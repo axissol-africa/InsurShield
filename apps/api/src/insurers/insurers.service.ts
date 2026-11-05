@@ -21,8 +21,12 @@ const nameClash = (name: string | undefined) => (error: unknown): never => {
 export class InsurersService {
   constructor(private readonly insurers: InsurersRepository) {}
 
-  /** Every insurer the admin portal manages, deleted ones excluded. Staff only. */
-  async list() {
+  /** Every insurer the admin portal manages, deleted ones excluded by default. */
+  async list(status: 'deleted' | undefined, role: StaffRoleName) {
+    if (status === 'deleted') {
+      if (role !== 'SUPER_ADMIN') throw ApiException.forbidden();
+      return (await this.insurers.listDeleted()).map(toInsurerResponse);
+    }
     return (await this.insurers.listNotDeleted()).map(toInsurerResponse);
   }
 
@@ -76,6 +80,22 @@ export class InsurersService {
       const row = await this.insurers.update(tx, id, { status, deletedAt: status === 'DELETED' ? new Date() : null });
       if (!row) throw ApiException.notFound('Insurer', id);
       return { ...row, contact: await this.insurers.findContact(tx, id) };
+    });
+    return toInsurerResponse(insurer);
+  }
+
+  /**
+   * Restore is deliberately not a general status update: only DELETED may
+   * transition here, and it returns INACTIVE until a super admin activates it.
+   */
+  async restore(id: string, role: StaffRoleName) {
+    if (role !== 'SUPER_ADMIN') throw ApiException.forbidden();
+    const insurer = await this.insurers.transaction(async (tx) => {
+      const row = await this.insurers.restoreDeleted(tx, id);
+      if (row) return { ...row, contact: await this.insurers.findContact(tx, id) };
+
+      if (!(await this.insurers.find(id, tx))) throw ApiException.notFound('Insurer', id);
+      throw ApiException.conflict('INSURER_NOT_DELETED', 'This insurer has not been deleted.');
     });
     return toInsurerResponse(insurer);
   }

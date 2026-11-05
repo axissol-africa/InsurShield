@@ -8,13 +8,14 @@ shared rules on configuration, code and comments, tests and commits.
 - Node 24 LTS (24.15 or newer), npm workspaces. Run commands from the repository root with `-w @insurshield/api`.
 - NestJS 12 as ESM: relative imports end in `.js`.
 - PostgreSQL in Docker Compose, Drizzle ORM with drizzle-kit migrations in `drizzle/`.
-- Keycloak issues the tokens this API verifies; documents live in S3-compatible storage (MinIO locally).
+- Better Auth runs inside this API; its cookie sessions and credentials live in PostgreSQL. Documents live in
+  S3-compatible storage (MinIO locally).
 - class-validator DTOs, Swagger UI at `/docs` when `SWAGGER_ENABLED=true`.
 - Vitest: unit tests in `*.spec.ts` next to the code, e2e tests in `test/*.e2e-spec.ts`.
 
 ```bash
 cp .env.example .env && cp apps/api/.env.example apps/api/.env   # then replace every CHANGE_ME
-npm run infra:up                          # Postgres, MinIO, Keycloak
+npm run infra:up                          # Postgres and MinIO
 npm run db:migrate                        # apply migrations (src/db/migrate.ts)
 npm run dev:api                           # run the API
 npm run lint -w @insurshield/api && npm run build -w @insurshield/api
@@ -47,7 +48,7 @@ npm run test:e2e -w @insurshield/api      # e2e tests against the test database
 ## Design
 
 - No speculative abstractions: no generic repositories, no interface with a single implementation. A port (an
-  interface with an adapter) is for an external system: Keycloak, object storage, insurer systems, RTSA, payment
+  interface with an adapter) is for an external system: object storage, insurer systems, RTSA, payment
   providers. Define it around the operation the use case needs, not the whole SDK.
 - Keep provider credentials, request formats, retries and error translation in the adapter. Preserve provider
   correlation identifiers.
@@ -109,6 +110,12 @@ npm run test:e2e -w @insurshield/api      # e2e tests against the test database
 ## Configuration
 
 - Settings are read and validated in `src/config/env.ts`; `apps/api/.env.example` documents each one.
+- `NODE_ENV`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` and `TRUST_PROXY_HOPS` are required. There is no default
+  environment: deployments declare one explicitly. Keep the Better Auth secret out of source control.
+- Browser identity uses HTTP-only cookie sessions, never bearer tokens. In production, serve the web app and API on
+  the same site, allow only the known web origins through CORS, and expose the API only through the exact number of
+  proxies in `TRUST_PROXY_HOPS`. A proxy must preserve identity route bodies, `Content-Length`, `Cookie`, `Origin`,
+  `X-InsurShield-User` and `Set-Cookie` headers.
 - `DATABASE_URL` and `TEST_DATABASE_URL` accept only the query parameters `URL_PARAMETERS` in `src/config/env.ts`
   lists; any other parameter can redirect or reconfigure the connection. `TEST_DATABASE_URL` must name a different
   database ending in `_test`.

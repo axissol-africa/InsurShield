@@ -14,7 +14,7 @@ const STATUS_BADGE = {
  * Manage Insurers list: inline rate editing, view/edit, and a per-row menu to
  * deactivate (no new requests, history kept), reactivate, or delete (soft).
  */
-export default function InsurerTable({ insurers, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore }) {
+export default function InsurerTable({ insurers, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore, canRemove = false, canRestore = false }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className={`hidden border-b border-border bg-muted/50 px-5 py-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground lg:grid lg:gap-x-5 ${GRID}`}>
@@ -24,14 +24,14 @@ export default function InsurerTable({ insurers, piaRatePercentage, onView, onEd
         {insurers.map((insurer) => (
           <InsurerRow key={insurer.id} insurer={insurer} piaRatePercentage={piaRatePercentage} onView={() => onView(insurer)} onEdit={() => onEdit(insurer)}
             onRateChange={(rate) => onRateChange(insurer.id, rate)} onStatusChange={(status) => onStatusChange(insurer.id, status)}
-            onDelete={() => onDelete(insurer)} onRestore={() => onRestore?.(insurer)} />
+            onDelete={() => onDelete(insurer)} onRestore={() => onRestore?.(insurer)} canRemove={canRemove} canRestore={canRestore} />
         ))}
       </div>
     </div>
   );
 }
 
-function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore }) {
+function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore, canRemove, canRestore }) {
   const status = insurer.status || 'Active';
   const effectiveRate = Math.max(insurer.ratePercentage, piaRatePercentage);
   return (
@@ -51,7 +51,7 @@ function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, 
           ? <><span className="font-mono text-foreground">{insurer.licenceNumber}</span><span className="mt-1 block text-xs">expires {formatDate(insurer.licenceExpiry)}</span></>
           : <span className="text-primary">Licence not recorded</span>}
       </div>
-      <div><CellLabel>Rate</CellLabel><RateCell insurer={insurer} onSave={onRateChange} /></div>
+      <div><CellLabel>Rate</CellLabel><RateCell insurer={insurer} onSave={onRateChange} readOnly={status === 'Deleted'} /></div>
       <div className="text-sm">
         <CellLabel>Effective rate</CellLabel>
         <span className="font-medium">{effectiveRate}%</span>
@@ -61,21 +61,26 @@ function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, 
       </div>
       <div><Meta className={`inline-flex rounded-full border px-2.5 py-1 ${STATUS_BADGE[status] || STATUS_BADGE.Inactive}`}>{status}</Meta></div>
       <div className="flex items-center gap-2 lg:justify-end">
-        <div className="inline-flex overflow-hidden rounded-lg border border-border">
-          <button type="button" onClick={onView} className="inline-flex min-h-9 items-center justify-center border-r border-border px-4 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">View</button>
-          <button type="button" onClick={onEdit} className="inline-flex min-h-9 items-center justify-center px-4 text-xs font-medium text-primary transition-colors hover:bg-primary/10">Edit</button>
-        </div>
+        {status !== 'Deleted' && (
+          <div className="inline-flex overflow-hidden rounded-lg border border-border">
+            <button type="button" onClick={onView} className="inline-flex min-h-9 items-center justify-center border-r border-border px-4 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">View</button>
+            <button type="button" onClick={onEdit} className="inline-flex min-h-9 items-center justify-center px-4 text-xs font-medium text-primary transition-colors hover:bg-primary/10">Edit</button>
+          </div>
+        )}
         {status === 'Deleted' ? (
-          <button
-            type="button"
-            onClick={onRestore}
-            className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-          >
-            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">restart_alt</span>
-            Restore
-          </button>
+          canRestore && (
+            <button
+              type="button"
+              aria-label={`Restore ${insurer.name}`}
+              onClick={onRestore}
+              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">restart_alt</span>
+              Restore
+            </button>
+          )
         ) : (
-          <RowActionsMenu insurer={insurer} status={status} onStatusChange={onStatusChange} onDelete={onDelete} />
+          <RowActionsMenu insurer={insurer} status={status} onStatusChange={onStatusChange} onDelete={onDelete} canRemove={canRemove} />
         )}
       </div>
     </div>
@@ -85,8 +90,10 @@ function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, 
 /** Column label shown only when the row stacks vertically and the header row is hidden. */
 const CellLabel = ({ children }) => <span className="mr-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground lg:hidden">{children}</span>;
 
-function RateCell({ insurer, onSave }) {
+function RateCell({ insurer, onSave, readOnly = false }) {
   const [draft, setDraft] = useState(null); // null = not editing
+
+  if (readOnly) return <span className="text-sm font-semibold text-primary">{insurer.ratePercentage}%</span>;
 
   if (draft === null) {
     return (
@@ -118,7 +125,7 @@ function RateCell({ insurer, onSave }) {
 
 const menuItemClass = 'flex w-full items-center gap-2.5 px-4 py-3 text-left text-sm font-medium transition-colors';
 
-function RowActionsMenu({ insurer, status, onStatusChange, onDelete }) {
+function RowActionsMenu({ insurer, status, onStatusChange, onDelete, canRemove }) {
   const [open, setOpen] = useState(false);
 
   // Close on a click anywhere outside the menu or on Escape.
@@ -147,7 +154,7 @@ function RowActionsMenu({ insurer, status, onStatusChange, onDelete }) {
           ) : (
             <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Inactive'))} className={`${menuItemClass} text-muted-foreground hover:bg-muted`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">pause_circle</span>Deactivate</button>
           )}
-          <button type="button" role="menuitem" onClick={() => choose(onDelete)} className={`${menuItemClass} mt-1 border-t border-border text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">delete</span>Remove</button>
+          {canRemove && <button type="button" role="menuitem" onClick={() => choose(onDelete)} className={`${menuItemClass} mt-1 border-t border-border text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">delete</span>Remove</button>}
         </div>
       )}
     </div>

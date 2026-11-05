@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
+import { api } from '@/api';
+import { env } from '@/config/env';
+import { requestIdentityTransition } from '@/app/identity';
+import { toast } from 'sonner';
+import { Toaster } from '@/components/ui/primitives/sonner';
 
 const CUSTOMER_LINKS = [
   { to: '/', label: 'Home' },
@@ -34,12 +39,30 @@ export default function MainLayout() {
   const currentHref = `${location.pathname}${location.search}`;
   const loginHref = location.pathname === '/create-account' ? currentHref : `/create-account?next=${encodeURIComponent(currentHref)}`;
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     setMenuOpen(false);
+    if (env.apiMode === 'http') {
+      try {
+        await api.auth.signOut();
+        requestIdentityTransition({ landing: '/', userId: null, announce: true });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
+      }
+      return;
+    }
     signOut();
     navigate('/');
   };
-  const handleStaffSignOut = () => {
+  const handleStaffSignOut = async () => {
+    if (env.apiMode === 'http') {
+      try {
+        await api.auth.signOut();
+        requestIdentityTransition({ landing: '/admin-login', userId: null, announce: true });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
+      }
+      return;
+    }
     endStaffSession();
     navigate('/admin-login');
   };
@@ -145,6 +168,7 @@ export default function MainLayout() {
           <Outlet />
         )}
       </main>
+      <Toaster theme="light" position="top-center" />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { applyDecorators } from '@nestjs/common';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -21,12 +21,12 @@ import {
   INSPECTION_METHODS,
   INSPECTION_RULES,
   INSPECTION_TIMINGS,
-  INSURER_STATUSES,
   type InspectionMethod,
   type InspectionRule,
   type InspectionTiming,
   type InsurerStatus,
 } from '../../common/domain/enums.js';
+import { CONTRACT_VALUES, fromContract } from '../../common/contract.js';
 import { MAX_RATE_BPS } from '../../common/domain/money-limits.js';
 import { percentToBps } from '../../common/money.js';
 import type { InsurerChanges, NewContact, NewInsurer } from '../insurers.repository.js';
@@ -128,7 +128,8 @@ export class UpdateInsurerDto {
 }
 
 export class SetInsurerStatusDto {
-  @IsIn(INSURER_STATUSES, { message: 'Status must be Active, Inactive or Deleted.' })
+  @Transform(({ value }) => (typeof value === 'string' ? (fromContract.insurerStatus(value) ?? value) : value))
+  @IsIn(CONTRACT_VALUES.insurerStatus, { message: 'Status must be Active, Inactive or Deleted.' })
   status!: InsurerStatus;
 }
 

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
   copyFileSync,
   cpSync,
@@ -83,6 +83,11 @@ const prismaEra = (client: ClientBase) => buildPrismaEraDatabase(client, { data:
 async function managedAfterBaseline(client: ClientBase) {
   await applyMigrationFiles(client, 1);
   await recordDrizzleHistory(client, 1);
+}
+
+async function managedAfterBetterAuth(client: ClientBase) {
+  await applyMigrationFiles(client, 3);
+  await recordDrizzleHistory(client, 3);
 }
 
 async function runEntryPoint(db: ScratchDatabase) {
@@ -362,6 +367,7 @@ describe('db:migrate recognises each accepted state and leaves it Drizzle-manage
   it.each([
     ['an empty database', undefined, 'fresh', ALL],
     ['a Drizzle-managed database with a pending migration', managedAfterBaseline, 'managed', ALL.slice(1)],
+    ['a Better Auth database with the retirement migrations pending', managedAfterBetterAuth, 'managed', ALL.slice(3)],
     ['a fully migrated Prisma-era database', prismaEra, 'prisma-era', ALL.slice(1)],
   ] as const)('%s, then a second run applies nothing', async (_case, build, state, applied) => {
     const db = await scratch(build);
@@ -370,6 +376,64 @@ describe('db:migrate recognises each accepted state and leaves it Drizzle-manage
     const after = await stateOf(db);
     expect(await migrateDatabase(db.config)).toEqual({ state: 'managed', applied: [] });
     expect(await stateOf(db)).toEqual(after);
+  });
+
+  it('retires Keycloak identifiers while retaining the Better Auth domain links', async () => {
+    const customerId = randomUUID();
+    const staffId = randomUUID();
+    const db = await scratch(async (client) => {
+      await managedAfterBetterAuth(client);
+      await client.query(
+        `INSERT INTO customers (id, "fullName", email, phone, "keycloakId", "updatedAt")
+         VALUES ($1, 'Chanda Mwale', 'chanda@example.invalid', '+260970000001', 'kc-chanda', CURRENT_TIMESTAMP)`,
+        [customerId],
+      );
+      await client.query(
+        `INSERT INTO staff_users (id, email, "fullName", role, "keycloakId", "updatedAt")
+         VALUES ($1, 'mutale@example.invalid', 'Mutale Banda', 'ADMIN', 'kc-mutale', CURRENT_TIMESTAMP)`,
+        [staffId],
+      );
+    });
+
+    expect(await migrateDatabase(db.config)).toEqual({ state: 'managed', applied: ALL.slice(3) });
+    await query(db, async (client) => {
+      expect(
+        (
+          await client.query(
+            `SELECT id, "fullName", email, phone, "userId" FROM customers WHERE id = $1`,
+            [customerId],
+          )
+        ).rows,
+      ).toEqual([
+        { id: customerId, fullName: 'Chanda Mwale', email: 'chanda@example.invalid', phone: '+260970000001', userId: null },
+      ]);
+      expect(
+        (
+          await client.query(
+            `SELECT id, email, "fullName", role, "userId" FROM staff_users WHERE id = $1`,
+            [staffId],
+          )
+        ).rows,
+      ).toEqual([
+        { id: staffId, email: 'mutale@example.invalid', fullName: 'Mutale Banda', role: 'ADMIN', userId: null },
+      ]);
+      expect(
+        (
+          await client.query(
+            `SELECT to_regclass('public."customers_keycloakId_key"') AS customer_index,
+                    to_regclass('public."staff_users_keycloakId_key"') AS staff_index`,
+          )
+        ).rows,
+      ).toEqual([{ customer_index: null, staff_index: null }]);
+      expect(
+        (
+          await client.query(
+            `SELECT column_default FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'rtsaAnniversaryFeeMinor'`,
+          )
+        ).rows,
+      ).toEqual([{ column_default: '0' }]);
+    });
   });
 
   it('adopts a Prisma-era database: archives its history, keeps JSON and benefits, converts money', async () => {

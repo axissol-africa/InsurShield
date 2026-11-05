@@ -31,27 +31,42 @@ describe('NcdTab', () => {
     render(<NcdTab applications={[submitted, reviewing, approved, rejected]} />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'NCD applications' })).toBeVisible();
-    expect(screen.getByText('2 awaiting a decision')).toBeVisible();
+    expect(screen.getByText('3 awaiting a decision')).toBeVisible();
     expect(screen.getByRole('tab', { name: /Open/ })).toHaveAttribute('aria-selected', 'true');
 
-    const [first, second] = openRows();
-    for (const text of ['Chanda Phiri', 'NCD-2026-0002', 'PA-2024-000111', '1 yr', '10%', 'Applied 7d ago', 'Under Review']) expect(first).toHaveTextContent(text);
-    for (const text of ['Mwiza Banda', 'NCD-2026-0001', 'PA-2025-000777', '3 yrs', '30%', 'Applied 3d ago', 'Submitted']) expect(second).toHaveTextContent(text);
+    const [first, second, third] = openRows();
+    for (const text of ['Thandiwe Zulu', 'NCD-2026-0004', 'PA-2022-000333', '1 yr', 'Rejected', 'Reopenable — you can decide again.']) expect(first).toHaveTextContent(text);
+    for (const text of ['Chanda Phiri', 'NCD-2026-0002', 'PA-2024-000111', '1 yr', '10%', 'Applied 7d ago', 'Under Review']) expect(second).toHaveTextContent(text);
+    for (const text of ['Mwiza Banda', 'NCD-2026-0001', 'PA-2025-000777', '3 yrs', '30%', 'Applied 3d ago', 'Submitted']) expect(third).toHaveTextContent(text);
     expect(screen.queryByText('Bwalya Mumba')).not.toBeInTheDocument();
   });
 
   it('shows decided applications with the code that was issued', async () => {
     const user = userEvent.setup();
-    render(<NcdTab applications={[submitted, approved, rejected]} />);
+    render(<NcdTab applications={[submitted, approved]} />);
 
     await user.click(screen.getByRole('tab', { name: /Decided/ }));
     const table = await screen.findByRole('table', { name: 'Decided NCD applications' });
     expect(within(table).getByRole('row', { name: /Bwalya Mumba/ })).toHaveTextContent('NCD-20-BWALYA');
     expect(within(table).getByRole('row', { name: /Bwalya Mumba/ })).toHaveTextContent('20% discount');
-    expect(within(table).getByRole('row', { name: /Thandiwe Zulu/ })).toHaveTextContent('Rejected');
-    // A rejected application carries no discount, so none is shown beside it.
-    expect(within(table).getByRole('row', { name: /Thandiwe Zulu/ })).not.toHaveTextContent('% discount');
     expect(within(table).queryByRole('button', { name: /Review/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps a rejected application in the work queue so it can be reopened', async () => {
+    const user = userEvent.setup();
+    render(<NcdTab applications={[rejected]} />);
+
+    expect(screen.getByText('1 awaiting a decision')).toBeVisible();
+    const dialog = await review(user, 'Thandiwe Zulu');
+    const decision = within(dialog).getByRole('radiogroup', { name: 'Your decision' });
+
+    expect(within(decision).getByRole('radio', { name: /^Approve/ })).toBeVisible();
+    expect(within(decision).getByRole('radio', { name: /^Keep under review/ })).toBeVisible();
+    expect(within(decision).queryByRole('radio', { name: /^Reject/ })).not.toBeInTheDocument();
+
+    await user.click(within(decision).getByRole('radio', { name: /^Approve/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
+    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-4', 'Approved');
   });
 
   it('puts what to check and every outcome on one surface, and sends nothing until a decision is confirmed', async () => {
@@ -66,7 +81,7 @@ describe('NcdTab', () => {
     const decision = within(dialog).getByRole('radiogroup', { name: 'Your decision' });
     expect(within(decision).getByRole('radio', { name: /^Approve.*Issues a 30% no-claim discount code/ })).not.toBeChecked();
     expect(within(decision).getByRole('radio', { name: /^Keep under review/ })).toBeVisible();
-    expect(within(decision).getByRole('radio', { name: /^Reject.*Closes the application without a discount/ })).toBeVisible();
+    expect(within(decision).getByRole('radio', { name: /^Reject.*Closes the application without a discount.*reopen it later/ })).toBeVisible();
     expect(within(dialog).getByRole('button', { name: 'Confirm decision' })).toBeDisabled();
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));

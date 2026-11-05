@@ -1,5 +1,6 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, HttpStatus, Inject, Res } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
+import type { Response } from 'express';
 import { Public } from '../common/auth/auth.guard.js';
 import { DATABASE, type Database } from '../db/database.module.js';
 import { StorageService } from '../storage/storage.service.js';
@@ -26,7 +27,7 @@ export class HealthController {
 
   @Public()
   @Get('ready')
-  async ready(): Promise<{
+  async ready(@Res({ passthrough: true }) response: Response): Promise<{
     status: DependencyState;
     dependencies: { database: DependencyState; storage: DependencyState };
   }> {
@@ -38,8 +39,14 @@ export class HealthController {
       this.storage.isReachable().then((ok): DependencyState => (ok ? 'up' : 'down')),
     ]);
 
+    const status = database === 'up' && storage === 'up' ? 'up' : 'down';
+
+    if (status === 'down') {
+      response.status(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
     return {
-      status: database === 'up' && storage === 'up' ? 'up' : 'down',
+      status,
       dependencies: { database, storage },
     };
   }

@@ -1,25 +1,26 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
 import type { Env } from '../src/config/env.js';
 import { documents } from '../src/db/schema.js';
+import { buildCustomer } from './builders.js';
 import { startApp, type TestApp } from './helpers.js';
-import { bearer, customerToken } from './jwks.js';
+import { signIn, type SessionHeaders } from './sessions.js';
 
 const UPLOAD = '/api/v1/documents';
 const PDF = Buffer.from('%PDF-1.7\n% e2e upload\n');
 
 describe('uploading a document', () => {
   let testApp: TestApp;
-  let headers: { Authorization: string };
+  let headers: SessionHeaders;
   let customerId: string;
   let limit: number;
 
   beforeAll(async () => {
     testApp = await startApp();
     limit = testApp.app.get(ConfigService<Env, true>).get('MAX_UPLOAD_BYTES', { infer: true });
-    const keycloakId = randomUUID();
-    headers = bearer(await customerToken({ keycloakId, email: `${keycloakId}@example.test` }));
+    const customer = await buildCustomer(testApp.db);
+    headers = await signIn(testApp.http, customer);
     customerId = (await testApp.http.get('/api/v1/auth/me').set(headers).expect(200)).body.customer.id;
   });
 

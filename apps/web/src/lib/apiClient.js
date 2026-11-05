@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { env } from '@/config/env';
-import { useStore } from '@/store';
+import { getIdentityBinding, requestIdentityTransition } from '@/app/identity';
 
 /** Normalised error thrown by every backend call. */
 export class ApiError extends Error {
@@ -16,7 +16,7 @@ export class ApiError extends Error {
 /**
  * Shared HTTP client for the backend REST API.
  * - JSON in and out, credentials sent for cookie sessions.
- * - Bearer token attached when the session slice holds one.
+ * - HTTP mode adds the tab's identity binding; it never sends bearer tokens.
  * - Backend errors surface as `ApiError` with the server's `code` and `message`.
  */
 export const apiClient = axios.create({
@@ -27,8 +27,9 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use((config) => {
-  const token = useStore.getState().authToken;
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (env.apiMode === 'http' && config.identity !== 'omit') {
+    config.headers['X-InsurShield-User'] = getIdentityBinding() || 'anonymous';
+  }
   return config;
 });
 
@@ -38,6 +39,8 @@ apiClient.interceptors.response.use(
     const { response } = error;
     if (!response) throw new ApiError('The server could not be reached. Check your connection and try again.', { code: 'NETWORK' });
     const body = response.data || {};
-    throw new ApiError(body.message || `Request failed (${response.status})`, { status: response.status, code: body.code || 'HTTP_ERROR', details: body.details ?? null });
+    const apiError = new ApiError(body.message || `Request failed (${response.status})`, { status: response.status, code: body.code || 'HTTP_ERROR', details: body.details ?? null });
+    if (env.apiMode === 'http' && apiError.status === 409 && apiError.code === 'IDENTITY_CHANGED') requestIdentityTransition();
+    throw apiError;
   },
 );

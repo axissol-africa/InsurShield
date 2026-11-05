@@ -1,13 +1,15 @@
-import type {
-  ClaimStatus,
-  CoverageDuration,
-  InspectionStatus,
-  InsuranceType,
-  NcdStatus,
-  PaymentMethod,
-  PaymentStatus,
-  PolicyStatus,
-  QuoteRequestStatus,
+import {
+  INSURER_STATUSES,
+  type ClaimStatus,
+  type CoverageDuration,
+  type InspectionStatus,
+  type InsuranceType,
+  type InsurerStatus,
+  type NcdStatus,
+  type PaymentMethod,
+  type PaymentStatus,
+  type PolicyStatus,
+  type QuoteRequestStatus,
 } from './domain/enums.js';
 
 /**
@@ -60,6 +62,22 @@ const NCD_STATUS: Record<NcdStatus, string> = {
   REJECTED: 'Rejected',
 };
 
+const INSURER_STATUS: Record<InsurerStatus, string> = {
+  ACTIVE: 'Active',
+  INACTIVE: 'Inactive',
+  DELETED: 'Deleted',
+};
+
+/** The only NCD statuses an insurer can choose as a decision. */
+export const NCD_DECISION_STATUSES = ['UNDER_REVIEW', 'APPROVED', 'REJECTED'] as const satisfies readonly NcdStatus[];
+export type NcdDecisionStatus = (typeof NCD_DECISION_STATUSES)[number];
+
+const NCD_DECISION_STATUS: Record<NcdDecisionStatus, string> = {
+  UNDER_REVIEW: NCD_STATUS.UNDER_REVIEW,
+  APPROVED: NCD_STATUS.APPROVED,
+  REJECTED: NCD_STATUS.REJECTED,
+};
+
 const PAYMENT_STATUS: Record<PaymentStatus, string> = {
   PENDING: 'Pending',
   CONFIRMED: 'Confirmed',
@@ -93,6 +111,13 @@ export const toContract = {
   paymentStatus: (value: PaymentStatus) => PAYMENT_STATUS[value],
   paymentMethod: (value: PaymentMethod) => PAYMENT_METHOD[value],
   inspectionStatus: (value: InspectionStatus) => INSPECTION_STATUS[value],
+  insurerStatus: (value: InsurerStatus) => INSURER_STATUS[value],
+};
+
+const readableOrStored = <T extends string>(map: Record<T, string>, storedValues: readonly T[]) => {
+  const readable = invert(map);
+  return (value: string): T | undefined =>
+    readable[value] ?? (storedValues.includes(value as T) ? (value as T) : undefined);
 };
 
 /**
@@ -103,6 +128,8 @@ export const fromContract = {
   insuranceType: (value: string): InsuranceType | undefined => invert(INSURANCE_TYPE)[value],
   coverageDuration: (value: string): CoverageDuration | undefined => invert(COVERAGE_DURATION)[value],
   paymentMethod: (value: string): PaymentMethod | undefined => invert(PAYMENT_METHOD)[value],
+  insurerStatus: readableOrStored(INSURER_STATUS, INSURER_STATUSES),
+  ncdDecision: readableOrStored(NCD_DECISION_STATUS, NCD_DECISION_STATUSES),
 };
 
 /** The wire values a DTO may accept, so validation messages list real options. */
@@ -110,4 +137,6 @@ export const CONTRACT_VALUES = {
   insuranceType: Object.values(INSURANCE_TYPE),
   coverageDuration: Object.values(COVERAGE_DURATION),
   paymentMethod: Object.values(PAYMENT_METHOD),
+  insurerStatus: [...INSURER_STATUSES, ...Object.values(INSURER_STATUS)],
+  ncdDecision: [...NCD_DECISION_STATUSES, ...Object.values(NCD_DECISION_STATUS)],
 };

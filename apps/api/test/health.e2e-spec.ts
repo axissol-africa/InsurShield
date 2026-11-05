@@ -28,7 +28,7 @@ describe('health', () => {
     it('reports storage down when the bucket cannot be reached', async () => {
       testApp.storage.reachable = false;
 
-      const response = await testApp.http.get('/health/ready').expect(200);
+      const response = await testApp.http.get('/health/ready').expect(503);
 
       expect(response.body).toEqual({ status: 'down', dependencies: { database: 'up', storage: 'down' } });
     });
@@ -61,7 +61,7 @@ describe('health', () => {
     });
 
     it('reports the database down on the readiness check', async () => {
-      const response = await testApp.http.get('/health/ready').expect(200);
+      const response = await testApp.http.get('/health/ready').expect(503);
 
       expect(response.body).toEqual({ status: 'down', dependencies: { database: 'down', storage: 'up' } });
     });

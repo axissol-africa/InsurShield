@@ -6,7 +6,7 @@ import { inspectionPhotos, inspections, insurers, type customers, type documents
 import { buildCustomer, buildDocument, buildInspection, buildInsurer, type Row } from './builders.js';
 import { buildInspectionPhoto } from './builders/documents.js';
 import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 
 type Customer = Row<typeof customers>;
 type DocumentRow = Row<typeof documents>;
@@ -45,8 +45,7 @@ describe('inspections', () => {
     await side.close();
   });
 
-  const asCustomer = async (customer: Customer) =>
-    bearer(await customerToken({ keycloakId: customer.keycloakId, email: customer.email }));
+  const asCustomer = (customer: Customer) => signIn(testApp.http, customer);
 
   const photoIn = async (inspectionId: string, customer: Customer, slot: string) => {
     const document = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'INSPECTION_PHOTO', mimeType: 'image/jpeg' });
@@ -519,7 +518,7 @@ describe('inspections', () => {
       ['PATCH', '/api/v1/inspections/INS-ANY'],
     ])('are refused %s %s with 403', async (method, path) => {
       const { staff } = await buildInsurer(testApp.db);
-      const headers = bearer(await staffToken(staff, ['insurer_user']));
+      const headers = await signIn(testApp.http, staff);
       const body = { vehiclePlate: 'BAA 1234', vehicleLabel: 'Corolla' };
       const call =
         method === 'GET'

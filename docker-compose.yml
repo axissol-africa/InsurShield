@@ -15,9 +15,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
-      # Created beside POSTGRES_DB by infra/postgres on a fresh volume.
+      # Created beside POSTGRES_DB by infra/postgres on a fresh volume. E2E tests
+      # own and recreate this isolated database only.
       POSTGRES_TEST_DB: ${POSTGRES_TEST_DB:?set POSTGRES_TEST_DB in .env}
-      KEYCLOAK_DB: ${KEYCLOAK_DB:?set KEYCLOAK_DB in .env}
       # Match the collation/encoding RDS uses so local and production sort alike.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
@@ -71,43 +71,6 @@ services:
       mc anonymous set none \"local/$$S3_BUCKET\" &&
       echo \"bucket ready: $$S3_BUCKET (private)\"
       "
-
-  # Identity provider. Runs in dev mode locally (HTTP, realm imported on boot)
-  # so a checkout needs no setup. Production runs the same image with
-  # KC_DB=postgres against RDS and TLS terminated in front of it — see
-  # docs/DEPLOYMENT.md.
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.7
-    container_name: insurshield-keycloak
-    restart: unless-stopped
-    command: start-dev --import-realm
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:?set KEYCLOAK_ADMIN_USER in .env}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
-      KC_HTTP_PORT: 8080
-      KC_HEALTH_ENABLED: "true"
-      # Same engine as production; only the URL and credentials change there.
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/${KEYCLOAK_DB:?set KEYCLOAK_DB in .env}
-      KC_DB_USERNAME: ${POSTGRES_USER:?set POSTGRES_USER in .env}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      # The realm import puts this in the insurshield-api client; apps/api/.env must hold the same value.
-      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in .env}
-    ports:
-      - "127.0.0.1:${KEYCLOAK_PORT:?set KEYCLOAK_PORT in .env}:8080"
-    volumes:
-      - ./infra/keycloak:/opt/keycloak/data/import:ro
-    healthcheck:
-      # The management port serves health; curl is not in the image, so this
-      # uses the JVM's own HTTP client via a bash /dev/tcp probe.
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
 
 volumes:
   postgres-data:

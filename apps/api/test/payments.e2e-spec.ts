@@ -13,7 +13,7 @@ import {
 import { buildApprovedNcdCode } from './builders/customer.js';
 import { addQuote, buildPayableQuote } from './builders/payments.js';
 import { holdLocks, openTestDatabase, queueBehind, startApp, startRepeatableReadApp, type TestApp } from './helpers.js';
-import { bearer, customerToken, staffToken } from './jwks.js';
+import { signIn } from './sessions.js';
 import type { customers } from '../src/db/schema.js';
 
 type Customer = Row<typeof customers>;
@@ -49,8 +49,7 @@ describe('payments', () => {
     await side.close();
   });
 
-  const asCustomer = async (customer: Customer) =>
-    bearer(await customerToken({ keycloakId: customer.keycloakId, email: customer.email }));
+  const asCustomer = (customer: Customer) => signIn(testApp.http, customer);
 
   const pay = async (customer: Customer, body: Record<string, unknown>, key?: string) => {
     const call = testApp.http.post('/api/v1/payments').set(await asCustomer(customer));
@@ -380,7 +379,7 @@ describe('payments', () => {
 
     it('refuses staff on both routes', async () => {
       const staff = await buildStaffUser(testApp.db);
-      const auth = bearer(await staffToken(staff, ['admin']));
+      const auth = await signIn(testApp.http, staff);
 
       const posted = await testApp.http
         .post('/api/v1/payments')

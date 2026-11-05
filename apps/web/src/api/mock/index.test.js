@@ -84,7 +84,12 @@ describe('mock api adapter', () => {
   it('manages insurers and the customer directory', async () => {
     await mock.insurers.setStatus('5', 'Inactive');
     await mock.insurers.remove('4');
-    expect((await mock.insurers.directory()).map((insurer) => insurer.id)).toEqual(['1', '2', '3', '5']);
+    expect((await mock.insurers.directory()).map((insurer) => insurer.id)).toEqual(['1', '2', '3']);
     expect((await mock.insurers.get('4')).status).toBe('Deleted');
+
+    expect((await mock.insurers.list({ status: 'deleted' })).map((insurer) => insurer.id)).toEqual(['4']);
+    await expect(mock.insurers.restore('4')).resolves.toMatchObject({ status: 'Inactive', deletedAt: null });
+    expect(await mock.insurers.list({ status: 'deleted' })).toEqual([]);
+    expect((await mock.insurers.directory()).map((insurer) => insurer.id)).not.toContain('4');
   });
 });
