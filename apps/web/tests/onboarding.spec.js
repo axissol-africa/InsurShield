@@ -11,7 +11,7 @@ const seedStaff = (role, name) => async ({ page }) => {
   await page.goto('/');
   await page.evaluate(([r, n]) => {
     const store = JSON.parse(localStorage.getItem('insurshield-storage') || '{"state":{}}');
-    store.state.staffSession = { role: r, name: n };
+    store.state.staffSession = { role: r, name: n, isSuperAdmin: r === 'admin' };
     store.version = 5;
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   }, [role, name]);

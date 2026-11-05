@@ -201,6 +201,7 @@ export default function AdminDashboard() {
 
   useEffect(() => { void hydrateAdmin(); }, []);
   const activeInsurers = useActiveInsurers();
+  const managedInsurers = insurersList.filter((insurer) => insurer.status !== 'Deleted');
   const piaRate = piaConfig?.piaRatePercentage ?? 4;
   const agentName = staffSession?.name || 'Admin';
   const agentRole = staffSession?.role || 'admin';
@@ -279,7 +280,7 @@ export default function AdminDashboard() {
   const sidebarItems = [
     { id: 'dashboard', label: 'Overview', icon: 'dashboard', hint: 'Platform totals', matches: ['dashboard'] },
     { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policies.length, matches: ['recent_policies'] },
-    { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: insurersList.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
+    { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
@@ -321,7 +322,7 @@ export default function AdminDashboard() {
       <>
         <SubPageHeader title="Manage insurers" description={isSuperAdmin ? 'View, update, deactivate, or restore companies in the marketplace.' : 'View, update, or deactivate companies in the marketplace.'} onBack={() => setView('dashboard')} action={addButton} />
         <InsurerTable
-          insurers={insurersList}
+          insurers={managedInsurers}
           piaRatePercentage={piaRate}
           onView={(insurer) => { setViewingInsurer(insurer); setView('view_insurer'); }}
           onEdit={(insurer) => { setEditingInsurer(insurer); setView('edit_insurer'); }}
