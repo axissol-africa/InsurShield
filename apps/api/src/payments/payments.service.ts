@@ -76,7 +76,8 @@ export class PaymentsService {
     try {
       paid = await this.payments.transaction(async (tx) => {
         if (!(await this.payments.lockOpenCustomer(tx, customerId))) throw ApiException.forbidden(ACCOUNT_CLOSED);
-        await this.payments.lockRequest(tx, request.id);
+        const lockedRequest = await this.payments.lockRequest(tx, request.id);
+        if (!lockedRequest) throw ApiException.notFound('Quote request', dto.quoteRequestId);
 
         // Inserted before the checks, so a second request with this key waits on the first and replays it.
         const payment = await this.payments.insertPayment(tx, {
@@ -119,7 +120,7 @@ export class PaymentsService {
           status: 'AWAITING_INSURER_CERTIFICATE',
           insurerId: quote.insurerId,
           customerId,
-          vehicleId: request.vehicleId,
+          vehicleId: lockedRequest.vehicleId,
           coverage: toContract.insuranceType(request.insuranceType),
           // The policy premium is the insurer's quoted price. The payment
           // record holds the total charge and its separate RTSA component.

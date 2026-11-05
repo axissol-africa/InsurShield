@@ -134,9 +134,14 @@ export class PaymentsRepository {
     return customer !== undefined;
   }
 
-  /** Taken before any insert: the payment's foreign key would otherwise hold a lock this one must wait for. */
-  async lockRequest(tx: Transaction, quoteRequestId: string): Promise<void> {
-    await tx.select({ id: quoteRequests.id }).from(quoteRequests).where(eq(quoteRequests.id, quoteRequestId)).for('update');
+  /** Taken before any insert: a concurrent vehicle-snapshot migration is then visible to the policy writer. */
+  async lockRequest(tx: Transaction, quoteRequestId: string): Promise<{ vehicleId: string } | undefined> {
+    const [request] = await tx
+      .select({ vehicleId: quoteRequests.vehicleId })
+      .from(quoteRequests)
+      .where(eq(quoteRequests.id, quoteRequestId))
+      .for('update');
+    return request;
   }
 
   /** False when the code is not this insurer's, was not issued on this customer's application, or was already redeemed. */

@@ -13,6 +13,7 @@ import {
   applyMigrationFiles,
   catalogPath,
   createScratchDatabase,
+  databaseState,
   DRIZZLE_FOLDER,
   drizzleKit,
   migrationTags,
@@ -135,7 +136,7 @@ describe('0001_minor_units_timestamptz', () => {
     const db = await scratch((client) => buildPrismaEraDatabase(client, { data: true }));
     const before = await query(db, timestamps, LUSAKA);
 
-    await migrateDatabase({ ...db.config, ...LUSAKA });
+    await query(db, (client) => applyMigration(client, 1), LUSAKA);
 
     await query(
       db,
@@ -168,12 +169,7 @@ describe('0001_minor_units_timestamptz', () => {
           { v: new Date('2026-03-31T22:30:00.123Z') },
         ]);
         const after = await timestamps(client);
-        const added = Object.keys(after).filter((column) => !(column in before));
-        expect(Object.keys(after).sort()).toEqual([...Object.keys(before), ...added].sort());
-        for (const column of added) {
-          expect(column).toMatch(/^auth_/);
-          expect(after[column], column).toEqual([]);
-        }
+        expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
         for (const [column, values] of Object.entries(before)) {
           expect(after[column], column).toEqual(values);
         }
@@ -196,7 +192,7 @@ describe('0001_minor_units_timestamptz', () => {
       );
     const before = await query(db, nulls);
 
-    await migrateDatabase({ ...db.config, ...LUSAKA });
+    await query(db, (client) => applyMigration(client, 1), LUSAKA);
 
     expect(Object.keys(before).length).toBeGreaterThanOrEqual(10);
     expect(await query(db, nulls)).toEqual(before);
@@ -502,6 +498,76 @@ describe('0004_payment_rtsa_fee', () => {
         code: '23514',
         constraint: 'payments_rtsaAnniversaryFeeMinor_check',
       });
+    });
+  });
+});
+
+describe('0005_vehicle_per_request', () => {
+  it('gives every historical quote request its own vehicle, follows linked policies, and is replay-safe', async () => {
+    const originalVehicleId = '00000000-0000-4000-8000-000000000021';
+    const db = await scratch(async (client) => {
+      await buildPrismaEraDatabase(client, { data: true });
+      await applyMigration(client, 1);
+      await applyMigration(client, 2);
+      await applyMigration(client, 3);
+      await applyMigration(client, 4);
+
+      // The fixture's first policy now represents a policy made from QR-2. The
+      // second policy has no originating quote request and must stay untouched.
+      await client.query(`UPDATE policies SET "quoteRequestId" = 'QR-2' WHERE "policyNumber" = 'POL-1'`);
+      await client.query(
+        `INSERT INTO payments
+           (id, "transactionId", method, "amountMinor", "idempotencyKey", "customerId", "quoteRequestId", "insurerQuoteId", "updatedAt")
+         VALUES
+           ('00000000-0000-4000-8000-000000000052', 'TX-2', 'CARD', 100550, 'key-2',
+            '00000000-0000-4000-8000-000000000001', 'QR-2', '00000000-0000-4000-8000-000000000042', now())`,
+      );
+      await client.query(
+        `INSERT INTO policies
+           ("policyNumber", "insurerId", "customerId", "vehicleId", coverage, "premiumMinor", "paymentId", "updatedAt")
+         VALUES
+           ('POL-WITHOUT-REQUEST', '00000000-0000-4000-8000-000000000011',
+            '00000000-0000-4000-8000-000000000001', $1, 'Comprehensive', 100550,
+            '00000000-0000-4000-8000-000000000052', now())`,
+        [originalVehicleId],
+      );
+    });
+
+    await query(db, async (client) => {
+      const { rows: [original] } = await client.query<{ snapshot: Record<string, unknown> }>(
+        `SELECT to_jsonb(v) - 'id' AS snapshot FROM vehicles v WHERE id = $1`,
+        [originalVehicleId],
+      );
+
+      await applyMigration(client, 5);
+
+      const { rows: requests } = await client.query<{ id: string; vehicleId: string; snapshot: Record<string, unknown> }>(
+        `SELECT qr.id, qr."vehicleId", to_jsonb(v) - 'id' AS snapshot
+         FROM quote_requests qr
+         INNER JOIN vehicles v ON v.id = qr."vehicleId"
+         ORDER BY qr.id`,
+      );
+      expect(requests.map(({ id }) => id)).toEqual(['QR-1', 'QR-2', 'QR-3']);
+      expect(requests[0].vehicleId).toBe(originalVehicleId);
+      expect(new Set(requests.map(({ vehicleId }) => vehicleId)).size).toBe(3);
+      expect(requests.map(({ snapshot }) => snapshot)).toEqual([original.snapshot, original.snapshot, original.snapshot]);
+
+      const vehicleForRequest = new Map(requests.map(({ id, vehicleId }) => [id, vehicleId]));
+      expect(
+        (
+          await client.query(
+            `SELECT "policyNumber", "quoteRequestId", "vehicleId"
+             FROM policies WHERE "policyNumber" IN ('POL-1', 'POL-WITHOUT-REQUEST') ORDER BY "policyNumber"`,
+          )
+        ).rows,
+      ).toEqual([
+        { policyNumber: 'POL-1', quoteRequestId: 'QR-2', vehicleId: vehicleForRequest.get('QR-2') },
+        { policyNumber: 'POL-WITHOUT-REQUEST', quoteRequestId: null, vehicleId: originalVehicleId },
+      ]);
+
+      const afterFirstRun = await databaseState(client);
+      await applyMigration(client, 5);
+      expect(await databaseState(client)).toEqual(afterFirstRun);
     });
   });
 });
