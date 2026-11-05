@@ -318,7 +318,9 @@ export default function CustomerAccountPage() {
                     <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
                       {[
                         ['Cover', policy.coverage || 'Comprehensive'],
-                        ['Premium', formatZMW(policy.premium || 0)],
+                        ['Insurance premium', formatZMW(policy.insurancePremium ?? policy.premium ?? 0)],
+                        ...(policy.rtsaAnniversaryFee > 0 ? [['RTSA anniversary fee', formatZMW(policy.rtsaAnniversaryFee)]] : []),
+                        ['Total paid', formatZMW(policy.paymentProof?.amount ?? (policy.premium || 0) + (policy.rtsaAnniversaryFee || 0))],
                         ['Valid until', coverPeriod(policy.policyDates).end],
                         ['Issued', formatDate(policy.issuedAt)],
                       ].map(([label, value]) => (

@@ -1,11 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract, toContract } from '../common/contract.js';
+import { MAX_NGWEE } from '../common/domain/money-limits.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { newReference } from '../common/domain/reference.js';
 import { isUniqueViolation } from '../db/errors.js';
+import type { Env } from '../config/env.js';
 import {
   expectedAmountMinor,
   isQuoteExpired,
@@ -32,7 +35,10 @@ const IDEMPOTENCY_KEY_CONSTRAINT = 'payments_idempotencyKey_key';
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
-  constructor(private readonly payments: PaymentsRepository) {}
+  constructor(
+    private readonly payments: PaymentsRepository,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   async pay(customerId: string, idempotencyKey: string, dto: PayDto): Promise<ReceiptResponse> {
     const method = fromContract.paymentMethod(dto.method);
@@ -54,7 +60,16 @@ export class PaymentsService {
     const quote = await this.payments.findQuote(request.id, dto.insurer);
     if (!quote) throw ApiException.notFound('Quote from', dto.insurer);
 
-    const expectedMinor = expectedAmountMinor(quote.premiumMinor, kwachaToNgwee(dto.rtsaAnniversaryFee ?? 0));
+    const rtsaAnniversaryFeeMinor = request.matchRtsaAnniversary
+      ? this.config.get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true })
+      : 0;
+    const expectedMinor = expectedAmountMinor(quote.premiumMinor, rtsaAnniversaryFeeMinor);
+    if (expectedMinor > Number(MAX_NGWEE)) {
+      throw ApiException.conflict(
+        'PAYMENT_AMOUNT_TOO_HIGH',
+        'The quoted premium and RTSA anniversary fee exceed the maximum payment amount.',
+      );
+    }
     const confirmedAt = new Date();
 
     let paid: ReceiptRow;
@@ -69,6 +84,7 @@ export class PaymentsService {
           status: 'CONFIRMED',
           method,
           amountMinor: attempt.amountMinor,
+          rtsaAnniversaryFeeMinor,
           currency: 'ZMW',
           confirmedAt,
           providerReference: providerReference(dto.mobileNumber),
@@ -105,7 +121,9 @@ export class PaymentsService {
           customerId,
           vehicleId: request.vehicleId,
           coverage: toContract.insuranceType(request.insuranceType),
-          premiumMinor: attempt.amountMinor,
+          // The policy premium is the insurer's quoted price. The payment
+          // record holds the total charge and its separate RTSA component.
+          premiumMinor: quote.premiumMinor,
           policyStartDate: request.policyStartDate,
           policyEndDate: request.policyEndDate,
           quoteRequestId: request.id,

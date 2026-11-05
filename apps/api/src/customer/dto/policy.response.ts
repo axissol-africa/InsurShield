@@ -15,6 +15,7 @@ export interface PolicyResponse {
   coverage: string;
   plan: string | null;
   premium: number;
+  rtsaAnniversaryFee: number;
   vehicle: string;
   vehicleDetails: {
     plateNumber: string;
@@ -38,6 +39,7 @@ export interface PolicyResponse {
     status: string;
     method: string;
     amount: number;
+    rtsaAnniversaryFee: number;
     currency: string;
     confirmedAt: string | null;
   };
@@ -62,6 +64,7 @@ export function toPolicyResponse(
     coverage: policy.coverage,
     plan: policy.plan,
     premium: ngweeToKwacha(policy.premiumMinor),
+    rtsaAnniversaryFee: ngweeToKwacha(payment.rtsaAnniversaryFeeMinor),
     vehicle: `${vehicle.year} ${vehicle.make} ${vehicle.model}`.trim(),
     // The whole vehicle, not just the plate: a renewal carries these forward
     // into the new quote request without asking for them again.
@@ -91,6 +94,7 @@ export function toPolicyResponse(
       status: toContract.paymentStatus(payment.status),
       method: toContract.paymentMethod(payment.method),
       amount: ngweeToKwacha(payment.amountMinor),
+      rtsaAnniversaryFee: ngweeToKwacha(payment.rtsaAnniversaryFeeMinor),
       currency: payment.currency,
       confirmedAt: payment.confirmedAt?.toISOString() ?? null,
     },

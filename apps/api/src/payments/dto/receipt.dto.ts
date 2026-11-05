@@ -7,6 +7,7 @@ export interface ReceiptResponse {
   status: string;
   method: string;
   amount: number;
+  rtsaAnniversaryFee: number;
   currency: string;
   confirmedAt: string | null;
   quoteRequestId: string;
@@ -19,6 +20,7 @@ export function toReceipt(row: ReceiptRow): ReceiptResponse {
     status: toContract.paymentStatus(row.status),
     method: toContract.paymentMethod(row.method),
     amount: ngweeToKwacha(row.amountMinor),
+    rtsaAnniversaryFee: ngweeToKwacha(row.rtsaAnniversaryFeeMinor),
     currency: row.currency,
     confirmedAt: row.confirmedAt?.toISOString() ?? null,
     quoteRequestId: row.quoteRequestId,

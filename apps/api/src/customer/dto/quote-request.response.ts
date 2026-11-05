@@ -40,6 +40,7 @@ export interface QuoteRequestResponse {
   insuranceType: string;
   coverageDurationId: string;
   matchRtsaAnniversary: boolean;
+  rtsaAnniversaryFee: number;
   policyDates: { startDate: string; endDate: string; daysTotal: number | null } | null;
   insurers: string[];
   insurerIds: string[];
@@ -54,10 +55,11 @@ export interface QuoteRequestResponse {
  * keys each reply by insurer name.
  */
 export function toQuoteRequestResponse(
-  { request, customer, vehicle }: RequestWithParties,
+  { request, customer, vehicle, chargedRtsaAnniversaryFeeMinor }: RequestWithParties,
   recipients: RecipientRow[],
   quotes: QuoteWithDocument[],
   requotedAs: string | null,
+  currentRtsaAnniversaryFeeMinor: number,
 ): QuoteRequestResponse {
   const insurerQuotes: Record<string, InsurerQuoteResponse> = {};
   for (const quote of quotes) {
@@ -97,6 +99,11 @@ export function toQuoteRequestResponse(
     insuranceType: toContract.insuranceType(request.insuranceType),
     coverageDurationId: toContract.coverageDuration(request.coverageDuration),
     matchRtsaAnniversary: request.matchRtsaAnniversary,
+    // A confirmed payment is a financial record. Keep showing the fee that was
+    // actually charged even if an administrator changes the setting later.
+    rtsaAnniversaryFee: ngweeToKwacha(
+      chargedRtsaAnniversaryFeeMinor ?? (request.matchRtsaAnniversary ? currentRtsaAnniversaryFeeMinor : 0),
+    ),
     policyDates:
       request.policyStartDate && request.policyEndDate
         ? {

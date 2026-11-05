@@ -59,7 +59,7 @@ export const createJourneySlice = (set, get) => ({
    * Save the customer's verified details, then let them compare published
    * cover guides before choosing which insurers receive the quote request.
    */
-  submitQuoteRequest: ({ customer, policyDates }) => {
+  submitQuoteRequest: ({ customer, policyDates, rtsaAnniversaryFee = 0 }) => {
     const state = get();
     const id = newReference('QR');
     const submittedAt = NOW();
@@ -83,6 +83,9 @@ export const createJourneySlice = (set, get) => ({
       insuranceType: state.insuranceType,
       coverageDurationId: state.coverageDurationId,
       matchRtsaAnniversary: state.matchRtsaAnniversary,
+      // This value is returned by the API. In mock mode it is supplied by the
+      // mock server adapter so payment screens use the same response contract.
+      rtsaAnniversaryFee,
       rtsaRegistrationDate: state.rtsaRegistrationDate,
       policyDates,
       // Photo blobs stay in `documents`; the request records which shots were captured.

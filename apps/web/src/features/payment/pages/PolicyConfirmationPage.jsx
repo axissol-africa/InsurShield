@@ -4,7 +4,6 @@ import { useStore } from '@/store';
 import { COVER_TYPE_LABELS } from '@/domain/coverGuide';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { coverPeriod } from '@/domain/coverPeriod';
-import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
 import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
 import { JOURNEY_COMPLETE } from '@/features/quote-journey/journeySteps';
 import { isForeignRegistered } from '@/domain/countries';
@@ -26,20 +25,24 @@ export default function PolicyConfirmationPage() {
   const [searchParams] = useSearchParams();
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { customer, quoteRequests, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, matchRtsaAnniversary, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
+  const { customer, quoteRequests, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
   const [issuing, setIssuing] = useState(true);
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
   const [reviewed, setReviewed] = useState(false);
   const [readingGuide, setReadingGuide] = useState(false);
 
-  const selectedCoverType = quoteRequests.find((request) => request.id === selectedQuote?.requestId)?.insuranceType || insuranceType;
+  const selectedRequest = quoteRequests.find((request) => request.id === selectedQuote?.requestId);
+  const selectedCoverType = selectedRequest?.insuranceType || insuranceType;
+  const selectedPolicyDates = selectedRequest?.policyDates ?? policyDates;
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
   const policyNumber = `POL-${reference}`;
-  const insurancePremium = premiumBreakdown?.finalPremium ?? selectedQuote?.price ?? 0;
-  const rtsaFee = matchRtsaAnniversary ? RTSA_ANNIVERSARY_FEE : 0;
-  const premium = insurancePremium + rtsaFee;
-  const cover = coverPeriod(policyDates);
+  // The confirmed receipt is authoritative: it records both what was paid and
+  // the RTSA fee configured by the server at the time of payment.
+  const rtsaFee = paymentReceipt?.rtsaAnniversaryFee ?? selectedRequest?.rtsaAnniversaryFee ?? 0;
+  const totalPaid = paymentReceipt?.amount ?? selectedQuote?.price ?? 0;
+  const insurancePremium = Math.max(0, totalPaid - rtsaFee);
+  const cover = coverPeriod(selectedPolicyDates);
   const validFrom = cover.known ? cover.start : formatDate(new Date());
   const validUntil = cover.end;
   const existingReview = insurerReviews.find((review) => review.policyNumber === policyNumber && review.customerEmail === customer?.email);
@@ -49,15 +52,15 @@ export default function PolicyConfirmationPage() {
       addPolicy({
         policyNumber,
         insurer: selectedQuote.name,
-        coverage: coverLabel(insuranceType),
+        coverage: coverLabel(selectedCoverType),
         plan: selectedQuote.coverage,
-        premium,
+        premium: insurancePremium,
         insurancePremium,
         rtsaAnniversaryFee: rtsaFee,
         vehicle: vehicleDetails ? `${vehicleDetails.year || ''} ${vehicleDetails.make || ''} ${vehicleDetails.model || ''}`.trim() : 'Vehicle',
         vehicleDetails,
         vehicleValue,
-        policyDates,
+        policyDates: selectedPolicyDates,
         customerName: customer?.fullName,
         customerEmail: customer?.email,
         customerPhone: customer?.phone,
@@ -68,14 +71,14 @@ export default function PolicyConfirmationPage() {
         // rather than only to the quote the customer chose it from.
         coverGuide: selectedQuote.reply?.coverGuide || null,
         paymentStatus: 'Paid',
-        paymentProof: paymentReceipt || { transactionId: `TXN-${selectedQuote.requestId?.slice(-6) || 'PENDING'}`, status: 'Confirmed', amount: premium, currency: 'ZMW', confirmedAt: new Date().toISOString() },
+        paymentProof: paymentReceipt || { transactionId: `TXN-${selectedQuote.requestId?.slice(-6) || 'PENDING'}`, status: 'Confirmed', amount: totalPaid, rtsaAnniversaryFee: rtsaFee, currency: 'ZMW', confirmedAt: new Date().toISOString() },
         status: 'Awaiting insurer certificate',
       });
       if (ncdCodeValidated) markNcdCodeUsed();
       setIssuing(false);
     }, ISSUE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [addPolicy, customer, insurancePremium, insuranceType, markNcdCodeUsed, matchRtsaAnniversary, ncdCodeValidated, paymentReceipt, policyDates, policyNumber, premium, rtsaFee, selectedQuote, vehicleDetails, vehicleValue]);
+  }, [addPolicy, customer, insurancePremium, markNcdCodeUsed, ncdCodeValidated, paymentReceipt, policyNumber, rtsaFee, selectedCoverType, selectedPolicyDates, selectedQuote, totalPaid, vehicleDetails, vehicleValue]);
 
 
   if (!selectedQuote) return (
@@ -122,10 +125,9 @@ export default function PolicyConfirmationPage() {
                   <Field label="Valid until" value={validUntil} />
                 </dl>
                 <dl className="space-y-3 border-t pt-5 text-sm">
-                  <div className="flex justify-between gap-4"><dt>Insurance premium ({premiumBreakdown?.coverageDuration || 'policy term'})</dt><dd className="shrink-0 font-medium">{formatZMW(insurancePremium)}</dd></div>
-                  {premiumBreakdown?.ncdDiscount > 0 && <div className="flex justify-between gap-4"><dt>NCD discount ({premiumBreakdown.appliedNcdPercentage}%)</dt><dd>− {formatZMW(premiumBreakdown.ncdDiscount)}</dd></div>}
+                  <div className="flex justify-between gap-4"><dt>Insurance premium ({selectedQuote.breakdown?.coverageDuration || premiumBreakdown?.coverageDuration || 'policy term'})</dt><dd className="shrink-0 font-medium">{formatZMW(insurancePremium)}</dd></div>
                   {rtsaFee > 0 && <div className="flex justify-between gap-4"><dt>RTSA anniversary fee</dt><dd>{formatZMW(rtsaFee)}</dd></div>}
-                  <div className="flex justify-between gap-4 border-t pt-4 text-lg font-semibold"><dt>Total paid</dt><dd>{formatZMW(premium)}</dd></div>
+                  <div className="flex justify-between gap-4 border-t pt-4 text-lg font-semibold"><dt>Total paid</dt><dd>{formatZMW(totalPaid)}</dd></div>
                 </dl>
                 {(selectedQuote.reply?.coverGuide?.planName || selectedQuote.reply?.document) && (
                   <div className="flex flex-wrap gap-2">

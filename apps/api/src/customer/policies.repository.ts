@@ -17,6 +17,7 @@ export interface PolicyWithParties {
     status: (typeof payments.$inferSelect)['status'];
     method: (typeof payments.$inferSelect)['method'];
     amountMinor: number;
+    rtsaAnniversaryFeeMinor: number;
     currency: string;
     confirmedAt: Date | null;
   };
@@ -44,6 +45,7 @@ const PARTIES = {
     status: payments.status,
     method: payments.method,
     amountMinor: payments.amountMinor,
+    rtsaAnniversaryFeeMinor: payments.rtsaAnniversaryFeeMinor,
     currency: payments.currency,
     confirmedAt: payments.confirmedAt,
   },

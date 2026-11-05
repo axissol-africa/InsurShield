@@ -17,6 +17,9 @@ const newReference = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCas
 const insurerNameById = (id) => state().insurersList.find((insurer) => insurer.id === id)?.name ?? '';
 const mine = (records) => records.filter(belongsToCustomer(state().customer));
 const insurerName = () => state().staffSession?.name;
+// The browser adapter stands in for the API during prototype demos. Production
+// clients always receive this fee from the API configuration, never this value.
+const MOCK_RTSA_ANNIVERSARY_FEE = 500;
 
 export const auth = {
   register: (account) => call((s) => {
@@ -82,7 +85,11 @@ export const quotes = {
   // The journey state already holds the vehicle, value and photos, so the
   // payload's extra fields are redundant here — the store builds the same
   // record the backend would return.
-  submitRequest: ({ customer, policyDates }) => call((s) => { const id = s.submitQuoteRequest({ customer, policyDates }); return state().quoteRequests.find((r) => r.id === id); }),
+  submitRequest: ({ customer, policyDates }) => call((s) => {
+    const rtsaAnniversaryFee = s.matchRtsaAnniversary ? MOCK_RTSA_ANNIVERSARY_FEE : 0;
+    const id = s.submitQuoteRequest({ customer, policyDates, rtsaAnniversaryFee });
+    return state().quoteRequests.find((r) => r.id === id);
+  }),
   listMine: () => call((s) => mine(s.quoteRequests)),
   get: (id) => call((s) => s.quoteRequests.find((r) => r.id === id) || null),
   requote: (id) => call((s) => ({ ok: s.requoteFromRequest(id) })),
@@ -114,8 +121,17 @@ export const insurers = {
 
 export const payments = {
   /** Simulated gateway round-trip: always confirms. */
-  pay: ({ amount, method }) => call((s) => {
-    const receipt = { transactionId: `TXN-${Date.now().toString(36).toUpperCase()}`, status: 'Confirmed', method, amount, currency: 'ZMW', confirmedAt: new Date().toISOString() };
+  pay: ({ amount, method, quoteRequestId }) => call((s) => {
+    const request = s.quoteRequests.find((item) => item.id === quoteRequestId);
+    const receipt = {
+      transactionId: `TXN-${Date.now().toString(36).toUpperCase()}`,
+      status: 'Confirmed',
+      method,
+      amount,
+      rtsaAnniversaryFee: request?.rtsaAnniversaryFee ?? 0,
+      currency: 'ZMW',
+      confirmedAt: new Date().toISOString(),
+    };
     s.recordPayment(receipt);
     return receipt;
   }),

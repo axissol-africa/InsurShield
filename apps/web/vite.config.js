@@ -81,6 +81,9 @@ export default defineConfig(({ mode }) => {
       include: ['src/**/*.{test,spec}.{js,jsx}', 'tools/**/*.test.js'],
       globals: true,
       setupFiles: './src/test/setup.js',
+      // Running every jsdom file at once causes otherwise fast interaction
+      // tests to time out on developer laptops and CI workers.
+      maxWorkers: 4,
       css: false,
     },
   }

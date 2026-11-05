@@ -28,3 +28,28 @@ it.each([true, false])('confirms the selected cover without a contradictory cata
   expect(screen.queryByText(/Comprehensive Gold Plan/)).not.toBeInTheDocument();
   expect(screen.getAllByRole('radio')).toHaveLength(5);
 });
+
+it('shows and persists the RTSA fee that was charged by the payment service', async () => {
+  vi.useFakeTimers();
+  useStore.setState({
+    selectedQuote: { requestId: 'REQ-RTSA', name: 'Test insurer', coverage: 'Motor', price: 1200 },
+    quoteRequests: [{ id: 'REQ-RTSA', insuranceType: 'Comprehensive', rtsaAnniversaryFee: 500 }],
+    customer: { fullName: 'Test Customer', email: 'customer@example.com' },
+    vehicleDetails: null,
+    vehicleValue: 0,
+    policyDates: null,
+    premiumBreakdown: null,
+    ncdCodeValidated: false,
+    insurerReviews: [],
+    policies: [],
+    paymentReceipt: { transactionId: 'TX-RTSA', amount: 1700, rtsaAnniversaryFee: 500, status: 'Confirmed' },
+  });
+  render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  await act(async () => { vi.advanceTimersByTime(1500); });
+
+  expect(screen.getByText('RTSA anniversary fee')).toBeInTheDocument();
+  expect(screen.getByText('ZMW 1,700.00')).toBeInTheDocument();
+  expect(useStore.getState().policies).toEqual(expect.arrayContaining([
+    expect.objectContaining({ premium: 1200, insurancePremium: 1200, rtsaAnniversaryFee: 500 }),
+  ]));
+});
