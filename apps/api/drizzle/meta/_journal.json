@@ -36,6 +36,13 @@
       "when": 1793799708923,
       "tag": "0004_payment_rtsa_fee",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793977200000,
+      "tag": "0005_vehicle_per_request",
+      "breakpoints": true
     }
   ]
 }

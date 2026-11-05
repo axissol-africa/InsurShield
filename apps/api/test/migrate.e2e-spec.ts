@@ -744,6 +744,104 @@ describe('a server whose database TimeZone is Africa/Lusaka', () => {
 });
 
 describe('concurrent runs', () => {
+  it('runs M4 at Read Committed so a policy committed while its request waits follows the copied vehicle', async () => {
+    const originalVehicleId = '00000000-0000-4000-8000-000000000021';
+    const beforeM4 = mkdtempSync(join(tmpdir(), 'migrations-before-m4-'));
+    const db = await scratch();
+    const holder = await db.connect();
+    const observer = await db.connect();
+    let committed = false;
+    let migrating: Promise<MigrationResult> | undefined;
+    try {
+      cpSync(DRIZZLE_FOLDER, beforeM4, { recursive: true });
+      rmSync(join(beforeM4, '0005_vehicle_per_request.sql'));
+      rmSync(join(beforeM4, 'catalog', '0005_vehicle_per_request.json'));
+      rmSync(join(beforeM4, 'meta', '0005_snapshot.json'));
+      const journalPath = join(beforeM4, 'meta', '_journal.json');
+      const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: unknown[] };
+      journal.entries.pop();
+      writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+
+      await query(db, (client) => buildPrismaEraDatabase(client, { data: true }));
+      expect(await migrateDatabase(db.config, { migrationsFolder: beforeM4 })).toEqual({
+        state: 'prisma-era',
+        applied: ALL.slice(1, -1),
+      });
+
+      await holder.query('BEGIN');
+      await holder.query(`SELECT id FROM quote_requests WHERE id = 'QR-2' FOR UPDATE`);
+
+      let migrationPid: number | undefined;
+      let started!: () => void;
+      const migrationStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      migrating = migrateDatabase(
+        { ...db.config, options: '-c default_transaction_isolation=repeatable\\ read' },
+        {
+          async onStep(step, client) {
+            if (step.name !== 'created-drizzle-schema') return;
+            migrationPid = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+            started();
+          },
+        },
+      );
+
+      await Promise.race([
+        migrationStarted,
+        migrating.then(() => {
+          throw new Error('M4 completed before it reported its connection PID');
+        }),
+      ]);
+      if (!migrationPid) throw new Error('Migration PID was not reported');
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        const { rows } = await observer.query<{ waiting: boolean }>(
+          `SELECT wait_event_type = 'Lock' AS waiting FROM pg_catalog.pg_stat_activity WHERE pid = $1`,
+          [migrationPid],
+        );
+        if (rows[0]?.waiting) break;
+        if (attempt === 299) throw new Error('Timed out waiting for M4 to lock QR-2');
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      await holder.query(
+        `INSERT INTO payments
+           (id, "transactionId", method, "amountMinor", "idempotencyKey", "customerId", "quoteRequestId", "insurerQuoteId", "updatedAt")
+         VALUES
+           ('00000000-0000-4000-8000-000000000052', 'TX-CONCURRENT', 'CARD', 100550, 'key-concurrent',
+            '00000000-0000-4000-8000-000000000001', 'QR-2', '00000000-0000-4000-8000-000000000042', now())`,
+      );
+      await holder.query(
+        `INSERT INTO policies
+           ("policyNumber", "insurerId", "customerId", "vehicleId", coverage, "premiumMinor", "quoteRequestId", "paymentId", "updatedAt")
+         VALUES
+           ('POL-CONCURRENT', '00000000-0000-4000-8000-000000000013',
+            '00000000-0000-4000-8000-000000000001', $1, 'Third party', 100550, 'QR-2',
+            '00000000-0000-4000-8000-000000000052', now())`,
+        [originalVehicleId],
+      );
+      await holder.query('COMMIT');
+      committed = true;
+
+      expect(await migrating).toEqual({ state: 'managed', applied: ['0005_vehicle_per_request'] });
+      const { rows } = await observer.query<{ requestVehicleId: string; policyVehicleId: string }>(
+        `SELECT qr."vehicleId" AS "requestVehicleId", p."vehicleId" AS "policyVehicleId"
+         FROM quote_requests qr
+         INNER JOIN policies p ON p."quoteRequestId" = qr.id
+         WHERE p."policyNumber" = 'POL-CONCURRENT'`,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].requestVehicleId).not.toBe(originalVehicleId);
+      expect(rows[0].policyVehicleId).toBe(rows[0].requestVehicleId);
+    } finally {
+      if (!committed) await holder.query('ROLLBACK').catch(() => undefined);
+      await migrating?.catch(() => undefined);
+      await holder.end();
+      await observer.end();
+      rmSync(beforeM4, { recursive: true, force: true });
+    }
+  });
+
   it('waits for the lock past a transaction_timeout the connection sets, then migrates', async () => {
     const db = await scratch();
     const holder = await db.connect();

@@ -424,7 +424,9 @@ export async function migrateDatabase(
     await client.query('SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended($1, 0))', [LOCK_KEY]);
     await client.query(`SET lock_timeout = '${DDL_LOCK_TIMEOUT}'`);
 
-    await client.query('BEGIN');
+    // A data migration may wait for an application transaction. Read Committed gives
+    // each subsequent statement a fresh view once that transaction releases its lock.
+    await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
     let result: MigrationResult;
     try {
       result = await apply(client, plan, options);

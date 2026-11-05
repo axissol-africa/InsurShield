@@ -11,11 +11,12 @@ import {
   buildNcdCode,
   buildPayment,
   buildStaffUser,
+  buildVehicle,
   type Row,
 } from './builders.js';
 import { buildApprovedNcdCode } from './builders/customer.js';
 import { addQuote, buildPayableQuote } from './builders/payments.js';
-import { holdLocks, openTestDatabase, queueBehind, startApp, startRepeatableReadApp, type TestApp } from './helpers.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, startRepeatableReadApp, type TestApp, until } from './helpers.js';
 import { signIn } from './sessions.js';
 import type { customers } from '../src/db/schema.js';
 
@@ -873,6 +874,24 @@ describe('payments', () => {
       expect(responses.find((response) => response.status === 409)?.body.code).toBe('ALREADY_PAID');
       expect(await policiesFor([quoteRequest.id])).toHaveLength(1);
       expect(await paymentsFor([quoteRequest.id])).toHaveLength(1);
+    });
+
+    it('uses the vehicle ID read after its request lock when that snapshot changes during payment', async () => {
+      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const replacementVehicle = await buildVehicle(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
+      const pending = pay(customer, body, randomUUID());
+
+      try {
+        await until(async () => (await held.waiters(LOCKING_THE_REQUEST)) === 1, 'the payment to wait for its quote request');
+        await held.run('UPDATE quote_requests SET "vehicleId" = $1 WHERE id = $2', [replacementVehicle.id, quoteRequest.id]);
+      } finally {
+        await held.release();
+      }
+
+      expect((await pending).status).toBe(201);
+      expect((await policiesFor([quoteRequest.id])).map((policy) => policy.vehicleId)).toEqual([replacementVehicle.id]);
     });
 
     describe('on a database whose transactions default to repeatable read', () => {
