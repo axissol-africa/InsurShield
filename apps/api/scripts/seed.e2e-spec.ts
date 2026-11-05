@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { escapeIdentifier, Pool, type ClientBase } from 'pg';
 import { createAuth, type AuthSettings } from '../src/auth/auth.instance.js';
 import {
@@ -234,12 +234,12 @@ describe('seed', () => {
     await assertSeededAccountCanSignIn('admin@insurshield.zm', after.userId);
   });
 
-  it('relinks a legacy staff row by email without creating a duplicate', async () => {
+  it('relinks a case-variant legacy staff row by email without creating a duplicate', async () => {
     await db.transaction((tx) => seedReferenceData(tx, () => {}));
     const [legacy] = await db
       .insert(schema.staffUsers)
       .values({
-        email: 'admin@insurshield.zm',
+        email: 'ADMIN@INSURSHIELD.ZM',
         fullName: 'InsurShield Administrator',
         role: 'SUPER_ADMIN',
       })
@@ -250,7 +250,7 @@ describe('seed', () => {
     const admins = await db
       .select({ id: schema.staffUsers.id, userId: schema.staffUsers.userId })
       .from(schema.staffUsers)
-      .where(eq(schema.staffUsers.email, 'admin@insurshield.zm'));
+      .where(eq(sql`lower(${schema.staffUsers.email})`, 'admin@insurshield.zm'));
     expect(admins).toEqual([{ id: legacy.id, userId: expect.any(String) }]);
   });
 
@@ -266,8 +266,8 @@ describe('seed', () => {
     expect(output.join('\n')).not.toContain(password);
   });
 
-  it('stops before linking a customer-created staff email to a seeded staff account', async () => {
-    const email = 'admin@insurshield.zm';
+  it('stops before linking a case-variant customer-created staff email to a seeded staff account', async () => {
+    const email = 'ADMIN@INSURSHIELD.ZM';
     const user = await createCredentialUser(db, {
       email,
       name: 'Existing customer',
@@ -283,7 +283,9 @@ describe('seed', () => {
       })
       .returning({ id: schema.customers.id, userId: schema.customers.userId });
 
-    await expect(seedDatabase(db, options())).rejects.toThrow(email);
+    await expect(seedDatabase(db, options())).rejects.toThrow(
+      'admin@insurshield.zm',
+    );
 
     expect(
       await db
@@ -299,7 +301,7 @@ describe('seed', () => {
     ).toEqual([customer]);
   });
 
-  it('stops before writing demo data onto a customer-created account', async () => {
+  it('stops before writing demo data onto a case-variant customer-created account', async () => {
     const user = await createCredentialUser(db, {
       email: DEMO_CUSTOMER.email,
       name: 'Existing customer',
@@ -308,7 +310,7 @@ describe('seed', () => {
     const [customer] = await db
       .insert(schema.customers)
       .values({
-        email: DEMO_CUSTOMER.email,
+        email: DEMO_CUSTOMER.email.toUpperCase(),
         fullName: 'Existing customer',
         phone: '+260971234568',
         userId: user.id,
@@ -325,6 +327,25 @@ describe('seed', () => {
         .from(schema.quoteRequests)
         .where(eq(schema.quoteRequests.customerId, customer.id)),
     ).toEqual([]);
+  });
+
+  it('relinks a case-variant legacy demo customer without creating another row', async () => {
+    const [legacy] = await db
+      .insert(schema.customers)
+      .values({
+        email: DEMO_CUSTOMER.email.toUpperCase(),
+        fullName: DEMO_CUSTOMER.fullName,
+        phone: DEMO_CUSTOMER.phone,
+      })
+      .returning({ id: schema.customers.id });
+
+    await seedDatabase(db, options());
+
+    const rows = await db
+      .select({ id: schema.customers.id, userId: schema.customers.userId })
+      .from(schema.customers)
+      .where(eq(sql`lower(${schema.customers.email})`, DEMO_CUSTOMER.email));
+    expect(rows).toEqual([{ id: legacy.id, userId: expect.any(String) }]);
   });
 
   it('issues every seeded NCD code on an approved application of the seeded customer, so a payment redeems it', async () => {

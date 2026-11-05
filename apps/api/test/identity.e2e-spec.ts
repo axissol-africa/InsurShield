@@ -500,6 +500,21 @@ describe('the identity routes', () => {
       expect(linked[0].n).toBe(0);
     });
 
+    it('refuses an unlinked legacy customer email in any letter case', async () => {
+      const customer = await buildCustomer(testApp.db, { userId: null });
+      const legacyEmail = customer.email.toUpperCase();
+      await side.db.update(customers).set({ email: legacyEmail }).where(eq(customers.id, customer.id));
+
+      for (const email of [customer.email, legacyEmail]) {
+        const response = await register(registrationBody({ email })).expect(409);
+        expect(response.body.code).toBe('ACCOUNT_CONFLICT');
+      }
+
+      const registered = await side.db.execute(sql`
+        SELECT id FROM auth_users WHERE lower(email) = ${customer.email}`);
+      expect(registered.rows).toEqual([]);
+    });
+
     it('answers a one-character password the same for a staff member’s email and any other', async () => {
       const staff = await buildStaffUser(testApp.db);
 

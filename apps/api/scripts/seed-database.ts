@@ -1,4 +1,4 @@
-import { asc, eq, ne } from 'drizzle-orm';
+import { asc, eq, ne, sql } from 'drizzle-orm';
 import {
   createCredentialUser,
   normalizeEmail,
@@ -81,13 +81,13 @@ async function ensureStaffCanBeSeeded(
   const [customer] = await tx
     .select({ id: customers.id })
     .from(customers)
-    .where(eq(customers.email, email));
+    .where(eq(sql`lower(${customers.email})`, email));
   if (customer) throw accountConflict('staff account', email);
 
   const [staff] = await tx
     .select({ userId: staffUsers.userId })
     .from(staffUsers)
-    .where(eq(staffUsers.email, email));
+    .where(eq(sql`lower(${staffUsers.email})`, email));
   const [user] = await tx
     .select({ id: authUsers.id })
     .from(authUsers)
@@ -111,7 +111,7 @@ async function ensureDemoCustomerCanBeSeeded(tx: Transaction): Promise<void> {
   const [staff] = await tx
     .select({ id: staffUsers.id })
     .from(staffUsers)
-    .where(eq(staffUsers.email, email));
+    .where(eq(sql`lower(${staffUsers.email})`, email));
   if (staff) throw accountConflict('demo customer', email);
 
   const [customer] = await tx
@@ -121,7 +121,7 @@ async function ensureDemoCustomerCanBeSeeded(tx: Transaction): Promise<void> {
       phone: customers.phone,
     })
     .from(customers)
-    .where(eq(customers.email, email));
+    .where(eq(sql`lower(${customers.email})`, email));
   const [user] = await tx
     .select({ id: authUsers.id })
     .from(authUsers)
@@ -159,7 +159,7 @@ async function seedStaff(
   const [existing] = await tx
     .select({ id: staffUsers.id, userId: staffUsers.userId })
     .from(staffUsers)
-    .where(eq(staffUsers.email, email));
+    .where(eq(sql`lower(${staffUsers.email})`, email));
 
   if (existing?.userId && !options.resetPasswords) return;
 
@@ -199,7 +199,7 @@ async function seedDemoCustomer(
   const [existing] = await tx
     .select({ id: customers.id, userId: customers.userId })
     .from(customers)
-    .where(eq(customers.email, email));
+    .where(eq(sql`lower(${customers.email})`, email));
 
   if (existing?.userId && !options.resetPasswords) return existing.id;
 

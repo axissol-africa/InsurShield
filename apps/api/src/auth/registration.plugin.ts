@@ -56,6 +56,13 @@ export function registration(db: Database) {
                 .from(staffUsers)
                 .where(eq(sql`lower(${staffUsers.email})`, email));
               if (staff) throw new APIError('CONFLICT', ACCOUNT_CONFLICT);
+              // Some pre-Better-Auth customers may have a legacy, unlinked account. PostgreSQL's
+              // normal unique index is case-sensitive, whereas sign-in addresses are not.
+              const [legacyCustomer] = await tx
+                .select({ id: customers.id })
+                .from(customers)
+                .where(eq(sql`lower(${customers.email})`, email));
+              if (legacyCustomer) throw new APIError('CONFLICT', ACCOUNT_CONFLICT);
               const created = await insertCredentialUser(tx, { email, name: fullName, passwordHash });
               const [customer] = await tx
                 .insert(customers)
