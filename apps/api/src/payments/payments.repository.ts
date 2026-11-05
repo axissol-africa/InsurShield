@@ -20,6 +20,7 @@ const receiptColumns = {
   status: payments.status,
   method: payments.method,
   amountMinor: payments.amountMinor,
+  rtsaAnniversaryFeeMinor: payments.rtsaAnniversaryFeeMinor,
   currency: payments.currency,
   confirmedAt: payments.confirmedAt,
   quoteRequestId: payments.quoteRequestId,
@@ -31,6 +32,7 @@ export type ReceiptRow = {
   status: (typeof payments.$inferSelect)['status'];
   method: (typeof payments.$inferSelect)['method'];
   amountMinor: number;
+  rtsaAnniversaryFeeMinor: number;
   currency: string;
   confirmedAt: Date | null;
   quoteRequestId: string;
@@ -76,6 +78,7 @@ export class PaymentsRepository {
         id: quoteRequests.id,
         vehicleId: quoteRequests.vehicleId,
         insuranceType: quoteRequests.insuranceType,
+        matchRtsaAnniversary: quoteRequests.matchRtsaAnniversary,
         policyStartDate: quoteRequests.policyStartDate,
         policyEndDate: quoteRequests.policyEndDate,
         ncdCode: quoteRequests.ncdCode,

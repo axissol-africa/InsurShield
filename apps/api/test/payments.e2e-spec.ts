@@ -1,6 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { ConfigService } from '@nestjs/config';
 import { eq, inArray } from 'drizzle-orm';
-import { MAX_KWACHA } from '../src/common/domain/money-limits.js';
+import { MAX_KWACHA, MAX_NGWEE } from '../src/common/domain/money-limits.js';
+import { ngweeToKwacha } from '../src/common/money.js';
+import type { Env } from '../src/config/env.js';
 import { ncdCodes, payments, policies } from '../src/db/schema.js';
 import {
   buildCustomer,
@@ -25,6 +28,7 @@ const RECEIPT_KEYS = [
   'method',
   'policyNumber',
   'quoteRequestId',
+  'rtsaAnniversaryFee',
   'status',
   'transactionId',
 ];
@@ -79,6 +83,7 @@ describe('payments', () => {
         status: 'Confirmed',
         method: 'Mobile money',
         amount: 1234.56,
+        rtsaAnniversaryFee: 0,
         currency: 'ZMW',
         quoteRequestId: quoteRequest.id,
       });
@@ -92,6 +97,7 @@ describe('payments', () => {
         status: 'CONFIRMED',
         method: 'MOBILE_MONEY',
         amountMinor: 123_456,
+        rtsaAnniversaryFeeMinor: 0,
         currency: 'ZMW',
         providerReference: 'MM-4567',
         customerId: customer.id,
@@ -136,61 +142,91 @@ describe('payments', () => {
     });
 
     describe('the amount', () => {
-      it('is the premium plus the RTSA anniversary fee, in ngwee', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, { quote: { premiumMinor: 123_456 } });
+      it('uses the configured RTSA anniversary fee only for an aligned request', async () => {
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+          request: { matchRtsaAnniversary: true },
+          quote: { premiumMinor: 123_456 },
+        });
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
           insurer: insurer.insurer.name,
-          amount: 1234.66,
+          amount: 1734.56,
           method: 'Card',
-          rtsaAnniversaryFee: 0.1,
         });
 
         expect(response.status).toBe(201);
-        expect(response.body.amount).toBe(1234.66);
+        expect(response.body).toMatchObject({ amount: 1734.56, rtsaAnniversaryFee: 500 });
         const [payment] = await paymentsFor([quoteRequest.id]);
-        expect(payment.amountMinor).toBe(123_466);
+        expect(payment).toMatchObject({ amountMinor: 173_456, rtsaAnniversaryFeeMinor: 50_000 });
         const [policy] = await policiesFor([quoteRequest.id]);
-        expect(policy.premiumMinor).toBe(123_466);
+        expect(policy.premiumMinor).toBe(123_456);
       });
 
       it.each([
-        ['one ngwee under', 1234.55, undefined],
-        ['one ngwee over', 1234.57, undefined],
-        ['one ngwee off the premium plus the fee', 1234.65, 0.1],
-      ])('is refused when %s, and nothing is stored', async (_case, amount, rtsaAnniversaryFee) => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+        ['one ngwee under', 1734.55],
+        ['one ngwee over', 1734.57],
+      ])('refuses an aligned payment that is %s, and stores nothing', async (_case, amount) => {
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+          request: { matchRtsaAnniversary: true },
+        });
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
           insurer: insurer.insurer.name,
           amount,
           method: 'Card',
-          rtsaAnniversaryFee,
         });
 
         expect(response.status).toBe(409);
         expect(response.body).toEqual({
           code: 'AMOUNT_MISMATCH',
           message: 'The amount does not match the quoted premium. Reload the quote and try again.',
-          details: { expected: rtsaAnniversaryFee ? 1234.66 : 1234.56, received: amount },
+          details: { expected: 1734.56, received: amount },
         });
         expect(await paymentsFor([quoteRequest.id])).toEqual([]);
         expect(await policiesFor([quoteRequest.id])).toEqual([]);
       });
 
-      it.each([
-        ['an amount', { amount: MAX_KWACHA + 0.01 }],
-        ['a fee', { amount: 1234.56, rtsaAnniversaryFee: MAX_KWACHA + 0.01 }],
-      ])('above MAX_KWACHA is refused with 400 for %s, and nothing is stored', async (_case, amounts) => {
+      it('does not charge the fee for an unaligned request', async () => {
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+
+        const response = await pay(customer, {
+          quoteRequestId: quoteRequest.id,
+          insurer: insurer.insurer.name,
+          amount: 1734.56,
+          method: 'Card',
+        });
+
+        expect(response.status).toBe(409);
+        expect(response.body.details).toEqual({ expected: 1234.56, received: 1734.56 });
+        expect(await paymentsFor([quoteRequest.id])).toEqual([]);
+      });
+
+      it('refuses a client-supplied RTSA fee instead of trusting it', async () => {
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+
+        const response = await pay(customer, {
+          quoteRequestId: quoteRequest.id,
+          insurer: insurer.insurer.name,
+          amount: 1234.56,
+          method: 'Card',
+          rtsaAnniversaryFee: 500,
+        });
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('VALIDATION_FAILED');
+        expect(await paymentsFor([quoteRequest.id])).toEqual([]);
+      });
+
+      it('refuses an amount above MAX_KWACHA with 400, and stores nothing', async () => {
         const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
           insurer: insurer.insurer.name,
           method: 'Card',
-          ...amounts,
+          amount: MAX_KWACHA + 0.01,
         });
 
         expect(response.status).toBe(400);
@@ -210,6 +246,113 @@ describe('payments', () => {
 
         expect(response.status).toBe(409);
         expect(response.body.code).toBe('AMOUNT_MISMATCH');
+      });
+
+      it('rejects an aligned quote whose premium and configured fee exceed MAX_KWACHA', async () => {
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+          request: { matchRtsaAnniversary: true },
+          quote: { premiumMinor: Number(MAX_NGWEE) },
+        });
+
+        const response = await pay(customer, {
+          quoteRequestId: quoteRequest.id,
+          insurer: insurer.insurer.name,
+          amount: MAX_KWACHA,
+          method: 'Card',
+        });
+
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual({
+          code: 'PAYMENT_AMOUNT_TOO_HIGH',
+          message: 'The quoted premium and RTSA anniversary fee exceed the maximum payment amount.',
+          details: null,
+        });
+        expect(await paymentsFor([quoteRequest.id])).toEqual([]);
+        expect(await policiesFor([quoteRequest.id])).toEqual([]);
+      });
+
+      it('accepts the largest aligned payment that fits within MAX_KWACHA', async () => {
+        const feeMinor = testApp.app.get(ConfigService<Env, true>).get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true });
+        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+          request: { matchRtsaAnniversary: true },
+          quote: { premiumMinor: Number(MAX_NGWEE) - feeMinor },
+        });
+
+        try {
+          const response = await pay(customer, {
+            quoteRequestId: quoteRequest.id,
+            insurer: insurer.insurer.name,
+            amount: MAX_KWACHA,
+            method: 'Card',
+          });
+
+          expect(response.status).toBe(201);
+          expect(response.body).toMatchObject({ amount: MAX_KWACHA, rtsaAnniversaryFee: ngweeToKwacha(feeMinor) });
+        } finally {
+          // This boundary value is deliberately large. Remove only its
+          // isolated payment so the shared e2e database's admin-total checks
+          // keep exercising realistic aggregate amounts.
+          await testApp.db.delete(policies).where(eq(policies.quoteRequestId, quoteRequest.id));
+          await testApp.db.delete(payments).where(eq(payments.quoteRequestId, quoteRequest.id));
+        }
+      });
+
+      it('keeps charged fees historical after the API boots with a new RTSA fee', async () => {
+        const originalFeeMinor = testApp.app.get(ConfigService<Env, true>).get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true });
+        const changedFeeMinor = originalFeeMinor === 12_345 ? 50_000 : 12_345;
+        const first = await buildPayableQuote(testApp.db, {
+          request: { matchRtsaAnniversary: true },
+          quote: { premiumMinor: 123_456 },
+        });
+        const originalPayment = await pay(first.customer, {
+          quoteRequestId: first.quoteRequest.id,
+          insurer: first.insurer.insurer.name,
+          amount: ngweeToKwacha(123_456 + originalFeeMinor),
+          method: 'Card',
+        });
+        expect(originalPayment.status).toBe(201);
+
+        const appWithChangedFee = await startApp({ env: { RTSA_ANNIVERSARY_FEE_NGWEE: String(changedFeeMinor) } });
+        try {
+          const firstSession = await signIn(appWithChangedFee.http, first.customer);
+          const [receipt, paidRequest, paidPolicy] = await Promise.all([
+            appWithChangedFee.http.get(`/api/v1/payments/${originalPayment.body.transactionId}`).set(firstSession).expect(200),
+            appWithChangedFee.http.get(`/api/v1/quote-requests/${first.quoteRequest.id}`).set(firstSession).expect(200),
+            appWithChangedFee.http.get(`/api/v1/policies/${originalPayment.body.policyNumber}`).set(firstSession).expect(200),
+          ]);
+
+          expect(receipt.body.rtsaAnniversaryFee).toBe(ngweeToKwacha(originalFeeMinor));
+          expect(paidRequest.body.rtsaAnniversaryFee).toBe(ngweeToKwacha(originalFeeMinor));
+          expect(paidPolicy.body).toMatchObject({
+            rtsaAnniversaryFee: ngweeToKwacha(originalFeeMinor),
+            paymentProof: { rtsaAnniversaryFee: ngweeToKwacha(originalFeeMinor) },
+          });
+
+          const next = await buildPayableQuote(testApp.db, {
+            request: { matchRtsaAnniversary: true },
+            quote: { premiumMinor: 123_456 },
+          });
+          const nextSession = await signIn(appWithChangedFee.http, next.customer);
+          const openRequest = await appWithChangedFee.http
+            .get(`/api/v1/quote-requests/${next.quoteRequest.id}`)
+            .set(nextSession)
+            .expect(200);
+          expect(openRequest.body.rtsaAnniversaryFee).toBe(ngweeToKwacha(changedFeeMinor));
+
+          const changedPayment = await appWithChangedFee.http
+            .post('/api/v1/payments')
+            .set(nextSession)
+            .send({
+              quoteRequestId: next.quoteRequest.id,
+              insurer: next.insurer.insurer.name,
+              amount: ngweeToKwacha(123_456 + changedFeeMinor),
+              method: 'Card',
+            })
+            .expect(201);
+          expect(changedPayment.body.rtsaAnniversaryFee).toBe(ngweeToKwacha(changedFeeMinor));
+        } finally {
+          await appWithChangedFee.close();
+        }
       });
     });
 
@@ -303,8 +446,6 @@ describe('payments', () => {
       ['a negative amount', { amount: -1234.56 }],
       ['a string amount', { amount: '1234.56' }],
       ['an amount with three decimals', { amount: 1234.561 }],
-      ['a negative fee', { amount: 1234.55, rtsaAnniversaryFee: -0.01 }],
-      ['a fee with three decimals', { amount: 1234.56, rtsaAnniversaryFee: 0.001 }],
       ['an unknown method', { method: 'Cash' }],
     ])('refuses %s with 400, and nothing is stored', async (_case, change) => {
       const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
@@ -434,6 +575,7 @@ describe('payments', () => {
         status: 'Pending',
         method: 'Card',
         amount: 0.01,
+        rtsaAnniversaryFee: 0,
         currency: 'ZMW',
         confirmedAt: null,
         quoteRequestId: quoteRequest.id,
@@ -503,7 +645,7 @@ describe('payments', () => {
     });
 
     it.each([
-      ['amount', { amount: 1234.57, rtsaAnniversaryFee: 0.01 }],
+      ['amount', { amount: 1234.57 }],
       ['method', { method: 'Mobile money' }],
     ])('with a different %s answers 409 IDEMPOTENCY_KEY_REUSED', async (_field, change) => {
       const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);

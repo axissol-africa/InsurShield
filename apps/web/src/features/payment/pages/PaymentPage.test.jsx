@@ -64,3 +64,20 @@ it.each([true, false])('displays the selected third-party cover instead of a con
   expect(screen.getByText('Third party only')).toBeInTheDocument();
   expect(screen.queryByText(/Comprehensive Gold Plan/)).not.toBeInTheDocument();
 });
+
+it('uses the server-returned RTSA fee and never sends a fee chosen by the browser', async () => {
+  api.payments.pay.mockResolvedValueOnce({ transactionId: 'TX-RTSA', amount: 1700, rtsaAnniversaryFee: 500 });
+  useStore.setState({
+    selectedQuote: { requestId: 'REQ-RTSA', name: 'Test insurer', coverage: 'Motor', price: 1200 },
+    quoteRequests: [{ id: 'REQ-RTSA', insuranceType: 'Comprehensive', rtsaAnniversaryFee: 500 }],
+  });
+  showPage();
+
+  expect(screen.getByText('RTSA anniversary fee')).toBeInTheDocument();
+  expect(screen.getByText('ZMW 1,700.00')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Pay ZMW 1,700.00' }));
+
+  await waitFor(() => expect(api.payments.pay).toHaveBeenCalledTimes(1));
+  expect(api.payments.pay).toHaveBeenCalledWith(expect.objectContaining({ quoteRequestId: 'REQ-RTSA', amount: 1700 }));
+  expect(api.payments.pay.mock.calls[0][0]).not.toHaveProperty('rtsaAnniversaryFee');
+});

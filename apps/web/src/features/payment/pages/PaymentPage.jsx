@@ -5,7 +5,6 @@ import { useStore } from '@/store';
 import { COVER_TYPE_LABELS } from '@/domain/coverGuide';
 import { formatZMW } from '@/domain/premiumEngine';
 import { coverPeriodLabel } from '@/domain/coverPeriod';
-import { RTSA_ANNIVERSARY_FEE } from '@/domain/rtsa';
 import { quoteValidity } from '@/domain/quoteValidity';
 import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from '@/components/ui/primitives/card';
@@ -23,7 +22,7 @@ export default function PaymentPage() {
   const [searchParams] = useSearchParams();
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { selectedQuote, insuranceType, quoteRequests, vehicleDetails, policyDates, customer, matchRtsaAnniversary, requoteFromRequest, recordPayment } = useStore();
+  const { selectedQuote, insuranceType, quoteRequests, vehicleDetails, policyDates, customer, requoteFromRequest, recordPayment } = useStore();
   const [expiredAtPay, setExpiredAtPay] = useState(false);
   const [method, setMethod] = useState('momo');
   const [mobileNumber, setMobileNumber] = useState(customer?.phone || '');
@@ -36,8 +35,9 @@ export default function PaymentPage() {
     </JourneyLayout>
   );
 
-  const selectedCoverType = quoteRequests.find((request) => request.id === selectedQuote.requestId)?.insuranceType || insuranceType;
-  const rtsaFee = matchRtsaAnniversary ? RTSA_ANNIVERSARY_FEE : 0;
+  const selectedRequest = quoteRequests.find((request) => request.id === selectedQuote.requestId);
+  const selectedCoverType = selectedRequest?.insuranceType || insuranceType;
+  const rtsaFee = selectedRequest?.rtsaAnniversaryFee ?? 0;
   const total = selectedQuote.price + rtsaFee;
   const validity = quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null);
   const requote = () => {

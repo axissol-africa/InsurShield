@@ -78,10 +78,27 @@ describe('quote requests', () => {
     expect(request.insurers).toEqual([]);
     expect(request.inspectionShots).toEqual(INSPECTION_KEYS);
     expect(request.insurerQuotes).toEqual({});
+    expect(request.rtsaAnniversaryFee).toBe(0);
     expect(request.status).toBe('GuidesReady');
     expect(state().requestQuotesFromGuides(id, ['1', '2'])).toBe(true);
     expect(selectActiveQuoteRequest(state()).insurers).toEqual(['Prestige Assurance', 'Global Guard Insurance']);
     expect(selectActiveQuoteRequest(state()).status).toBe('Submitted');
+  });
+
+  it('keeps the RTSA fee returned by the server with the request', () => {
+    signInDemo();
+    seedVehicle();
+    state().setRtsaAnniversary(true, '2023-10-31');
+    const id = state().submitQuoteRequest({
+      customer: { email: DEMO_CUSTOMER_ACCOUNT.email },
+      policyDates: null,
+      rtsaAnniversaryFee: 500,
+    });
+
+    expect(state().quoteRequests.find((request) => request.id === id)).toMatchObject({
+      matchRtsaAnniversary: true,
+      rtsaAnniversaryFee: 500,
+    });
   });
 
   it('attaches an insurer reply and reopens earlier requests', () => {

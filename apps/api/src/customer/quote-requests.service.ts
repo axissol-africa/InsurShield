@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract } from '../common/contract.js';
 import { kwachaToNgwee } from '../common/money.js';
+import type { Env } from '../config/env.js';
 import type { Transaction } from '../db/database.module.js';
 import { newReference } from '../common/domain/reference.js';
 import type { CustomerPrincipal } from './customer-principal.js';
@@ -34,6 +36,7 @@ export class QuoteRequestsService {
   constructor(
     private readonly repository: QuoteRequestsRepository,
     private readonly documents: DocumentsService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -194,6 +197,7 @@ export class QuoteRequestsService {
   }
 
   private async responses(rows: RequestWithParties[], tx?: Transaction): Promise<QuoteRequestResponse[]> {
+    const currentRtsaAnniversaryFeeMinor = this.config.get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true });
     const ids = rows.map((row) => row.request.id);
     const recipients = await this.repository.recipientsOf(ids, tx);
     const quotes = await this.repository.quotesOf(ids, tx);
@@ -211,6 +215,7 @@ export class QuoteRequestsService {
           recipients.filter((recipient) => recipient.quoteRequestId === row.request.id),
           withDocuments,
           links.find((link) => link.requotedFromId === row.request.id)?.id ?? null,
+          currentRtsaAnniversaryFeeMinor,
         ),
       );
     }

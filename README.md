@@ -118,6 +118,7 @@ Error messages name a variable but never print its value.
 | `BETTER_AUTH_URL` | yes | Public API origin used by the identity routes, for example `https://api.insurshield.zm` |
 | `TRUST_PROXY_HOPS` | yes | Exact number of trusted proxies in front of the API: `0` locally, otherwise set for the deployed path |
 | `AUTH_RATE_LIMIT` | no (`on`) | Identity-route rate limiting; `off` is accepted only in the test environment |
+| `RTSA_ANNIVERSARY_FEE_NGWEE` | yes | RTSA anniversary fee in ngwee, added only to an aligned quote; set `50000` for ZMW 500.00 locally |
 | `S3_ENDPOINT` | no | Object storage endpoint (MinIO locally); unset for AWS S3 |
 | `S3_FORCE_PATH_STYLE` | no (`false`) | `true` for MinIO |
 | `S3_REGION` | no (`us-east-1`) | Bucket region |

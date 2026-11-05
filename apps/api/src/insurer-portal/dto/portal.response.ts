@@ -113,6 +113,7 @@ export function toPortalPolicy(
       status: policy.payment.status,
       method: policy.payment.method,
       amount: ngweeToKwacha(policy.payment.amountMinor),
+      rtsaAnniversaryFee: ngweeToKwacha(policy.payment.rtsaAnniversaryFeeMinor),
       currency: policy.payment.currency,
       confirmedAt: iso(policy.payment.confirmedAt),
     },

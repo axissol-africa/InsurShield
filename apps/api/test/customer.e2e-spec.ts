@@ -74,6 +74,7 @@ const QUOTE_REQUEST_KEYS = [
   'policyDates',
   'requotedAs',
   'requotedFromId',
+  'rtsaAnniversaryFee',
   'status',
   'submittedAt',
   'vehicle',
@@ -101,6 +102,7 @@ const POLICY_KEYS = [
   'quoteRequestId',
   'receivedAt',
   'renewal',
+  'rtsaAnniversaryFee',
   'status',
   'vehicle',
   'vehicleDetails',
@@ -331,6 +333,7 @@ describe('customer', () => {
         insuranceType: 'ThirdParty',
         coverageDurationId: '2q',
         matchRtsaAnniversary: true,
+        rtsaAnniversaryFee: 500,
         policyDates: { startDate: '2026-11-01T00:00:00.000Z', endDate: '2027-05-01T00:00:00.000Z', daysTotal: 181 },
         insurers: [quoted.insurer.name, silent.insurer.name],
         insurerIds: [quoted.insurer.id, silent.insurer.id],
@@ -351,6 +354,25 @@ describe('customer', () => {
         requotedAs: again.id,
       });
       expect(response.body[0]).toMatchObject({ requotedFromId: quoteRequest.id, requotedAs: null, policyDates: null });
+    });
+
+    it('keeps the RTSA fee that was charged on a paid aligned request', async () => {
+      const purchase = await buildPurchasedPolicy(testApp.db);
+      await testApp.db
+        .update(quoteRequests)
+        .set({ matchRtsaAnniversary: true })
+        .where(eq(quoteRequests.id, purchase.quoteRequest.id));
+      await testApp.db
+        .update(payments)
+        .set({ rtsaAnniversaryFeeMinor: 12_345 })
+        .where(eq(payments.id, purchase.payment.id));
+
+      const response = await testApp.http
+        .get(`/api/v1/quote-requests/${purchase.quoteRequest.id}`)
+        .set(await asCustomer(purchase.customer))
+        .expect(200);
+
+      expect(response.body).toMatchObject({ matchRtsaAnniversary: true, rtsaAnniversaryFee: 123.45 });
     });
 
     it('answers 404 for another customer’s request and leaves it out of the list', async () => {
@@ -822,7 +844,7 @@ describe('customer', () => {
         .where(eq(policies.policyNumber, purchase.policy.policyNumber));
       await testApp.db
         .update(payments)
-        .set({ amountMinor: 123_456, confirmedAt: new Date('2026-01-01T09:59:59.999Z') })
+        .set({ amountMinor: 173_456, rtsaAnniversaryFeeMinor: 50_000, confirmedAt: new Date('2026-01-01T09:59:59.999Z') })
         .where(eq(payments.id, purchase.payment.id));
 
       const response = await testApp.http.get('/api/v1/policies').set(await asCustomer(customer)).expect(200);
@@ -842,6 +864,7 @@ describe('customer', () => {
         coverage: 'Comprehensive',
         plan: 'Elite Security Policy',
         premium: 1234.56,
+        rtsaAnniversaryFee: 500,
         vehicle: '2020 Toyota Hilux',
         vehicleDetails: {
           plateNumber: 'BAZ 9901',
@@ -864,7 +887,8 @@ describe('customer', () => {
           transactionId: purchase.payment.transactionId,
           status: 'Confirmed',
           method: 'Mobile money',
-          amount: 1234.56,
+          amount: 1734.56,
+          rtsaAnniversaryFee: 500,
           currency: 'ZMW',
           confirmedAt: '2026-01-01T09:59:59.999Z',
         },

@@ -92,6 +92,7 @@
  * @property {'Comprehensive'|'ThirdParty'} insuranceType
  * @property {string} coverageDurationId       '1q' | '2q' | '3q' | '4q'
  * @property {boolean} [matchRtsaAnniversary]
+ * @property {number} rtsaAnniversaryFee       ZMW server-configured fee for a matched RTSA anniversary; charged fee after payment
  * @property {string} [rtsaRegistrationDate]
  * @property {Object|null} policyDates
  * @property {string[]} inspectionShots        keys of the live photos captured
@@ -106,6 +107,7 @@
  * @property {'Confirmed'|'Pending'|'Failed'} status
  * @property {'Mobile money'|'Card'} method
  * @property {number} amount
+ * @property {number} rtsaAnniversaryFee
  * @property {'ZMW'} currency
  * @property {string} confirmedAt
  */
@@ -119,6 +121,7 @@
  * @property {string} coverage
  * @property {string} [plan]
  * @property {number} premium
+ * @property {number} rtsaAnniversaryFee
  * @property {string} vehicle
  * @property {VehicleDetails} vehicleDetails
  * @property {Object|null} policyDates

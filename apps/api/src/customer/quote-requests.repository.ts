@@ -7,6 +7,7 @@ import {
   insurerQuotes,
   insurers,
   ncdCodes,
+  payments,
   quoteRequestRecipients,
   quoteRequests,
   vehicles,
@@ -22,6 +23,7 @@ export interface RequestWithParties {
   request: QuoteRequestRow;
   customer: { fullName: string; email: string; phone: string };
   vehicle: VehicleRow;
+  chargedRtsaAnniversaryFeeMinor: number | null;
 }
 
 export interface RecipientRow {
@@ -64,6 +66,7 @@ const PARTIES = {
   request: quoteRequests,
   customer: { fullName: customers.fullName, email: customers.email, phone: customers.phone },
   vehicle: vehicles,
+  chargedRtsaAnniversaryFeeMinor: payments.rtsaAnniversaryFeeMinor,
 };
 
 @Injectable()
@@ -84,6 +87,10 @@ export class QuoteRequestsRepository {
       .from(quoteRequests)
       .innerJoin(customers, eq(customers.id, quoteRequests.customerId))
       .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
+      .leftJoin(
+        payments,
+        and(eq(payments.quoteRequestId, quoteRequests.id), eq(payments.status, 'CONFIRMED')),
+      )
       .where(eq(quoteRequests.customerId, customerId))
       .orderBy(desc(quoteRequests.submittedAt));
   }
@@ -94,6 +101,10 @@ export class QuoteRequestsRepository {
       .from(quoteRequests)
       .innerJoin(customers, eq(customers.id, quoteRequests.customerId))
       .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
+      .leftJoin(
+        payments,
+        and(eq(payments.quoteRequestId, quoteRequests.id), eq(payments.status, 'CONFIRMED')),
+      )
       .where(and(eq(quoteRequests.id, id), eq(quoteRequests.customerId, customerId)));
     return row;
   }

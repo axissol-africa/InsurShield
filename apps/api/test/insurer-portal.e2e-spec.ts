@@ -421,6 +421,7 @@ describe('insurer portal', () => {
           status: 'CONFIRMED',
           method: 'MOBILE_MONEY',
           amount: 1234.56,
+          rtsaAnniversaryFee: 0,
           currency: 'ZMW',
           confirmedAt: '2026-10-22T10:00:00.250Z',
         },

@@ -35,6 +35,7 @@ const valid = {
   BETTER_AUTH_SECRET: 'a-test-secret-of-at-least-32-characters',
   BETTER_AUTH_URL: 'http://localhost:4000',
   TRUST_PROXY_HOPS: '0',
+  RTSA_ANNIVERSARY_FEE_NGWEE: '50000',
 };
 
 function problems(raw: Record<string, unknown>): string {
@@ -101,6 +102,14 @@ describe('validateEnv', () => {
     expect(validateEnv({ ...valid, TRUST_PROXY_HOPS: '2' }).TRUST_PROXY_HOPS).toBe(2);
   });
 
+  it.each(['0', '50000', '99999999999999'])('accepts RTSA_ANNIVERSARY_FEE_NGWEE=%s as ngwee', (value) => {
+    expect(validateEnv({ ...valid, RTSA_ANNIVERSARY_FEE_NGWEE: value }).RTSA_ANNIVERSARY_FEE_NGWEE).toBe(Number(value));
+  });
+
+  it.each(['-1', '1.5', 'one', '100000000000000', ''])('refuses invalid RTSA_ANNIVERSARY_FEE_NGWEE=%j', (value) => {
+    expect(problems({ ...valid, RTSA_ANNIVERSARY_FEE_NGWEE: value })).toMatch(/- RTSA_ANNIVERSARY_FEE_NGWEE:/);
+  });
+
   it('keeps the sign-in limiter on unless told otherwise', () => {
     expect(validateEnv(valid).AUTH_RATE_LIMIT).toBe('on');
   });
@@ -127,6 +136,7 @@ describe('validateEnv', () => {
     'BETTER_AUTH_SECRET',
     'BETTER_AUTH_URL',
     'TRUST_PROXY_HOPS',
+    'RTSA_ANNIVERSARY_FEE_NGWEE',
     'S3_BUCKET',
   ])('requires %s, with no default host, port or name in code', (name) => {
     const { [name as keyof typeof valid]: _omitted, ...without } = valid;
@@ -231,6 +241,7 @@ describe('validateEnv', () => {
       BETTER_AUTH_SECRET: SECRET,
       BETTER_AUTH_URL: SECRET,
       TRUST_PROXY_HOPS: SECRET,
+      RTSA_ANNIVERSARY_FEE_NGWEE: SECRET,
       AUTH_RATE_LIMIT: SECRET,
       S3_ENDPOINT: SECRET,
       S3_SSE: SECRET,
@@ -248,7 +259,7 @@ describe('validateEnv', () => {
 });
 
 // A placeholder whose setting is a number needs a number in its place.
-const FILLERS: Record<string, string> = { TRUST_PROXY_HOPS: '0' };
+const FILLERS: Record<string, string> = { TRUST_PROXY_HOPS: '0', RTSA_ANNIVERSARY_FEE_NGWEE: '50000' };
 
 describe('.env.example', () => {
   const documented = readFileSync(new URL('../../.env.example', import.meta.url), 'utf8');

@@ -31,10 +31,12 @@ describe('mock api adapter', () => {
     state.setVehicleValue(250000);
     state.setVehicleUsage('Individual');
     state.setInsuranceType('Comprehensive');
+    state.setRtsaAnniversary(true, '2023-10-31');
     state.setDocuments(Object.fromEntries(INSPECTION_KEYS.map((key) => [key, 'data:image/jpeg;base64,x'])));
 
     const request = await mock.quotes.submitRequest({ customer: state.customer, policyDates: null });
     expect(request.insurers).toEqual([]);
+    expect(request.rtsaAnniversaryFee).toBe(500);
     expect(await mock.quotes.listMine()).toHaveLength(1);
 
     state.requestQuotesFromGuides(request.id, ['1']);
@@ -49,7 +51,7 @@ describe('mock api adapter', () => {
 
   it('confirms a payment and records the receipt for the confirmation page', async () => {
     const receipt = await mock.payments.pay({ amount: 10900, method: 'Mobile money' });
-    expect(receipt).toMatchObject({ status: 'Confirmed', amount: 10900, currency: 'ZMW' });
+    expect(receipt).toMatchObject({ status: 'Confirmed', amount: 10900, rtsaAnniversaryFee: 0, currency: 'ZMW' });
     expect(useStore.getState().paymentReceipt).toEqual(receipt);
     expect(await mock.payments.status(receipt.transactionId)).toEqual(receipt);
   });

@@ -223,6 +223,7 @@ export class InsurerPortalRepository {
           status: payments.status,
           method: payments.method,
           amountMinor: payments.amountMinor,
+          rtsaAnniversaryFeeMinor: payments.rtsaAnniversaryFeeMinor,
           currency: payments.currency,
           confirmedAt: payments.confirmedAt,
         },

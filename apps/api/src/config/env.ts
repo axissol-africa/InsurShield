@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { parse } from 'pg-connection-string';
 import { z } from 'zod';
+import { MAX_NGWEE } from '../common/domain/money-limits.js';
 
 /**
  * Every environment variable the API needs, validated once at boot. A missing or
@@ -114,6 +115,8 @@ export const envSchema = z.object({
   TRUST_PROXY_HOPS: wholeNumber(0, 10),
   /** The identity routes' rate limits. */
   AUTH_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
+  /** Server-controlled RTSA fee added only to a quote that aligns to the RTSA anniversary. */
+  RTSA_ANNIVERSARY_FEE_NGWEE: wholeNumber(0, Number(MAX_NGWEE)),
 
   /** Unset in production so the AWS SDK talks to real S3. */
   S3_ENDPOINT: z.string().url().optional(),
