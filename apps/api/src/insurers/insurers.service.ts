@@ -88,7 +88,8 @@ export class InsurersService {
    * Restore is deliberately not a general status update: only DELETED may
    * transition here, and it returns INACTIVE until a super admin activates it.
    */
-  async restore(id: string) {
+  async restore(id: string, role: StaffRoleName) {
+    if (role !== 'SUPER_ADMIN') throw ApiException.forbidden();
     const insurer = await this.insurers.transaction(async (tx) => {
       const row = await this.insurers.restoreDeleted(tx, id);
       if (row) return { ...row, contact: await this.insurers.findContact(tx, id) };

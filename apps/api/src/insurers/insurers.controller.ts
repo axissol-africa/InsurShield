@@ -34,8 +34,11 @@ export class InsurersController {
   @Roles('SUPER_ADMIN')
   @HttpCode(HttpStatus.OK)
   @Post(':id/restore')
-  restore(@Param('id', ParseUUIDPipe) id: string) {
-    return this.insurers.restore(id);
+  restore(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.restore(id, principal.role);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')

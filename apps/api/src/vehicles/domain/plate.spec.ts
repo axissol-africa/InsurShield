@@ -5,6 +5,7 @@ describe('comparablePlate', () => {
     ['BAA 1234', 'BAA1234'],
     [' baa  1234 ', 'BAA1234'],
     ['b a a\t1 2 3 4', 'BAA1234'],
+    ['b\u00a0a\ufeffa 1 2 3 4', 'BAA1234'],
     ['abc-12', 'ABC-12'],
   ])('reads %j as %j', (plate, expected) => {
     expect(comparablePlate(plate)).toBe(expected);

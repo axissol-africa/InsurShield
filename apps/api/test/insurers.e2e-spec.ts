@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { Response } from 'supertest';
 import { insurerContacts, insurers, staffUsers } from '../src/db/schema.js';
+import { InsurersService } from '../src/insurers/insurers.service.js';
 import { buildCustomer, buildInsurer, buildStaffUser, unique, type Row } from './builders.js';
-import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, until, type TestApp } from './helpers.js';
 import { signIn, type SessionHeaders } from './sessions.js';
 
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -528,7 +529,7 @@ describe('insurers', () => {
       const response = await testApp.http
         .patch(`/api/v1/insurers/${insurer.id}/status`)
         .set(asAdmin)
-        .send({ status: 'Active' })
+        .send({ status: 'Enabled' })
         .expect(400);
 
       expect(response.body.details.fields).toEqual(['Status must be Active, Inactive or Deleted.']);
@@ -552,6 +553,17 @@ describe('insurers', () => {
   });
 
   describe('restore (T-D6–T-D10)', () => {
+    it.each(['ADMIN', 'INSURER_USER'] as const)('refuses direct service restore by %s without changing the insurer', async (role) => {
+      const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const service = testApp.app.get(InsurersService);
+      const before = await stored(insurer.id);
+
+      await expect(service.restore(insurer.id, role)).rejects.toMatchObject({ status: 403 });
+      await expect(service.restore(randomUUID(), role)).rejects.toMatchObject({ status: 403 });
+
+      expect(await stored(insurer.id)).toEqual(before);
+    });
+
     it('restores a deleted insurer as inactive without losing its staff or product details', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const { insurer, staff } = await buildInsurer(testApp.db, {
@@ -595,9 +607,16 @@ describe('insurers', () => {
       const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
       const asSuperAdmin = await signIn(testApp.http, superAdmin);
 
-      const responses = await Promise.all([restore(insurer.id, asSuperAdmin), restore(insurer.id, asSuperAdmin)]);
+      const held = await holdLocks(side.pool, (_db, client) =>
+        client.query('SELECT id FROM insurers WHERE id = $1 FOR UPDATE', [insurer.id]),
+      );
+      const responses = await queueBehind(held, '%update "insurers"%', 2, [
+        async () => restore(insurer.id, asSuperAdmin),
+        async () => restore(insurer.id, asSuperAdmin),
+      ]);
 
       expect(responses.map((response) => response.status).sort((first, second) => first - second)).toEqual([200, 409]);
+      expect(responses.find((response) => response.status === 409)?.body.code).toBe('INSURER_NOT_DELETED');
       expect((await stored(insurer.id)).row).toMatchObject({ status: 'INACTIVE', deletedAt: null });
     });
 
