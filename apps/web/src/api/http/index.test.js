@@ -8,7 +8,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, auth, insurers } from './index';
+import { account, admin, auth, insurers } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -39,5 +39,13 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.get).toHaveBeenNthCalledWith(1, '/insurer/profile');
     expect(transport.get).toHaveBeenNthCalledWith(2, '/insurers', { params: { status: 'deleted' } });
     expect(transport.post).toHaveBeenCalledWith('/insurers/insurer-1/restore');
+  });
+
+  it('loads the read-only audit trail with server filters', () => {
+    admin.auditLogs({ entityType: 'POLICY', limit: 25, cursor: 'next-page' });
+
+    expect(transport.get).toHaveBeenCalledWith('/admin/audit-logs', {
+      params: { entityType: 'POLICY', limit: 25, cursor: 'next-page' },
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha, sumToKwacha } from '../../common/money.js';
-import type { ConsentRow, CustomerMatch, OverviewCounts, RecentPolicyRow } from '../admin.repository.js';
+import type { AuditLogRow, ConsentRow, CustomerMatch, OverviewCounts, RecentPolicyRow } from '../admin.repository.js';
 import { shownPhone } from '../../common/auth/phone.js';
 
 export function toOverviewResponse(counts: OverviewCounts) {
@@ -56,4 +56,29 @@ export function toCustomerLookupResponse(customer: CustomerMatch, consent: Conse
       claims: customer.claims,
     },
   };
+}
+
+/** Only field names leave the audit endpoint; the values stay server-side. */
+export function toAuditLogResponse(entry: AuditLogRow) {
+  const before = asRecord(entry.before);
+  const after = asRecord(entry.after);
+  const changedFields = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+    .sort();
+
+  return {
+    id: entry.id,
+    actorType: entry.actorType,
+    action: entry.action,
+    entityType: entry.entityType,
+    entityId: entry.entityId,
+    note: entry.note,
+    correlationId: entry.correlationId,
+    changedFields,
+    createdAt: entry.createdAt.toISOString(),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

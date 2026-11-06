@@ -9,6 +9,8 @@ import { toPolicyResponse, type PolicyResponse } from './dto/policy.response.js'
 import type { QuoteRequestResponse } from './dto/quote-request.response.js';
 import { PoliciesRepository, type PolicyWithParties } from './policies.repository.js';
 import { QuoteRequestsService } from './quote-requests.service.js';
+import type { CustomerPrincipal } from './customer-principal.js';
+import { auditActor } from '../common/audit/audit.types.js';
 
 @Injectable()
 export class PoliciesService {
@@ -37,9 +39,9 @@ export class PoliciesService {
    * request rather than an extension: the point is to compare the market
    * again, and the customer may well leave the incumbent.
    */
-  async renew(customerId: string, policyNumber: string): Promise<QuoteRequestResponse> {
+  async renew(customer: CustomerPrincipal, policyNumber: string): Promise<QuoteRequestResponse> {
     const response = await this.repository.transaction(async (tx) => {
-      const policy = await this.repository.lockOwned(tx, customerId, policyNumber);
+      const policy = await this.repository.lockOwned(tx, customer.id, policyNumber);
       if (!policy) throw ApiException.notFound('Policy', policyNumber);
 
       const now = new Date();
@@ -63,7 +65,7 @@ export class PoliciesService {
           status: 'SUBMITTED',
           submittedAt: now,
           expiresAt: addDays(now, REQUEST_VALIDITY_DAYS),
-          customerId,
+          customerId: customer.id,
           vehicleId: policy.vehicleId,
           vehicleValueMinor: original?.vehicleValueMinor ?? policy.premiumMinor,
           vehicleUsage: original?.vehicleUsage ?? 'Individual',
@@ -76,6 +78,8 @@ export class PoliciesService {
           renewalOfPolicyNumber: policy.policyNumber,
         },
         insurerIds,
+        [],
+        auditActor(customer),
       );
     });
 

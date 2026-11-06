@@ -8,6 +8,8 @@ import type { Env } from '../config/env.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { Transaction } from '../db/database.module.js';
 import { DocumentsRepository, type DocumentRow } from './documents.repository.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 import { fileTooLarge } from './upload-limits.js';
 
 /** What the browser is allowed to upload, matching apps/web/src/lib/files.js. */
@@ -40,6 +42,7 @@ export class DocumentsService {
     private readonly repository: DocumentsRepository,
     private readonly storage: StorageService,
     private readonly config: ConfigService<Env, true>,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -75,18 +78,30 @@ export class DocumentsService {
     const key = this.storage.buildKey(scope, file.originalname);
     await this.storage.put(key, file.buffer, file.mimetype);
 
-    const document = await this.repository.insert({
-      kind,
-      fileName: file.originalname,
-      mimeType: file.mimetype,
-      sizeBytes: file.size,
-      storageKey: key,
-      // Lets a later upload of the same bytes be recognised, and proves the
-      // stored object has not been altered.
-      checksumSha256: createHash('sha256').update(file.buffer).digest('hex'),
-      ...(principal.kind === 'customer'
-        ? { uploadedByCustomerId: principal.id }
-        : { uploadedByStaffId: principal.id }),
+    const document = await this.repository.transaction(async (tx) => {
+      const stored = await this.repository.insert(tx, {
+        kind,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+        storageKey: key,
+        // Lets a later upload of the same bytes be recognised, and proves the
+        // stored object has not been altered.
+        checksumSha256: createHash('sha256').update(file.buffer).digest('hex'),
+        ...(principal.kind === 'customer'
+          ? { uploadedByCustomerId: principal.id }
+          : { uploadedByStaffId: principal.id }),
+      });
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'document.uploaded',
+        entityType: 'DOCUMENT',
+        entityId: stored.id,
+        after: { kind: stored.kind, mimeType: stored.mimeType, sizeBytes: stored.sizeBytes },
+        note: 'Document uploaded for a later workflow attachment.',
+        correlationId: stored.id,
+      });
+      return stored;
     });
 
     return this.toRecord(document);

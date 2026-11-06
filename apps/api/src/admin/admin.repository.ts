@@ -6,6 +6,7 @@ import {
   claimNotifications,
   consentRecords,
   customers,
+  auditLogs,
   insurers,
   ncdApplications,
   payments,
@@ -43,6 +44,17 @@ export interface OverviewCounts {
   totalCustomers: number;
   premiumAllTimeMinor: string;
   premiumThisMonthMinor: string;
+}
+
+export interface AuditLogFilters {
+  entityType?: string;
+  actorType?: 'CUSTOMER' | 'STAFF' | 'INSURER' | 'SYSTEM';
+  action?: string;
+  entityId?: string;
+  from?: Date;
+  to?: Date;
+  cursor?: { createdAt: Date; id: string };
+  limit: number;
 }
 
 @Injectable()
@@ -146,8 +158,47 @@ export class AdminRepository {
       .limit(1);
     return consent;
   }
+
+  /**
+   * The admin reader selects the minimum it needs. Raw JSON snapshots stay in
+   * the database so a new console screen cannot accidentally disclose them.
+   */
+  async auditLogs(filters: AuditLogFilters) {
+    const conditions: SQL[] = [];
+    if (filters.entityType) conditions.push(eq(auditLogs.entityType, filters.entityType));
+    if (filters.actorType) conditions.push(eq(auditLogs.actorType, filters.actorType));
+    if (filters.action) conditions.push(eq(auditLogs.action, filters.action));
+    if (filters.entityId) conditions.push(eq(auditLogs.entityId, filters.entityId));
+    if (filters.from) conditions.push(gte(auditLogs.createdAt, filters.from));
+    if (filters.to) conditions.push(lte(auditLogs.createdAt, filters.to));
+    if (filters.cursor) {
+      conditions.push(or(
+        lt(auditLogs.createdAt, filters.cursor.createdAt),
+        and(eq(auditLogs.createdAt, filters.cursor.createdAt), lt(auditLogs.id, filters.cursor.id)),
+      )!);
+    }
+
+    return this.db
+      .select({
+        id: auditLogs.id,
+        actorType: auditLogs.actorType,
+        action: auditLogs.action,
+        entityType: auditLogs.entityType,
+        entityId: auditLogs.entityId,
+        note: auditLogs.note,
+        correlationId: auditLogs.correlationId,
+        before: auditLogs.before,
+        after: auditLogs.after,
+        createdAt: auditLogs.createdAt,
+      })
+      .from(auditLogs)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+      .limit(filters.limit + 1);
+  }
 }
 
 export type RecentPolicyRow = Awaited<ReturnType<AdminRepository['recentPolicies']>>[number];
 export type CustomerMatch = NonNullable<Awaited<ReturnType<AdminRepository['findCustomer']>>>;
 export type ConsentRow = Awaited<ReturnType<AdminRepository['latestConsent']>>;
+export type AuditLogRow = Awaited<ReturnType<AdminRepository['auditLogs']>>[number];

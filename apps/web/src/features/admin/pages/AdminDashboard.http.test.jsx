@@ -10,7 +10,7 @@ vi.mock('@/config/env', () => ({ env: { apiMode: 'http', mockLatencyMs: 0 } }));
 vi.mock('@/api', () => ({
   api: {
     admin: {
-      overview: vi.fn(), premiumByMonth: vi.fn(), recentPolicies: vi.fn(), findCustomer: vi.fn(),
+      overview: vi.fn(), premiumByMonth: vi.fn(), recentPolicies: vi.fn(), findCustomer: vi.fn(), auditLogs: vi.fn(),
     },
     insurers: { list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn(), remove: vi.fn(), restore: vi.fn() },
     config: { getPia: vi.fn(), setPia: vi.fn() },
@@ -73,5 +73,23 @@ describe('administrator HTTP data', () => {
     await waitFor(() => expect(api.admin.findCustomer).toHaveBeenCalledWith('mwiza@example.zm'));
     await waitFor(() => expect(screen.getByText('Mwiza Banda', { selector: 'dd' })).toBeVisible());
     expect(screen.getByText('+260970123456', { selector: 'dd' })).toBeVisible();
+  });
+
+  it('loads safe audit summaries only when the audit trail is opened', async () => {
+    api.admin.auditLogs.mockResolvedValue({
+      items: [{
+        id: 'audit-1', actorType: 'STAFF', action: 'insurer.updated', entityType: 'INSURER', entityId: 'insurer-1',
+        note: 'Administrator updated an insurer profile.', correlationId: 'insurer-1', changedFields: ['rateBps'], createdAt: '2026-11-06T10:00:00.000Z',
+      }],
+      nextCursor: null,
+    });
+    const user = userEvent.setup();
+    render(<AdminDashboard />);
+
+    await user.click(screen.getByRole('button', { name: 'Audit trail' }));
+
+    await waitFor(() => expect(api.admin.auditLogs).toHaveBeenCalledWith({ limit: 25 }));
+    await waitFor(() => expect(screen.getByText('insurer.updated')).toBeVisible());
+    expect(screen.getByText(/Changed: rate Bps/)).toBeVisible();
   });
 });

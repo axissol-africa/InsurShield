@@ -1,6 +1,7 @@
 import { Controller, DefaultValuePipe, Get, ParseIntPipe, Query } from '@nestjs/common';
 import { AdminService } from './admin.service.js';
 import { Roles } from '../common/auth/auth.guard.js';
+import { AuditLogQueryDto } from './dto/audit-log-query.dto.js';
 
 /** The administrator console. Platform-wide, so it is staff-only. */
 @Roles('SUPER_ADMIN', 'ADMIN')
@@ -26,5 +27,11 @@ export class AdminController {
   @Get('customers/find')
   findCustomer(@Query('query') query = '') {
     return this.admin.findCustomer(query);
+  }
+
+  /** Immutable operational history, intentionally limited to safe summaries. */
+  @Get('audit-logs')
+  auditLogs(@Query() query: AuditLogQueryDto) {
+    return this.admin.auditLogs(query);
   }
 }

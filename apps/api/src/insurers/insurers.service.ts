@@ -2,10 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { ApiException } from '../common/errors/api.exception.js';
 import { isUniqueViolation } from '../db/errors.js';
 import type { InsurerStatus } from '../common/domain/enums.js';
-import type { StaffRoleName } from '../common/auth/auth.types.js';
 import { toInsurerChanges, toNewContact, toNewInsurer, type CreateInsurerDto, type UpdateInsurerDto } from './dto/insurer.dto.js';
 import { toInsurerResponse, toPublicInsurerResponse } from './dto/insurer-response.dto.js';
 import { InsurersRepository } from './insurers.repository.js';
+import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 
 const NAME_CONSTRAINT = 'insurers_name_key';
 
@@ -19,7 +21,10 @@ const nameClash = (name: string | undefined) => (error: unknown): never => {
 
 @Injectable()
 export class InsurersService {
-  constructor(private readonly insurers: InsurersRepository) {}
+  constructor(
+    private readonly insurers: InsurersRepository,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Every insurer the admin portal manages, deleted ones excluded by default. */
   async list(status: 'deleted' | undefined, role: StaffRoleName) {
@@ -54,32 +59,70 @@ export class InsurersService {
     return toInsurerResponse(insurer);
   }
 
-  async create(dto: CreateInsurerDto) {
+  async create(dto: CreateInsurerDto, principal: Extract<Principal, { kind: 'staff' }>) {
     const insurer = await this.insurers
-      .transaction((tx) => this.insurers.insert(tx, toNewInsurer(dto), toNewContact(dto.contact)))
+      .transaction(async (tx) => {
+        const created = await this.insurers.insert(tx, toNewInsurer(dto), toNewContact(dto.contact));
+        await this.audit.write(tx, {
+          actor: auditActor(principal),
+          action: 'insurer.created',
+          entityType: 'INSURER',
+          entityId: created.id,
+          after: insurerSnapshot(created),
+          note: 'Administrator onboarded an insurer.',
+          correlationId: created.id,
+        });
+        return created;
+      })
       .catch(nameClash(dto.name));
     return toInsurerResponse(insurer);
   }
 
-  async update(id: string, dto: UpdateInsurerDto) {
+  async update(id: string, dto: UpdateInsurerDto, principal: Extract<Principal, { kind: 'staff' }>) {
     const insurer = await this.insurers.transaction(async (tx) => {
+      const before = await this.insurers.lock(tx, id);
+      if (!before || before.status === 'DELETED') throw ApiException.notFound('Insurer', id);
       const row = await this.insurers.update(tx, id, toInsurerChanges(dto));
       if (!row) throw ApiException.notFound('Insurer', id);
       const contact = dto.contact
         ? await this.insurers.upsertContact(tx, id, toNewContact(dto.contact))
         : await this.insurers.findContact(tx, id);
-      return { ...row, contact };
+      const updated = { ...row, contact };
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'insurer.updated',
+        entityType: 'INSURER',
+        entityId: id,
+        before: insurerSnapshot(before),
+        after: insurerSnapshot(updated),
+        note: 'Administrator updated an insurer profile.',
+        correlationId: id,
+      });
+      return updated;
     }).catch(nameClash(dto.name));
     return toInsurerResponse(insurer);
   }
 
   /** Deleting is for super admins on either route, so an admin cannot soft-delete through a status change. */
-  async setStatus(id: string, status: InsurerStatus, role: StaffRoleName) {
-    if (status === 'DELETED' && role !== 'SUPER_ADMIN') throw ApiException.forbidden();
+  async setStatus(id: string, status: InsurerStatus, principal: Extract<Principal, { kind: 'staff' }>) {
+    if (status === 'DELETED' && principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
     const insurer = await this.insurers.transaction(async (tx) => {
+      const before = await this.insurers.lock(tx, id);
+      if (!before || before.status === 'DELETED') throw ApiException.notFound('Insurer', id);
       const row = await this.insurers.update(tx, id, { status, deletedAt: status === 'DELETED' ? new Date() : null });
       if (!row) throw ApiException.notFound('Insurer', id);
-      return { ...row, contact: await this.insurers.findContact(tx, id) };
+      const updated = { ...row, contact: await this.insurers.findContact(tx, id) };
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'insurer.status_changed',
+        entityType: 'INSURER',
+        entityId: id,
+        before: { status: before.status },
+        after: { status: updated.status },
+        note: `Administrator changed the insurer status from ${before.status} to ${updated.status}.`,
+        correlationId: id,
+      });
+      return updated;
     });
     return toInsurerResponse(insurer);
   }
@@ -88,11 +131,28 @@ export class InsurersService {
    * Restore is deliberately not a general status update: only DELETED may
    * transition here, and it returns INACTIVE until a super admin activates it.
    */
-  async restore(id: string, role: StaffRoleName) {
-    if (role !== 'SUPER_ADMIN') throw ApiException.forbidden();
+  async restore(id: string, principal: Extract<Principal, { kind: 'staff' }>) {
+    if (principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
     const insurer = await this.insurers.transaction(async (tx) => {
       const row = await this.insurers.restoreDeleted(tx, id);
-      if (row) return { ...row, contact: await this.insurers.findContact(tx, id) };
+      if (row) {
+        const restored = { ...row, contact: await this.insurers.findContact(tx, id) };
+        await this.audit.write(tx, {
+          actor: auditActor(principal),
+          action: 'insurer.restored',
+          entityType: 'INSURER',
+          entityId: id,
+          // restoreDeleted only matches a currently deleted insurer, so this
+          // transition is known without taking a separate lock before the
+          // conditional update. Keeping the update first also preserves the
+          // atomic single-winner restore contract under concurrent requests.
+          before: { status: 'DELETED' },
+          after: { status: restored.status },
+          note: 'Super administrator restored a deleted insurer as inactive.',
+          correlationId: id,
+        });
+        return restored;
+      }
 
       if (!(await this.insurers.find(id, tx))) throw ApiException.notFound('Insurer', id);
       throw ApiException.conflict('INSURER_NOT_DELETED', 'This insurer has not been deleted.');
@@ -104,8 +164,35 @@ export class InsurersService {
    * Soft delete. Deactivation stops new deliveries immediately but prior
    * quotes, claims and policies stay readable, per INSURER_API_INTEGRATION.md.
    */
-  async remove(id: string) {
-    await this.setStatus(id, 'DELETED', 'SUPER_ADMIN');
+  async remove(id: string, principal: Extract<Principal, { kind: 'staff' }>) {
+    await this.setStatus(id, 'DELETED', principal);
     return { id, status: 'Deleted' as const };
   }
+}
+
+/** The audit log keeps decision fields, never contact or integration credentials. */
+function insurerSnapshot(insurer: {
+  name: string;
+  status: string;
+  rateBps: number;
+  quoteValidityDays: number;
+  coverage: string;
+  plan: string | null;
+  ncdAccepted: boolean;
+  inspectionRule: string;
+  inspectionTiming: string;
+  inspectionMethod: string;
+}) {
+  return {
+    name: insurer.name,
+    status: insurer.status,
+    rateBps: insurer.rateBps,
+    quoteValidityDays: insurer.quoteValidityDays,
+    coverage: insurer.coverage,
+    plan: insurer.plan,
+    ncdAccepted: insurer.ncdAccepted,
+    inspectionRule: insurer.inspectionRule,
+    inspectionTiming: insurer.inspectionTiming,
+    inspectionMethod: insurer.inspectionMethod,
+  };
 }

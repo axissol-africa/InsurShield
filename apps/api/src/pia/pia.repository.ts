@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { piaConfig, staffUsers } from '../db/schema.js';
+import { piaConfig, piaConfigHistory, staffUsers } from '../db/schema.js';
 
 const CURRENT = 'current';
 
@@ -22,11 +22,27 @@ export class PiaRepository {
     return row;
   }
 
+  async lockCurrent(tx: Transaction) {
+    const [row] = await tx
+      .select({ piaRateBps: piaConfig.piaRateBps })
+      .from(piaConfig)
+      .where(eq(piaConfig.id, CURRENT))
+      .for('update');
+    return row;
+  }
+
   async save(tx: Transaction, piaRateBps: number, updatedByStaffId: string): Promise<void> {
     await tx
       .insert(piaConfig)
       .values({ id: CURRENT, piaRateBps, updatedByStaffId })
       .onConflictDoUpdate({ target: piaConfig.id, set: { piaRateBps, updatedByStaffId, updatedAt: new Date() } });
+  }
+
+  async appendHistory(
+    tx: Transaction,
+    value: { piaRateBps: number; previousRateBps: number | null; changedByStaffId: string },
+  ): Promise<void> {
+    await tx.insert(piaConfigHistory).values(value);
   }
 }
 

@@ -2,7 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { MAX_NGWEE } from '../src/common/domain/money-limits.js';
 import { parseKwacha } from '../src/common/money.js';
-import { payments, vehicles } from '../src/db/schema.js';
+import { auditLogs, payments, vehicles } from '../src/db/schema.js';
 import { buildClaim, buildCustomer, buildInsurer, buildPayment, buildQuoteRequest, buildStaffUser, type Row } from './builders.js';
 import {
   buildConfirmedPayments,
@@ -69,7 +69,7 @@ describe('admin console', () => {
   }
 
   describe('access', () => {
-    it.each(['overview', 'premium-by-month', 'policies', 'customers/find?query=someone@example.test'])(
+    it.each(['overview', 'premium-by-month', 'policies', 'customers/find?query=someone@example.test', 'audit-logs'])(
       'refuses a customer and an insurer user on %s',
       async (path) => {
         const customer = await buildCustomer(testApp.db);
@@ -93,6 +93,56 @@ describe('admin console', () => {
         .get('/api/v1/admin/overview')
         .set(await signIn(testApp.http, superAdmin))
         .expect(200);
+    });
+  });
+
+  describe('audit logs', () => {
+    it('returns a safe, filterable change summary and never its stored values', async () => {
+      const entityId = randomUUID();
+      await side.db.insert(auditLogs).values({
+        id: randomUUID(), actorType: 'STAFF', actorId: admin.id, action: 'insurer.updated', entityType: 'INSURER', entityId,
+        before: { rateBps: 400, email: 'old@example.invalid' },
+        after: { rateBps: 500, email: 'new@example.invalid' },
+        note: 'Administrator updated an insurer profile.', correlationId: entityId,
+      });
+
+      const { body } = await get(`audit-logs?entityType=INSURER&entityId=${entityId}`).expect(200);
+
+      expect(body).toEqual({
+        items: [{
+          id: expect.any(String), actorType: 'STAFF', action: 'insurer.updated', entityType: 'INSURER', entityId,
+          note: 'Administrator updated an insurer profile.', correlationId: entityId,
+          changedFields: ['email', 'rateBps'], createdAt: expect.stringMatching(ISO_MS),
+        }],
+        nextCursor: null,
+      });
+      expect(JSON.stringify(body)).not.toContain('old@example.invalid');
+      expect(JSON.stringify(body)).not.toContain('new@example.invalid');
+      expect(JSON.stringify(body)).not.toContain('400');
+      expect(JSON.stringify(body)).not.toContain('500');
+    });
+
+    it('pages newest-first without repeating a result and rejects unknown filters', async () => {
+      const action = `audit.page.${randomUUID()}`;
+      for (const [index, createdAt] of [
+        new Date('2026-01-01T00:00:00.000Z'),
+        new Date('2026-01-02T00:00:00.000Z'),
+        new Date('2026-01-03T00:00:00.000Z'),
+      ].entries()) {
+        await side.db.insert(auditLogs).values({
+          id: randomUUID(), actorType: 'SYSTEM', action, entityType: 'SETTING', entityId: `setting-${index}`, createdAt,
+        });
+      }
+
+      const first = (await get(`audit-logs?action=${encodeURIComponent(action)}&limit=2`).expect(200)).body;
+      expect(first.items.map((item: { entityId: string }) => item.entityId)).toEqual(['setting-2', 'setting-1']);
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      const second = (await get(`audit-logs?action=${encodeURIComponent(action)}&limit=2&cursor=${encodeURIComponent(first.nextCursor)}`).expect(200)).body;
+      expect(second.items.map((item: { entityId: string }) => item.entityId)).toEqual(['setting-0']);
+      expect(second.nextCursor).toBeNull();
+
+      await get('audit-logs?entityType=NOT_A_RECORD').expect(400);
     });
   });
 

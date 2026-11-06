@@ -783,11 +783,66 @@ export const auditLogs = pgTable(
     entityId: text('entityId').notNull(),
     before: jsonb('before'),
     after: jsonb('after'),
+    note: text('note'),
+    correlationId: text('correlationId'),
     ipAddress: text('ipAddress'),
     createdAt: createdAt(),
   },
   (t) => [
     index('audit_logs_entityType_entityId_createdAt_idx').on(t.entityType, t.entityId, t.createdAt),
     index('audit_logs_actorType_actorId_createdAt_idx').on(t.actorType, t.actorId, t.createdAt),
+    index('audit_logs_createdAt_id_idx').on(t.createdAt, t.id),
+    index('audit_logs_action_createdAt_idx').on(t.action, t.createdAt),
+  ],
+);
+
+/**
+ * The operational status journey for every workflow entity. The entity is
+ * deliberately polymorphic: a single, consistently indexed history reader is
+ * safer than five nearly-identical tables with different access behaviour.
+ */
+export const stateHistory = pgTable(
+  'state_history',
+  {
+    id: id(),
+    entityType: text('entityType').notNull(),
+    entityId: text('entityId').notNull(),
+    fromStatus: text('fromStatus'),
+    toStatus: text('toStatus').notNull(),
+    actorType: actorType('actorType').notNull(),
+    actorId: text('actorId'),
+    note: text('note'),
+    correlationId: text('correlationId'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('state_history_entityType_entityId_createdAt_idx').on(t.entityType, t.entityId, t.createdAt),
+    index('state_history_actorType_actorId_createdAt_idx').on(t.actorType, t.actorId, t.createdAt),
+  ],
+);
+
+/**
+ * A PIA floor remains quick to read from `pia_config`, while this append-only
+ * table preserves each value that was in force before a later Batch 10 turns
+ * platform settings into fully versioned configuration.
+ */
+export const piaConfigHistory = pgTable(
+  'pia_config_history',
+  {
+    id: id(),
+    piaRateBps: integer('piaRateBps').notNull(),
+    previousRateBps: integer('previousRateBps'),
+    changedByStaffId: uuid('changedByStaffId'),
+    note: text('note'),
+    changedAt: createdAt('changedAt'),
+  },
+  (t) => [
+    index('pia_config_history_changedAt_idx').on(t.changedAt),
+    fk('pia_config_history_changedByStaffId_fkey', [t.changedByStaffId], [staffUsers.id], 'set null'),
+    rateCheck('pia_config_history', t.piaRateBps),
+    check(
+      'pia_config_history_previousRateBps_check',
+      sql`${t.previousRateBps} IS NULL OR (${t.previousRateBps} >= ${sql.raw(String(MIN_RATE_BPS))} AND ${t.previousRateBps} <= ${sql.raw(String(MAX_RATE_BPS))})`,
+    ),
   ],
 );

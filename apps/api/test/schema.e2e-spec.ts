@@ -69,7 +69,28 @@ async function applyMigration(client: ClientBase, index: number) {
 async function pushed(): Promise<ScratchDatabase> {
   const db = await scratch();
   await drizzleKit(['push', '--force', '--config', 'drizzle.config.ts'], { databaseUrl: db.url });
+  // Drizzle models tables and indexes but not the append-only trigger. Keep
+  // the push-built catalog comparable to the real migration-built catalog.
+  await query(db, applyAuditLogAppendOnlyInvariant);
   return db;
+}
+
+async function applyAuditLogAppendOnlyInvariant(client: ClientBase) {
+  // Keep the definition text byte-for-byte aligned with migration 0008: the
+  // catalog deliberately detects a changed database function definition.
+  await client.query(`CREATE OR REPLACE FUNCTION "audit_logs_reject_mutation"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_logs is append-only';
+END;
+$$;`);
+  await client.query(`DROP TRIGGER IF EXISTS "audit_logs_append_only" ON "audit_logs"`);
+  await client.query(`CREATE TRIGGER "audit_logs_append_only"
+BEFORE UPDATE OR DELETE ON "audit_logs"
+FOR EACH ROW
+EXECUTE FUNCTION "audit_logs_reject_mutation"()`);
 }
 
 /** Every timestamp value in public, per column, as UTC wall-clock text. */
@@ -572,6 +593,33 @@ describe('0005_vehicle_per_request', () => {
   });
 });
 
+describe('0008_audit_trail_state_history', () => {
+  it('makes audit evidence append-only while retaining its searchable state history', async () => {
+    const db = await scratch((client) => applyMigrationFiles(client, TAGS.length));
+
+    await query(db, async (client) => {
+      const id = randomUUID();
+      await client.query(
+        `INSERT INTO audit_logs (id, "actorType", action, "entityType", "entityId")
+         VALUES ($1, 'SYSTEM', 'test.created', 'TEST', 'record-1')`,
+        [id],
+      );
+      await expect(client.query(`UPDATE audit_logs SET action = 'test.updated' WHERE id = $1`, [id]))
+        .rejects.toMatchObject({ message: expect.stringContaining('audit_logs is append-only') });
+      await expect(client.query(`DELETE FROM audit_logs WHERE id = $1`, [id]))
+        .rejects.toMatchObject({ message: expect.stringContaining('audit_logs is append-only') });
+
+      await client.query(
+        `INSERT INTO state_history (id, "entityType", "entityId", "fromStatus", "toStatus", "actorType")
+         VALUES ($1, 'POLICY', 'POL-1', 'AWAITING_INSURER_CERTIFICATE', 'ACTIVE', 'INSURER')`,
+        [randomUUID()],
+      );
+      expect((await client.query(`SELECT "toStatus" FROM state_history WHERE "entityId" = 'POL-1'`)).rows)
+        .toEqual([{ toStatus: 'ACTIVE' }]);
+    });
+  });
+});
+
 describe('drizzle-kit', () => {
   it('generate finds no difference between src/db/schema.ts and the migrations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'insurshield-generate-'));
@@ -616,7 +664,7 @@ describe('the final schema', () => {
       return rows;
     });
     const timestampColumns = columns.filter((column) => column.type.startsWith('timestamp'));
-    expect(timestampColumns).toHaveLength(73);
+    expect(timestampColumns).toHaveLength(75);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

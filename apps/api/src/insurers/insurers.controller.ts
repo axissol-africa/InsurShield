@@ -40,7 +40,7 @@ export class InsurersController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.insurers.restore(id, principal.role);
+    return this.insurers.restore(id, principal);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')
@@ -51,14 +51,18 @@ export class InsurersController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Post()
-  create(@Body() dto: CreateInsurerDto) {
-    return this.insurers.create(dto);
+  create(@Body() dto: CreateInsurerDto, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
+    return this.insurers.create(dto, principal);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Patch(':id')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateInsurerDto) {
-    return this.insurers.update(id, dto);
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateInsurerDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.update(id, dto, principal);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')
@@ -68,12 +72,12 @@ export class InsurersController {
     @Body() dto: SetInsurerStatusDto,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.insurers.setStatus(id, dto.status, principal.role);
+    return this.insurers.setStatus(id, dto.status, principal);
   }
 
   @Roles('SUPER_ADMIN')
   @Delete(':id')
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.insurers.remove(id);
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
+    return this.insurers.remove(id, principal);
   }
 }

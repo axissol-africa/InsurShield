@@ -18,11 +18,13 @@ import { PaymentsModule } from './payments/payments.module.js';
 import { InspectionsModule } from './inspections/inspections.module.js';
 import { AuthGuard } from './common/auth/auth.guard.js';
 import { ApiRateLimitGuard } from './common/rate-limit/api-rate-limit.guard.js';
+import { AuditModule } from './common/audit/audit.module.js';
 
 @Module({
   imports: [
     ConfigModule,
     DatabaseModule,
+    AuditModule,
     StorageModule,
     AuthModule,
     DocumentsModule,

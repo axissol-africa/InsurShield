@@ -328,6 +328,7 @@ export default function AdminDashboard() {
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
+    { id: 'audit_log', label: 'Audit trail', icon: 'history', hint: 'Immutable history', matches: ['audit_log'] },
   ];
 
   const selectSection = (id) => {
@@ -405,6 +406,8 @@ export default function AdminDashboard() {
     );
   } else if (view === 'recent_policies') {
     content = <RecentPolicies policies={dashboardPolicies} onBack={() => setView('dashboard')} />;
+  } else if (view === 'audit_log') {
+    content = <AuditTrail onBack={() => setView('dashboard')} />;
   } else if (view === 'find_account') {
     content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} onBack={() => setView('dashboard')} />;
   } else if (view === 'pia_config') {
@@ -691,6 +694,138 @@ function RecentPolicies({ policies, onBack }) {
             </Pagination>
           </CardFooter>
         )}
+      </Card>
+    </>
+  );
+}
+
+const AUDIT_PAGE_SIZE = 25;
+
+const auditFieldLabel = (field) => field.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toLowerCase());
+
+/**
+ * The administrative reader intentionally receives only changed field names.
+ * The values remain in the protected append-only record on the server.
+ */
+function AuditTrail({ onBack }) {
+  const [draft, setDraft] = useState({ entityType: '', actorType: '', action: '', entityId: '' });
+  const [applied, setApplied] = useState({});
+  const [items, setItems] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [cursor, setCursor] = useState(null);
+  const [previousCursors, setPreviousCursors] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  const load = useCallback(async (filters, nextPageCursor = null) => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const response = await api.admin.auditLogs({
+        ...filters,
+        limit: AUDIT_PAGE_SIZE,
+        ...(nextPageCursor ? { cursor: nextPageCursor } : {}),
+      });
+      setItems(response.items ?? []);
+      setNextCursor(response.nextCursor ?? null);
+    } catch (error) {
+      setItems([]);
+      setNextCursor(null);
+      setLoadError(error instanceof Error ? error.message : 'The audit history could not be loaded.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const deferredLoad = window.setTimeout(() => { void load({}, null); }, 0);
+    return () => window.clearTimeout(deferredLoad);
+  }, [load]);
+
+  const applyFilters = (event) => {
+    event.preventDefault();
+    const filters = Object.fromEntries(Object.entries(draft).filter(([, value]) => value.trim()));
+    setApplied(filters);
+    setCursor(null);
+    setPreviousCursors([]);
+    void load(filters, null);
+  };
+
+  const clearFilters = () => {
+    setDraft({ entityType: '', actorType: '', action: '', entityId: '' });
+    setApplied({});
+    setCursor(null);
+    setPreviousCursors([]);
+    void load({}, null);
+  };
+
+  const nextPage = () => {
+    if (!nextCursor || loading) return;
+    setPreviousCursors((pages) => [...pages, cursor]);
+    setCursor(nextCursor);
+    void load(applied, nextCursor);
+  };
+
+  const previousPage = () => {
+    if (!previousCursors.length || loading) return;
+    const previous = previousCursors.at(-1) ?? null;
+    setPreviousCursors((pages) => pages.slice(0, -1));
+    setCursor(previous);
+    void load(applied, previous);
+  };
+
+  return (
+    <>
+      <SubPageHeader title="Audit trail" description="Review who changed an operational record and when. Values and personal details are deliberately not displayed here." onBack={onBack} />
+      <Card className="gap-0 border-border shadow-none">
+        <CardHeader className="border-b">
+          <CardTitle>Filter history</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">Audit records are append-only and ordered from newest to oldest.</p>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <form onSubmit={applyFilters} className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5 xl:items-end">
+            <label className="block"><span className={labelClass}>Record type</span>
+              <select value={draft.entityType} onChange={(event) => setDraft((current) => ({ ...current, entityType: event.target.value }))} className={inputClass}>
+                <option value="">All record types</option>
+                {['CLAIM', 'CONSENT', 'CUSTOMER', 'DOCUMENT', 'INSPECTION', 'INSURER', 'INSURER_QUOTE', 'NCD_APPLICATION', 'PAYMENT', 'POLICY', 'QUOTE_REQUEST', 'SETTING'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
+              </select>
+            </label>
+            <label className="block"><span className={labelClass}>Actor</span>
+              <select value={draft.actorType} onChange={(event) => setDraft((current) => ({ ...current, actorType: event.target.value }))} className={inputClass}>
+                <option value="">All actors</option>
+                {['CUSTOMER', 'STAFF', 'INSURER', 'SYSTEM'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="block"><span className={labelClass}>Action</span><input value={draft.action} onChange={(event) => setDraft((current) => ({ ...current, action: event.target.value }))} className={inputClass} placeholder="e.g. policy.created" /></label>
+            <label className="block"><span className={labelClass}>Record reference</span><input value={draft.entityId} onChange={(event) => setDraft((current) => ({ ...current, entityId: event.target.value }))} className={inputClass} placeholder="Exact record ID" /></label>
+            <div className="flex gap-2"><Button type="submit" className="flex-1">Apply filters</Button><Button type="button" variant="outline" onClick={clearFilters}>Clear</Button></div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6 gap-0 border-border shadow-none">
+        <CardHeader className="grid-cols-[1fr_auto] items-center gap-4 border-b"><div><CardTitle>Recorded changes</CardTitle><p className="mt-1 text-sm text-muted-foreground">The platform stores the full protected record, while this view shows safe operational context.</p></div><UiBadge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Read-only</UiBadge></CardHeader>
+        <CardContent className="pt-5">
+          {loading && <p className="py-10 text-center text-sm text-muted-foreground">Loading audit history…</p>}
+          {loadError && <p role="alert" className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{loadError}</p>}
+          {!loading && !loadError && items.length === 0 && <p className="py-10 text-center text-sm text-muted-foreground">No audit records match these filters yet.</p>}
+          {!loading && !loadError && items.length > 0 && (
+            <ol className="overflow-hidden rounded-xl border border-border">
+              {items.map((entry, index) => (
+                <li key={entry.id} className={`grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${index ? 'border-t border-border' : ''}`}>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2"><p className="font-mono text-sm font-semibold text-primary">{entry.action}</p><UiBadge variant="outline" className="text-[10px]">{entry.actorType}</UiBadge></div>
+                    <p className="mt-1.5 text-sm text-muted-foreground"><span className="font-medium text-foreground">{entry.entityType.replaceAll('_', ' ')}</span> · {entry.entityId}</p>
+                    {entry.note && <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{entry.note}</p>}
+                    {entry.changedFields?.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Changed: {entry.changedFields.map(auditFieldLabel).join(', ')}</p>}
+                  </div>
+                  <time dateTime={entry.createdAt} className="shrink-0 text-xs text-muted-foreground sm:text-right">{new Date(entry.createdAt).toLocaleString('en-ZM', { dateStyle: 'medium', timeStyle: 'short' })}</time>
+                </li>
+              ))}
+            </ol>
+          )}
+        </CardContent>
+        <CardFooter className="flex items-center justify-between gap-3 border-t"><p className="text-xs text-muted-foreground">{previousCursors.length ? `Page ${previousCursors.length + 1}` : 'Latest records'}</p><div className="flex gap-2"><Button type="button" variant="outline" size="sm" disabled={!previousCursors.length || loading} onClick={previousPage}>Previous</Button><Button type="button" size="sm" disabled={!nextCursor || loading} onClick={nextPage}>Next</Button></div></CardFooter>
       </Card>
     </>
   );

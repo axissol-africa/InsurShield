@@ -4,21 +4,22 @@ import { RequestInspectionDto, UpdateInspectionDto } from '../customer/dto/custo
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import type { CustomerPrincipal } from '../customer/customer-principal.js';
 
 @Controller('inspections')
 export class InspectionsController {
   constructor(private readonly inspections: InspectionsService) {}
 
-  private scope(principal: Principal): string {
+  private scope(principal: Principal): CustomerPrincipal {
     if (principal.kind !== 'customer') {
       throw ApiException.forbidden('This endpoint is for customer accounts.');
     }
-    return principal.id;
+    return principal;
   }
 
   @Get()
   list(@CurrentUser() principal: Principal) {
-    return this.inspections.list(this.scope(principal));
+    return this.inspections.list(this.scope(principal).id);
   }
 
   @Post()

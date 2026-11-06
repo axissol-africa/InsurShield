@@ -4,6 +4,8 @@ import type { Principal } from '../common/auth/auth.types.js';
 import { shownPhone } from '../common/auth/phone.js';
 import type { Transaction } from '../db/database.module.js';
 import { AuthRepository } from './auth.repository.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 
 export interface StaffSession {
   id: string;
@@ -24,7 +26,10 @@ const PORTAL_ROLE = {
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly repository: AuthRepository) {}
+  constructor(
+    private readonly repository: AuthRepository,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Who the caller is: the domain record behind the session, and the Better Auth user the session belongs to. */
   async me(principal: Principal): Promise<{
@@ -88,12 +93,24 @@ export class AuthService {
       throw ApiException.forbidden('Only a customer account can accept these terms.');
     }
 
-    const record = await this.repository.insertConsent({
-      customerId: principal.id,
-      privacyVersion: noticeVersion,
-      termsVersion: noticeVersion,
-      ipAddress: context.ipAddress ?? null,
-      userAgent: context.userAgent ?? null,
+    const record = await this.repository.transaction(async (tx) => {
+      const accepted = await this.repository.insertConsent(tx, {
+        customerId: principal.id,
+        privacyVersion: noticeVersion,
+        termsVersion: noticeVersion,
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+      });
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'consent.accepted',
+        entityType: 'CONSENT',
+        entityId: principal.id,
+        after: { noticeVersion },
+        note: 'Customer accepted the current privacy notice and terms.',
+        correlationId: principal.id,
+      });
+      return accepted;
     });
 
     return {

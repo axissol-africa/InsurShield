@@ -24,8 +24,12 @@ const ONE = { one: sql`1` };
 export class DocumentsRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  async insert(document: NewDocument): Promise<DocumentRow> {
-    const [created] = await this.db.insert(documents).values(document).returning();
+  transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
+    return this.db.transaction(work);
+  }
+
+  async insert(tx: Transaction, document: NewDocument): Promise<DocumentRow> {
+    const [created] = await tx.insert(documents).values(document).returning();
     return created;
   }
 

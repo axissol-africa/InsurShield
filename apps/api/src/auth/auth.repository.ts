@@ -15,6 +15,10 @@ export interface NewConsent {
 export class AuthRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
+  transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
+    return this.db.transaction(work);
+  }
+
   async findStaffSession(staffId: string) {
     const [staff] = await this.db
       .select({
@@ -55,8 +59,8 @@ export class AuthRepository {
     return consent;
   }
 
-  async insertConsent(consent: NewConsent) {
-    const [record] = await this.db
+  async insertConsent(tx: Transaction, consent: NewConsent) {
+    const [record] = await tx
       .insert(consentRecords)
       .values(consent)
       .returning({
