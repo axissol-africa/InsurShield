@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Body, Controller, Post } from '@nestjs/common';
@@ -255,7 +255,14 @@ describe('e2e global setup', () => {
     });
 
     it('refuses a build older than a source', () => {
-      writeFileSync(join(root, 'src', 'db', 'migrate.ts'), 'changed');
+      const source = join(root, 'src', 'db', 'migrate.ts');
+      const built = join(root, 'dist', 'db', 'migrate.js');
+      writeFileSync(source, 'changed');
+      // Use a future moment rather than trying to recreate an exact file
+      // timestamp: Date only carries millisecond precision while some filesystems
+      // report sub-millisecond mtimes.
+      const future = new Date(statSync(built).mtimeMs + 1_000);
+      utimesSync(source, future, future);
       expect(() => assertCurrentBuild(root)).toThrow(
         'The API build is older than src/: run npm run build -w @insurshield/api before the e2e suite',
       );

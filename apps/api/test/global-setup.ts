@@ -43,7 +43,10 @@ export function assertCurrentBuild(apiRoot = API_ROOT) {
       entry.isFile() &&
       entry.name.endsWith('.ts') &&
       !entry.name.endsWith('.spec.ts') &&
-      statSync(join(entry.parentPath, entry.name)).mtimeMs > built.mtimeMs,
+      // Equal timestamps cannot prove that the build contains the source on
+      // filesystems with coarse timestamp resolution, so fail safely and
+      // require a fresh build in that case too.
+      statSync(join(entry.parentPath, entry.name)).mtimeMs >= built.mtimeMs,
   );
   if (stale) {
     throw new Error(`The API build is older than src/: run ${BUILD_COMMAND} before the e2e suite`);
