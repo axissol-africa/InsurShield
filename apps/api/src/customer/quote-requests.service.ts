@@ -9,7 +9,7 @@ import type { Env } from '../config/env.js';
 import type { Transaction } from '../db/database.module.js';
 import { newReference } from '../common/domain/reference.js';
 import type { CustomerPrincipal } from './customer-principal.js';
-import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS } from './domain/cover-period.js';
+import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
 import { CHOOSE_A_COVER_PERIOD, CHOOSE_A_COVER_TYPE, type SubmitQuoteRequestDto, type VehicleDetailsDto } from './dto/customer.dto.js';
 import { toQuoteRequestResponse, type QuoteRequestResponse, type QuoteWithDocument } from './dto/quote-request.response.js';
@@ -50,18 +50,35 @@ export class QuoteRequestsService {
     return response;
   }
 
-  async submit(customer: CustomerPrincipal, dto: SubmitQuoteRequestDto): Promise<QuoteRequestResponse> {
+  async submit(
+    customer: CustomerPrincipal,
+    dto: SubmitQuoteRequestDto,
+    transaction?: Transaction,
+  ): Promise<QuoteRequestResponse> {
     const insuranceType = fromContract.insuranceType(dto.insuranceType);
     if (!insuranceType) throw new ApiException('BAD_REQUEST', CHOOSE_A_COVER_TYPE);
     const coverageDuration = fromContract.coverageDuration(dto.coverageDurationId);
     if (!coverageDuration) throw new ApiException('BAD_REQUEST', CHOOSE_A_COVER_PERIOD);
     const shots = dto.inspectionShots ?? [];
     const submittedAt = new Date();
-    const dates = coverPeriod(dto.policyDates, coverageDuration, submittedAt);
+    if (dto.matchRtsaAnniversary && !dto.rtsaRegistrationDate) {
+      throw new ApiException('BAD_REQUEST', 'The RTSA registration anniversary is required when policy dates are aligned.');
+    }
+    const policyStartDate = dto.matchRtsaAnniversary
+      ? rtsaAnniversaryStart(dto.rtsaRegistrationDate!, submittedAt).toISOString()
+      : dto.policyDates?.startDate;
+    const dates = coverPeriod(
+      policyStartDate ? { startDate: policyStartDate, endDate: dto.policyDates?.endDate ?? policyStartDate } : undefined,
+      coverageDuration,
+      submittedAt,
+    );
 
-    const response = await this.repository.transaction(async (tx) => {
+    const create = async (tx: Transaction) => {
       const insurerIds = await this.activeInsurerIds(tx);
       await this.documents.assertAttachable(tx, customer, shots.map((shot) => shot.documentId), 'INSPECTION_PHOTO');
+      if (dto.whiteBookDocumentId) {
+        await this.documents.assertOwnedOfKind(tx, customer, dto.whiteBookDocumentId, 'WHITE_BOOK');
+      }
       const vehicle = await this.createVehicle(tx, dto.vehicleDetails);
       const ncd = await this.usableNcdCode(tx, customer.id, dto.ncdCode);
       return this.distribute(
@@ -82,6 +99,7 @@ export class QuoteRequestsService {
           policyStartDate: dates.startDate,
           policyEndDate: dates.endDate,
           coverageDays: dates.days,
+          whiteBookDocumentId: dto.whiteBookDocumentId ?? null,
           ncdCode: ncd?.code ?? null,
           ncdPercentage: ncd?.percentage ?? null,
           photosCapturedAt: dto.photosCapturedAt ? new Date(dto.photosCapturedAt) : null,
@@ -89,7 +107,8 @@ export class QuoteRequestsService {
         insurerIds,
         shots,
       );
-    });
+    };
+    const response = transaction ? await create(transaction) : await this.repository.transaction(create);
 
     this.logger.log(
       `Quote request ${response.id} distributed to ${response.insurerIds.length} insurers with ${shots.length} photos`,
@@ -114,6 +133,19 @@ export class QuoteRequestsService {
 
       const insurerIds = await this.activeInsurerIds(tx);
       const submittedAt = new Date();
+      const dates = coverPeriod(
+        original.matchRtsaAnniversary && original.rtsaRegistrationDate
+          ? {
+              startDate: rtsaAnniversaryStart(original.rtsaRegistrationDate, submittedAt).toISOString(),
+              endDate: rtsaAnniversaryStart(original.rtsaRegistrationDate, submittedAt).toISOString(),
+            }
+          : original.policyStartDate
+            ? { startDate: original.policyStartDate.toISOString(), endDate: original.policyStartDate.toISOString() }
+            : undefined,
+        original.coverageDuration,
+        submittedAt,
+      );
+      const shots = await this.repository.shotsForRequest(tx, original.id);
       return this.distribute(
         tx,
         {
@@ -129,9 +161,15 @@ export class QuoteRequestsService {
           coverageDuration: original.coverageDuration,
           matchRtsaAnniversary: original.matchRtsaAnniversary,
           rtsaRegistrationDate: original.rtsaRegistrationDate,
+          policyStartDate: dates.startDate,
+          policyEndDate: dates.endDate,
+          coverageDays: dates.days,
+          whiteBookDocumentId: original.whiteBookDocumentId,
+          photosCapturedAt: original.photosCapturedAt,
           requotedFromId: original.id,
         },
         insurerIds,
+        shots,
       );
     });
 
@@ -188,11 +226,16 @@ export class QuoteRequestsService {
     return this.repository.insertVehicle(tx, vehicle);
   }
 
-  /** The customer's own code behind `ncdCode`, if it is still usable; anything else is dropped. */
+  /** The customer's own code behind `ncdCode`, if it is still usable. */
   private async usableNcdCode(tx: Transaction, customerId: string, code: string | undefined) {
     if (!code?.trim()) return null;
     const found = await this.repository.findNcdCodeIssuedTo(tx, normaliseNcdCode(code), customerId);
-    if (!found || ncdCodeRefusal(found, new Date())) return null;
+    if (!found || ncdCodeRefusal(found, new Date())) {
+      throw ApiException.conflict(
+        'INVALID_NCD_CODE',
+        'This No Claim Discount code is not available for this quote request.',
+      );
+    }
     return { code: found.code, percentage: found.percentage };
   }
 

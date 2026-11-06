@@ -79,7 +79,7 @@ describe('mock api adapter', () => {
     asInsurer();
     const approved = await mock.ncd.decide(application.id, 'Approved');
     expect(approved.approvedCode).toMatch(/^NCD-/);
-    expect(await mock.ncd.validateCode(approved.approvedCode)).toMatchObject({ valid: true, yearsClaimFree: 2 });
+    expect(await mock.ncd.validateCode(approved.approvedCode)).toEqual({ valid: true });
     expect(await mock.ncd.validateCode('NCD-NOPE')).toEqual({ valid: false });
   });
 

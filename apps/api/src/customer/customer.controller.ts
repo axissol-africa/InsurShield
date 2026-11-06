@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { Public } from '../common/auth/auth.guard.js';
 import { ApiException } from '../common/errors/api.exception.js';
@@ -15,6 +15,8 @@ import {
 import { NcdService } from './ncd.service.js';
 import { PoliciesService } from './policies.service.js';
 import { QuoteRequestsService } from './quote-requests.service.js';
+import { IdempotencyService, idempotencyKey } from '../common/idempotency/idempotency.service.js';
+import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 
 /**
  * A customer's own records.
@@ -31,6 +33,7 @@ export class CustomerController {
     private readonly claims: ClaimsService,
     private readonly ncd: NcdService,
     private readonly account: AccountService,
+    private readonly idempotency: IdempotencyService,
   ) {}
 
   private scope(principal: Principal): CustomerPrincipal {
@@ -50,8 +53,21 @@ export class CustomerController {
   /** Sends one request to every active insurer at once. */
   @Post('quote-requests')
   @HttpCode(HttpStatus.CREATED)
-  submitQuoteRequest(@Body() dto: SubmitQuoteRequestDto, @CurrentUser() principal: Principal) {
-    return this.quoteRequests.submit(this.scope(principal), dto);
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  async submitQuoteRequest(
+    @Body() dto: SubmitQuoteRequestDto,
+    @CurrentUser() principal: Principal,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    const customer = this.scope(principal);
+    const result = await this.idempotency.execute(
+      `customer:${customer.id}`,
+      'POST /quote-requests',
+      idempotencyKey(key),
+      dto,
+      (tx) => this.quoteRequests.submit(customer, dto, tx),
+    );
+    return result.value;
   }
 
   @Get('quote-requests/:id')
@@ -94,8 +110,21 @@ export class CustomerController {
   /** First notification: issues the claim number the customer quotes by phone. */
   @Post('claims')
   @HttpCode(HttpStatus.CREATED)
-  notifyClaim(@Body() dto: NotifyClaimDto, @CurrentUser() principal: Principal) {
-    return this.claims.notify(this.scope(principal), dto);
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  async notifyClaim(
+    @Body() dto: NotifyClaimDto,
+    @CurrentUser() principal: Principal,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    const customer = this.scope(principal);
+    const result = await this.idempotency.execute(
+      `customer:${customer.id}`,
+      'POST /claims',
+      idempotencyKey(key),
+      dto,
+      (tx) => this.claims.notify(customer, dto, tx),
+    );
+    return result.value;
   }
 
   @Get('ncd/applications')
@@ -116,6 +145,7 @@ export class CustomerController {
   @Public()
   @Post('ncd/codes/validate')
   @HttpCode(HttpStatus.OK)
+  @ApiRateLimit(API_LIMITS.ncdValidation)
   validateNcdCode(@Body() dto: ValidateNcdCodeDto) {
     return this.ncd.validateCode(dto);
   }

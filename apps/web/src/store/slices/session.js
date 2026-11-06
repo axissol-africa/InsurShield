@@ -95,7 +95,7 @@ export const createSessionSlice = (set, get) => ({
   beginIdentityTransition: () => set({ leaving: true, identityReady: false, identityFailure: null }),
 
   // ─── Staff / insurer portal session ──────────────────────
-  staffSession: null, // { role: 'admin' | 'support' | 'insurer', name }
+  staffSession: null, // { role: 'admin' | 'insurer', name }
   startStaffSession: (session) => set({ staffSession: session }),
   applyStaffSession: (staffSession) => set({ ...SIGNED_OUT, staffSession }),
   endStaffSession: () => set({ staffSession: null }),

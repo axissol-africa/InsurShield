@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,11 +83,13 @@ describe('quote comparison', () => {
     expect(screen.getAllByRole('button', { name: 'Awaiting insurer quote' })).toHaveLength(2);
     expect(screen.getAllByRole('button', { name: 'Awaiting insurer quote' })[0]).toBeDisabled();
     const request = useStore.getState().quoteRequests[0];
-    useStore.setState({
-      quoteRequests: [{
-        ...request,
-        insurerQuotes: { 'Prestige Assurance': { premium: 2300, validUntil: '2099-01-01T00:00:00Z' } },
-      }],
+    act(() => {
+      useStore.setState({
+        quoteRequests: [{
+          ...request,
+          insurerQuotes: { 'Prestige Assurance': { premium: 2300, validUntil: '2099-01-01T00:00:00Z' } },
+        }],
+      });
     });
     await user.click(await screen.findByRole('button', { name: 'Choose Prestige Assurance', exact: true }));
     expect(useStore.getState().selectedQuote.name).toBe('Prestige Assurance');

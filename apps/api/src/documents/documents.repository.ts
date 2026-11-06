@@ -78,6 +78,7 @@ export class DocumentsRepository {
                 ),
             ),
             exists(tx.select(ONE).from(inspectionShots).where(eq(inspectionShots.documentId, documents.id))),
+            exists(tx.select(ONE).from(quoteRequests).where(eq(quoteRequests.whiteBookDocumentId, documents.id))),
             exists(tx.select(ONE).from(inspectionPhotos).where(eq(inspectionPhotos.documentId, documents.id))),
             exists(tx.select(ONE).from(claimAttachments).where(eq(claimAttachments.documentId, documents.id))),
           ),
@@ -110,6 +111,12 @@ export class DocumentsRepository {
           .from(insurerQuotes)
           .innerJoin(quoteRequests, eq(quoteRequests.id, insurerQuotes.quoteRequestId))
           .where(and(eq(insurerQuotes.documentId, documents.id), eq(quoteRequests.customerId, customerId))),
+      ),
+      exists(
+        db
+          .select(ONE)
+          .from(quoteRequests)
+          .where(and(eq(quoteRequests.whiteBookDocumentId, documents.id), eq(quoteRequests.customerId, customerId))),
       ),
       exists(
         db
@@ -157,6 +164,18 @@ export class DocumentsRepository {
           .select(ONE)
           .from(policies)
           .where(and(this.policyDocument(), eq(policies.insurerId, insurerId))),
+      ),
+      exists(
+        db
+          .select(ONE)
+          .from(quoteRequests)
+          .innerJoin(quoteRequestRecipients, eq(quoteRequestRecipients.quoteRequestId, quoteRequests.id))
+          .where(
+            and(
+              eq(quoteRequests.whiteBookDocumentId, documents.id),
+              eq(quoteRequestRecipients.insurerId, insurerId),
+            ),
+          ),
       ),
       exists(
         db

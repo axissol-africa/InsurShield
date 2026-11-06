@@ -9,6 +9,8 @@ import { signIn, type SessionHeaders } from './sessions.js';
 
 const UPLOAD = '/api/v1/documents';
 const PDF = Buffer.from('%PDF-1.7\n% e2e upload\n');
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 describe('uploading a document', () => {
   let testApp: TestApp;
@@ -56,21 +58,27 @@ describe('uploading a document', () => {
     });
   });
 
-  it.each(['image/jpeg', 'image/png'])('accepts %s', async (contentType) => {
+  it.each([
+    ['image/jpeg', JPEG],
+    ['image/png', PNG],
+  ])('accepts %s', async (contentType, bytes) => {
     await testApp.http
       .post(UPLOAD)
       .set(headers)
       .field('kind', 'INSPECTION_PHOTO')
-      .attach('file', Buffer.from('image bytes'), { filename: 'front.img', contentType })
+      .attach('file', bytes, { filename: 'front.img', contentType })
       .expect(201);
   });
 
   it('accepts a file of exactly the size limit', async () => {
+    const limitPdf = Buffer.alloc(limit);
+    PDF.copy(limitPdf);
+
     await testApp.http
       .post(UPLOAD)
       .set(headers)
       .field('kind', 'CERTIFICATE')
-      .attach('file', Buffer.alloc(limit), { filename: 'limit.pdf', contentType: 'application/pdf' })
+      .attach('file', limitPdf, { filename: 'limit.pdf', contentType: 'application/pdf' })
       .expect(201);
   });
 

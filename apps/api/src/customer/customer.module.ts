@@ -10,6 +10,7 @@ import { PoliciesRepository } from './policies.repository.js';
 import { PoliciesService } from './policies.service.js';
 import { QuoteRequestsRepository } from './quote-requests.repository.js';
 import { QuoteRequestsService } from './quote-requests.service.js';
+import { IdempotencyService } from '../common/idempotency/idempotency.service.js';
 
 @Module({
   controllers: [CustomerController],
@@ -24,6 +25,7 @@ import { QuoteRequestsService } from './quote-requests.service.js';
     NcdRepository,
     AccountService,
     AccountRepository,
+    IdempotencyService,
   ],
 })
 export class CustomerModule {}

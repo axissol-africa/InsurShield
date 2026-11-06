@@ -81,6 +81,7 @@ export class InsurerPortalRepository {
         policyEndDate: quoteRequests.policyEndDate,
         coverageDays: quoteRequests.coverageDays,
         photosCapturedAt: quoteRequests.photosCapturedAt,
+        whiteBookDocumentId: quoteRequests.whiteBookDocumentId,
         customer: { fullName: customers.fullName, email: customers.email, phone: customers.phone },
         vehicle: {
           plateNumber: vehicles.plateNumber,
@@ -130,6 +131,8 @@ export class InsurerPortalRepository {
         status: quoteRequests.status,
         expiresAt: quoteRequests.expiresAt,
         quoteValidityDays: insurers.quoteValidityDays,
+        vehicleValueMinor: quoteRequests.vehicleValueMinor,
+        coverageDuration: quoteRequests.coverageDuration,
       })
       .from(quoteRequestRecipients)
       .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestRecipients.quoteRequestId))

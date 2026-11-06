@@ -13,6 +13,9 @@ export function addDays(from: Date, days: number): Date {
 }
 
 export function ncdPercentage(yearsClaimFree: number, chosen?: number): number {
+  if (chosen !== undefined && chosen > MAX_NCD_PERCENTAGE) {
+    throw new RangeError(`NCD percentage cannot exceed ${MAX_NCD_PERCENTAGE}%.`);
+  }
   return chosen ?? Math.min(yearsClaimFree * NCD_PERCENTAGE_PER_YEAR, MAX_NCD_PERCENTAGE);
 }
 

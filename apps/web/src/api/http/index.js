@@ -41,7 +41,7 @@ export const vehicles = {
 };
 
 export const quotes = {
-  submitRequest: (request) => apiClient.post('/quote-requests', request, { headers: { 'Idempotency-Key': newIdempotencyKey() } }),
+  submitRequest: (request, idempotencyKey = newIdempotencyKey()) => apiClient.post('/quote-requests', request, { headers: { 'Idempotency-Key': idempotencyKey } }),
   listMine: () => apiClient.get('/quote-requests'),
   get: (id) => apiClient.get(`/quote-requests/${id}`),
   requote: (id) => apiClient.post(`/quote-requests/${id}/requote`),
@@ -51,6 +51,8 @@ export const quotes = {
 };
 
 export const insurers = {
+  /** The signed-in insurer's own record; never a browser-selected insurer. */
+  profile: () => apiClient.get('/insurer/profile'),
   list: (query = {}) => apiClient.get('/insurers', { params: query }),
   get: (id) => apiClient.get(`/insurers/${id}`),
   create: (insurer) => apiClient.post('/insurers', insurer),
@@ -75,7 +77,7 @@ export const policies = {
 };
 
 export const claims = {
-  notify: (claim) => apiClient.post('/claims', claim, { headers: { 'Idempotency-Key': newIdempotencyKey() } }),
+  notify: (claim, idempotencyKey = newIdempotencyKey()) => apiClient.post('/claims', claim, { headers: { 'Idempotency-Key': idempotencyKey } }),
   listMine: () => apiClient.get('/claims'),
   listForInsurer: () => apiClient.get('/insurer/claims'),
   markReceived: (claimNumber) => apiClient.post(`/insurer/claims/${claimNumber}/received`),
@@ -98,4 +100,12 @@ export const inspections = {
 export const config = {
   getPia: () => apiClient.get('/config/pia'),
   setPia: (piaConfig) => apiClient.put('/config/pia', piaConfig),
+};
+
+/** Platform-wide records for the administrator console. */
+export const admin = {
+  overview: () => apiClient.get('/admin/overview'),
+  premiumByMonth: (months = 12) => apiClient.get('/admin/premium-by-month', { params: { months } }),
+  recentPolicies: (limit = 8) => apiClient.get('/admin/policies', { params: { limit } }),
+  findCustomer: (query) => apiClient.get('/admin/customers/find', { params: { query } }),
 };

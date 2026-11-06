@@ -115,6 +115,8 @@ export const envSchema = z.object({
   TRUST_PROXY_HOPS: wholeNumber(0, 10),
   /** The identity routes' rate limits. */
   AUTH_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
+  /** Address-based limits for public lookups, uploads and high-impact writes. */
+  API_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
   /** Server-controlled RTSA fee added only to a quote that aligns to the RTSA anniversary. */
   RTSA_ANNIVERSARY_FEE_NGWEE: wholeNumber(0, Number(MAX_NGWEE)),
 
@@ -141,6 +143,9 @@ export const envSchema = z.object({
 }).superRefine((env, context) => {
   if (env.AUTH_RATE_LIMIT === 'off' && env.NODE_ENV !== 'test') {
     context.addIssue({ code: 'custom', path: ['AUTH_RATE_LIMIT'], message: 'may be off only when NODE_ENV is test' });
+  }
+  if (env.API_RATE_LIMIT === 'off' && env.NODE_ENV !== 'test') {
+    context.addIssue({ code: 'custom', path: ['API_RATE_LIMIT'], message: 'may be off only when NODE_ENV is test' });
   }
 });
 

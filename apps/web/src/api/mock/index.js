@@ -99,6 +99,7 @@ export const quotes = {
 };
 
 export const insurers = {
+  profile: () => call((s) => s.insurersList.find((insurer) => insurer.name === insurerName()) || null),
   list: ({ status } = {}) => call((s) => (
     status === 'deleted'
       ? s.insurersList.filter((insurer) => insurer.status === 'Deleted')
@@ -163,7 +164,7 @@ export const ncd = {
   listMine: () => call((s) => mine(s.ncdApplications)),
   validateCode: (code) => call((s) => {
     const approved = s.ncdApplications.find((a) => a.approvedCode === code);
-    return approved ? { valid: true, insurer: approved.insurer, yearsClaimFree: approved.yearsClaimFree } : { valid: false };
+    return { valid: Boolean(approved) };
   }),
   listForInsurer: () => call((s) => s.ncdApplications.filter((a) => a.insurer === insurerName())),
   decide: (id, status) => call((s) => {
@@ -182,4 +183,71 @@ export const inspections = {
 export const config = {
   getPia: () => call((s) => s.piaConfig),
   setPia: (piaConfig) => call((s) => { s.setPiaConfig(piaConfig); return state().piaConfig; }),
+};
+
+/**
+ * Browser-storage equivalent of the protected administrator read endpoints.
+ * It keeps prototype mode useful while HTTP mode always reads these figures
+ * from the API rather than reusing persisted demo records.
+ */
+export const admin = {
+  overview: () => call((s) => {
+    const activePolicies = s.policies.filter((policy) => policy.status === 'Active').length;
+    const awaitingCertificate = s.policies.filter((policy) => policy.status === 'Awaiting insurer certificate').length;
+    const activeInsurers = s.insurersList.filter((insurer) => insurer.status === 'Active').length;
+    const visibleInsurers = s.insurersList.filter((insurer) => insurer.status !== 'Deleted').length;
+    const openClaims = s.claims.filter((claim) => claim.status === 'Notified').length;
+    const submittedQuotes = s.quoteRequests.filter((request) => request.status === 'Submitted').length;
+    const quotedRequests = s.quoteRequests.filter((request) => request.status === 'Quoted').length;
+    const openNcd = s.ncdApplications.filter((application) => ['Submitted', 'Under Review'].includes(application.status)).length;
+    const confirmed = s.policies.filter((policy) => policy.paymentProof?.status === 'Confirmed');
+    return {
+      policies: { total: s.policies.length, active: activePolicies, awaitingCertificate, expiringIn30Days: 0 },
+      insurers: { total: visibleInsurers, active: activeInsurers, inactive: visibleInsurers - activeInsurers },
+      claims: { open: openClaims, total: s.claims.length },
+      quoteRequests: { awaitingQuotes: submittedQuotes, quoted: quotedRequests },
+      ncd: { open: openNcd },
+      customers: { total: s.registeredAccounts.length },
+      premium: { currency: 'ZMW', allTime: confirmed.reduce((sum, policy) => sum + (policy.premium || 0), 0), thisMonth: 0 },
+    };
+  }),
+  premiumByMonth: (months = 12) => call((s) => {
+    const now = new Date();
+    return Array.from({ length: months }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - (months - index - 1), 1);
+      const total = s.policies
+        .filter((policy) => policy.paymentProof?.status === 'Confirmed')
+        .filter((policy) => {
+          const paidAt = new Date(policy.paymentProof?.confirmedAt || policy.receivedAt || policy.issuedAt || 0);
+          return paidAt.getFullYear() === date.getFullYear() && paidAt.getMonth() === date.getMonth();
+        })
+        .reduce((sum, policy) => sum + (policy.premium || 0), 0);
+      return { month: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`, total };
+    });
+  }),
+  recentPolicies: (limit = 8) => call((s) => [...s.policies]
+    .sort((first, second) => new Date(second.receivedAt || second.issuedAt || 0) - new Date(first.receivedAt || first.issuedAt || 0))
+    .slice(0, limit)),
+  findCustomer: (query) => call((s) => {
+    const needle = query.trim().toLowerCase();
+    const account = s.registeredAccounts.find((item) => item.email.toLowerCase() === needle || item.phone === query.trim());
+    if (!account) {
+      const error = new Error('Customer account was not found.');
+      error.status = 404;
+      throw error;
+    }
+    return {
+      id: account.id || account.email,
+      fullName: account.fullName,
+      email: account.email,
+      phone: account.phone,
+      createdAt: account.createdAt || null,
+      consent: null,
+      counts: {
+        quoteRequests: s.quoteRequests.filter((item) => item.customer?.email === account.email || item.customer?.phone === account.phone).length,
+        policies: s.policies.filter((item) => item.customerEmail === account.email || item.customerPhone === account.phone).length,
+        claims: s.claims.filter((item) => item.email === account.email || item.phone === account.phone).length,
+      },
+    };
+  }),
 };

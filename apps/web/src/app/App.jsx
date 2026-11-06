@@ -53,7 +53,7 @@ export default function App() {
 
           {/* Staff and insurer portals */}
           <Route path="admin-login" element={<AdminLogin />} />
-          <Route path="admin" element={<StaffRoute roles={['admin', 'support']}><AdminDashboard /></StaffRoute>} />
+          <Route path="admin" element={<StaffRoute roles={['admin']}><AdminDashboard /></StaffRoute>} />
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

@@ -395,6 +395,7 @@ export const quoteRequests = pgTable(
     policyStartDate: timestamptz('policyStartDate'),
     policyEndDate: timestamptz('policyEndDate'),
     coverageDays: integer('coverageDays'),
+    whiteBookDocumentId: uuid('whiteBookDocumentId'),
     ncdCode: text('ncdCode'),
     ncdPercentage: integer('ncdPercentage'),
     photosCapturedAt: timestamptz('photosCapturedAt'),
@@ -411,6 +412,7 @@ export const quoteRequests = pgTable(
     index('quote_requests_renewalOfPolicyNumber_idx').on(t.renewalOfPolicyNumber),
     fk('quote_requests_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
     fk('quote_requests_vehicleId_fkey', [t.vehicleId], [vehicles.id], 'restrict'),
+    fk('quote_requests_whiteBookDocumentId_fkey', [t.whiteBookDocumentId], [documents.id], 'restrict'),
     fk('quote_requests_requotedFromId_fkey', [t.requotedFromId], [t.id], 'set null'),
     fk(
       'quote_requests_renewalOfPolicyNumber_fkey',
@@ -490,7 +492,6 @@ export const inspectionShots = pgTable(
     capturedAt: createdAt('capturedAt'),
   },
   (t) => [
-    uniqueIndex('inspection_shots_documentId_key').on(t.documentId),
     uniqueIndex('inspection_shots_quoteRequestId_shotKey_key').on(t.quoteRequestId, t.shotKey),
     fk('inspection_shots_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
     fk('inspection_shots_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
@@ -729,7 +730,8 @@ export const piaConfig = pgTable(
 export const idempotencyRecords = pgTable(
   'idempotency_records',
   {
-    key: text('key').primaryKey(),
+    callerId: text('callerId').notNull(),
+    key: text('key').notNull(),
     endpoint: text('endpoint').notNull(),
     requestHash: text('requestHash').notNull(),
     responseStatus: integer('responseStatus'),
@@ -737,7 +739,10 @@ export const idempotencyRecords = pgTable(
     createdAt: createdAt(),
     expiresAt: timestamptz('expiresAt').notNull(),
   },
-  (t) => [index('idempotency_records_expiresAt_idx').on(t.expiresAt)],
+  (t) => [
+    uniqueIndex('idempotency_records_callerId_endpoint_key_key').on(t.callerId, t.endpoint, t.key),
+    index('idempotency_records_expiresAt_idx').on(t.expiresAt),
+  ],
 );
 
 export const integrationDeliveries = pgTable(

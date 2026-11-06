@@ -52,8 +52,8 @@ describe('StaffRoute', () => {
   });
 
   it('enforces the role', () => {
-    useStore.getState().startStaffSession({ role: 'insurer', name: 'Prestige' });
-    renderAt('/admin', <StaffRoute roles={['admin', 'support']}><p>admin</p></StaffRoute>);
+    useStore.getState().startStaffSession({ role: 'support', name: 'Legacy support' });
+    renderAt('/admin', <StaffRoute roles={['admin']}><p>admin</p></StaffRoute>);
     expect(screen.getByTestId('location')).toHaveTextContent('/admin-login');
   });
 

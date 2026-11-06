@@ -13,6 +13,19 @@ import { fileTooLarge } from './upload-limits.js';
 /** What the browser is allowed to upload, matching apps/web/src/lib/files.js. */
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 
+function hasExpectedBytes(mimeType: string, bytes: Buffer): boolean {
+  switch (mimeType) {
+    case 'application/pdf':
+      return bytes.subarray(0, 5).toString('ascii') === '%PDF-';
+    case 'image/jpeg':
+      return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    case 'image/png':
+      return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    default:
+      return false;
+  }
+}
+
 export interface DocumentRecord {
   id: string;
   name: string;
@@ -51,6 +64,13 @@ export class DocumentsService {
 
     const limit = this.config.get('MAX_UPLOAD_BYTES', { infer: true });
     if (file.size > limit) throw fileTooLarge(limit);
+
+    if (!hasExpectedBytes(file.mimetype, file.buffer)) {
+      throw new ApiException(
+        'UNSUPPORTED_FILE_CONTENT',
+        'The file contents do not match the selected PDF, JPG or PNG format.',
+      );
+    }
 
     const key = this.storage.buildKey(scope, file.originalname);
     await this.storage.put(key, file.buffer, file.mimetype);
@@ -123,6 +143,32 @@ export class DocumentsService {
           : document.uploadedByStaffId === principal.id),
     );
     if (attachable.length !== documentIds.length) {
+      throw ApiException.conflict(
+        'DOCUMENT_NOT_ATTACHABLE',
+        'That document cannot be attached here. Upload the file again and attach the new upload.',
+      );
+    }
+  }
+
+  /**
+   * Verifies a customer-owned document without reserving it for a single parent.
+   * A White Book can legitimately follow the same vehicle into a later requote;
+   * quotations, certificates and inspection evidence remain single-attachment.
+   */
+  async assertOwnedOfKind(
+    tx: Transaction,
+    principal: Principal,
+    documentId: string,
+    kind: DocumentKind,
+  ): Promise<void> {
+    const [document] = await this.repository.lockForAttach(tx, [documentId]);
+    const owned =
+      document &&
+      document.kind === kind &&
+      (principal.kind === 'customer'
+        ? document.uploadedByCustomerId === principal.id
+        : document.uploadedByStaffId === principal.id);
+    if (!owned) {
       throw ApiException.conflict(
         'DOCUMENT_NOT_ATTACHABLE',
         'That document cannot be attached here. Upload the file again and attach the new upload.',

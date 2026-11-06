@@ -17,6 +17,7 @@ import { VehiclesModule } from './vehicles/vehicles.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
 import { InspectionsModule } from './inspections/inspections.module.js';
 import { AuthGuard } from './common/auth/auth.guard.js';
+import { ApiRateLimitGuard } from './common/rate-limit/api-rate-limit.guard.js';
 
 @Module({
   imports: [
@@ -39,6 +40,9 @@ import { AuthGuard } from './common/auth/auth.guard.js';
     AppService,
     // Every route requires a session unless it opts out with @Public() or @OptionalAuth().
     { provide: APP_GUARD, useClass: AuthGuard },
+    // Individual controllers opt in with @ApiRateLimit; keeping this global
+    // makes the address policy consistent across every bounded endpoint.
+    { provide: APP_GUARD, useClass: ApiRateLimitGuard },
   ],
 })
 export class AppModule {}

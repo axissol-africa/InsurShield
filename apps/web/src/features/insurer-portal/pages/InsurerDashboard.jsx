@@ -51,10 +51,12 @@ export default function InsurerDashboard() {
 
   // A session may name the insurer separately from the staff member; the
   // prototype session puts the insurer in `name`.
-  const insurerName =
+  const sessionInsurerName =
     (staffSession?.role === 'insurer' && (staffSession.insurerName || staffSession.name)) ||
     DEFAULT_PORTAL_INSURER;
-  const insurer = insurersList.find((item) => item.name === insurerName);
+  const insurer = insurersList.find((item) => item.id === staffSession?.insurerId)
+    ?? insurersList.find((item) => item.name === sessionInsurerName);
+  const insurerName = insurer?.name ?? sessionInsurerName;
   const defaultValidityDays = insurer?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
 
   const myClaims = claims.filter((claim) => claim.insurer === insurerName);
@@ -233,10 +235,10 @@ export default function InsurerDashboard() {
         onSave={async (coverageType, guide) => {
           if (!insurer) throw new Error('Your insurer profile could not be found.');
           const coverGuides = { ...(insurer.coverGuides || {}), [coverageType]: guide };
-          await thenReloadPortal(async () => {
-            await api.insurers.update(insurer.id, { coverGuides });
-            updateInsurer(insurer.id, { coverGuides });
-          });
+          // Cover guides move to insurer products in Batch 9. Until then this
+          // prototype-only editor must not send a field the insurer API does
+          // not own or persist.
+          updateInsurer(insurer.id, { coverGuides });
         }}
       />
     );

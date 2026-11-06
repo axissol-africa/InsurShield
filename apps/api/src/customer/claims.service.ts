@@ -5,6 +5,7 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { kwachaToNgwee } from '../common/money.js';
 import { newReference } from '../common/domain/reference.js';
 import { ClaimsRepository } from './claims.repository.js';
+import type { Transaction } from '../db/database.module.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import { toClaimListItem, toClaimNotified, type ClaimListItem, type ClaimNotified } from './dto/claim.response.js';
 import type { NotifyClaimDto } from './dto/customer.dto.js';
@@ -41,11 +42,15 @@ export class ClaimsService {
     return items;
   }
 
-  async notify(customer: CustomerPrincipal, dto: NotifyClaimDto): Promise<ClaimNotified> {
+  async notify(
+    customer: CustomerPrincipal,
+    dto: NotifyClaimDto,
+    transaction?: Transaction,
+  ): Promise<ClaimNotified> {
     const documentIds = dto.supportingDocumentIds ?? [];
     const submittedAt = new Date();
 
-    const { claim, insurerName, supportingDocs } = await this.repository.transaction(async (tx) => {
+    const create = async (tx: Transaction) => {
       const insurer = await this.repository.findInsurer(tx, dto.insurerId);
       if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
 
@@ -85,7 +90,10 @@ export class ClaimsService {
         records.push(await this.documents.record(documentId, tx));
       }
       return { claim: created, insurerName: insurer.name, supportingDocs: records };
-    });
+    };
+    const { claim, insurerName, supportingDocs } = transaction
+      ? await create(transaction)
+      : await this.repository.transaction(create);
 
     this.logger.log(`Claim ${claim.claimNumber} notified to ${insurerName}`);
     return toClaimNotified(claim, insurerName, supportingDocs);

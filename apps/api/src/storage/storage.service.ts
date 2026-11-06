@@ -15,6 +15,7 @@ export type DocumentScope =
   | { kind: 'quotation'; quoteRequestId: string; insurerId: string }
   | { kind: 'certificate'; policyNumber: string }
   | { kind: 'inspection-shot'; quoteRequestId: string; shotKey: string }
+  | { kind: 'white-book'; quoteRequestId: string }
   | { kind: 'inspection-photo'; inspectionId: string; slot: string }
   | { kind: 'claim-attachment'; claimNumber: string }
   | { kind: 'insurer-logo'; insurerId: string }
@@ -83,6 +84,7 @@ export class StorageService implements OnModuleInit {
       certificate: () => `certificates/${(scope as { policyNumber: string }).policyNumber}`,
       'inspection-shot': () =>
         `inspection-shots/${(scope as { quoteRequestId: string }).quoteRequestId}/${(scope as { shotKey: string }).shotKey}`,
+      'white-book': () => `white-books/${(scope as { quoteRequestId: string }).quoteRequestId}`,
       'inspection-photo': () =>
         `inspection-photos/${(scope as { inspectionId: string }).inspectionId}/${(scope as { slot: string }).slot}`,
       'claim-attachment': () => `claims/${(scope as { claimNumber: string }).claimNumber}`,

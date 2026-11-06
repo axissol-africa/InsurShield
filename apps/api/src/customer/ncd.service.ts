@@ -4,7 +4,7 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { newReference } from '../common/domain/reference.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
 import type { ApplyForNcdDto, ValidateNcdCodeDto } from './dto/customer.dto.js';
-import { toNcdApplicationResponse, toUsableNcdCode, type NcdApplicationResponse, type NcdCodeValidation } from './dto/ncd.response.js';
+import { toNcdApplicationResponse, type NcdApplicationResponse, type NcdCodeValidation } from './dto/ncd.response.js';
 import { NcdRepository } from './ncd.repository.js';
 
 @Injectable()
@@ -48,14 +48,12 @@ export class NcdService {
   /**
    * Checks a discount code the customer holds.
    *
-   * The reply names the insurer, because a code only discounts that insurer's
-   * quote: a customer applying it to anyone else's is the common mistake this
-   * endpoint exists to catch before payment.
+   * This is public, so the response deliberately does not disclose any code,
+   * insurer, percentage or refusal detail that could help enumerate discounts.
    */
   async validateCode(dto: ValidateNcdCodeDto): Promise<NcdCodeValidation> {
     const code = await this.repository.findCode(normaliseNcdCode(dto.code));
     const reason = ncdCodeRefusal(code, new Date());
-    if (reason || !code) return { valid: false, reason: reason ?? 'NOT_FOUND' };
-    return toUsableNcdCode(code);
+    return { valid: !reason && Boolean(code) };
   }
 }

@@ -84,7 +84,9 @@ export default function QuotesComparisonPage() {
               }
             : { ...breakdown, source: 'estimate' };
           const validity = quoteValidity(reply);
-          const reviews = insurerReviews.filter((review) => sameInsurerName(review.insurer, insurer.name));
+          const reviews = env.apiMode === 'mock'
+            ? insurerReviews.filter((review) => sameInsurerName(review.insurer, insurer.name))
+            : [];
           const rating = reviews.length
             ? reviews.reduce((total, review) => total + review.rating, 0) / reviews.length
             : null;

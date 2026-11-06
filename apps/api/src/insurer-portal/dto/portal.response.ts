@@ -32,7 +32,12 @@ export function toReply(reply: ReplyRow, document: DocumentRecord) {
   };
 }
 
-export function toPortalRequest(request: RequestRow, shotKeys: string[], replyDocument: DocumentRecord | null) {
+export function toPortalRequest(
+  request: RequestRow,
+  shotKeys: string[],
+  replyDocument: DocumentRecord | null,
+  whiteBook: DocumentRecord | null,
+) {
   return {
     id: request.id,
     status: toContract.quoteRequestStatus(request.status),
@@ -65,6 +70,7 @@ export function toPortalRequest(request: RequestRow, shotKeys: string[], replyDo
       phone: request.customer.phone,
     },
     inspectionShots: shotKeys,
+    whiteBook,
     photosCapturedAt: iso(request.photosCapturedAt),
     reply: request.reply && replyDocument ? toReply(request.reply, replyDocument) : null,
   };

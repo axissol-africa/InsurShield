@@ -10,6 +10,7 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:check-user-links": "tsx scripts/check-user-links.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:studio": "drizzle-kit studio",
     "deploy": "nest deploy",

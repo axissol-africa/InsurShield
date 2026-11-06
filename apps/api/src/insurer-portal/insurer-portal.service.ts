@@ -1,10 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
-import { kwachaToNgwee } from '../common/money.js';
+import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { Transaction } from '../db/database.module.js';
+import { PiaService } from '../pia/pia.service.js';
 import {
   addDays,
   canDecideNcd,
@@ -25,6 +26,7 @@ import {
   toPortalRequest,
   toReply,
 } from './dto/portal.response.js';
+import { coverTermLabel, premiumFloorMinor } from './domain/premium-floor.js';
 import type {
   AcknowledgeClaimDto,
   ExtendQuoteDto,
@@ -52,6 +54,7 @@ export class InsurerPortalService {
   constructor(
     private readonly portal: InsurerPortalRepository,
     private readonly documents: DocumentsService,
+    private readonly pia: PiaService,
     @Inject(NCD_CODE_PICK) private readonly pick: (n: number) => number,
   ) {}
 
@@ -77,6 +80,7 @@ export class InsurerPortalService {
           request,
           shots.filter((shot) => shot.quoteRequestId === request.id).map((shot) => shot.shotKey),
           request.reply ? await this.documents.record(request.reply.documentId) : null,
+          request.whiteBookDocumentId ? await this.documents.record(request.whiteBookDocumentId) : null,
         ),
       ),
     );
@@ -101,6 +105,18 @@ export class InsurerPortalService {
       }
       const sentAt = new Date();
       if (!isRequestOpen(delivery.status, delivery.expiresAt, sentAt)) throw requestExpired();
+
+      const minimumPremiumMinor = premiumFloorMinor(
+        delivery.vehicleValueMinor,
+        await this.pia.currentRateBps(tx),
+        delivery.coverageDuration,
+      );
+      if (premiumMinor < minimumPremiumMinor) {
+        throw ApiException.conflict(
+          'PREMIUM_BELOW_PIA_FLOOR',
+          `The minimum PIA premium for this ${coverTermLabel(delivery.coverageDuration)} cover is ZMW ${ngweeToKwacha(minimumPremiumMinor).toFixed(2)}.`,
+        );
+      }
 
       await this.documents.assertAttachable(tx, principal, [dto.documentId], 'QUOTATION');
 
@@ -240,6 +256,9 @@ export class InsurerPortalService {
    */
   async decideNcdApplication(principal: Principal, applicationId: string, dto: NcdDecisionDto) {
     const insurerId = this.insurerOf(principal);
+    if (dto.status !== 'APPROVED' && dto.percentage !== undefined) {
+      throw new ApiException('BAD_REQUEST', 'A discount percentage can be set only when approving an NCD application.');
+    }
     const alreadyDecided = () =>
       ApiException.conflict('ALREADY_DECIDED', 'This application has already been approved and its code issued.');
 

@@ -397,6 +397,7 @@ describe('customer', () => {
       const active = await buildInsurer(testApp.db);
       const inactive = await buildInsurer(testApp.db, { insurer: { status: 'INACTIVE' } });
       const deleted = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const expired = await buildInsurer(testApp.db, { insurer: { licenceExpiry: inDays(-1) } });
       const front = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'INSPECTION_PHOTO', mimeType: 'image/jpeg' });
       const rear = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'INSPECTION_PHOTO', mimeType: 'image/jpeg' });
 
@@ -436,13 +437,14 @@ describe('customer', () => {
       expect(response.body.insurerIds).toContain(active.insurer.id);
       expect(response.body.insurerIds).not.toContain(inactive.insurer.id);
       expect(response.body.insurerIds).not.toContain(deleted.insurer.id);
+      expect(response.body.insurerIds).not.toContain(expired.insurer.id);
       expect(response.body.insurers).toHaveLength(response.body.insurerIds.length);
 
       const stored = await storedRequest(response.body.id);
       expect(stored).toMatchObject({ vehicleValueMinor: 123_456, customerId: customer.id, ncdCode: null, ncdPercentage: null });
-      const activeNow = await testApp.db.select({ id: insurers.id }).from(insurers).where(eq(insurers.status, 'ACTIVE'));
-      expect((await recipientsOf(stored.id)).map((recipient) => recipient.insurerId).sort()).toEqual(
-        activeNow.map((insurer) => insurer.id).sort(),
+      const byId = (left: string, right: string) => left.localeCompare(right);
+      expect((await recipientsOf(stored.id)).map((recipient) => recipient.insurerId).sort(byId)).toEqual(
+        [...response.body.insurerIds].sort(byId),
       );
       const shots = (await shotsOf(stored.id)).sort((a, b) => a.shotKey.localeCompare(b.shotKey));
       expect(shots.map((shot) => [shot.shotKey, shot.documentId])).toEqual([
@@ -466,6 +468,129 @@ describe('customer', () => {
       expect(daysTotal).toBeGreaterThanOrEqual(89);
       expect(daysTotal).toBeLessThanOrEqual(92);
       expect((await storedRequest(response.body.id)).coverageDays).toBe(daysTotal);
+    });
+
+    it('replays a submitted request once, refuses a changed replay, and scopes a key to its customer', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const other = await buildCustomer(testApp.db);
+      await buildInsurer(testApp.db);
+      const key = 'quote-request-retry';
+      const payload = submission(unique('BID').toUpperCase());
+
+      const first = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .set('Idempotency-Key', key)
+        .send(payload)
+        .expect(201);
+      const replay = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .set('Idempotency-Key', key)
+        .send({ ...payload, vehicleDetails: { ...payload.vehicleDetails } })
+        .expect(201);
+
+      expect(replay.body).toEqual(first.body);
+      expect(await requestsOf(customer.id)).toHaveLength(1);
+
+      const changed = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .set('Idempotency-Key', key)
+        .send({ ...payload, vehicleValue: 1234.57 })
+        .expect(409);
+      expect(changed.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
+      expect(await requestsOf(customer.id)).toHaveLength(1);
+
+      await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(other))
+        .set('Idempotency-Key', key)
+        .send(submission(unique('BIE').toUpperCase()))
+        .expect(201);
+      expect(await requestsOf(other.id)).toHaveLength(1);
+    });
+
+    it('attaches the customer’s White Book to the request and exposes it only to recipient insurers', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const { insurer, staff } = await buildInsurer(testApp.db);
+      const whiteBook = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'WHITE_BOOK', mimeType: 'application/pdf' });
+
+      const submitted = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('BCW').toUpperCase(), { whiteBookDocumentId: whiteBook.id }))
+        .expect(201);
+
+      expect(await storedRequest(submitted.body.id)).toMatchObject({ whiteBookDocumentId: whiteBook.id });
+      const received = await testApp.http
+        .get('/api/v1/insurer/quote-requests')
+        .set(await signIn(testApp.http, staff))
+        .expect(200);
+      const request = received.body.find((candidate: { id: string }) => candidate.id === submitted.body.id);
+      expect(request).toMatchObject({
+        id: submitted.body.id,
+        whiteBook: await documentResponse(whiteBook),
+      });
+      expect(request.insurerIds).toBeUndefined();
+      expect(insurer.id).toBeDefined();
+    });
+
+    it('derives policy dates on the server and uses the RTSA anniversary when alignment is selected', async () => {
+      const customer = await buildCustomer(testApp.db);
+      await buildInsurer(testApp.db);
+
+      const requested = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(
+          submission(unique('BCT').toUpperCase(), {
+            coverageDurationId: '1q',
+            policyDates: { startDate: '2026-11-01T00:00:00.000Z', endDate: '2030-01-01T00:00:00.000Z' },
+          }),
+        )
+        .expect(201);
+      expect(requested.body.policyDates).toEqual({
+        startDate: '2026-11-01T00:00:00.000Z',
+        endDate: '2027-02-01T00:00:00.000Z',
+        daysTotal: 92,
+      });
+
+      const policyYear = new Date().getUTCFullYear();
+      const rtsaStart = new Date(Date.UTC(policyYear, 9, 31)).toISOString();
+      const rtsaEnd = new Date(Date.UTC(policyYear + 1, 0, 31)).toISOString();
+      const aligned = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(
+          submission(unique('BCR').toUpperCase(), {
+            coverageDurationId: '1q',
+            matchRtsaAnniversary: true,
+            rtsaRegistrationDate: '2023-10-31T00:00:00.000Z',
+            policyDates: { startDate: '2029-01-01T00:00:00.000Z', endDate: '2029-02-01T00:00:00.000Z' },
+          }),
+        )
+        .expect(201);
+      expect(aligned.body.policyDates).toEqual({ startDate: rtsaStart, endDate: rtsaEnd, daysTotal: 92 });
+      expect(await storedRequest(aligned.body.id)).toMatchObject({
+        policyStartDate: new Date(rtsaStart),
+        policyEndDate: new Date(rtsaEnd),
+        coverageDays: 92,
+      });
+    });
+
+    it('refuses RTSA date alignment when no RTSA anniversary is supplied', async () => {
+      const customer = await buildCustomer(testApp.db);
+      await buildInsurer(testApp.db);
+
+      const response = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('BCD').toUpperCase(), { matchRtsaAnniversary: true }))
+        .expect(400);
+
+      expect(response.body.code).toBe('VALIDATION_FAILED');
+      expect(await requestsOf(customer.id)).toEqual([]);
     });
 
     it('creates a new immutable vehicle for a matching plate without changing another customer’s request, policy or lookup', async () => {
@@ -681,7 +806,7 @@ describe('customer', () => {
         expect(stored).toMatchObject({ ncdCode: code.code, ncdPercentage: 15 });
       });
 
-      it('drops another customer’s valid code exactly as it drops an unknown one', async () => {
+      it('refuses another customer’s valid code exactly as it refuses an unknown one', async () => {
         const customer = await buildCustomer(testApp.db);
         const other = await buildCustomer(testApp.db);
         const { insurer } = await buildInsurer(testApp.db);
@@ -689,21 +814,31 @@ describe('customer', () => {
         const unowned = await buildNcdCode(testApp.db, { insurerId: insurer.id });
 
         for (const code of [theirs.code, unowned.code, 'NCD-NOBODY-HAS-THIS']) {
-          const stored = await submitWithCode(customer, code);
-          expect(stored).toMatchObject({ ncdCode: null, ncdPercentage: null });
+          const response = await testApp.http
+            .post('/api/v1/quote-requests')
+            .set(await asCustomer(customer))
+            .send(submission(unique('BAH').toUpperCase(), { ncdCode: code }))
+            .expect(409);
+          expect(response.body.code).toBe('INVALID_NCD_CODE');
         }
+        expect(await requestsOf(customer.id)).toEqual([]);
       });
 
-      it('drops the customer’s own code once it is redeemed or expired', async () => {
+      it('refuses the customer’s own code once it is redeemed or expired', async () => {
         const customer = await buildCustomer(testApp.db);
         const { insurer } = await buildInsurer(testApp.db);
         const redeemed = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.id }, { redeemedAt: new Date() });
         const expired = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.id }, { expiresAt: inDays(-1) });
 
         for (const code of [redeemed.code, expired.code]) {
-          const stored = await submitWithCode(customer, code);
-          expect(stored).toMatchObject({ ncdCode: null, ncdPercentage: null });
+          const response = await testApp.http
+            .post('/api/v1/quote-requests')
+            .set(await asCustomer(customer))
+            .send(submission(unique('BAH').toUpperCase(), { ncdCode: code }))
+            .expect(409);
+          expect(response.body.code).toBe('INVALID_NCD_CODE');
         }
+        expect(await requestsOf(customer.id)).toEqual([]);
       });
     });
 
@@ -746,8 +881,27 @@ describe('customer', () => {
       const { quoteRequest } = await buildQuoteRequest(
         testApp.db,
         { customerId: customer.id, insurerIds: [insurer.id] },
-        { status: 'EXPIRED', vehicleValueMinor: 250_000_00, vehicleUsage: 'Commercial', insuranceType: 'THIRD_PARTY', coverageDuration: 'Q3' },
+        {
+          status: 'EXPIRED',
+          vehicleValueMinor: 250_000_00,
+          vehicleUsage: 'Commercial',
+          insuranceType: 'THIRD_PARTY',
+          coverageDuration: 'Q3',
+          policyStartDate: new Date('2026-11-01T00:00:00.000Z'),
+          policyEndDate: new Date('2027-08-01T00:00:00.000Z'),
+          coverageDays: 273,
+          photosCapturedAt: new Date('2026-10-30T09:00:00.000Z'),
+        },
       );
+      const { shot: originalShot, document: photo } = await buildInspectionShot(testApp.db, {
+        quoteRequestId: quoteRequest.id,
+        uploader: { customerId: customer.id },
+      });
+      const whiteBook = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'WHITE_BOOK' });
+      await testApp.db
+        .update(quoteRequests)
+        .set({ whiteBookDocumentId: whiteBook.id })
+        .where(eq(quoteRequests.id, quoteRequest.id));
 
       const response = await testApp.http
         .post(`/api/v1/quote-requests/${quoteRequest.id}/requote`)
@@ -763,10 +917,20 @@ describe('customer', () => {
         coverageDurationId: '3q',
         requotedFromId: quoteRequest.id,
         requotedAs: null,
-        policyDates: null,
+        policyDates: { startDate: '2026-11-01T00:00:00.000Z', endDate: '2027-08-01T00:00:00.000Z', daysTotal: 273 },
       });
       expect(response.body.id).not.toBe(quoteRequest.id);
-      expect((await storedRequest(response.body.id)).vehicleId).toBe(quoteRequest.vehicleId);
+      expect(await storedRequest(response.body.id)).toMatchObject({
+        vehicleId: quoteRequest.vehicleId,
+        whiteBookDocumentId: whiteBook.id,
+        photosCapturedAt: new Date('2026-10-30T09:00:00.000Z'),
+        policyStartDate: new Date('2026-11-01T00:00:00.000Z'),
+        policyEndDate: new Date('2027-08-01T00:00:00.000Z'),
+        coverageDays: 273,
+      });
+      expect(await shotsOf(response.body.id)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ shotKey: originalShot.shotKey, documentId: photo.id })]),
+      );
       expect((await recipientsOf(response.body.id)).length).toBeGreaterThan(0);
 
       const original = await testApp.http.get(`/api/v1/quote-requests/${quoteRequest.id}`).set(await asCustomer(customer)).expect(200);
@@ -1213,6 +1377,29 @@ describe('customer', () => {
       ]);
     });
 
+    it('replays the same claim notification without issuing a second claim number', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const { insurer } = await buildInsurer(testApp.db);
+      const key = 'claim-notification-retry';
+      const payload = claim(insurer.id);
+
+      const first = await testApp.http
+        .post('/api/v1/claims')
+        .set(await asCustomer(customer))
+        .set('Idempotency-Key', key)
+        .send(payload)
+        .expect(201);
+      const replay = await testApp.http
+        .post('/api/v1/claims')
+        .set(await asCustomer(customer))
+        .set('Idempotency-Key', key)
+        .send({ ...payload })
+        .expect(201);
+
+      expect(replay.body).toEqual(first.body);
+      expect(await claimsOf(customer.id)).toHaveLength(1);
+    });
+
     it('drops a policy number that is not the customer’s rather than refusing the claim', async () => {
       const customer = await buildCustomer(testApp.db);
       const { insurer } = await buildInsurer(testApp.db);
@@ -1416,7 +1603,7 @@ describe('customer', () => {
   });
 
   describe('POST /ncd/codes/validate', () => {
-    it('describes a usable code, and says why one is not, without signing in', async () => {
+    it('reveals only whether a code is usable, without signing in', async () => {
       const { insurer } = await buildInsurer(testApp.db);
       const expiresAt = inDays(90);
       const usable = await buildNcdCode(testApp.db, { insurerId: insurer.id }, { percentage: 15, yearsClaimFree: 3, expiresAt });
@@ -1424,22 +1611,14 @@ describe('customer', () => {
       const expired = await buildNcdCode(testApp.db, { insurerId: insurer.id }, { expiresAt: inDays(-1) });
 
       const valid = await testApp.http.post('/api/v1/ncd/codes/validate').send({ code: ` ${usable.code.toLowerCase()} ` }).expect(200);
-      expect(valid.body).toEqual({
-        valid: true,
-        code: usable.code,
-        insurerId: insurer.id,
-        insurer: insurer.name,
-        percentage: 15,
-        yearsClaimFree: 3,
-        expiresAt: expiresAt.toISOString(),
-      });
-      for (const [code, reason] of [
-        [used.code, 'ALREADY_USED'],
-        [expired.code, 'EXPIRED'],
-        ['NCD-NOBODY-HAS-THIS', 'NOT_FOUND'],
+      expect(valid.body).toEqual({ valid: true });
+      for (const code of [
+        used.code,
+        expired.code,
+        'NCD-NOBODY-HAS-THIS',
       ]) {
         const response = await testApp.http.post('/api/v1/ncd/codes/validate').send({ code }).expect(200);
-        expect(response.body).toEqual({ valid: false, reason });
+        expect(response.body).toEqual({ valid: false });
       }
     });
   });

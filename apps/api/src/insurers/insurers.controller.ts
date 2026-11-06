@@ -3,6 +3,7 @@ import { InsurersService } from './insurers.service.js';
 import { CreateInsurerDto, SetInsurerStatusDto, UpdateInsurerDto } from './dto/insurer.dto.js';
 import { InsurerListQuery } from './dto/insurer-list.query.js';
 import { Public, Roles } from '../common/auth/auth.guard.js';
+import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
 
@@ -17,6 +18,7 @@ export class InsurersController {
    */
   @Public()
   @Get('directory')
+  @ApiRateLimit(API_LIMITS.publicRead)
   directory() {
     return this.insurers.directory();
   }

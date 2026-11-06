@@ -73,7 +73,7 @@ describe('RequestQueue', () => {
 
   it('says how long is left to reply to a request that is still waiting', () => {
     const waiting = { ...requests[0], expiresAt: new Date(Date.now() + 86_400_000 - 60_000).toISOString() };
-    render(<RequestQueue title="Quote requests" requests={[waiting, quote('2030-01-01T00:00:00Z')]} onQuote={vi.fn()} />);
+    render(<RequestQueue title="Quote requests" requests={[waiting, { ...quote('2030-01-01T00:00:00Z'), id: 'REQ-answered' }]} onQuote={vi.fn()} />);
 
     const rows = within(screen.getByRole('table', { name: 'Quote requests' })).getAllByRole('row');
     expect(rows[1]).toHaveTextContent(/Reply by .* · 1 day left/);

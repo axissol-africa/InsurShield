@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Put } from '@nestjs/common';
 import { Public, Roles } from '../common/auth/auth.guard.js';
+import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { SetPiaConfigDto } from './dto/pia.dto.js';
@@ -16,6 +17,7 @@ export class PiaController {
 
   @Public()
   @Get()
+  @ApiRateLimit(API_LIMITS.publicRead)
   get() {
     return this.pia.get();
   }

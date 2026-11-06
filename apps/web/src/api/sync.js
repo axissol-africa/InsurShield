@@ -47,6 +47,7 @@ export const hydrateCustomer = async () => {
 export const hydrateInsurerPortal = async () => {
   const store = useStore.getState();
   await Promise.all([
+    load('your insurer profile', api.insurers.profile, (profile) => store.setInsurers(profile ? [profile] : [])),
     load('the quote queue', api.quotes.listForInsurer, store.setQuoteRequests),
     load('paid policies', api.policies.listForInsurer, store.setPolicies),
     load('claim notifications', api.claims.listForInsurer, store.setClaims),
