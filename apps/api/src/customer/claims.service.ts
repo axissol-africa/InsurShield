@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { DocumentsService, type DocumentRecord } from '../documents/documents.service.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { kwachaToNgwee } from '../common/money.js';
 import { newReference } from '../common/domain/reference.js';
@@ -25,6 +27,7 @@ export class ClaimsService {
   constructor(
     private readonly repository: ClaimsRepository,
     private readonly documents: DocumentsService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(customerId: string): Promise<ClaimListItem[]> {
@@ -89,6 +92,29 @@ export class ClaimsService {
       for (const documentId of documentIds) {
         records.push(await this.documents.record(documentId, tx));
       }
+      await this.audit.write(tx, {
+        actor: auditActor(customer),
+        action: 'claim.notified',
+        entityType: 'CLAIM',
+        entityId: created.claimNumber,
+        after: {
+          insurerId: created.insurerId,
+          hasPolicy: Boolean(created.policyNumber),
+          attachmentCount: documentIds.length,
+          policeReport: created.policeReport,
+        },
+        note: 'Customer submitted the first claim notification.',
+        correlationId: created.claimNumber,
+      });
+      await this.audit.transition(tx, {
+        actor: auditActor(customer),
+        entityType: 'CLAIM',
+        entityId: created.claimNumber,
+        fromStatus: null,
+        toStatus: created.status,
+        note: 'Claim notification submitted.',
+        correlationId: created.claimNumber,
+      });
       return { claim: created, insurerName: insurer.name, supportingDocs: records };
     };
     const { claim, insurerName, supportingDocs } = transaction

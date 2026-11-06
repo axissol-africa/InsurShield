@@ -13,6 +13,8 @@ const STAFF: Principal = {
   insurerId: 'insurer-1',
 };
 
+const audit = { write: async () => undefined };
+
 interface StoredDocument {
   id: string;
   kind: DocumentKind;
@@ -32,7 +34,7 @@ function serviceWith(stored: StoredDocument[], referenced: string[] = []) {
       return new Set(referenced);
     },
   };
-  const service = new DocumentsService(repository as never, {} as never, {} as never);
+  const service = new DocumentsService(repository as never, {} as never, {} as never, audit as never);
   const attach = (principal: Principal, ids: string[], kind: DocumentKind) =>
     service.assertAttachable({} as Transaction, principal, ids, kind);
   return { attach, calls };
@@ -119,14 +121,17 @@ describe('upload', () => {
     ({ originalname: 'evidence', mimetype, size: buffer.length, buffer }) as Express.Multer.File;
 
   function uploadService() {
-    const repository = { insert: vi.fn().mockResolvedValue({ id: 'doc-1', fileName: 'evidence', mimeType: 'application/pdf', sizeBytes: 5, storageKey: 'documents/evidence' }) };
+    const repository = {
+      transaction: (work: (tx: Transaction) => Promise<unknown>) => work({} as Transaction),
+      insert: vi.fn().mockResolvedValue({ id: 'doc-1', kind: 'CLAIM_ATTACHMENT', fileName: 'evidence', mimeType: 'application/pdf', sizeBytes: 5, storageKey: 'documents/evidence' }),
+    };
     const storage = {
       buildKey: vi.fn().mockReturnValue('documents/evidence'),
       put: vi.fn(),
       signedDownloadUrl: vi.fn().mockResolvedValue('https://signed/doc-1'),
     };
     const config = { get: () => 3 * 1024 * 1024 };
-    return { service: new DocumentsService(repository as never, storage as never, config as never), repository, storage };
+    return { service: new DocumentsService(repository as never, storage as never, config as never, audit as never), repository, storage };
   }
 
   it.each([
@@ -158,7 +163,7 @@ describe('upload', () => {
   it('refuses a file over the limit with the same message the multipart limit gives', async () => {
     const limit = 3 * 1024 * 1024;
     const config = { get: () => limit };
-    const service = new DocumentsService({} as never, {} as never, config as never);
+    const service = new DocumentsService({} as never, {} as never, config as never, audit as never);
     const file = { mimetype: 'application/pdf', size: limit + 1 } as Express.Multer.File;
 
     await expect(service.upload(file, 'CLAIM_ATTACHMENT', { kind: 'claim-attachment', claimNumber: 'x' } as never, CUSTOMER))
@@ -178,7 +183,7 @@ describe('record', () => {
       },
     };
     const storage = { signedDownloadUrl: async (key: string) => `https://signed/${key}` };
-    return { service: new DocumentsService(repository as never, storage as never, {} as never), reads };
+    return { service: new DocumentsService(repository as never, storage as never, {} as never, audit as never), reads };
   }
 
   it('reads the document through the given transaction and signs a link', async () => {

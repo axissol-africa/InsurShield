@@ -30,7 +30,7 @@
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
  *  config      GET  /config/pia · PUT /config/pia
- *  admin       GET  /admin/overview · GET /admin/premium-by-month?months= · GET /admin/policies?limit= · GET /admin/customers/find?query=
+ *  admin       GET  /admin/overview · GET /admin/premium-by-month?months= · GET /admin/policies?limit= · GET /admin/customers/find?query= · GET /admin/audit-logs
  *  capture     see `api/capture.js` (photo hand-off relay)
  */
 

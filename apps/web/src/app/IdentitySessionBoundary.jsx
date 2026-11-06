@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/components/ui/Button';
 import { api, ApiError } from '@/api';
 import { env } from '@/config/env';
 import { useStore } from '@/store';

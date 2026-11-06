@@ -78,7 +78,7 @@ export class CustomerController {
   @Post('quote-requests/:id/requote')
   @HttpCode(HttpStatus.CREATED)
   requote(@Param('id') id: string, @CurrentUser() principal: Principal) {
-    return this.quoteRequests.requote(this.scope(principal).id, id);
+    return this.quoteRequests.requote(this.scope(principal), id);
   }
 
   // ── Policies ────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ export class CustomerController {
   @Post('policies/:policyNumber/renew')
   @HttpCode(HttpStatus.CREATED)
   renewPolicy(@Param('policyNumber') policyNumber: string, @CurrentUser() principal: Principal) {
-    return this.policies.renew(this.scope(principal).id, policyNumber);
+    return this.policies.renew(this.scope(principal), policyNumber);
   }
 
   // ── Claims and NCD ──────────────────────────────────────────────
@@ -135,7 +135,7 @@ export class CustomerController {
   @Post('ncd/applications')
   @HttpCode(HttpStatus.CREATED)
   applyForNcd(@Body() dto: ApplyForNcdDto, @CurrentUser() principal: Principal) {
-    return this.ncd.apply(this.scope(principal).id, dto);
+    return this.ncd.apply(this.scope(principal), dto);
   }
 
   /**
@@ -156,6 +156,6 @@ export class CustomerController {
   @Delete('account')
   @HttpCode(HttpStatus.OK)
   closeAccount(@CurrentUser() principal: Principal) {
-    return this.account.close(this.scope(principal).id);
+    return this.account.close(this.scope(principal));
   }
 }

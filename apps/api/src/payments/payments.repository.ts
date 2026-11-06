@@ -120,7 +120,14 @@ export class PaymentsRepository {
   }
 
   async insertPolicy(tx: Transaction, policy: NewPolicy) {
-    const [created] = await tx.insert(policies).values(policy).returning({ policyNumber: policies.policyNumber });
+    const [created] = await tx.insert(policies).values(policy).returning({
+      policyNumber: policies.policyNumber,
+      status: policies.status,
+      insurerId: policies.insurerId,
+      quoteRequestId: policies.quoteRequestId,
+      insurerQuoteId: policies.insurerQuoteId,
+      premiumMinor: policies.premiumMinor,
+    });
     return created;
   }
 

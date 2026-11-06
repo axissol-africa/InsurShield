@@ -250,4 +250,7 @@ export const admin = {
       },
     };
   }),
+  // Audit history needs the server's append-only database. Prototype mode
+  // states that boundary plainly rather than inventing compliance records.
+  auditLogs: () => call(() => ({ items: [], nextCursor: null })),
 };

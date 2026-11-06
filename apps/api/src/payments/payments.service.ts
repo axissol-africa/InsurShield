@@ -19,6 +19,9 @@ import {
 import { toReceipt, type ReceiptResponse } from './dto/receipt.dto.js';
 import { PaymentsRepository, type ReceiptRow } from './payments.repository.js';
 import { CHOOSE_A_PAYMENT_METHOD, type PayDto } from './dto/payment.dto.js';
+import type { CustomerPrincipal } from '../customer/customer-principal.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 
 const IDEMPOTENCY_KEY_CONSTRAINT = 'payments_idempotencyKey_key';
 
@@ -38,9 +41,11 @@ export class PaymentsService {
   constructor(
     private readonly payments: PaymentsRepository,
     private readonly config: ConfigService<Env, true>,
+    private readonly audit: AuditService,
   ) {}
 
-  async pay(customerId: string, idempotencyKey: string, dto: PayDto): Promise<ReceiptResponse> {
+  async pay(customer: CustomerPrincipal, idempotencyKey: string, dto: PayDto): Promise<ReceiptResponse> {
+    const customerId = customer.id;
     const method = fromContract.paymentMethod(dto.method);
     if (!method) throw new ApiException('BAD_REQUEST', CHOOSE_A_PAYMENT_METHOD);
     const attempt: PaymentAttempt = {
@@ -150,6 +155,45 @@ export class PaymentsService {
             );
           }
         }
+        await this.audit.write(tx, {
+          actor: auditActor(customer),
+          action: 'payment.confirmed',
+          entityType: 'PAYMENT',
+          entityId: payment.id,
+          after: {
+            transactionId: payment.transactionId,
+            status: payment.status,
+            amountMinor: payment.amountMinor,
+            rtsaAnniversaryFeeMinor: payment.rtsaAnniversaryFeeMinor,
+            method: payment.method,
+            quoteRequestId: payment.quoteRequestId,
+          },
+          note: 'Payment confirmed for an insurer quote.',
+          correlationId: payment.transactionId,
+        });
+        await this.audit.write(tx, {
+          actor: auditActor(customer),
+          action: 'policy.created',
+          entityType: 'POLICY',
+          entityId: policy.policyNumber,
+          after: {
+            insurerId: policy.insurerId,
+            quoteRequestId: policy.quoteRequestId,
+            insurerQuoteId: policy.insurerQuoteId,
+            premiumMinor: policy.premiumMinor,
+          },
+          note: 'Paid policy received and awaiting the insurer certificate.',
+          correlationId: payment.transactionId,
+        });
+        await this.audit.transition(tx, {
+          actor: auditActor(customer),
+          entityType: 'POLICY',
+          entityId: policy.policyNumber,
+          fromStatus: null,
+          toStatus: policy.status,
+          note: 'Policy created after payment confirmation.',
+          correlationId: payment.transactionId,
+        });
         return { ...payment, policyNumber: policy.policyNumber };
       });
     } catch (error) {

@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { piaConfig } from '../src/db/schema.js';
+import { auditLogs, piaConfig, piaConfigHistory } from '../src/db/schema.js';
 import { buildCustomer, buildInsurer, buildStaffUser } from './builders.js';
 import { buildPiaConfig } from './builders/admin.js';
 import { openTestDatabase, startApp, type TestApp } from './helpers.js';
@@ -80,6 +80,29 @@ describe('PIA minimum rate', () => {
     expect(row.updatedAt.getTime()).toBeGreaterThan(new Date('2026-01-01T00:00:00.000Z').getTime());
     expect(response.body.lastUpdated).toBe(row.updatedAt.toISOString());
     expect((await testApp.http.get(PATH).expect(200)).body).toEqual(response.body);
+  });
+
+  it('keeps an append-only rate history and an administrator audit event', async () => {
+    await side.db.delete(piaConfig);
+    const staff = await buildStaffUser(testApp.db, { role: 'ADMIN', fullName: 'History Setter' });
+    const session = await signIn(testApp.http, staff);
+
+    await testApp.http.put(PATH).set(session).send({ piaRatePercentage: 4 }).expect(200);
+    await testApp.http.put(PATH).set(session).send({ piaRatePercentage: 5.25 }).expect(200);
+
+    const history = await side.db
+      .select()
+      .from(piaConfigHistory)
+      .where(eq(piaConfigHistory.changedByStaffId, staff.id))
+      .orderBy(piaConfigHistory.changedAt);
+    expect(history.map(({ piaRateBps, previousRateBps }) => ({ piaRateBps, previousRateBps })))
+      .toEqual([{ piaRateBps: 400, previousRateBps: null }, { piaRateBps: 525, previousRateBps: 400 }]);
+
+    const events = await side.db
+      .select({ actorId: auditLogs.actorId, action: auditLogs.action, after: auditLogs.after })
+      .from(auditLogs)
+      .where(eq(auditLogs.actorId, staff.id));
+    expect(events).toContainEqual({ actorId: staff.id, action: 'setting.pia_floor_updated', after: { piaRateBps: 525 } });
   });
 
   it.each([

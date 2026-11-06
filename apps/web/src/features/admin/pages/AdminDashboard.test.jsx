@@ -10,6 +10,7 @@ vi.mock('@/config/env', () => ({ env: { apiMode: 'mock', mockLatencyMs: 0 } }));
 
 vi.mock('@/api', () => ({
   api: {
+    admin: { auditLogs: vi.fn() },
     insurers: {
       list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn(), remove: vi.fn(), restore: vi.fn(),
     },

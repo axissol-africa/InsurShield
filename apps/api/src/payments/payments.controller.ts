@@ -5,6 +5,7 @@ import { PayDto } from './dto/payment.dto.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import type { CustomerPrincipal } from '../customer/customer-principal.js';
 
 const MAX_IDEMPOTENCY_KEY_LENGTH = 200;
 
@@ -12,11 +13,11 @@ const MAX_IDEMPOTENCY_KEY_LENGTH = 200;
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
-  private scope(principal: Principal): string {
+  private scope(principal: Principal): CustomerPrincipal {
     if (principal.kind !== 'customer') {
       throw ApiException.forbidden('Only a customer can pay for their own quote.');
     }
-    return principal.id;
+    return principal;
   }
 
   /**
@@ -53,6 +54,6 @@ export class PaymentsController {
 
   @Get(':transactionId')
   status(@Param('transactionId') transactionId: string, @CurrentUser() principal: Principal) {
-    return this.payments.status(this.scope(principal), transactionId);
+    return this.payments.status(this.scope(principal).id, transactionId);
   }
 }

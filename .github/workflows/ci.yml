@@ -222,5 +222,23 @@ jobs:
           npm run start:prod -w @insurshield/api > api.log 2>&1 &
           api_pid=$!
           trap 'kill "$api_pid" 2>/dev/null || true; cat api.log' EXIT
-          until curl --fail --silent http://127.0.0.1:4000/health/ready > /dev/null; do sleep 1; done
+          # The browser journey only needs the HTTP API. /health/ready also
+          # checks object storage, which is intentionally not started in this
+          # job, so using it here would wait until the CI timeout.
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4000/health > /dev/null; then
+              break
+            fi
+            if ! kill -0 "$api_pid" 2>/dev/null; then
+              echo 'API exited before it became available.'
+              cat api.log
+              exit 1
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo 'API did not become available within 60 seconds.'
+              cat api.log
+              exit 1
+            fi
+            sleep 1
+          done
           npm run test:e2e -w @insurshield/web -- --project=real-api

@@ -100,6 +100,17 @@ export class InsurersRepository {
     return row;
   }
 
+  /** Locks the insurer before an audited lifecycle or profile change. */
+  async lock(tx: Transaction, id: string) {
+    const [row] = await tx
+      .select({ ...staffColumns, contact: contactColumns })
+      .from(insurers)
+      .leftJoin(insurerContacts, eq(insurerContacts.insurerId, insurers.id))
+      .where(eq(insurers.id, id))
+      .for('update', { of: insurers });
+    return row;
+  }
+
   async insert(tx: Transaction, insurer: NewInsurer, contact: NewContact): Promise<InsurerRow> {
     const [row] = await tx.insert(insurers).values(insurer).returning(staffColumns);
     const [stored] = await tx

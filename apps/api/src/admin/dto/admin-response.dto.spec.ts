@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { CustomerMatch } from '../admin.repository.js';
-import { toCustomerLookupResponse } from './admin-response.dto.js';
+import type { AuditLogRow, CustomerMatch } from '../admin.repository.js';
+import { toAuditLogResponse, toCustomerLookupResponse } from './admin-response.dto.js';
 
 const customer = (phone: string) =>
   ({
@@ -23,5 +23,21 @@ describe('the admin customer view', () => {
 
   it('shows a real phone as stored', () => {
     expect(toCustomerLookupResponse(customer('+260971000000'), consent).phone).toBe('+260971000000');
+  });
+});
+
+describe('the admin audit reader', () => {
+  it('shows only changed field names, never raw audit values', () => {
+    const entry = {
+      id: 'audit-1', actorType: 'STAFF', action: 'insurer.updated', entityType: 'INSURER', entityId: 'insurer-1',
+      note: 'Updated insurer.', correlationId: null, createdAt: new Date('2026-11-06T10:00:00Z'),
+      before: { rateBps: 400, email: 'old@example.invalid' },
+      after: { rateBps: 500, email: 'new@example.invalid' },
+    } as unknown as AuditLogRow;
+
+    expect(toAuditLogResponse(entry)).toEqual({
+      id: 'audit-1', actorType: 'STAFF', action: 'insurer.updated', entityType: 'INSURER', entityId: 'insurer-1',
+      note: 'Updated insurer.', correlationId: null, changedFields: ['email', 'rateBps'], createdAt: '2026-11-06T10:00:00.000Z',
+    });
   });
 });

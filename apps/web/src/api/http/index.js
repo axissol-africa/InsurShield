@@ -108,4 +108,5 @@ export const admin = {
   premiumByMonth: (months = 12) => apiClient.get('/admin/premium-by-month', { params: { months } }),
   recentPolicies: (limit = 8) => apiClient.get('/admin/policies', { params: { limit } }),
   findCustomer: (query) => apiClient.get('/admin/customers/find', { params: { query } }),
+  auditLogs: (query = {}) => apiClient.get('/admin/audit-logs', { params: query }),
 };

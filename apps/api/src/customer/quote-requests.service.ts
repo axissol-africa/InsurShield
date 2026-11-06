@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor, type AuditActor } from '../common/audit/audit.types.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract } from '../common/contract.js';
 import { kwachaToNgwee } from '../common/money.js';
@@ -37,6 +39,7 @@ export class QuoteRequestsService {
     private readonly repository: QuoteRequestsRepository,
     private readonly documents: DocumentsService,
     private readonly config: ConfigService<Env, true>,
+    private readonly audit: AuditService,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -106,6 +109,7 @@ export class QuoteRequestsService {
         },
         insurerIds,
         shots,
+        auditActor(customer),
       );
     };
     const response = transaction ? await create(transaction) : await this.repository.transaction(create);
@@ -121,9 +125,9 @@ export class QuoteRequestsService {
    * request links back to the old one, so the history of what was asked and
    * when stays intact rather than being overwritten.
    */
-  async requote(customerId: string, id: string): Promise<QuoteRequestResponse> {
+  async requote(customer: CustomerPrincipal, id: string): Promise<QuoteRequestResponse> {
     const response = await this.repository.transaction(async (tx) => {
-      const original = await this.repository.lockOwned(tx, customerId, id);
+      const original = await this.repository.lockOwned(tx, customer.id, id);
       if (!original) throw ApiException.notFound('Quote request', id);
 
       const [sentAgain] = await this.repository.requoteLinksOf([original.id], tx);
@@ -153,7 +157,7 @@ export class QuoteRequestsService {
           status: 'SUBMITTED',
           submittedAt,
           expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
-          customerId,
+          customerId: customer.id,
           vehicleId: original.vehicleId,
           vehicleValueMinor: original.vehicleValueMinor,
           vehicleUsage: original.vehicleUsage,
@@ -170,6 +174,7 @@ export class QuoteRequestsService {
         },
         insurerIds,
         shots,
+        auditActor(customer),
       );
     });
 
@@ -195,6 +200,7 @@ export class QuoteRequestsService {
     request: NewQuoteRequest,
     insurerIds: string[],
     shots: NewShot[] = [],
+    actor: AuditActor,
   ): Promise<QuoteRequestResponse> {
     const created = await this.repository.insertRequest(tx, request);
     await this.repository.insertRecipients(tx, created.id, insurerIds);
@@ -202,6 +208,40 @@ export class QuoteRequestsService {
     const row = await this.repository.findOwned(created.customerId, created.id, tx);
     if (!row) throw new Error(`Quote request ${created.id} is missing inside its own transaction`);
     const [response] = await this.responses([row], tx);
+    const action = request.requotedFromId
+      ? 'quote_request.requoted'
+      : request.renewalOfPolicyNumber
+        ? 'quote_request.renewed'
+        : 'quote_request.submitted';
+    await this.audit.write(tx, {
+      actor,
+      action,
+      entityType: 'QUOTE_REQUEST',
+      entityId: created.id,
+      after: {
+        insuranceType: created.insuranceType,
+        coverageDuration: created.coverageDuration,
+        insurerCount: insurerIds.length,
+        inspectionPhotoCount: shots.length,
+        requotedFromId: created.requotedFromId,
+        renewalOfPolicyNumber: created.renewalOfPolicyNumber,
+      },
+      note: request.requotedFromId
+        ? `Fresh quote request created from ${request.requotedFromId}.`
+        : request.renewalOfPolicyNumber
+          ? `Renewal quote request created for ${request.renewalOfPolicyNumber}.`
+          : 'Quote request submitted to eligible insurers.',
+      correlationId: created.id,
+    });
+    await this.audit.transition(tx, {
+      actor,
+      entityType: 'QUOTE_REQUEST',
+      entityId: created.id,
+      fromStatus: null,
+      toStatus: created.status,
+      note: 'Quote request submitted.',
+      correlationId: created.id,
+    });
     return response;
   }
 

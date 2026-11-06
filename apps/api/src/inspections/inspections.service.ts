@@ -8,6 +8,9 @@ import type { RequestInspectionDto, UpdateInspectionDto } from '../customer/dto/
 import { isCustomerEditable } from './domain/inspection.js';
 import { toInspectionResponse, type InspectionPhotoResponse } from './dto/inspection.response.js';
 import { InspectionsRepository, type PhotoRow } from './inspections.repository.js';
+import type { CustomerPrincipal } from '../customer/customer-principal.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 
 /**
  * Scheduled vehicle inspections.
@@ -23,6 +26,7 @@ export class InspectionsService {
   constructor(
     private readonly repository: InspectionsRepository,
     private readonly documents: DocumentsService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(customerId: string) {
@@ -38,7 +42,7 @@ export class InspectionsService {
     );
   }
 
-  async request(customerId: string, dto: RequestInspectionDto) {
+  async request(customer: CustomerPrincipal, dto: RequestInspectionDto) {
     const inspection = await this.repository.transaction(async (tx) => {
       let insurerName: string | null = null;
       if (dto.insurerId) {
@@ -49,7 +53,7 @@ export class InspectionsService {
 
       const created = await this.repository.insert(tx, {
         id: newReference('INS', new Date(), randomInt),
-        customerId,
+        customerId: customer.id,
         insurerId: dto.insurerId ?? null,
         vehiclePlate: dto.vehiclePlate.trim(),
         vehicleLabel: dto.vehicleLabel.trim(),
@@ -57,6 +61,24 @@ export class InspectionsService {
         preferredTime: dto.preferredTime?.trim() ?? null,
         preferredLocation: dto.preferredLocation?.trim() ?? null,
         notes: dto.notes?.trim() ?? null,
+      });
+      await this.audit.write(tx, {
+        actor: auditActor(customer),
+        action: 'inspection.requested',
+        entityType: 'INSPECTION',
+        entityId: created.id,
+        after: { insurerId: created.insurerId, hasPreferredDate: Boolean(created.preferredDate), hasPreferredLocation: Boolean(created.preferredLocation) },
+        note: 'Customer requested a vehicle inspection.',
+        correlationId: created.id,
+      });
+      await this.audit.transition(tx, {
+        actor: auditActor(customer),
+        entityType: 'INSPECTION',
+        entityId: created.id,
+        fromStatus: null,
+        toStatus: created.status,
+        note: 'Inspection requested.',
+        correlationId: created.id,
       });
       return { ...created, insurerName };
     });
@@ -70,12 +92,12 @@ export class InspectionsService {
    * belong to whoever is carrying the inspection out, so they are not editable
    * from here — and once that work has started, neither are the preferences.
    */
-  async update(customerId: string, id: string, dto: UpdateInspectionDto) {
+  async update(customer: CustomerPrincipal, id: string, dto: UpdateInspectionDto) {
     // Read before the write, so nothing after its commit can fail; nothing in the API changes photos.
-    const photos = await this.photoRecords(await this.repository.photosOfOwned(customerId, id));
+    const photos = await this.photoRecords(await this.repository.photosOfOwned(customer.id, id));
 
     const updated = await this.repository.transaction(async (tx) => {
-      const inspection = await this.repository.lockOwned(tx, id, customerId);
+      const inspection = await this.repository.lockOwned(tx, id, customer.id);
       if (!inspection) throw ApiException.notFound('Inspection', id);
 
       if (!isCustomerEditable(inspection.status)) {
@@ -90,6 +112,26 @@ export class InspectionsService {
         preferredTime: dto.preferredTime?.trim() ?? inspection.preferredTime,
         preferredLocation: dto.preferredLocation?.trim() ?? inspection.preferredLocation,
         notes: dto.notes?.trim() ?? inspection.notes,
+      });
+      await this.audit.write(tx, {
+        actor: auditActor(customer),
+        action: 'inspection.preferences_updated',
+        entityType: 'INSPECTION',
+        entityId: changed.id,
+        before: {
+          hasPreferredDate: Boolean(inspection.preferredDate),
+          hasPreferredTime: Boolean(inspection.preferredTime),
+          hasPreferredLocation: Boolean(inspection.preferredLocation),
+          hasNotes: Boolean(inspection.notes),
+        },
+        after: {
+          hasPreferredDate: Boolean(changed.preferredDate),
+          hasPreferredTime: Boolean(changed.preferredTime),
+          hasPreferredLocation: Boolean(changed.preferredLocation),
+          hasNotes: Boolean(changed.notes),
+        },
+        note: 'Customer updated inspection preferences.',
+        correlationId: changed.id,
       });
       return { ...changed, insurerName: inspection.insurerName };
     });

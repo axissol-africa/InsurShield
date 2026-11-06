@@ -23,6 +23,9 @@ export type NewInsurerQuote = typeof insurerQuotes.$inferInsert;
 export type NewNcdCode = typeof ncdCodes.$inferInsert;
 
 const replyColumns = {
+  id: insurerQuotes.id,
+  quoteRequestId: insurerQuotes.quoteRequestId,
+  insurerId: insurerQuotes.insurerId,
   premiumMinor: insurerQuotes.premiumMinor,
   notes: insurerQuotes.notes,
   insurerReference: insurerQuotes.insurerReference,
@@ -34,6 +37,7 @@ const replyColumns = {
 };
 
 const extensionColumns = {
+  id: insurerQuotes.id,
   premiumMinor: insurerQuotes.premiumMinor,
   validityDays: insurerQuotes.validityDays,
   validUntil: insurerQuotes.validUntil,
@@ -181,8 +185,8 @@ export class InsurerPortalRepository {
   }
 
   /** Extends the insurer's quote unless it expired before `now`; undefined when nothing was extended. */
-  async extendOpenQuote(quoteRequestId: string, insurerId: string, extraDays: number, now: Date) {
-    const [extended] = await this.db
+  async extendOpenQuote(tx: Transaction, quoteRequestId: string, insurerId: string, extraDays: number, now: Date) {
+    const [extended] = await tx
       .update(insurerQuotes)
       .set({
         validUntil: sql`${insurerQuotes.validUntil} + make_interval(secs => ${extraDays * 86_400})`,
@@ -305,11 +309,12 @@ export class InsurerPortalRepository {
 
   /** Undefined unless the claim was still waiting to be acknowledged. */
   async acknowledgeClaim(
+    tx: Transaction,
     claimNumber: string,
     insurerId: string,
     receipt: { receivedAt: Date; insurerClaimReference?: string },
   ) {
-    const [acknowledged] = await this.db
+    const [acknowledged] = await tx
       .update(claimNotifications)
       .set({ ...receipt, status: 'RECEIVED_BY_INSURER' })
       .where(

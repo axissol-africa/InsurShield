@@ -24,7 +24,7 @@ export class PiaController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Put()
-  set(@Body() dto: SetPiaConfigDto, @CurrentUser() principal: Principal) {
-    return this.pia.set(dto.piaRatePercentage, principal.id);
+  set(@Body() dto: SetPiaConfigDto, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
+    return this.pia.set(dto.piaRatePercentage, principal);
   }
 }

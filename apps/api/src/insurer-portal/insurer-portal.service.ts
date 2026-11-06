@@ -6,6 +6,8 @@ import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { Transaction } from '../db/database.module.js';
 import { PiaService } from '../pia/pia.service.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 import {
   addDays,
   canDecideNcd,
@@ -56,6 +58,7 @@ export class InsurerPortalService {
     private readonly documents: DocumentsService,
     private readonly pia: PiaService,
     @Inject(NCD_CODE_PICK) private readonly pick: (n: number) => number,
+    private readonly audit: AuditService,
   ) {}
 
   /** The insurer this caller acts for, or a refusal if the account has none. */
@@ -134,6 +137,31 @@ export class InsurerPortalService {
       });
       // The request is "Quoted" as soon as one insurer replies; others may still reply afterwards.
       if (!(await this.portal.markQuoted(tx, requestId, insurerId, sentAt))) throw requestExpired();
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'insurer_quote.issued',
+        entityType: 'INSURER_QUOTE',
+        entityId: quote.id,
+        after: {
+          quoteRequestId: quote.quoteRequestId,
+          insurerId: quote.insurerId,
+          premiumMinor: quote.premiumMinor,
+          validityDays: quote.validityDays,
+        },
+        note: 'Insurer issued a final quote.',
+        correlationId: requestId,
+      });
+      if (delivery.status !== 'QUOTED') {
+        await this.audit.transition(tx, {
+          actor: auditActor(principal),
+          entityType: 'QUOTE_REQUEST',
+          entityId: requestId,
+          fromStatus: delivery.status,
+          toStatus: 'QUOTED',
+          note: 'First insurer quote received.',
+          correlationId: requestId,
+        });
+      }
       return toReply(quote, await this.documents.record(quote.documentId, tx));
     });
 
@@ -145,7 +173,21 @@ export class InsurerPortalService {
   async extendQuote(principal: Principal, requestId: string, dto: ExtendQuoteDto) {
     const insurerId = this.insurerOf(principal);
 
-    const extended = await this.portal.extendOpenQuote(requestId, insurerId, dto.extraDays, new Date());
+    const extended = await this.portal.transaction(async (tx) => {
+      const result = await this.portal.extendOpenQuote(tx, requestId, insurerId, dto.extraDays, new Date());
+      if (result) {
+        await this.audit.write(tx, {
+          actor: auditActor(principal),
+          action: 'insurer_quote.extended',
+          entityType: 'INSURER_QUOTE',
+          entityId: result.id,
+          after: { validityDays: result.validityDays },
+          note: `Insurer extended a quote by ${dto.extraDays} day${dto.extraDays === 1 ? '' : 's'}.`,
+          correlationId: requestId,
+        });
+      }
+      return result;
+    });
     if (extended) return toExtension(extended);
 
     if (!(await this.portal.hasQuote(requestId, insurerId))) {
@@ -195,6 +237,24 @@ export class InsurerPortalService {
         issuedAt: new Date(),
       });
       if (!activated) throw alreadyIssued();
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'policy.certificate_issued',
+        entityType: 'POLICY',
+        entityId: activated.policyNumber,
+        after: { hasCertificate: true, hasInsurerPolicyNumber: Boolean(activated.insurerPolicyNumber) },
+        note: 'Insurer uploaded the official policy certificate.',
+        correlationId: activated.policyNumber,
+      });
+      await this.audit.transition(tx, {
+        actor: auditActor(principal),
+        entityType: 'POLICY',
+        entityId: activated.policyNumber,
+        fromStatus: policy.status,
+        toStatus: activated.status,
+        note: 'Policy activated when the insurer certificate was issued.',
+        correlationId: activated.policyNumber,
+      });
       return toIssuedPolicy(activated, await this.documents.record(dto.certificateDocumentId, tx));
     });
 
@@ -231,9 +291,30 @@ export class InsurerPortalService {
   async acknowledgeClaim(principal: Principal, claimNumber: string, dto: AcknowledgeClaimDto) {
     const insurerId = this.insurerOf(principal);
 
-    const acknowledged = await this.portal.acknowledgeClaim(claimNumber, insurerId, {
-      receivedAt: new Date(),
-      insurerClaimReference: dto.insurerClaimReference ?? undefined,
+    const acknowledged = await this.portal.transaction(async (tx) => {
+      const receipt = { receivedAt: new Date(), insurerClaimReference: dto.insurerClaimReference ?? undefined };
+      const result = await this.portal.acknowledgeClaim(tx, claimNumber, insurerId, receipt);
+      if (result) {
+        await this.audit.write(tx, {
+          actor: auditActor(principal),
+          action: 'claim.received_by_insurer',
+          entityType: 'CLAIM',
+          entityId: result.claimNumber,
+          after: { hasInsurerReference: Boolean(result.insurerClaimReference) },
+          note: 'Insurer acknowledged receipt of the claim notification.',
+          correlationId: result.claimNumber,
+        });
+        await this.audit.transition(tx, {
+          actor: auditActor(principal),
+          entityType: 'CLAIM',
+          entityId: result.claimNumber,
+          fromStatus: 'NOTIFIED',
+          toStatus: result.status,
+          note: 'Insurer acknowledged the claim notification.',
+          correlationId: result.claimNumber,
+        });
+      }
+      return result;
     });
     if (acknowledged) return toAcknowledgement(acknowledged);
 
@@ -275,6 +356,15 @@ export class InsurerPortalService {
           decidedAt,
         });
         if (!decided) throw alreadyDecided();
+        await this.audit.transition(tx, {
+          actor: auditActor(principal),
+          entityType: 'NCD_APPLICATION',
+          entityId: applicationId,
+          fromStatus: application.status,
+          toStatus: decided.status,
+          note: 'Insurer recorded an NCD decision.',
+          correlationId: applicationNumber,
+        });
         return { decision: toNcdDecision(decided), applicationNumber };
       }
 
@@ -291,6 +381,24 @@ export class InsurerPortalService {
       });
       // Rolling back here also removes the code inserted above, so a lost race leaves no code behind.
       if (!approved) throw alreadyDecided();
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'ncd_code.issued',
+        entityType: 'NCD_APPLICATION',
+        entityId: applicationId,
+        after: { percentage },
+        note: 'Insurer issued a No Claim Discount code.',
+        correlationId: applicationNumber,
+      });
+      await this.audit.transition(tx, {
+        actor: auditActor(principal),
+        entityType: 'NCD_APPLICATION',
+        entityId: applicationId,
+        fromStatus: application.status,
+        toStatus: approved.status,
+        note: 'Insurer approved the NCD application.',
+        correlationId: applicationNumber,
+      });
       return { decision: toNcdApproval(approved, { code, percentage }), applicationNumber };
     });
 

@@ -25,7 +25,10 @@ function serviceWorkerBuild(apiBaseUrl) {
     configResolved(resolvedConfig) {
       config = resolvedConfig
     },
-    async closeBundle() {
+    // Vite 8 may call closeBundle before the output directory has been
+    // written on a clean build. The worker manifest depends on emitted asset
+    // filenames, so it belongs in writeBundle, which runs after output.
+    async writeBundle() {
       const outputDirectory = path.resolve(config.root, config.build.outDir)
       const templatePath = path.join(config.publicDir, 'sw.js')
       const workerPath = path.join(outputDirectory, 'sw.js')
