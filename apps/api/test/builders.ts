@@ -166,7 +166,7 @@ export async function buildQuoteRequest(
       expiresAt: daysFromNow(7),
       customerId: input.customerId,
       vehicleId,
-      vehicleValueMinor: 15_000_000,
+      vehicleValueMinor: 1_000_000,
       vehicleUsage: 'PRIVATE',
       insuranceType: 'COMPREHENSIVE',
       coverageDuration: 'Q4',

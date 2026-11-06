@@ -31,6 +31,7 @@ import {
   type BuiltInsurer,
 } from './builders.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
+import { buildPiaConfig } from './builders/admin.js';
 import { buildNcdApplication } from './builders/customer.js';
 import {
   holdLocks,
@@ -65,6 +66,7 @@ const REQUEST_KEYS = [
   'vehicleDetails',
   'vehicleUsage',
   'vehicleValue',
+  'whiteBook',
 ];
 const REPLY_KEYS = ['document', 'extendedAt', 'insurerReference', 'notes', 'premium', 'sentAt', 'validUntil', 'validityDays'];
 const POLICY_KEYS = [
@@ -262,6 +264,7 @@ describe('insurer portal', () => {
       expect(newest.policyDates).toBeNull();
       expect(newest.photosCapturedAt).toBeNull();
       expect(newest.inspectionShots).toEqual([]);
+      expect(newest.whiteBook).toBeNull();
       expect(older).toEqual({
         id: quoted.id,
         status: 'Quoted',
@@ -287,6 +290,7 @@ describe('insurer portal', () => {
         },
         customer: { fullName: 'Mwila Tembo', email: customer.email, phone: customer.phone },
         inspectionShots: [shot.shotKey],
+        whiteBook: null,
         photosCapturedAt: '2026-10-20T07:55:10.789Z',
         reply: {
           premium: 1234.56,
@@ -804,6 +808,29 @@ describe('insurer portal', () => {
   });
 
   describe('final quotes', () => {
+    it('refuses a final premium below the PIA floor for the requested cover period', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const customer = await buildCustomer(testApp.db);
+      await buildPiaConfig(testApp.db, { piaRateBps: 400 });
+      const { quoteRequest } = await buildQuoteRequest(
+        testApp.db,
+        { customerId: customer.id, insurerIds: [insurer.insurer.id] },
+        { vehicleValueMinor: 4_000_000, coverageDuration: 'Q1' },
+      );
+
+      const response = await post(insurer, `quote-requests/${quoteRequest.id}/quote`, {
+        premium: 399.99,
+        documentId: (await upload(insurer, 'QUOTATION')).id,
+      });
+
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({
+        code: 'PREMIUM_BELOW_PIA_FLOOR',
+        message: 'The minimum PIA premium for this 3-month cover is ZMW 400.00.',
+      });
+      expect(await quotesFor(quoteRequest.id)).toEqual([]);
+    });
+
     it('refuses a second final quote with 409 ALREADY_QUOTED', async () => {
       const insurer = await buildInsurer(testApp.db);
       const request = await openRequest(insurer);
@@ -1307,6 +1334,21 @@ describe('insurer portal', () => {
         expect((await applicationRow(application.id)).status).toBe('SUBMITTED');
       },
     );
+
+    it('refuses an over-cap percentage and unsupported notification field without changing the application', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+
+      const overCap = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED', percentage: 51 });
+      expect(overCap.status).toBe(400);
+      expect((await applicationRow(application.id)).status).toBe('SUBMITTED');
+      expect(await codesOf(insurer.insurer.id)).toEqual([]);
+
+      const unsupported = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED', notifyCustomer: true });
+      expect(unsupported.status).toBe(400);
+      expect((await applicationRow(application.id)).status).toBe('SUBMITTED');
+      expect(await codesOf(insurer.insurer.id)).toEqual([]);
+    });
   });
 
   describe('when a drawn NCD code is already taken', () => {

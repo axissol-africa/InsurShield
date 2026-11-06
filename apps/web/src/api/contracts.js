@@ -22,7 +22,7 @@
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
- *  insurers    GET  /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
+ *  insurers    GET  /insurer/profile (signed-in insurer) · GET /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
  *  payments    POST /payments · GET /payments/:id
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
@@ -30,6 +30,7 @@
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
  *  config      GET  /config/pia · PUT /config/pia
+ *  admin       GET  /admin/overview · GET /admin/premium-by-month?months= · GET /admin/policies?limit= · GET /admin/customers/find?query=
  *  capture     see `api/capture.js` (photo hand-off relay)
  */
 

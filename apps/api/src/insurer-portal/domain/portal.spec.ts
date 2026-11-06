@@ -28,6 +28,10 @@ describe('no-claim discount decisions', () => {
     expect(ncdPercentage(4, 0)).toBe(0);
   });
 
+  it('never permits a chosen percentage above the 50% product cap', () => {
+    expect(() => ncdPercentage(9, 51)).toThrow('NCD percentage cannot exceed 50%.');
+  });
+
   it('refuses a new decision only once the application is approved', () => {
     expect(canDecideNcd('APPROVED')).toBe(false);
     for (const status of ['SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'REJECTED'] as const) {

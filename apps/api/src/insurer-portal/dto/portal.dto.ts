@@ -1,6 +1,5 @@
 import { Transform } from 'class-transformer';
 import {
-  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
@@ -60,7 +59,5 @@ export class NcdDecisionDto {
   status!: NcdDecisionStatus;
 
   /** Set when approving to override the automatic percentage. */
-  @IsOptional() @IsInt() @Min(0) @Max(100) percentage?: number;
-
-  @IsOptional() @IsBoolean() notifyCustomer?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(50, { message: 'NCD percentage cannot exceed 50%.' }) percentage?: number;
 }

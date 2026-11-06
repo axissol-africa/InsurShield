@@ -111,8 +111,8 @@ export class UpdateInsurerDto {
   @LicenceExpiry() licenceExpiry?: string;
   @IsOptional() @IsString() registrationNumber?: string;
   @IsOptional() @IsString() tpin?: string;
-  @IsOptional() @IsString() website?: string;
-  @IsOptional() @IsString() logoUrl?: string;
+  @IsOptional() @IsUrl({}, { message: 'Enter a valid website address.' }) website?: string;
+  @IsOptional() @IsUrl({}, { message: 'Enter a valid logo URL.' }) logoUrl?: string;
   @IsOptional() @IsBoolean() ncdAccepted?: boolean;
   @IsOptional() @IsIn(INSPECTION_RULES) inspectionRule?: InspectionRule;
   @IsOptional() @IsIn(INSPECTION_TIMINGS) inspectionTiming?: InspectionTiming;

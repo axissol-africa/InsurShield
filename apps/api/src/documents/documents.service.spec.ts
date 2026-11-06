@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { DocumentKind } from '../common/domain/enums.js';
 import type { Transaction } from '../db/database.module.js';
@@ -114,6 +115,46 @@ describe('assertAttachable', () => {
 });
 
 describe('upload', () => {
+  const file = (mimetype: string, buffer: Buffer) =>
+    ({ originalname: 'evidence', mimetype, size: buffer.length, buffer }) as Express.Multer.File;
+
+  function uploadService() {
+    const repository = { insert: vi.fn().mockResolvedValue({ id: 'doc-1', fileName: 'evidence', mimeType: 'application/pdf', sizeBytes: 5, storageKey: 'documents/evidence' }) };
+    const storage = {
+      buildKey: vi.fn().mockReturnValue('documents/evidence'),
+      put: vi.fn(),
+      signedDownloadUrl: vi.fn().mockResolvedValue('https://signed/doc-1'),
+    };
+    const config = { get: () => 3 * 1024 * 1024 };
+    return { service: new DocumentsService(repository as never, storage as never, config as never), repository, storage };
+  }
+
+  it.each([
+    ['application/pdf', Buffer.from('%PDF-1.7')],
+    ['image/jpeg', Buffer.from([0xff, 0xd8, 0xff, 0xdb])],
+    ['image/png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+  ])('stores a genuine %s upload', async (mimetype, buffer) => {
+    const { service, repository, storage } = uploadService();
+
+    await expect(service.upload(file(mimetype, buffer), 'CLAIM_ATTACHMENT', { kind: 'claim-attachment', claimNumber: 'x' }, CUSTOMER))
+      .resolves.toMatchObject({ id: 'doc-1' });
+    expect(storage.put).toHaveBeenCalledOnce();
+    expect(repository.insert).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['application/pdf', Buffer.from('not actually a PDF')],
+    ['image/jpeg', Buffer.from([0x89, 0x50, 0x4e, 0x47])],
+    ['image/png', Buffer.from([0xff, 0xd8, 0xff])],
+  ])('refuses spoofed %s bytes before storage or database writes', async (mimetype, buffer) => {
+    const { service, repository, storage } = uploadService();
+
+    await expect(service.upload(file(mimetype, buffer), 'CLAIM_ATTACHMENT', { kind: 'claim-attachment', claimNumber: 'x' }, CUSTOMER))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_FILE_CONTENT', status: 400 });
+    expect(storage.put).not.toHaveBeenCalled();
+    expect(repository.insert).not.toHaveBeenCalled();
+  });
+
   it('refuses a file over the limit with the same message the multipart limit gives', async () => {
     const limit = 3 * 1024 * 1024;
     const config = { get: () => limit };

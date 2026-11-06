@@ -746,6 +746,9 @@ describe('a server whose database TimeZone is Africa/Lusaka', () => {
 describe('concurrent runs', () => {
   it('runs M4 at Read Committed so a policy committed while its request waits follows the copied vehicle', async () => {
     const originalVehicleId = '00000000-0000-4000-8000-000000000021';
+    const vehicleSnapshotIndex = ALL.indexOf('0005_vehicle_per_request');
+    if (vehicleSnapshotIndex < 0) throw new Error('The vehicle snapshot migration is required for this concurrency regression test.');
+    const snapshotAndLater = ALL.slice(vehicleSnapshotIndex);
     const beforeM4 = mkdtempSync(join(tmpdir(), 'migrations-before-m4-'));
     const db = await scratch();
     const holder = await db.connect();
@@ -754,18 +757,20 @@ describe('concurrent runs', () => {
     let migrating: Promise<MigrationResult> | undefined;
     try {
       cpSync(DRIZZLE_FOLDER, beforeM4, { recursive: true });
-      rmSync(join(beforeM4, '0005_vehicle_per_request.sql'));
-      rmSync(join(beforeM4, 'catalog', '0005_vehicle_per_request.json'));
-      rmSync(join(beforeM4, 'meta', '0005_snapshot.json'));
+      for (const tag of snapshotAndLater) {
+        rmSync(join(beforeM4, `${tag}.sql`));
+        rmSync(join(beforeM4, 'catalog', `${tag}.json`));
+        rmSync(join(beforeM4, 'meta', `${tag.split('_', 1)[0]}_snapshot.json`));
+      }
       const journalPath = join(beforeM4, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: unknown[] };
-      journal.entries.pop();
+      journal.entries.splice(vehicleSnapshotIndex);
       writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
 
       await query(db, (client) => buildPrismaEraDatabase(client, { data: true }));
       expect(await migrateDatabase(db.config, { migrationsFolder: beforeM4 })).toEqual({
         state: 'prisma-era',
-        applied: ALL.slice(1, -1),
+        applied: ALL.slice(1, vehicleSnapshotIndex),
       });
 
       await holder.query('BEGIN');
@@ -823,7 +828,7 @@ describe('concurrent runs', () => {
       await holder.query('COMMIT');
       committed = true;
 
-      expect(await migrating).toEqual({ state: 'managed', applied: ['0005_vehicle_per_request'] });
+      expect(await migrating).toEqual({ state: 'managed', applied: snapshotAndLater });
       const { rows } = await observer.query<{ requestVehicleId: string; policyVehicleId: string }>(
         `SELECT qr."vehicleId" AS "requestVehicleId", p."vehicleId" AS "policyVehicleId"
          FROM quote_requests qr

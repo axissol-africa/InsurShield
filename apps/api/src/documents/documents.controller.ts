@@ -16,6 +16,7 @@ import { DOCUMENT_KINDS, type DocumentKind } from '../common/domain/enums.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { DocumentScope } from '../storage/storage.service.js';
+import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 
 class UploadDocumentDto {
   @IsIn(DOCUMENT_KINDS, { message: 'Unknown document kind.' })
@@ -27,6 +28,7 @@ const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
   QUOTATION: { kind: 'quotation' as const, quoteRequestId: 'unfiled', insurerId: 'unfiled' },
   CERTIFICATE: { kind: 'certificate' as const, policyNumber: 'unfiled' },
   INSPECTION_PHOTO: { kind: 'inspection-shot' as const, quoteRequestId: 'unfiled', shotKey: 'unfiled' },
+  WHITE_BOOK: { kind: 'white-book' as const, quoteRequestId: 'unfiled' },
   CLAIM_ATTACHMENT: { kind: 'claim-attachment' as const, claimNumber: 'unfiled' },
   INSURER_LOGO: { kind: 'insurer-logo' as const, insurerId: 'unfiled' },
   NCD_EVIDENCE: { kind: 'ncd-evidence' as const, applicationNumber: 'unfiled' },
@@ -41,6 +43,7 @@ export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
   @Post()
+  @ApiRateLimit(API_LIMITS.upload)
   @UseInterceptors(FileTooLargeInterceptor, FileInterceptor('file'))
   upload(
     @UploadedFile() file: Express.Multer.File,

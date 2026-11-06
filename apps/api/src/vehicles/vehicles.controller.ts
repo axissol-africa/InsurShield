@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import type { Principal } from '../common/auth/auth.types.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { OptionalAuth } from '../common/auth/auth.guard.js';
+import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 import { VehiclesService } from './vehicles.service.js';
 
 @Controller('vehicles')
@@ -16,6 +17,7 @@ export class VehiclesController {
    */
   @OptionalAuth()
   @Get('lookup')
+  @ApiRateLimit(API_LIMITS.publicRead)
   lookup(@Query('plate') plate: string, @CurrentUser() principal?: Principal) {
     return this.vehicles.lookup(plate, principal);
   }

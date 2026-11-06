@@ -20,6 +20,7 @@ export default async function setup() {
   // Spec workers start after this and inherit these. Specs that test the limiter or proxies build
   // their app with `startApp({ env })`.
   process.env.AUTH_RATE_LIMIT = 'off';
+  process.env.API_RATE_LIMIT = 'off';
   process.env.TRUST_PROXY_HOPS = '0';
 }
 

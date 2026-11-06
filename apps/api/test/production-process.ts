@@ -3,3 +3,4 @@
 process.env.NODE_ENV = 'production';
 delete process.env.TEST;
 process.env.AUTH_RATE_LIMIT = 'on';
+process.env.API_RATE_LIMIT = 'on';

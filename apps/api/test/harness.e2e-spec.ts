@@ -113,6 +113,7 @@ describe('e2e sessions', () => {
 
   it('runs the app with the limiter off and no trusted proxy, as the global setup sets them', () => {
     expect(process.env.AUTH_RATE_LIMIT).toBe('off');
+    expect(process.env.API_RATE_LIMIT).toBe('off');
     expect(process.env.TRUST_PROXY_HOPS).toBe('0');
   });
 

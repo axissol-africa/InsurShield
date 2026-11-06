@@ -16,8 +16,22 @@ export interface CoverPeriod {
 export const addDays = (from: Date, days: number): Date => new Date(from.getTime() + days * MS_PER_DAY);
 
 /**
- * The period the quotes are priced against. The client's dates win when it sent
- * them; otherwise cover starts now and runs the duration's quarters.
+ * RTSA alignment deliberately uses the current policy year with the registered
+ * anniversary's month and day. This keeps the authoritative RTSA anniversary
+ * stable while the policy term remains a current-year insurance decision.
+ */
+export function rtsaAnniversaryStart(registrationDate: string | Date, now: Date): Date {
+  const source = typeof registrationDate === 'string' ? new Date(registrationDate) : registrationDate;
+  const year = now.getUTCFullYear();
+  const month = source.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(source.getUTCDate(), lastDay)));
+}
+
+/**
+ * The period the quotes are priced against. The client can choose a start date,
+ * but the cover term and end date are always derived on the server so a request
+ * cannot be shortened or extended by a stale or manipulated browser calculation.
  */
 export function coverPeriod(
   dates: { startDate: string; endDate: string } | undefined,
@@ -25,7 +39,7 @@ export function coverPeriod(
   now: Date,
 ): CoverPeriod {
   const startDate = dates ? new Date(dates.startDate) : now;
-  const endDate = dates ? new Date(dates.endDate) : addQuarters(startDate, QUARTERS[duration]);
+  const endDate = addQuarters(startDate, QUARTERS[duration]);
   return {
     startDate,
     endDate,
@@ -34,7 +48,19 @@ export function coverPeriod(
 }
 
 function addQuarters(from: Date, quarters: number): Date {
-  const end = new Date(from);
-  end.setMonth(end.getMonth() + quarters * 3);
-  return end;
+  const targetMonth = from.getUTCMonth() + quarters * 3;
+  const targetYear = from.getUTCFullYear() + Math.floor(targetMonth / 12);
+  const normalisedMonth = ((targetMonth % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(targetYear, normalisedMonth + 1, 0)).getUTCDate();
+  return new Date(
+    Date.UTC(
+      targetYear,
+      normalisedMonth,
+      Math.min(from.getUTCDate(), lastDay),
+      from.getUTCHours(),
+      from.getUTCMinutes(),
+      from.getUTCSeconds(),
+      from.getUTCMilliseconds(),
+    ),
+  );
 }

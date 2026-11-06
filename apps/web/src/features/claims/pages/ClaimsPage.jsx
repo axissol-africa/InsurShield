@@ -6,6 +6,7 @@ import Badge from '@/components/ui/Badge';
 import { Button } from '@/components/ui/primitives/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { api } from '@/api';
+import { submitWithRetry } from '@/api/idempotency';
 import { hydrateCustomer, hydrateDirectory } from '@/api/sync';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { NCD_TIERS as PUBLISHED_NCD_TIERS, ncdDiscountForYears } from '@/domain/insurers';
@@ -252,28 +253,40 @@ export default function ClaimsPage() {
     setClaimSubmitting(true);
     setClaimError('');
     try {
-      // Supporting evidence is stored first, then referenced by the claim.
-      const supportingDocumentIds = (
-        await Promise.all(docItems.filter(item => item.file).map(item => api.documents.upload(item.file, 'CLAIM_ATTACHMENT')))
-      ).map(document => document.id);
-
-      const claim = await api.claims.notify({
-        insurerId: claimForm.insurerId,
-        policyNumber: claimForm.policyNumber || undefined,
-        fullName: claimForm.fullName,
-        phone: claimForm.phone,
-        email: customer?.email || undefined,
-        plate: claimForm.plateNumber || vehicleDetails?.plateNumber || 'N/A',
-        vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your vehicle',
-        type: claimForm.type,
-        incidentDate: claimForm.incidentDate,
-        location: claimForm.location,
-        description: claimForm.description,
-        estimatedLoss: claimForm.estimatedLoss ? Number(claimForm.estimatedLoss) : undefined,
-        policeReport: claimForm.policeReport,
-        policeReportNumber: claimForm.policeReportNumber || undefined,
-        lateReason: claimForm.lateReason || undefined,
-        supportingDocumentIds,
+      const fingerprint = JSON.stringify({
+        customer: customer?.email,
+        claimForm,
+        vehicle: vehicleDetails?.plateNumber,
+        documents: docItems.map((item) => item.file ? [item.file.name, item.file.size, item.file.lastModified] : null),
+      });
+      const claim = await submitWithRetry({
+        operation: 'claim-notification',
+        fingerprint,
+        prepare: async () => {
+          // Supporting evidence is stored first, then referenced by the claim.
+          const supportingDocumentIds = (
+            await Promise.all(docItems.filter(item => item.file).map(item => api.documents.upload(item.file, 'CLAIM_ATTACHMENT')))
+          ).map(document => document.id);
+          return {
+            insurerId: claimForm.insurerId,
+            policyNumber: claimForm.policyNumber || undefined,
+            fullName: claimForm.fullName,
+            phone: claimForm.phone,
+            email: customer?.email || undefined,
+            plate: claimForm.plateNumber || vehicleDetails?.plateNumber || 'N/A',
+            vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your vehicle',
+            type: claimForm.type,
+            incidentDate: claimForm.incidentDate,
+            location: claimForm.location,
+            description: claimForm.description,
+            estimatedLoss: claimForm.estimatedLoss ? Number(claimForm.estimatedLoss) : undefined,
+            policeReport: claimForm.policeReport,
+            policeReportNumber: claimForm.policeReportNumber || undefined,
+            lateReason: claimForm.lateReason || undefined,
+            supportingDocumentIds,
+          };
+        },
+        send: (payload, idempotencyKey) => api.claims.notify(payload, idempotencyKey),
       });
 
       await hydrateCustomer();

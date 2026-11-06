@@ -15,6 +15,7 @@ import {
   Min,
   MinLength,
   ValidateNested,
+  ValidateIf,
 } from 'class-validator';
 import { CONTRACT_VALUES } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
@@ -44,9 +45,10 @@ export class InspectionShotDto {
   @IsUUID('4') documentId!: string;
 }
 
-/** Cover dates the client calculated; the server recomputes the day count. */
+/** The requested start date. The server always derives the cover end date. */
 export class PolicyDatesDto {
   @IsDateString() startDate!: string;
+  /** Accepted for older clients but ignored by the server. */
   @IsDateString() endDate!: string;
 }
 
@@ -68,9 +70,14 @@ export class SubmitQuoteRequestDto {
   coverageDurationId!: string;
 
   @IsOptional() @IsBoolean() matchRtsaAnniversary?: boolean;
-  @IsOptional() @IsDateString() rtsaRegistrationDate?: string;
+  @ValidateIf((dto: SubmitQuoteRequestDto) => dto.matchRtsaAnniversary === true)
+  @IsDateString({ strict: true }, { message: 'The RTSA registration anniversary is required when policy dates are aligned.' })
+  rtsaRegistrationDate?: string;
 
   @IsOptional() @ValidateNested() @Type(() => PolicyDatesDto) policyDates?: PolicyDatesDto;
+
+  /** Registration White Book uploaded separately before the request is sent. */
+  @IsOptional() @IsUUID('4') whiteBookDocumentId?: string;
 
   /** The live photos captured for this request. */
   @IsOptional()

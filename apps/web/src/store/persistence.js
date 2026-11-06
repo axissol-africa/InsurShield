@@ -93,8 +93,14 @@ export const backfillValidity = (requests, insurers) =>
 export const merge = (persisted, current) => ({
   ...current,
   ...persisted,
-  insurersList: reconcileInsurers(persisted?.insurersList),
-  quoteRequests: backfillValidity(persisted?.quoteRequests ?? current.quoteRequests, reconcileInsurers(persisted?.insurersList)),
+  // A live API response is authoritative. Reconciling it against the mock
+  // catalogue would silently add demo insurers to an otherwise empty or
+  // partial production directory.
+  insurersList: env.apiMode === 'mock' ? reconcileInsurers(persisted?.insurersList) : (persisted?.insurersList ?? current.insurersList),
+  quoteRequests: backfillValidity(
+    persisted?.quoteRequests ?? current.quoteRequests,
+    env.apiMode === 'mock' ? reconcileInsurers(persisted?.insurersList) : (persisted?.insurersList ?? current.insurersList),
+  ),
   // A start date saved on an earlier day would fail the date input's minimum.
   policyStartDate: persisted?.policyStartDate >= TODAY() ? persisted.policyStartDate : TODAY(),
   // Inspection images are deliberately not persisted. Seven camera data URLs
@@ -114,7 +120,7 @@ export const migrate = (persisted, version) => {
       Object.assign(state, { customer: null, isAuthenticated: false, consentAccepted: false, consentTimestamp: null, consentRecord: null });
     }
   }
-  if (version < 4) state.insurersList = reconcileInsurers(state.insurersList);
+  if (version < 4 && env.apiMode === 'mock') state.insurersList = reconcileInsurers(state.insurersList);
   // v5: insurer-portal demo records moved into the store so portal actions work on them.
   if (version < 5) {
     state.quoteRequests = withSeed(state.quoteRequests, SEED_QUOTE_REQUESTS);

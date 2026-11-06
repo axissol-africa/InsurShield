@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/primitives/badge';
 import { Textarea } from '@/components/ui/primitives/textarea';
 import { Label } from '@/components/ui/primitives/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/primitives/radio-group';
+import { env } from '@/config/env';
 
 const ISSUE_DELAY_MS = 1500;
 
@@ -46,6 +47,7 @@ export default function PolicyConfirmationPage() {
   const validFrom = cover.known ? cover.start : formatDate(new Date());
   const validUntil = cover.end;
   const existingReview = insurerReviews.find((review) => review.policyNumber === policyNumber && review.customerEmail === customer?.email);
+  const reviewsEnabled = env.apiMode === 'mock';
   useEffect(() => {
     if (!selectedQuote) return undefined;
     const timer = setTimeout(() => {
@@ -148,7 +150,7 @@ export default function PolicyConfirmationPage() {
                 </CardContent>
                 <CardFooter><Button className="w-full" onClick={finish}>My account</Button></CardFooter>
               </Card>
-              <Card>
+              {reviewsEnabled && <Card>
                 <CardHeader><CardTitle><h2 id="review-heading">Rate your purchase experience</h2></CardTitle><p className="text-sm text-muted-foreground">Optional. Share your experience with {selectedQuote.name}.</p></CardHeader>
                 <CardContent>
                   {reviewed || existingReview ? (
@@ -163,7 +165,7 @@ export default function PolicyConfirmationPage() {
                     </div>
                   )}
                 </CardContent>
-              </Card>
+              </Card>}
               <Button variant="ghost" onClick={() => navigate('/')}>Back to home</Button>
             </div>
           </div>

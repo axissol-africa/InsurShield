@@ -4,6 +4,10 @@ import { defineConfig, devices } from '@playwright/test';
 const serviceWorkerOnly = process.argv.some((argument, index) => (
   argument === '--project=service-worker' || (argument === 'service-worker' && process.argv[index - 1] === '--project')
 ));
+const realApiOnly = process.argv.some((argument, index) => (
+  argument === '--project=real-api' || (argument === 'real-api' && process.argv[index - 1] === '--project')
+));
+const realApiBaseUrl = process.env.PLAYWRIGHT_REAL_API_BASE_URL ?? 'http://127.0.0.1:4000/api/v1';
 
 /**
  * Read environment variables from file.
@@ -44,7 +48,9 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: ['service-worker.spec.js'],
+      // The real-api project owns its HTTP-adapter test. Keeping it out of
+      // mock mode makes both environments independently meaningful.
+      testIgnore: ['service-worker.spec.js', 'real-api.spec.js'],
     },
     {
       // Service-worker checks need a production build and their own same-origin
@@ -52,6 +58,13 @@ export default defineConfig({
       name: 'service-worker',
       testMatch: 'service-worker.spec.js',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // The CI job starts the Nest app and this project proves a browser page
+      // uses it rather than the browser-storage prototype adapter.
+      name: 'real-api',
+      testMatch: 'real-api.spec.js',
+      use: { ...devices['Desktop Chrome'], baseURL: 'http://127.0.0.1:5181' },
     },
 
     // {
@@ -86,7 +99,15 @@ export default defineConfig({
   ],
 
   /* Run your local dev server before starting the tests */
-  webServer: serviceWorkerOnly ? undefined : {
+  webServer: serviceWorkerOnly ? undefined : realApiOnly ? {
+    command: 'npm run dev -- --port 5181 --strictPort',
+    url: 'http://127.0.0.1:5181',
+    reuseExistingServer: !process.env.CI,
+    env: {
+      VITE_API_MODE: 'http',
+      VITE_API_BASE_URL: realApiBaseUrl,
+    },
+  } : {
     command: 'npm run dev -- --port 5180 --strictPort',
     url: 'http://localhost:5180',
     reuseExistingServer: !process.env.CI,

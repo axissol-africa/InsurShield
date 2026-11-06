@@ -21,7 +21,12 @@ const untouchable = (what: string) =>
 const always = (index: number) => () => index;
 
 describe('who may use the portal', () => {
-  const service = new InsurerPortalService(untouchable('repository') as never, untouchable('documents') as never, always(0));
+  const service = new InsurerPortalService(
+    untouchable('repository') as never,
+    untouchable('documents') as never,
+    untouchable('pia') as never,
+    always(0),
+  );
 
   const calls: [string, (principal: Principal) => Promise<unknown>][] = [
     ['listQuoteRequests', (principal) => service.listQuoteRequests(principal)],
@@ -63,7 +68,7 @@ describe('final quotes', () => {
       hasQuote: async () => false,
     };
     const documents = untouchable('documents');
-    const service = new InsurerPortalService(repository as never, documents as never, always(0));
+    const service = new InsurerPortalService(repository as never, documents as never, untouchable('pia') as never, always(0));
 
     await expect(service.submitQuote(INSURER_USER, 'r', { premium: 1, documentId: 'd' })).rejects.toMatchObject({
       status: 409,
@@ -97,7 +102,12 @@ describe('NCD approvals', () => {
     let draw = 0;
     // Draws NCD-00000 for the first code, NCD-11111 for the second, and so on.
     const pick = () => Math.floor(draw++ / 5);
-    const service = new InsurerPortalService(repository as never, untouchable('documents') as never, pick);
+    const service = new InsurerPortalService(
+      repository as never,
+      untouchable('documents') as never,
+      untouchable('pia') as never,
+      pick,
+    );
     return { service, inserted, linked };
   }
 

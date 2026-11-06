@@ -37,8 +37,11 @@ export function answerFailure(exception: unknown, request: Request, response: Re
     logger.error(summary, exception instanceof Error ? exception.stack : String(exception));
   }
 
-  if (body.code === 'TRY_AGAIN') {
-    response.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));
+  if (body.code === 'TRY_AGAIN' || body.code === 'RATE_LIMITED') {
+    const retryAfter = typeof body.details === 'object' && body.details !== null && 'retryAfterSeconds' in body.details
+      ? (body.details as { retryAfterSeconds?: unknown }).retryAfterSeconds
+      : RETRY_AFTER_SECONDS;
+    response.setHeader('Retry-After', String(typeof retryAfter === 'number' ? retryAfter : RETRY_AFTER_SECONDS));
   }
   response.status(status).json(body);
 }

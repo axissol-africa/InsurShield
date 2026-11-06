@@ -4,6 +4,7 @@ import { Building2, ChevronLeft, ChevronsLeft, ChevronsRight, CircleDollarSign, 
 import { useStore, useActiveInsurers } from '@/store';
 import { api } from '@/api';
 import { hydrateAdmin } from '@/api/sync';
+import { env } from '@/config/env';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
@@ -198,8 +199,6 @@ function AdminSidebar({ items, view, onSelect }) {
 /** Super-admin console: insurer onboarding and lifecycle, PIA floor, customer account lookup. */
 export default function AdminDashboard() {
   const { insurersList, claims, piaConfig, staffSession, registeredAccounts, quoteRequests, policies } = useStore();
-
-  useEffect(() => { void hydrateAdmin(); }, []);
   const activeInsurers = useActiveInsurers();
   const managedInsurers = insurersList.filter((insurer) => insurer.status !== 'Deleted');
   const piaRate = piaConfig?.piaRatePercentage ?? 4;
@@ -215,6 +214,36 @@ export default function AdminDashboard() {
   const [deletedInsurers, setDeletedInsurers] = useState([]);
   const [deletedInsurersLoading, setDeletedInsurersLoading] = useState(false);
   const [deletedInsurersError, setDeletedInsurersError] = useState(null);
+  const [serverDashboard, setServerDashboard] = useState(null);
+  const [serverDashboardError, setServerDashboardError] = useState(null);
+
+  const loadServerDashboard = useCallback(async () => {
+    if (env.apiMode !== 'http') return;
+
+    // Yield once so the initial effect only starts asynchronous work; React's
+    // effect rule correctly rejects a synchronous state change from here.
+    await Promise.resolve();
+    setServerDashboardError(null);
+    try {
+      const [overview, revenue, recent] = await Promise.all([
+        api.admin.overview(),
+        api.admin.premiumByMonth(12),
+        api.admin.recentPolicies(50),
+      ]);
+      setServerDashboard({ overview, revenue, policies: recent });
+    } catch (error) {
+      // Live mode never substitutes old browser records for an unavailable
+      // administrator API. Showing zeros with a clear error is safer.
+      setServerDashboard(null);
+      setServerDashboardError(error instanceof Error ? error.message : 'The administrator data could not be loaded.');
+    }
+  }, []);
+
+  useEffect(() => {
+    void hydrateAdmin();
+    const deferredLoad = window.setTimeout(() => { void loadServerDashboard(); }, 0);
+    return () => window.clearTimeout(deferredLoad);
+  }, [loadServerDashboard]);
 
   const loadDeletedInsurers = useCallback(async () => {
     if (!isSuperAdmin) {
@@ -236,20 +265,35 @@ export default function AdminDashboard() {
   }, [isSuperAdmin]);
 
   const refreshInsurers = useCallback(async () => {
-    await Promise.all([hydrateAdmin(), loadDeletedInsurers()]);
-  }, [loadDeletedInsurers]);
+    await Promise.all([hydrateAdmin(), loadDeletedInsurers(), loadServerDashboard()]);
+  }, [loadDeletedInsurers, loadServerDashboard]);
 
   useEffect(() => { window.scrollTo({ top: 0 }); }, [view]);
 
-  // Every figure below is counted from the records this console holds. An
-  // empty platform reports zeros rather than plausible-looking estimates.
-  const openClaims = claims.filter((claim) => claim.status === 'Notified').length;
-  const activePolicies = policies.filter((policy) => policy.status === 'Active').length;
-  const awaitingCertificate = policies.filter((policy) => policy.status === AWAITING_CERTIFICATE).length;
-  const premiumTotal = policies.reduce((sum, policy) => sum + (policy.premium || 0), 0);
-  const revenue = premiumByMonth(policies);
+  const useServerDashboard = env.apiMode === 'http';
+  const overview = serverDashboard?.overview;
+  // In HTTP mode these records only come from the administrator endpoints.
+  // A stale local demo snapshot must never become the source of live figures.
+  const dashboardPolicies = useServerDashboard ? (serverDashboard?.policies ?? []) : policies;
+  const policyCount = useServerDashboard ? (overview?.policies.total ?? 0) : policies.length;
+  const activePolicies = useServerDashboard ? (overview?.policies.active ?? 0) : policies.filter((policy) => policy.status === 'Active').length;
+  const awaitingCertificate = useServerDashboard ? (overview?.policies.awaitingCertificate ?? 0) : policies.filter((policy) => policy.status === AWAITING_CERTIFICATE).length;
+  const activeInsurerCount = useServerDashboard ? (overview?.insurers.active ?? 0) : activeInsurers.length;
+  const inactiveInsurerCount = useServerDashboard ? (overview?.insurers.inactive ?? 0) : insurersList.length - activeInsurers.length;
+  const openClaims = useServerDashboard ? (overview?.claims.open ?? 0) : claims.filter((claim) => claim.status === 'Notified').length;
+  const claimCount = useServerDashboard ? (overview?.claims.total ?? 0) : claims.length;
+  const quoteRequestCount = useServerDashboard ? ((overview?.quoteRequests.awaitingQuotes ?? 0) + (overview?.quoteRequests.quoted ?? 0)) : quoteRequests.length;
+  const customerCount = useServerDashboard ? (overview?.customers.total ?? 0) : registeredAccounts.length;
+  const premiumTotal = useServerDashboard ? (overview?.premium.allTime ?? 0) : policies.reduce((sum, policy) => sum + (policy.premium || 0), 0);
+  const revenue = useServerDashboard
+    ? (serverDashboard?.revenue ?? []).map((month) => ({
+      key: month.month,
+      label: MONTHS[Number(month.month.slice(5, 7)) - 1],
+      total: month.total,
+    }))
+    : premiumByMonth(policies);
   const peakMonth = Math.max(...revenue.map((month) => month.total), 0);
-  const recentPolicies = [...policies].sort((first, second) => policyDate(second) - policyDate(first)).slice(0, 6);
+  const recentPolicies = [...dashboardPolicies].sort((first, second) => policyDate(second) - policyDate(first)).slice(0, 6);
 
   const showInsurers = () => {
     setEditingInsurer(null);
@@ -279,7 +323,7 @@ export default function AdminDashboard() {
 
   const sidebarItems = [
     { id: 'dashboard', label: 'Overview', icon: 'dashboard', hint: 'Platform totals', matches: ['dashboard'] },
-    { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policies.length, matches: ['recent_policies'] },
+    { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policyCount, matches: ['recent_policies'] },
     { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
@@ -326,8 +370,8 @@ export default function AdminDashboard() {
           piaRatePercentage={piaRate}
           onView={(insurer) => { setViewingInsurer(insurer); setView('view_insurer'); }}
           onEdit={(insurer) => { setEditingInsurer(insurer); setView('edit_insurer'); }}
-          onRateChange={async (id, ratePercentage) => { await api.insurers.update(id, { ratePercentage }); await hydrateAdmin(); }}
-          onStatusChange={async (id, status) => { await api.insurers.setStatus(id, status); await hydrateAdmin(); }}
+          onRateChange={async (id, ratePercentage) => { await api.insurers.update(id, { ratePercentage }); await refreshInsurers(); }}
+          onStatusChange={async (id, status) => { await api.insurers.setStatus(id, status); await refreshInsurers(); }}
           onDelete={confirmDelete}
           canRemove={isSuperAdmin}
         />
@@ -360,9 +404,9 @@ export default function AdminDashboard() {
       </>
     );
   } else if (view === 'recent_policies') {
-    content = <RecentPolicies policies={policies} onBack={() => setView('dashboard')} />;
+    content = <RecentPolicies policies={dashboardPolicies} onBack={() => setView('dashboard')} />;
   } else if (view === 'find_account') {
-    content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} onBack={() => setView('dashboard')} />;
+    content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} onBack={() => setView('dashboard')} />;
   } else if (view === 'pia_config') {
     content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => { await api.config.setPia({ piaRatePercentage: rate }); await hydrateAdmin(); }} onBack={() => setView('dashboard')} />;
   } else {
@@ -398,15 +442,15 @@ export default function AdminDashboard() {
   function renderOverview() {
 
   const kpis = [
-    { label: 'Policies', value: policies.length, icon: ShieldCheck, note: `${activePolicies} active` },
+    { label: 'Policies', value: policyCount, icon: ShieldCheck, note: `${activePolicies} active` },
     { label: 'Awaiting certificate', value: awaitingCertificate, icon: FileCheck2, note: awaitingCertificate ? 'Insurer action due' : 'None outstanding', alert: awaitingCertificate > 0 },
-    { label: 'Active insurers', value: activeInsurers.length, icon: Building2, note: `${insurersList.length - activeInsurers.length} inactive or removed` },
-    { label: 'Claims open', value: openClaims, icon: ShieldAlert, note: `${claims.length} notified in total`, alert: openClaims > 0 },
+    { label: 'Active insurers', value: activeInsurerCount, icon: Building2, note: `${inactiveInsurerCount} inactive or removed` },
+    { label: 'Claims open', value: openClaims, icon: ShieldAlert, note: `${claimCount} notified in total`, alert: openClaims > 0 },
   ];
   const operations = [
     { label: 'Claims awaiting acknowledgement', value: openClaims, icon: ShieldAlert },
-    { label: 'Quote requests in flight', value: quoteRequests.length, icon: 'send' },
-    { label: 'Registered customers', value: registeredAccounts.length, icon: UsersRound },
+    { label: 'Quote requests in flight', value: quoteRequestCount, icon: 'send' },
+    { label: 'Registered customers', value: customerCount, icon: UsersRound },
     { label: 'PIA minimum rate', value: `${piaRate}%`, icon: Gavel, view: 'pia_config' },
   ];
 
@@ -446,6 +490,12 @@ export default function AdminDashboard() {
           </Card>
         ))}
       </section>
+
+      {serverDashboardError && (
+        <p role="alert" className="mt-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed text-primary">
+          Live platform figures are unavailable: {serverDashboardError}
+        </p>
+      )}
 
       <section className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card className="gap-0 border-border shadow-none xl:col-span-2">
@@ -522,7 +572,7 @@ export default function AdminDashboard() {
           <CardHeader className="grid-cols-[1fr_auto] items-center border-b">
             <div><CardTitle>Recent policies</CardTitle><p className="mt-1 text-sm text-muted-foreground">The latest policy records created on the platform.</p></div>
             <div className="flex items-center gap-2">
-              <UiBadge variant="outline" className="hidden text-muted-foreground sm:inline-flex">{policies.length} total</UiBadge>
+              <UiBadge variant="outline" className="hidden text-muted-foreground sm:inline-flex">{policyCount} total</UiBadge>
               <Button type="button" variant="ghost" size="sm" onClick={() => setView('recent_policies')} className="text-primary hover:bg-primary/10 hover:text-primary">View all</Button>
             </div>
           </CardHeader>
@@ -688,14 +738,30 @@ function InsurerProfile({ insurer, onBack }) {
   );
 }
 
-function FindCustomerAccount({ accounts, quoteRequests, policies, onBack }) {
+function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer, onBack }) {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState(null);
+  const [searchError, setSearchError] = useState(null);
 
-  const search = (event) => {
+  const search = async (event) => {
     event.preventDefault();
     const needle = query.trim().toLowerCase();
     if (!needle) return;
+    setSearchError(null);
+    if (lookupCustomer) {
+      try {
+        const account = await lookupCustomer(query.trim());
+        setResult({
+          account,
+          requests: account.counts.quoteRequests,
+          policies: account.counts.policies,
+        });
+      } catch (error) {
+        setResult(null);
+        setSearchError(error instanceof Error ? error.message : 'The customer account could not be found.');
+      }
+      return;
+    }
     const account = accounts.find((item) => item.email.toLowerCase() === needle || item.phone === needle);
     setResult(account ? {
       account,
@@ -730,6 +796,7 @@ function FindCustomerAccount({ accounts, quoteRequests, policies, onBack }) {
             Results appear here.
           </p>
         )}
+        {searchError && <p role="alert" className="text-sm leading-relaxed text-primary">{searchError}</p>}
         {result?.notFound && <p className="text-sm leading-relaxed text-muted-foreground">No account matches those details. Ask the customer to register, or check the spelling of the email address.</p>}
         {result?.account && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">

@@ -32,10 +32,12 @@ describe('Better Auth HTTP adapter', () => {
   });
 
   it('requests deleted insurers and restores one through the dedicated endpoint', () => {
+    insurers.profile();
     insurers.list({ status: 'deleted' });
     insurers.restore('insurer-1');
 
-    expect(transport.get).toHaveBeenCalledWith('/insurers', { params: { status: 'deleted' } });
+    expect(transport.get).toHaveBeenNthCalledWith(1, '/insurer/profile');
+    expect(transport.get).toHaveBeenNthCalledWith(2, '/insurers', { params: { status: 'deleted' } });
     expect(transport.post).toHaveBeenCalledWith('/insurers/insurer-1/restore');
   });
 });

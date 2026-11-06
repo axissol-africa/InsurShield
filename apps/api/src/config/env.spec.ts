@@ -114,6 +114,10 @@ describe('validateEnv', () => {
     expect(validateEnv(valid).AUTH_RATE_LIMIT).toBe('on');
   });
 
+  it('keeps the API limiter on unless told otherwise', () => {
+    expect(validateEnv(valid).API_RATE_LIMIT).toBe('on');
+  });
+
   it.each(['development', 'production'])('refuses AUTH_RATE_LIMIT=off when NODE_ENV is %s', (nodeEnv) => {
     expect(problems({ ...valid, NODE_ENV: nodeEnv, AUTH_RATE_LIMIT: 'off' })).toMatch(
       /- AUTH_RATE_LIMIT: may be off only when NODE_ENV is test/,
@@ -124,8 +128,22 @@ describe('validateEnv', () => {
     expect(validateEnv({ ...valid, NODE_ENV: 'test', AUTH_RATE_LIMIT: 'off' }).AUTH_RATE_LIMIT).toBe('off');
   });
 
+  it.each(['development', 'production'])('refuses API_RATE_LIMIT=off when NODE_ENV is %s', (nodeEnv) => {
+    expect(problems({ ...valid, NODE_ENV: nodeEnv, API_RATE_LIMIT: 'off' })).toMatch(
+      /- API_RATE_LIMIT: may be off only when NODE_ENV is test/,
+    );
+  });
+
+  it('allows API_RATE_LIMIT=off when NODE_ENV is test', () => {
+    expect(validateEnv({ ...valid, NODE_ENV: 'test', API_RATE_LIMIT: 'off' }).API_RATE_LIMIT).toBe('off');
+  });
+
   it('refuses an AUTH_RATE_LIMIT other than on or off', () => {
     expect(problems({ ...valid, AUTH_RATE_LIMIT: 'false' })).toMatch(/- AUTH_RATE_LIMIT:/);
+  });
+
+  it('refuses an API_RATE_LIMIT other than on or off', () => {
+    expect(problems({ ...valid, API_RATE_LIMIT: 'false' })).toMatch(/- API_RATE_LIMIT:/);
   });
 
   it.each([
@@ -243,6 +261,7 @@ describe('validateEnv', () => {
       TRUST_PROXY_HOPS: SECRET,
       RTSA_ANNIVERSARY_FEE_NGWEE: SECRET,
       AUTH_RATE_LIMIT: SECRET,
+      API_RATE_LIMIT: SECRET,
       S3_ENDPOINT: SECRET,
       S3_SSE: SECRET,
       S3_SIGNED_URL_TTL_SECONDS: SECRET,

@@ -1,6 +1,5 @@
 import { toContract } from '../../common/contract.js';
-import type { NcdCodeRefusal } from '../domain/ncd-code.js';
-import type { NcdApplicationRow, NcdCodeWithInsurer } from '../ncd.repository.js';
+import type { NcdApplicationRow } from '../ncd.repository.js';
 
 export interface NcdApplicationResponse {
   id: string;
@@ -15,17 +14,10 @@ export interface NcdApplicationResponse {
   submittedAt: string;
 }
 
-export type NcdCodeValidation =
-  | { valid: false; reason: NcdCodeRefusal }
-  | {
-      valid: true;
-      code: string;
-      insurerId: string;
-      insurer: string;
-      percentage: number;
-      yearsClaimFree: number;
-      expiresAt: string | null;
-    };
+/** Public validation deliberately reveals no code, insurer or discount data. */
+export interface NcdCodeValidation {
+  valid: boolean;
+}
 
 export function toNcdApplicationResponse(application: NcdApplicationRow, insurerName: string): NcdApplicationResponse {
   return {
@@ -39,17 +31,5 @@ export function toNcdApplicationResponse(application: NcdApplicationRow, insurer
     status: toContract.ncdStatus(application.status),
     approvedCode: application.approvedCodeId,
     submittedAt: application.submittedAt.toISOString(),
-  };
-}
-
-export function toUsableNcdCode(code: NcdCodeWithInsurer): NcdCodeValidation {
-  return {
-    valid: true,
-    code: code.code,
-    insurerId: code.insurerId,
-    insurer: code.insurerName,
-    percentage: code.percentage,
-    yearsClaimFree: code.yearsClaimFree,
-    expiresAt: code.expiresAt?.toISOString() ?? null,
   };
 }

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   customers,
@@ -166,10 +166,18 @@ export class QuoteRequestsRepository {
 
   /** Held shared until `tx` ends, so a deactivation in flight is waited for and none commits under the request. */
   async activeInsurerIds(tx: Transaction): Promise<string[]> {
+    // A date-only licence expiry is valid until the end of that UTC day.
+    const today = new Date();
+    const currentDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
     const rows = await tx
       .select({ id: insurers.id })
       .from(insurers)
-      .where(eq(insurers.status, 'ACTIVE'))
+      .where(
+        and(
+          eq(insurers.status, 'ACTIVE'),
+          or(isNull(insurers.licenceExpiry), gte(insurers.licenceExpiry, currentDay)),
+        ),
+      )
       .orderBy(asc(insurers.name))
       .for('share');
     return rows.map((insurer) => insurer.id);
@@ -209,5 +217,14 @@ export class QuoteRequestsRepository {
   async insertShots(tx: Transaction, quoteRequestId: string, shots: NewShot[]): Promise<void> {
     if (shots.length === 0) return;
     await tx.insert(inspectionShots).values(shots.map((shot) => ({ quoteRequestId, ...shot })));
+  }
+
+  /** Stable captured proof that follows the request if it is sent again. */
+  shotsForRequest(tx: Transaction, quoteRequestId: string): Promise<NewShot[]> {
+    return tx
+      .select({ shotKey: inspectionShots.shotKey, documentId: inspectionShots.documentId })
+      .from(inspectionShots)
+      .where(eq(inspectionShots.quoteRequestId, quoteRequestId))
+      .orderBy(asc(inspectionShots.capturedAt), asc(inspectionShots.id));
   }
 }
