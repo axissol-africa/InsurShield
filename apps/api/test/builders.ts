@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createCredentialUser, normalizeEmail } from '../src/auth/credential-user.js';
 import type { Database, Transaction } from '../src/db/database.module.js';
+import { retentionClassOf } from '../src/documents/domain/retention.js';
 import {
   claimNotifications,
   customers,
@@ -136,6 +137,11 @@ export async function buildDocument(
       mimeType: 'application/pdf',
       sizeBytes: 1024,
       storageKey: unique('fake/document'),
+      // A built document stands for one the API stored, which is always scanned.
+      scanStatus: 'CLEAN',
+      scannedAt: new Date(),
+      scannerName: 'stand-in',
+      retentionClass: retentionClassOf(overrides.kind ?? 'QUOTATION'),
       ...overrides,
       uploadedByCustomerId: 'customerId' in uploader ? uploader.customerId : null,
       uploadedByStaffId: 'staffId' in uploader ? uploader.staffId : null,

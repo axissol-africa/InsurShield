@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Principal } from '../src/common/auth/auth.types.js';
 import type { DocumentKind } from '../src/common/domain/enums.js';
-import { policies } from '../src/db/schema.js';
+import { auditLogs, documents, policies } from '../src/db/schema.js';
 import { DocumentsService } from '../src/documents/documents.service.js';
 import {
   buildClaim,
@@ -209,6 +209,80 @@ describe('documents', () => {
       const response = await testApp.http.get(`/api/v1/documents/${id}`).set(principals.admin).expect(404);
 
       expect(response.body).toEqual({ code: 'NOT_FOUND', message: `Document ${id} was not found.`, details: null });
+    });
+
+    it('records who was given a link, without the link itself', async () => {
+      const id = docs['certificate A'];
+      const downloads = async () =>
+        side.db
+          .select({ actorId: auditLogs.actorId, after: auditLogs.after })
+          .from(auditLogs)
+          .where(and(eq(auditLogs.entityId, id), eq(auditLogs.action, 'document.downloaded')));
+      const before = await downloads();
+
+      await testApp.http.get(`/api/v1/documents/${id}`).set(principals.admin).expect(200);
+
+      const after = await downloads();
+      expect(after).toHaveLength(before.length + 1);
+      expect(after.at(-1)).toMatchObject({ after: { kind: 'CERTIFICATE' } });
+      // The link is the secret; the trail records that one was issued, not which.
+      expect(JSON.stringify(after)).not.toContain('storage.invalid');
+    });
+
+    it('withholds the link of a document that has not been found clean, keeping the record', async () => {
+      // Embedded links are signed by DocumentsService.record while a list or
+      // detail response is built. Refusing there would fail the whole response,
+      // so the record keeps its description and loses only its link.
+      const id = docs['certificate A'];
+      const service = testApp.app.get(DocumentsService);
+      await side.db.update(documents).set({ scanStatus: 'UNSCANNED' }).where(eq(documents.id, id));
+      try {
+        const record = await service.record(id);
+
+        expect(record).toMatchObject({ id, name: expect.any(String), size: expect.any(Number) });
+        expect(record.url).toBeUndefined();
+      } finally {
+        await side.db.update(documents).set({ scanStatus: 'CLEAN' }).where(eq(documents.id, id));
+      }
+      await expect(service.record(id)).resolves.toMatchObject({ url: expect.stringContaining('https://') });
+    });
+
+    it('still lists a customer policy whose certificate has not been found clean', async () => {
+      // The regression the download gate could have caused: one unscanned
+      // document must never stop a parent page from loading.
+      const id = docs['certificate A'];
+      await side.db.update(documents).set({ scanStatus: 'UNSCANNED' }).where(eq(documents.id, id));
+      try {
+        const response = await testApp.http.get('/api/v1/policies').set(principals['customer A']).expect(200);
+
+        const listed = response.body
+          .flatMap((policy: { certificateDocument?: { id: string; url?: string } | null }) =>
+            policy.certificateDocument ?? [],
+          )
+          .find((document: { id: string }) => document.id === id);
+        expect(listed, 'the certificate is still described').toBeDefined();
+        expect(listed.url, 'but carries no link').toBeUndefined();
+      } finally {
+        await side.db.update(documents).set({ scanStatus: 'CLEAN' }).where(eq(documents.id, id));
+      }
+    });
+
+    it('refuses a document that has not been found clean, to everyone', async () => {
+      const id = docs['certificate A'];
+      await side.db.update(documents).set({ scanStatus: 'UNSCANNED' }).where(eq(documents.id, id));
+      try {
+        for (const principal of ['super admin', 'admin'] as const) {
+          const response = await testApp.http.get(`/api/v1/documents/${id}`).set(principals[principal]).expect(409);
+
+          expect(response.body).toEqual({
+            code: 'DOCUMENT_NOT_AVAILABLE',
+            message: 'That document is not available for download.',
+            details: null,
+          });
+        }
+      } finally {
+        await side.db.update(documents).set({ scanStatus: 'CLEAN' }).where(eq(documents.id, id));
+      }
     });
   });
 

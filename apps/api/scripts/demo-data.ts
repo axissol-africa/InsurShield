@@ -8,6 +8,7 @@
 import { asc, eq, inArray, like } from 'drizzle-orm';
 import { kwachaToNgwee } from '../src/common/money.js';
 import type { Transaction } from '../src/db/database.module.js';
+import { retentionClassOf } from '../src/documents/domain/retention.js';
 import {
   claimNotifications,
   documents,
@@ -197,6 +198,10 @@ export async function seedDemoData(
           fileName: `${shotKey}.jpg`,
           mimeType: 'image/jpeg',
           sizeBytes: 184_320,
+          scanStatus: 'CLEAN' as const,
+          scannedAt: submittedAt,
+          scannerName: 'stand-in',
+          retentionClass: retentionClassOf('INSPECTION_PHOTO'),
           storageKey: `inspection-shots/${request.id}/${shotKey}/demo.jpg`,
         })
         .returning({ id: documents.id });
@@ -249,6 +254,10 @@ export async function seedDemoData(
         fileName: 'Prestige-quotation.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 98_304,
+        scanStatus: 'CLEAN' as const,
+        scannedAt: hoursAgo(48),
+        scannerName: 'stand-in',
+        retentionClass: retentionClassOf('QUOTATION'),
         storageKey: `quotations/${paidRequestId}/${prestige.id}/demo.pdf`,
       })
       .returning({ id: documents.id });

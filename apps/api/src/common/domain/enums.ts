@@ -68,6 +68,23 @@ export const DOCUMENT_KINDS = [
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
+/**
+ * `UNSCANNED` exists for documents stored before scanning was introduced. The
+ * API stores a new document only once a scanner has answered `CLEAN`, so an
+ * infected file never reaches this enum at all.
+ */
+export const DOCUMENT_SCAN_STATUSES = ['UNSCANNED', 'CLEAN'] as const;
+export type DocumentScanStatus = (typeof DOCUMENT_SCAN_STATUSES)[number];
+
+/** How long a document is kept. The durations are settings, not code. */
+export const DOCUMENT_RETENTION_CLASSES = [
+  'UNDERWRITING_EVIDENCE',
+  'POLICY_EVIDENCE',
+  'CLAIM_EVIDENCE',
+  'BRAND_ASSET',
+] as const;
+export type DocumentRetentionClass = (typeof DOCUMENT_RETENTION_CLASSES)[number];
+
 export const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKNOWLEDGED', 'FAILED'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 

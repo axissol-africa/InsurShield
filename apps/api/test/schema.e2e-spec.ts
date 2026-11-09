@@ -620,6 +620,60 @@ describe('0008_audit_trail_state_history', () => {
   });
 });
 
+describe('0009_documents_scanning_and_retention', () => {
+  it('leaves existing documents unscanned, classifies them by kind and scans nothing retrospectively', async () => {
+    // Applied up to 0008, so the rows exist before scanning was introduced.
+    const db = await scratch((client) => applyMigrationFiles(client, TAGS.length - 1));
+
+    await query(db, async (client) => {
+      const kinds = ['QUOTATION', 'WHITE_BOOK', 'INSPECTION_PHOTO', 'CERTIFICATE', 'CLAIM_ATTACHMENT', 'NCD_EVIDENCE', 'INSURER_LOGO'];
+      for (const kind of kinds) {
+        await client.query(
+          `INSERT INTO documents (id, kind, "fileName", "mimeType", "sizeBytes", "storageKey")
+           VALUES ($1, $2, 'legacy.pdf', 'application/pdf', 10, $3)`,
+          [randomUUID(), kind, `legacy/${kind}`],
+        );
+      }
+      await applyMigration(client, TAGS.length - 1);
+
+      const { rows } = await client.query<{ kind: string; scanStatus: string; retentionClass: string; scannedAt: Date | null; scannerName: string | null }>(
+        `SELECT kind, "scanStatus", "retentionClass", "scannedAt", "scannerName" FROM documents ORDER BY kind::text`,
+      );
+      expect(rows).toEqual(
+        [
+          ['CERTIFICATE', 'POLICY_EVIDENCE'],
+          ['CLAIM_ATTACHMENT', 'CLAIM_EVIDENCE'],
+          ['INSPECTION_PHOTO', 'UNDERWRITING_EVIDENCE'],
+          ['INSURER_LOGO', 'BRAND_ASSET'],
+          ['NCD_EVIDENCE', 'CLAIM_EVIDENCE'],
+          ['QUOTATION', 'UNDERWRITING_EVIDENCE'],
+          ['WHITE_BOOK', 'UNDERWRITING_EVIDENCE'],
+        ].map(([kind, retentionClass]) => ({
+          kind,
+          retentionClass,
+          scanStatus: 'UNSCANNED',
+          scannedAt: null,
+          scannerName: null,
+        })),
+      );
+    });
+  });
+
+  it('refuses a document stored without a retention class', async () => {
+    const db = await scratch((client) => applyMigrationFiles(client, TAGS.length));
+
+    await query(db, async (client) => {
+      await expect(
+        client.query(
+          `INSERT INTO documents (id, kind, "fileName", "mimeType", "sizeBytes", "storageKey")
+           VALUES ($1, 'QUOTATION', 'q.pdf', 'application/pdf', 10, 'k/q.pdf')`,
+          [randomUUID()],
+        ),
+      ).rejects.toMatchObject({ message: expect.stringContaining('retentionClass') });
+    });
+  });
+});
+
 describe('drizzle-kit', () => {
   it('generate finds no difference between src/db/schema.ts and the migrations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'insurshield-generate-'));
@@ -664,7 +718,7 @@ describe('the final schema', () => {
       return rows;
     });
     const timestampColumns = columns.filter((column) => column.type.startsWith('timestamp'));
-    expect(timestampColumns).toHaveLength(75);
+    expect(timestampColumns).toHaveLength(76);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

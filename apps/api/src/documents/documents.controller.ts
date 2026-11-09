@@ -55,6 +55,7 @@ export class DocumentsController {
 
   /** A fresh signed URL, because the one issued at upload time expires. */
   @Get(':id')
+  @ApiRateLimit(API_LIMITS.download)
   get(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() principal: Principal) {
     return this.documents.recordFor(principal, id);
   }

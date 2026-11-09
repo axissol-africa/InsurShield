@@ -29,6 +29,8 @@ export const API_LIMITS = {
   ncdValidation: { bucket: 'ncd-validation', limit: 8, windowMs: 60_000 },
   /** Uploads are resource-intensive even before storage receives the bytes. */
   upload: { bucket: 'upload', limit: 12, windowMs: 5 * 60_000 },
+  /** A download link is short-lived, so harvesting them has to be slow too. */
+  download: { bucket: 'download', limit: 60, windowMs: 5 * 60_000 },
   /** Customer submissions should tolerate retries but stop accidental loops. */
   customerWrite: { bucket: 'customer-write', limit: 20, windowMs: 5 * 60_000 },
 } as const satisfies Record<string, ApiRateLimitPolicy>;

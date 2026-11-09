@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
+import { and, desc, eq as equals } from 'drizzle-orm';
 import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
 import type { Env } from '../src/config/env.js';
-import { documents } from '../src/db/schema.js';
+import { auditLogs, documents } from '../src/db/schema.js';
 import { buildCustomer } from './builders.js';
 import { startApp, type TestApp } from './helpers.js';
 import { signIn, type SessionHeaders } from './sessions.js';
@@ -11,6 +12,10 @@ const UPLOAD = '/api/v1/documents';
 const PDF = Buffer.from('%PDF-1.7\n% e2e upload\n');
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/** The agreed harmless test file every scanner reports as a detection. */
+const EICAR = Buffer.from(
+  `%PDF-1.7\nX5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*\n`,
+);
 
 describe('uploading a document', () => {
   let testApp: TestApp;
@@ -47,7 +52,11 @@ describe('uploading a document', () => {
       checksumSha256: createHash('sha256').update(PDF).digest('hex'),
       uploadedByCustomerId: customerId,
       uploadedByStaffId: null,
+      scanStatus: 'CLEAN',
+      scannerName: 'stand-in',
+      retentionClass: 'CLAIM_EVIDENCE',
     });
+    expect(row.scannedAt).toBeInstanceOf(Date);
     expect(testApp.storage.objects.get(row.storageKey)).toEqual({ body: PDF, contentType: 'application/pdf' });
     expect(response.body).toEqual({
       id: row.id,
@@ -195,6 +204,55 @@ describe('uploading a document', () => {
       .expect(400);
 
     expect(response.body).toMatchObject({ code: 'VALIDATION_FAILED', details: { fields: ['Unknown document kind.'] } });
+  });
+
+  it('refuses a file the scanner reports on, storing neither the object nor a row', async () => {
+    const before = await stored();
+
+    const response = await testApp.http
+      .post(UPLOAD)
+      .set(headers)
+      .field('kind', 'CLAIM_ATTACHMENT')
+      .attach('file', EICAR, { filename: 'invoice.pdf', contentType: 'application/pdf' })
+      .expect(422);
+
+    expect(response.body).toEqual({
+      code: 'FILE_REJECTED',
+      message: 'That file was refused by the security scan. Upload a different file.',
+      details: null,
+    });
+    expect(await stored()).toEqual(before);
+  });
+
+  it('records the refusal without the file name', async () => {
+    await testApp.http
+      .post(UPLOAD)
+      .set(headers)
+      .field('kind', 'WHITE_BOOK')
+      .attach('file', EICAR, { filename: 'secret-name.pdf', contentType: 'application/pdf' })
+      .expect(422);
+
+    const [entry] = await testApp.db
+      .select({ after: auditLogs.after, actorId: auditLogs.actorId, note: auditLogs.note })
+      .from(auditLogs)
+      .where(and(equals(auditLogs.action, 'document.rejected'), equals(auditLogs.actorId, customerId)))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(1);
+
+    expect(entry).toMatchObject({ after: { kind: 'WHITE_BOOK', signature: 'EICAR-Test-File' } });
+    expect(JSON.stringify(entry)).not.toContain('secret-name');
+  });
+
+  it('classifies each kind for retention as it stores it', async () => {
+    const response = await testApp.http
+      .post(UPLOAD)
+      .set(headers)
+      .field('kind', 'CERTIFICATE')
+      .attach('file', PDF, { filename: 'certificate.pdf', contentType: 'application/pdf' })
+      .expect(201);
+
+    const [row] = await testApp.db.select().from(documents).where(eq(documents.id, response.body.id));
+    expect(row.retentionClass).toBe('POLICY_EVIDENCE');
   });
 
   it('refuses an upload without a token', async () => {
