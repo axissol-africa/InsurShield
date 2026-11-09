@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, type CallHandler, type ExecutionContext, type NestInterceptor } from '@nestjs/common';
 import { tap, type Observable } from 'rxjs';
 import type { Principal } from '../common/auth/auth.types.js';
@@ -44,8 +45,10 @@ export class LinkIssueInterceptor implements NestInterceptor {
         this.audit.write(tx, {
           actor: auditActor(principal),
           action: 'document.links_issued',
-          entityType: 'DOCUMENT',
-          entityId: 'embedded',
+          // The response, not a document: `DOCUMENT_UPLOAD` sets the same
+          // precedent for an act that has no single document to point at.
+          entityType: 'DOCUMENT_LINKS',
+          entityId: randomUUID(),
           after: issued,
           note: 'Download links issued inside a response.',
         }),

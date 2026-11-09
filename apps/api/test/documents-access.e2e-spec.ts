@@ -250,6 +250,36 @@ describe('documents', () => {
       expect(JSON.stringify(after)).not.toContain('storage.invalid');
     });
 
+    it('keeps each concurrent response to its own count', async () => {
+      // The counter is request-scoped through AsyncLocalStorage, and the handler
+      // runs when the interceptor's observable is subscribed rather than when it
+      // is built. If that context did not survive, concurrent reads would share
+      // a log and attribute one customer's links to another.
+      const entries = async () =>
+        side.db
+          .select({ actorId: auditLogs.actorId, after: auditLogs.after })
+          .from(auditLogs)
+          .where(eq(auditLogs.action, 'document.links_issued'));
+      const before = (await entries()).length;
+      const readers = ['customer A', 'customer B', 'customer A', 'customer B'] as const;
+
+      await Promise.all(
+        readers.map((reader) => testApp.http.get('/api/v1/policies').set(principals[reader]).expect(200)),
+      );
+
+      await until(async () => (await entries()).length >= before + readers.length, 'one entry per response');
+      const written = (await entries()).slice(before);
+      expect(written).toHaveLength(readers.length);
+      // Every entry names an actor and carries a count of its own response.
+      for (const entry of written) {
+        expect(entry.actorId).toEqual(expect.any(String));
+        expect((entry.after as { count: number }).count).toBeGreaterThan(0);
+      }
+      // Two customers read concurrently, so both appear and neither absorbed
+      // the other's links.
+      expect(new Set(written.map((entry) => entry.actorId)).size).toBe(2);
+    });
+
     it('does not count the direct download twice, which records itself', async () => {
       const id = docs['certificate A'];
       const countOf = async (action: string) =>

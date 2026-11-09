@@ -208,9 +208,9 @@ export class DocumentsService {
 
   /**
    * A document the principal is related to; any other answers as if it did not
-   * exist. This is the only route that hands a link straight to a caller, so it
-   * is the one that records who read what. Links embedded in a workflow
-   * response come from `record` as part of an operation already audited.
+   * exist. Asking for one outright is its own act, so it gets its own entry.
+   * Links embedded in a response are counted together by LinkIssueInterceptor,
+   * which is why this call is excluded from that count.
    */
   async recordFor(principal: Principal, documentId: string): Promise<DocumentRecord> {
     const document = await this.repository.findVisibleTo(principal, documentId);
