@@ -111,6 +111,7 @@
  * @property {number} rtsaAnniversaryFee
  * @property {'ZMW'} currency
  * @property {string} confirmedAt
+ * @property {string|null} policyNumber        Minted by the payment service; null until the policy exists
  */
 
 /**
