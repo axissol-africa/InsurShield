@@ -13,6 +13,7 @@ import { auditActor } from '../common/audit/audit.types.js';
 import { MALWARE_SCANNER, type MalwareScanner } from '../scanning/scanner.port.js';
 import { retentionClassOf } from './domain/retention.js';
 import { fileTooLarge } from './upload-limits.js';
+import { noteLinkIssued } from './link-issues.js';
 
 /** What the browser is allowed to upload, matching apps/web/src/lib/files.js. */
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -223,7 +224,7 @@ export class DocumentsService {
         HttpStatus.CONFLICT,
       );
     }
-    const record = await this.toRecord(document);
+    const record = await this.toRecord(document, { counted: false });
     await this.repository.transaction((tx) =>
       this.audit.write(tx, {
         actor: auditActor(principal),
@@ -333,7 +334,7 @@ export class DocumentsService {
    * The single point a download link is signed, so a document that has not been
    * found clean is never linked anywhere, staff included.
    */
-  private async toRecord(document: DocumentRow): Promise<DocumentRecord> {
+  private async toRecord(document: DocumentRow, { counted = true } = {}): Promise<DocumentRecord> {
     const described: DocumentRecord = {
       id: document.id,
       name: document.fileName,
@@ -341,6 +342,9 @@ export class DocumentsService {
       size: document.sizeBytes,
     };
     if (document.scanStatus !== 'CLEAN') return described;
+    // Counted here rather than at the call sites, because this is the only
+    // place a link comes into existence. `recordFor` writes its own entry.
+    if (counted) noteLinkIssued(document.kind);
     return {
       ...described,
       url: await this.storage.signedDownloadUrl(document.storageKey, document.fileName),

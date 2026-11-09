@@ -229,6 +229,40 @@ describe('documents', () => {
       expect(JSON.stringify(after)).not.toContain('storage.invalid');
     });
 
+    it('records the links a list response handed out, once for the response', async () => {
+      const issues = async () =>
+        side.db
+          .select({ actorId: auditLogs.actorId, after: auditLogs.after })
+          .from(auditLogs)
+          .where(eq(auditLogs.action, 'document.links_issued'));
+      const before = await issues();
+
+      await testApp.http.get('/api/v1/policies').set(principals['customer A']).expect(200);
+
+      // The entry is written after the response, so the read can outrun it.
+      await until(async () => (await issues()).length > before.length, 'the issued-links entry');
+      const after = await issues();
+      const issued = after.at(-1)?.after as { count: number; kinds: string[] };
+      // One entry for the whole response, however many links it carried.
+      expect(after).toHaveLength(before.length + 1);
+      expect(issued.count).toBeGreaterThan(0);
+      expect(issued.kinds.length).toBeGreaterThan(0);
+      expect(JSON.stringify(after)).not.toContain('storage.invalid');
+    });
+
+    it('does not count the direct download twice, which records itself', async () => {
+      const id = docs['certificate A'];
+      const countOf = async (action: string) =>
+        (await side.db.select({ id: auditLogs.id }).from(auditLogs).where(eq(auditLogs.action, action))).length;
+      const beforeIssued = await countOf('document.links_issued');
+      const beforeDownloads = await countOf('document.downloaded');
+
+      await testApp.http.get(`/api/v1/documents/${id}`).set(principals.admin).expect(200);
+
+      expect(await countOf('document.downloaded')).toBe(beforeDownloads + 1);
+      expect(await countOf('document.links_issued')).toBe(beforeIssued);
+    });
+
     it('withholds the link of a document that has not been found clean, keeping the record', async () => {
       // Embedded links are signed by DocumentsService.record while a list or
       // detail response is built. Refusing there would fail the whole response,

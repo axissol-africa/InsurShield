@@ -7,6 +7,7 @@ import { mountIdentity } from './auth/identity-routes.js';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter.js';
 import type { Env } from './config/env.js';
 import { DATABASE, type Database } from './db/database.module.js';
+import { LinkIssueInterceptor } from './documents/link-issue.interceptor.js';
 import { setupSwagger } from './swagger.js';
 
 export type AppSettings = Pick<Env, 'API_PREFIX' | 'CORS_ORIGINS' | 'SWAGGER_ENABLED' | 'TRUST_PROXY_HOPS'>;
@@ -31,6 +32,8 @@ export function configureApp(app: INestApplication, settings: AppSettings) {
   mountIdentity(express, app.get<Auth>(AUTH), app.get<Database>(DATABASE), app.get<AuthSettings>(AUTH_SETTINGS));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new ApiExceptionFilter());
+  // Embedded download links are recorded once per response; see link-issues.ts.
+  app.useGlobalInterceptors(app.get(LinkIssueInterceptor));
   if (settings.SWAGGER_ENABLED) {
     setupSwagger(app);
   }

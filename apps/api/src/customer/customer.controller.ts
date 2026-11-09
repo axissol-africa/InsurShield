@@ -45,6 +45,7 @@ export class CustomerController {
 
   // ── Quote requests ──────────────────────────────────────────────
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('quote-requests')
   listQuoteRequests(@CurrentUser() principal: Principal) {
     return this.quoteRequests.list(this.scope(principal).id);
@@ -70,6 +71,7 @@ export class CustomerController {
     return result.value;
   }
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('quote-requests/:id')
   getQuoteRequest(@Param('id') id: string, @CurrentUser() principal: Principal) {
     return this.quoteRequests.get(this.scope(principal).id, id);
@@ -83,11 +85,13 @@ export class CustomerController {
 
   // ── Policies ────────────────────────────────────────────────────
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('policies')
   listPolicies(@CurrentUser() principal: Principal) {
     return this.policies.list(this.scope(principal).id);
   }
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('policies/:policyNumber')
   getPolicy(@Param('policyNumber') policyNumber: string, @CurrentUser() principal: Principal) {
     return this.policies.get(this.scope(principal).id, policyNumber);
@@ -102,6 +106,7 @@ export class CustomerController {
 
   // ── Claims and NCD ──────────────────────────────────────────────
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('claims')
   listClaims(@CurrentUser() principal: Principal) {
     return this.claims.list(this.scope(principal).id);
