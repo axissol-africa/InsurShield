@@ -158,8 +158,9 @@ mode: require**.
 Uploaded files never go into Postgres. [`StorageService`](src/storage/storage.service.ts)
 writes them to a private bucket and the database stores only metadata and the
 object key (the `documents` table). Downloads are always short-lived signed URLs
-— `S3_SIGNED_URL_TTL_SECONDS`, 300s by default. The bucket is not publicly
-readable; an unsigned request returns 403.
+— `S3_SIGNED_URL_TTL_SECONDS`, 60s by default. The bucket is not publicly
+readable; an unsigned request returns 403. A link is only ever signed for a
+document whose scan came back clean.
 
 Locally this is MinIO. In production it is S3, through the same code path.
 

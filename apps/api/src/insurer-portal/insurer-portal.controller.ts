@@ -11,6 +11,7 @@ import {
 import { Roles } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 
 /**
  * The insurer portal.
@@ -41,6 +42,7 @@ export class InsurerPortalController {
 
   // ── Quote requests ──────────────────────────────────────────────
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('quote-requests')
   listQuoteRequests(@CurrentUser() principal: Principal) {
     return this.portal.listQuoteRequests(principal);
@@ -68,6 +70,7 @@ export class InsurerPortalController {
 
   // ── Paid policies ───────────────────────────────────────────────
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('policies')
   listPolicies(@CurrentUser() principal: Principal) {
     return this.portal.listPolicies(principal);
@@ -85,6 +88,7 @@ export class InsurerPortalController {
 
   // ── Claims ──────────────────────────────────────────────────────
 
+  @ApiRateLimit(API_LIMITS.bulkRead)
   @Get('claims')
   listClaims(@CurrentUser() principal: Principal) {
     return this.portal.listClaims(principal);

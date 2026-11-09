@@ -129,7 +129,12 @@ export const envSchema = z.object({
   /** Omit both keys in production to fall back to the instance/task IAM role. */
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
-  S3_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(300),
+  /**
+   * How long a document download link stays valid. Short on purpose: the link
+   * is handed out per request, so it only has to survive the browser's fetch,
+   * and a leaked link expires before it is useful.
+   */
+  S3_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(604800).default(60),
   /**
    * Server-side encryption applied on upload. Leave unset for MinIO, which
    * rejects the header with 501 NotImplemented. On S3 use 'AES256' (SSE-S3) or
@@ -140,6 +145,11 @@ export const envSchema = z.object({
   S3_SSE_KMS_KEY_ID: z.string().optional(),
 
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(3 * 1024 * 1024),
+  /**
+   * Which malware-scan adapter uploads go through. 'stand-in' simulates one and
+   * is refused in production by the provider gate.
+   */
+  MALWARE_SCANNER: z.enum(['stand-in']).default('stand-in'),
 }).superRefine((env, context) => {
   if (env.AUTH_RATE_LIMIT === 'off' && env.NODE_ENV !== 'test') {
     context.addIssue({ code: 'custom', path: ['AUTH_RATE_LIMIT'], message: 'may be off only when NODE_ENV is test' });

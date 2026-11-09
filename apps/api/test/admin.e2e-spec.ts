@@ -118,8 +118,11 @@ describe('admin console', () => {
       });
       expect(JSON.stringify(body)).not.toContain('old@example.invalid');
       expect(JSON.stringify(body)).not.toContain('new@example.invalid');
-      expect(JSON.stringify(body)).not.toContain('400');
-      expect(JSON.stringify(body)).not.toContain('500');
+      // The rates are 400 and 500, but the response carries a random UUID, which
+      // contains those digits often enough to fail a search of the whole body.
+      // The summary names what changed; the snapshots themselves never leave.
+      expect(body.items[0]).not.toHaveProperty('before');
+      expect(body.items[0]).not.toHaveProperty('after');
     });
 
     it('pages newest-first without repeating a result and rejects unknown filters', async () => {

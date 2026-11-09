@@ -1,6 +1,6 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { StorageService, type DocumentScope } from '../storage/storage.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { DocumentKind } from '../common/domain/enums.js';
@@ -10,7 +10,10 @@ import type { Transaction } from '../db/database.module.js';
 import { DocumentsRepository, type DocumentRow } from './documents.repository.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
+import { MALWARE_SCANNER, type MalwareScanner } from '../scanning/scanner.port.js';
+import { retentionClassOf } from './domain/retention.js';
 import { fileTooLarge } from './upload-limits.js';
+import { noteLinkIssued } from './link-issues.js';
 
 /** What the browser is allowed to upload, matching apps/web/src/lib/files.js. */
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -33,16 +36,24 @@ export interface DocumentRecord {
   name: string;
   type: string;
   size: number;
-  url: string;
+  /**
+   * Absent when the document has not been found clean. The record still
+   * describes the file, so a list or detail response keeps its shape; only the
+   * link is withheld.
+   */
+  url?: string;
 }
 
 @Injectable()
 export class DocumentsService {
+  private readonly logger = new Logger(DocumentsService.name);
+
   constructor(
     private readonly repository: DocumentsRepository,
     private readonly storage: StorageService,
     private readonly config: ConfigService<Env, true>,
     private readonly audit: AuditService,
+    @Inject(MALWARE_SCANNER) private readonly scanner: MalwareScanner,
   ) {}
 
   /**
@@ -75,10 +86,78 @@ export class DocumentsService {
       );
     }
 
+    // Scanned before the bytes reach the bucket and before any transaction is
+    // opened: infected bytes are never stored, and no transaction waits on a
+    // network call.
+    const verdict = await this.scanner.scan(file.buffer);
+    if (verdict.result !== 'clean') {
+      if (verdict.result === 'unavailable') {
+        // The customer is told only to try again, and the audit entry records
+        // no reason, so this log is the only place an operator can tell a
+        // credential failure from a timeout while uploads refuse platform-wide.
+        this.logger.warn(`Malware scan unavailable: ${verdict.reason}`);
+      }
+      await this.recordRefusal(kind, principal, verdict.result === 'infected' ? verdict.signature : null);
+      throw verdict.result === 'infected'
+        ? new ApiException(
+            'FILE_REJECTED',
+            'That file was refused by the security scan. Upload a different file.',
+            HttpStatus.UNPROCESSABLE_ENTITY,
+          )
+        : new ApiException(
+            'FILE_SCAN_UNAVAILABLE',
+            'Files cannot be checked for viruses right now. Please try again shortly.',
+            HttpStatus.SERVICE_UNAVAILABLE,
+          );
+    }
+
+    const scannedAt = new Date();
     const key = this.storage.buildKey(scope, file.originalname);
     await this.storage.put(key, file.buffer, file.mimetype);
 
-    const document = await this.repository.transaction(async (tx) => {
+    const document = await this.storeMetadata(key, file, kind, principal, scannedAt);
+
+    return this.toRecord(document);
+  }
+
+  /**
+   * The object is already in the bucket by this point, so a failed insert would
+   * leave it with nothing referencing it. Deleting it here keeps storage and
+   * the database in step; a failed delete does not mask the original error.
+   *
+   * A rejected promise does not prove the row is absent: a connection lost
+   * during COMMIT reads the same way as a refused insert, and the server may
+   * have committed. Deleting then would strand a row pointing at bytes that no
+   * longer exist, which is worse than leaving an object nothing references, so
+   * the row is checked before anything is removed.
+   */
+  private async storeMetadata(
+    key: string,
+    file: Express.Multer.File,
+    kind: DocumentKind,
+    principal: Principal,
+    scannedAt: Date,
+  ): Promise<DocumentRow> {
+    try {
+      return await this.documentRow(key, file, kind, principal, scannedAt);
+    } catch (error) {
+      if (!(await this.repository.storedUnder(key).catch(() => true))) {
+        await this.storage.delete(key).catch((failure: unknown) => {
+          this.logger.error(`Could not remove the stored object of a failed upload: ${String(failure)}`);
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async documentRow(
+    key: string,
+    file: Express.Multer.File,
+    kind: DocumentKind,
+    principal: Principal,
+    scannedAt: Date,
+  ): Promise<DocumentRow> {
+    return this.repository.transaction(async (tx) => {
       const stored = await this.repository.insert(tx, {
         kind,
         fileName: file.originalname,
@@ -88,6 +167,10 @@ export class DocumentsService {
         // Lets a later upload of the same bytes be recognised, and proves the
         // stored object has not been altered.
         checksumSha256: createHash('sha256').update(file.buffer).digest('hex'),
+        scanStatus: 'CLEAN',
+        scannedAt,
+        scannerName: this.scanner.name,
+        retentionClass: retentionClassOf(kind),
         ...(principal.kind === 'customer'
           ? { uploadedByCustomerId: principal.id }
           : { uploadedByStaffId: principal.id }),
@@ -97,14 +180,19 @@ export class DocumentsService {
         action: 'document.uploaded',
         entityType: 'DOCUMENT',
         entityId: stored.id,
-        after: { kind: stored.kind, mimeType: stored.mimeType, sizeBytes: stored.sizeBytes },
+        after: {
+          kind: stored.kind,
+          mimeType: stored.mimeType,
+          sizeBytes: stored.sizeBytes,
+          scanStatus: stored.scanStatus,
+          scannerName: stored.scannerName,
+          retentionClass: stored.retentionClass,
+        },
         note: 'Document uploaded for a later workflow attachment.',
         correlationId: stored.id,
       });
       return stored;
     });
-
-    return this.toRecord(document);
   }
 
   /**
@@ -118,11 +206,62 @@ export class DocumentsService {
     return this.toRecord(document);
   }
 
-  /** A document the principal is related to; any other answers as if it did not exist. */
+  /**
+   * A document the principal is related to; any other answers as if it did not
+   * exist. Asking for one outright is its own act, so it gets its own entry.
+   * Links embedded in a response are counted together by LinkIssueInterceptor,
+   * which is why this call is excluded from that count.
+   */
   async recordFor(principal: Principal, documentId: string): Promise<DocumentRecord> {
     const document = await this.repository.findVisibleTo(principal, documentId);
     if (!document) throw ApiException.notFound('Document', documentId);
-    return this.toRecord(document);
+    // Asking for a document outright is refused outright. An embedded record
+    // only loses its link, so one unscanned file cannot break a whole page.
+    if (document.scanStatus !== 'CLEAN') {
+      throw new ApiException(
+        'DOCUMENT_NOT_AVAILABLE',
+        'That document is not available for download.',
+        HttpStatus.CONFLICT,
+      );
+    }
+    const record = await this.toRecord(document, { counted: false });
+    await this.repository.transaction((tx) =>
+      this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'document.downloaded',
+        entityType: 'DOCUMENT',
+        entityId: document.id,
+        after: { kind: document.kind },
+        note: 'Download link issued.',
+        correlationId: document.id,
+      }),
+    );
+    return record;
+  }
+
+  /**
+   * Records an upload the scanner refused. Nothing was stored, so the audit
+   * entry is the only trace; it names the kind and the signature, never the
+   * file name or its bytes.
+   */
+  private async recordRefusal(
+    kind: DocumentKind,
+    principal: Principal,
+    signature: string | null,
+  ): Promise<void> {
+    await this.repository.transaction((tx) =>
+      this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'document.rejected',
+        // The attempt, not a document: nothing was stored to point at.
+        entityType: 'DOCUMENT_UPLOAD',
+        entityId: randomUUID(),
+        after: { kind, signature },
+        note: signature
+          ? 'Upload refused: the security scan reported a detection.'
+          : 'Upload refused: the security scanner was unavailable.',
+      }),
+    );
   }
 
   /**
@@ -191,12 +330,23 @@ export class DocumentsService {
     }
   }
 
-  private async toRecord(document: DocumentRow): Promise<DocumentRecord> {
-    return {
+  /**
+   * The single point a download link is signed, so a document that has not been
+   * found clean is never linked anywhere, staff included.
+   */
+  private async toRecord(document: DocumentRow, { counted = true } = {}): Promise<DocumentRecord> {
+    const described: DocumentRecord = {
       id: document.id,
       name: document.fileName,
       type: document.mimeType,
       size: document.sizeBytes,
+    };
+    if (document.scanStatus !== 'CLEAN') return described;
+    // Counted here rather than at the call sites, because this is the only
+    // place a link comes into existence. `recordFor` writes its own entry.
+    if (counted) noteLinkIssued(document.kind);
+    return {
+      ...described,
       url: await this.storage.signedDownloadUrl(document.storageKey, document.fileName),
     };
   }

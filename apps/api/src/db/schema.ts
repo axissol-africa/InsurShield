@@ -26,6 +26,8 @@ import {
   DELIVERY_KINDS,
   DELIVERY_STATUSES,
   DOCUMENT_KINDS,
+  DOCUMENT_RETENTION_CLASSES,
+  DOCUMENT_SCAN_STATUSES,
   INSPECTION_METHODS,
   INSPECTION_RULES,
   INSPECTION_STATUSES,
@@ -58,6 +60,8 @@ export const inspectionTiming = pgEnum('InspectionTiming', INSPECTION_TIMINGS);
 export const inspectionMethod = pgEnum('InspectionMethod', INSPECTION_METHODS);
 export const staffRole = pgEnum('StaffRole', STAFF_ROLES);
 export const documentKind = pgEnum('DocumentKind', DOCUMENT_KINDS);
+export const documentScanStatus = pgEnum('DocumentScanStatus', DOCUMENT_SCAN_STATUSES);
+export const documentRetentionClass = pgEnum('DocumentRetentionClass', DOCUMENT_RETENTION_CLASSES);
 export const deliveryStatus = pgEnum('DeliveryStatus', DELIVERY_STATUSES);
 export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
@@ -345,6 +349,11 @@ export const documents = pgTable(
     sizeBytes: integer('sizeBytes').notNull(),
     storageKey: text('storageKey').notNull(),
     checksumSha256: text('checksumSha256'),
+    // Documents stored before scanning existed stay UNSCANNED, and unreadable.
+    scanStatus: documentScanStatus('scanStatus').notNull().default('UNSCANNED'),
+    scannedAt: timestamptz('scannedAt'),
+    scannerName: text('scannerName'),
+    retentionClass: documentRetentionClass('retentionClass').notNull(),
     uploadedAt: createdAt('uploadedAt'),
     uploadedByCustomerId: uuid('uploadedByCustomerId'),
     uploadedByStaffId: uuid('uploadedByStaffId'),
@@ -352,6 +361,7 @@ export const documents = pgTable(
   (t) => [
     uniqueIndex('documents_storageKey_key').on(t.storageKey),
     index('documents_kind_idx').on(t.kind),
+    index('documents_scanStatus_idx').on(t.scanStatus),
     fk('documents_uploadedByCustomerId_fkey', [t.uploadedByCustomerId], [customers.id], 'set null'),
     fk('documents_uploadedByStaffId_fkey', [t.uploadedByStaffId], [staffUsers.id], 'set null'),
   ],

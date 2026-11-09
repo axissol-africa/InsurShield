@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Principal } from '../src/common/auth/auth.types.js';
 import type { DocumentKind } from '../src/common/domain/enums.js';
-import { policies } from '../src/db/schema.js';
+import { auditLogs, documents, policies } from '../src/db/schema.js';
 import { DocumentsService } from '../src/documents/documents.service.js';
 import {
   buildClaim,
@@ -209,6 +209,144 @@ describe('documents', () => {
       const response = await testApp.http.get(`/api/v1/documents/${id}`).set(principals.admin).expect(404);
 
       expect(response.body).toEqual({ code: 'NOT_FOUND', message: `Document ${id} was not found.`, details: null });
+    });
+
+    it('records who was given a link, without the link itself', async () => {
+      const id = docs['certificate A'];
+      const downloads = async () =>
+        side.db
+          .select({ actorId: auditLogs.actorId, after: auditLogs.after })
+          .from(auditLogs)
+          .where(and(eq(auditLogs.entityId, id), eq(auditLogs.action, 'document.downloaded')));
+      const before = await downloads();
+
+      await testApp.http.get(`/api/v1/documents/${id}`).set(principals.admin).expect(200);
+
+      const after = await downloads();
+      expect(after).toHaveLength(before.length + 1);
+      expect(after.at(-1)).toMatchObject({ after: { kind: 'CERTIFICATE' } });
+      // The link is the secret; the trail records that one was issued, not which.
+      expect(JSON.stringify(after)).not.toContain('storage.invalid');
+    });
+
+    it('records the links a list response handed out, once for the response', async () => {
+      const issues = async () =>
+        side.db
+          .select({ actorId: auditLogs.actorId, after: auditLogs.after })
+          .from(auditLogs)
+          .where(eq(auditLogs.action, 'document.links_issued'));
+      const before = await issues();
+
+      await testApp.http.get('/api/v1/policies').set(principals['customer A']).expect(200);
+
+      // The entry is written after the response, so the read can outrun it.
+      await until(async () => (await issues()).length > before.length, 'the issued-links entry');
+      const after = await issues();
+      const issued = after.at(-1)?.after as { count: number; kinds: string[] };
+      // One entry for the whole response, however many links it carried.
+      expect(after).toHaveLength(before.length + 1);
+      expect(issued.count).toBeGreaterThan(0);
+      expect(issued.kinds.length).toBeGreaterThan(0);
+      expect(JSON.stringify(after)).not.toContain('storage.invalid');
+    });
+
+    it('keeps each concurrent response to its own count', async () => {
+      // The counter is request-scoped through AsyncLocalStorage, and the handler
+      // runs when the interceptor's observable is subscribed rather than when it
+      // is built. If that context did not survive, concurrent reads would share
+      // a log and attribute one customer's links to another.
+      const entries = async () =>
+        side.db
+          .select({ actorId: auditLogs.actorId, after: auditLogs.after })
+          .from(auditLogs)
+          .where(eq(auditLogs.action, 'document.links_issued'));
+      const before = (await entries()).length;
+      const readers = ['customer A', 'customer B', 'customer A', 'customer B'] as const;
+
+      await Promise.all(
+        readers.map((reader) => testApp.http.get('/api/v1/policies').set(principals[reader]).expect(200)),
+      );
+
+      await until(async () => (await entries()).length >= before + readers.length, 'one entry per response');
+      const written = (await entries()).slice(before);
+      expect(written).toHaveLength(readers.length);
+      // Every entry names an actor and carries a count of its own response.
+      for (const entry of written) {
+        expect(entry.actorId).toEqual(expect.any(String));
+        expect((entry.after as { count: number }).count).toBeGreaterThan(0);
+      }
+      // Two customers read concurrently, so both appear and neither absorbed
+      // the other's links.
+      expect(new Set(written.map((entry) => entry.actorId)).size).toBe(2);
+    });
+
+    it('does not count the direct download twice, which records itself', async () => {
+      const id = docs['certificate A'];
+      const countOf = async (action: string) =>
+        (await side.db.select({ id: auditLogs.id }).from(auditLogs).where(eq(auditLogs.action, action))).length;
+      const beforeIssued = await countOf('document.links_issued');
+      const beforeDownloads = await countOf('document.downloaded');
+
+      await testApp.http.get(`/api/v1/documents/${id}`).set(principals.admin).expect(200);
+
+      expect(await countOf('document.downloaded')).toBe(beforeDownloads + 1);
+      expect(await countOf('document.links_issued')).toBe(beforeIssued);
+    });
+
+    it('withholds the link of a document that has not been found clean, keeping the record', async () => {
+      // Embedded links are signed by DocumentsService.record while a list or
+      // detail response is built. Refusing there would fail the whole response,
+      // so the record keeps its description and loses only its link.
+      const id = docs['certificate A'];
+      const service = testApp.app.get(DocumentsService);
+      await side.db.update(documents).set({ scanStatus: 'UNSCANNED' }).where(eq(documents.id, id));
+      try {
+        const record = await service.record(id);
+
+        expect(record).toMatchObject({ id, name: expect.any(String), size: expect.any(Number) });
+        expect(record.url).toBeUndefined();
+      } finally {
+        await side.db.update(documents).set({ scanStatus: 'CLEAN' }).where(eq(documents.id, id));
+      }
+      await expect(service.record(id)).resolves.toMatchObject({ url: expect.stringContaining('https://') });
+    });
+
+    it('still lists a customer policy whose certificate has not been found clean', async () => {
+      // The regression the download gate could have caused: one unscanned
+      // document must never stop a parent page from loading.
+      const id = docs['certificate A'];
+      await side.db.update(documents).set({ scanStatus: 'UNSCANNED' }).where(eq(documents.id, id));
+      try {
+        const response = await testApp.http.get('/api/v1/policies').set(principals['customer A']).expect(200);
+
+        const listed = response.body
+          .flatMap((policy: { certificateDocument?: { id: string; url?: string } | null }) =>
+            policy.certificateDocument ?? [],
+          )
+          .find((document: { id: string }) => document.id === id);
+        expect(listed, 'the certificate is still described').toBeDefined();
+        expect(listed.url, 'but carries no link').toBeUndefined();
+      } finally {
+        await side.db.update(documents).set({ scanStatus: 'CLEAN' }).where(eq(documents.id, id));
+      }
+    });
+
+    it('refuses a document that has not been found clean, to everyone', async () => {
+      const id = docs['certificate A'];
+      await side.db.update(documents).set({ scanStatus: 'UNSCANNED' }).where(eq(documents.id, id));
+      try {
+        for (const principal of ['super admin', 'admin'] as const) {
+          const response = await testApp.http.get(`/api/v1/documents/${id}`).set(principals[principal]).expect(409);
+
+          expect(response.body).toEqual({
+            code: 'DOCUMENT_NOT_AVAILABLE',
+            message: 'That document is not available for download.',
+            details: null,
+          });
+        }
+      } finally {
+        await side.db.update(documents).set({ scanStatus: 'CLEAN' }).where(eq(documents.id, id));
+      }
     });
   });
 

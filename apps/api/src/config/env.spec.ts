@@ -55,8 +55,10 @@ describe('validateEnv', () => {
     expect(env.API_PREFIX).toBe('api/v1');
     expect(env.DATABASE_POOL_SIZE).toBe(10);
     expect(env.SWAGGER_ENABLED).toBe(false);
-    expect(env.S3_SIGNED_URL_TTL_SECONDS).toBe(300);
+    expect(env.S3_SIGNED_URL_TTL_SECONDS).toBe(60);
     expect(env.MAX_UPLOAD_BYTES).toBe(3 * 1024 * 1024);
+    // Only the simulated scanner exists; the provider gate keeps it out of production.
+    expect(env.MALWARE_SCANNER).toBe('stand-in');
     // Unset locally so MinIO does not reject the upload with 501.
     expect(env.S3_SSE).toBeUndefined();
   });

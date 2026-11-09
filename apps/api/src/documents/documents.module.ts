@@ -5,6 +5,7 @@ import type { Env } from '../config/env.js';
 import { DocumentsService } from './documents.service.js';
 import { DocumentsController } from './documents.controller.js';
 import { DocumentsRepository } from './documents.repository.js';
+import { LinkIssueInterceptor } from './link-issue.interceptor.js';
 import { uploadOptions } from './upload-limits.js';
 
 @Global()
@@ -16,7 +17,7 @@ import { uploadOptions } from './upload-limits.js';
     }),
   ],
   controllers: [DocumentsController],
-  providers: [DocumentsService, DocumentsRepository],
-  exports: [DocumentsService],
+  providers: [DocumentsService, DocumentsRepository, LinkIssueInterceptor],
+  exports: [DocumentsService, LinkIssueInterceptor],
 })
 export class DocumentsModule {}

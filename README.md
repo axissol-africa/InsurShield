@@ -124,10 +124,11 @@ Error messages name a variable but never print its value.
 | `S3_REGION` | no (`us-east-1`) | Bucket region |
 | `S3_BUCKET` | yes | Private bucket holding the documents |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | no | Static keys; omit both to use the instance or task IAM role |
-| `S3_SIGNED_URL_TTL_SECONDS` | no (`300`) | Lifetime of a download link, at most 604800 |
+| `S3_SIGNED_URL_TTL_SECONDS` | no (`60`) | Lifetime of a document download link, at most 604800 |
 | `S3_SSE` | no | Server-side encryption on upload: `AES256` or `aws:kms`; unset for MinIO |
 | `S3_SSE_KMS_KEY_ID` | no | The KMS key for `S3_SSE=aws:kms` |
 | `MAX_UPLOAD_BYTES` | no (`3145728`) | Largest accepted upload |
+| `MALWARE_SCANNER` | no (`stand-in`) | Malware-scan adapter for uploads; `stand-in` simulates one and is refused in production |
 
 ### Seed (`npm run db:seed`, read from the same `apps/api/.env`)
 

@@ -19,13 +19,18 @@ import { InspectionsModule } from './inspections/inspections.module.js';
 import { AuthGuard } from './common/auth/auth.guard.js';
 import { ApiRateLimitGuard } from './common/rate-limit/api-rate-limit.guard.js';
 import { AuditModule } from './common/audit/audit.module.js';
+import { ProvidersModule } from './common/providers/providers.module.js';
+import { ScanningModule } from './scanning/scanning.module.js';
 
 @Module({
   imports: [
     ConfigModule,
     DatabaseModule,
     AuditModule,
+    // Before any adapter module, so each can register itself as it initialises.
+    ProvidersModule,
     StorageModule,
+    ScanningModule,
     AuthModule,
     DocumentsModule,
     InsurersModule,
