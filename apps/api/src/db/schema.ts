@@ -40,6 +40,7 @@ import {
   POLICY_STATUSES,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
+  JOB_STATUSES,
 } from '../common/domain/enums.js';
 import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/domain/money-limits.js';
 
@@ -65,6 +66,7 @@ export const documentRetentionClass = pgEnum('DocumentRetentionClass', DOCUMENT_
 export const deliveryStatus = pgEnum('DeliveryStatus', DELIVERY_STATUSES);
 export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
+export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, precision: 3, mode: 'date' });
@@ -752,6 +754,40 @@ export const idempotencyRecords = pgTable(
   (t) => [
     uniqueIndex('idempotency_records_callerId_endpoint_key_key').on(t.callerId, t.endpoint, t.key),
     index('idempotency_records_expiresAt_idx').on(t.expiresAt),
+  ],
+);
+
+/**
+ * Work the platform owes after a request has committed: an outbox row and a
+ * scheduled task are the same thing with different kinds.
+ *
+ * `(kind, key)` is unique, so a fact enqueued twice is one row. That is what
+ * lets delivery be at-least-once without a consumer having to recognise a
+ * repeat, which is the guarantee US-CUS-019 asks for.
+ */
+export const jobs = pgTable(
+  'jobs',
+  {
+    id: id(),
+    kind: text('kind').notNull(),
+    /** Stable for the fact this job is about, so re-enqueueing is a no-op. */
+    key: text('key').notNull(),
+    /** Identifiers the consumer reads the record with. Never a copy of it. */
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    status: jobStatus('status').notNull().default('PENDING'),
+    runAfter: timestamptz('runAfter').notNull().default(sql`CURRENT_TIMESTAMP`),
+    attempt: integer('attempt').notNull().default(0),
+    maxAttempts: integer('maxAttempts').notNull().default(5),
+    /** While in the future and the row is RUNNING, another runner leaves it alone. */
+    leaseUntil: timestamptz('leaseUntil'),
+    lastError: text('lastError'),
+    createdAt: createdAt(),
+    completedAt: timestamptz('completedAt'),
+  },
+  (t) => [
+    uniqueIndex('jobs_kind_key_key').on(t.kind, t.key),
+    // The claim query orders by runAfter within the rows a runner may take.
+    index('jobs_status_runAfter_idx').on(t.status, t.runAfter),
   ],
 );
 

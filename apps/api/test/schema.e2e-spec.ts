@@ -25,6 +25,9 @@ const SCHEMA = fileURLToPath(new URL('../src/db/schema.ts', import.meta.url));
 const LUSAKA = { options: '-c TimeZone=Africa/Lusaka' };
 const TAGS = migrationTags();
 
+/** How many migrations precede 0009, which is the one the scanning test is about. */
+const SCANNING = TAGS.findIndex((tag) => tag.startsWith('0009_'));
+
 const created: ScratchDatabase[] = [];
 
 afterEach(async () => {
@@ -622,8 +625,10 @@ describe('0008_audit_trail_state_history', () => {
 
 describe('0009_documents_scanning_and_retention', () => {
   it('leaves existing documents unscanned, classifies them by kind and scans nothing retrospectively', async () => {
-    // Applied up to 0008, so the rows exist before scanning was introduced.
-    const db = await scratch((client) => applyMigrationFiles(client, TAGS.length - 1));
+    // Applied up to the migration before scanning, so the rows exist without it.
+    // Counted from 0009's own position rather than from the end of TAGS, so a
+    // later migration does not silently change which one this test runs against.
+    const db = await scratch((client) => applyMigrationFiles(client, SCANNING));
 
     await query(db, async (client) => {
       const kinds = ['QUOTATION', 'WHITE_BOOK', 'INSPECTION_PHOTO', 'CERTIFICATE', 'CLAIM_ATTACHMENT', 'NCD_EVIDENCE', 'INSURER_LOGO'];
@@ -634,7 +639,7 @@ describe('0009_documents_scanning_and_retention', () => {
           [randomUUID(), kind, `legacy/${kind}`],
         );
       }
-      await applyMigration(client, TAGS.length - 1);
+      await applyMigration(client, SCANNING);
 
       const { rows } = await client.query<{ kind: string; scanStatus: string; retentionClass: string; scannedAt: Date | null; scannerName: string | null }>(
         `SELECT kind, "scanStatus", "retentionClass", "scannedAt", "scannerName" FROM documents ORDER BY kind::text`,
@@ -718,7 +723,7 @@ describe('the final schema', () => {
       return rows;
     });
     const timestampColumns = columns.filter((column) => column.type.startsWith('timestamp'));
-    expect(timestampColumns).toHaveLength(76);
+    expect(timestampColumns).toHaveLength(80);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

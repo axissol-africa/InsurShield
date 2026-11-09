@@ -93,3 +93,11 @@ export type DeliveryKind = (typeof DELIVERY_KINDS)[number];
 
 export const ACTOR_TYPES = ['CUSTOMER', 'STAFF', 'INSURER', 'SYSTEM'] as const;
 export type ActorType = (typeof ACTOR_TYPES)[number];
+
+/**
+ * `RUNNING` means a runner holds a lease on the row, not that work is certainly
+ * in progress: a runner that dies leaves the row `RUNNING` until its lease
+ * expires, which is what makes the work claimable again rather than stuck.
+ */
+export const JOB_STATUSES = ['PENDING', 'RUNNING', 'DONE', 'FAILED'] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
