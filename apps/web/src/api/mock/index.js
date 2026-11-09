@@ -132,6 +132,7 @@ export const payments = {
       rtsaAnniversaryFee: request?.rtsaAnniversaryFee ?? 0,
       currency: 'ZMW',
       confirmedAt: new Date().toISOString(),
+      policyNumber: `POL-${Date.now().toString(36).toUpperCase()}`,
     };
     s.recordPayment(receipt);
     return receipt;

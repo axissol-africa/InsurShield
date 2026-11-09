@@ -31,6 +31,7 @@
     "setup": "npm install && npm run infra:up && npm run db:migrate && npm run db:seed",
     "build": "turbo run build",
     "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
     "format": "turbo run format",

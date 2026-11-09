@@ -29,6 +29,48 @@ it.each([true, false])('confirms the selected cover without a contradictory cata
   expect(screen.getAllByRole('radio')).toHaveLength(5);
 });
 
+it('records the policy under the number the payment service issued, not one derived from the request id', async () => {
+  vi.useFakeTimers();
+  useStore.setState({
+    selectedQuote: { requestId: 'REQ-SERVER-123456', name: 'Test insurer', coverage: 'Motor', price: 1200 },
+    quoteRequests: [],
+    customer: { fullName: 'Test Customer', email: 'customer@example.com' },
+    vehicleDetails: null,
+    vehicleValue: 0,
+    policyDates: null,
+    premiumBreakdown: null,
+    ncdCodeValidated: false,
+    insurerReviews: [],
+    policies: [],
+    paymentReceipt: { transactionId: 'TX-SRV', amount: 1200, status: 'Confirmed', policyNumber: 'POL-MH2K9QX' },
+  });
+  render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  await act(async () => { vi.advanceTimersByTime(1500); });
+
+  expect(useStore.getState().policies).toEqual([expect.objectContaining({ policyNumber: 'POL-MH2K9QX' })]);
+});
+
+it('falls back to a reference of its own while the payment service has issued no policy number', async () => {
+  vi.useFakeTimers();
+  useStore.setState({
+    selectedQuote: { requestId: 'REQ-SERVER-123456', name: 'Test insurer', coverage: 'Motor', price: 1200 },
+    quoteRequests: [],
+    customer: { fullName: 'Test Customer', email: 'customer@example.com' },
+    vehicleDetails: null,
+    vehicleValue: 0,
+    policyDates: null,
+    premiumBreakdown: null,
+    ncdCodeValidated: false,
+    insurerReviews: [],
+    policies: [],
+    paymentReceipt: { transactionId: 'TX-SRV', amount: 1200, status: 'Confirmed', policyNumber: null },
+  });
+  render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  await act(async () => { vi.advanceTimersByTime(1500); });
+
+  expect(useStore.getState().policies).toEqual([expect.objectContaining({ policyNumber: 'POL-123456' })]);
+});
+
 it('shows and persists the RTSA fee that was charged by the payment service', async () => {
   vi.useFakeTimers();
   useStore.setState({

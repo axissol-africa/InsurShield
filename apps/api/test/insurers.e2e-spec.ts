@@ -557,9 +557,16 @@ describe('insurers', () => {
       const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
       const service = testApp.app.get(InsurersService);
       const before = await stored(insurer.id);
+      const principal = {
+        kind: 'staff',
+        id: randomUUID(),
+        email: `${unique('restore')}@example.zm`,
+        role,
+        insurerId: role === 'INSURER_USER' ? insurer.id : null,
+      } as const;
 
-      await expect(service.restore(insurer.id, role)).rejects.toMatchObject({ status: 403 });
-      await expect(service.restore(randomUUID(), role)).rejects.toMatchObject({ status: 403 });
+      await expect(service.restore(insurer.id, principal)).rejects.toMatchObject({ status: 403 });
+      await expect(service.restore(randomUUID(), principal)).rejects.toMatchObject({ status: 403 });
 
       expect(await stored(insurer.id)).toEqual(before);
     });

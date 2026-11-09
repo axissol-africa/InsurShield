@@ -27,6 +27,7 @@ import {
   failureReason,
   MigrationRefusedError,
   migrateDatabase,
+  type MigrationResult,
   type MigrationStep,
 } from '../src/db/migrator.js';
 import { buildPrismaEraDatabase, PRISMA_MIGRATIONS } from './fixtures/prisma-era/prisma-era.js';

@@ -37,7 +37,9 @@ export default function PolicyConfirmationPage() {
   const selectedCoverType = selectedRequest?.insuranceType || insuranceType;
   const selectedPolicyDates = selectedRequest?.policyDates ?? policyDates;
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
-  const policyNumber = `POL-${reference}`;
+  // The payment service mints the policy number when it confirms the payment.
+  // The derived reference is only a stand-in for a receipt that carries none.
+  const policyNumber = paymentReceipt?.policyNumber || `POL-${reference}`;
   // The confirmed receipt is authoritative: it records both what was paid and
   // the RTSA fee configured by the server at the time of payment.
   const rtsaFee = paymentReceipt?.rtsaAnniversaryFee ?? selectedRequest?.rtsaAnniversaryFee ?? 0;

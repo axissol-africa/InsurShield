@@ -41,6 +41,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # `nest build` only type-checks src/, so test/ and scripts/ have no gate
+      # without this step.
+      - name: Type check
+        run: npm run typecheck
+
       - name: Run unit tests
         run: npm run test
 
