@@ -129,10 +129,12 @@ describe('upload', () => {
     const repository = {
       transaction: (work: (tx: Transaction) => Promise<unknown>) => work({} as Transaction),
       insert: vi.fn().mockResolvedValue({ id: 'doc-1', kind: 'CLAIM_ATTACHMENT', fileName: 'evidence', mimeType: 'application/pdf', sizeBytes: 5, storageKey: 'documents/evidence', scanStatus: 'CLEAN', scannerName: 'stand-in', retentionClass: 'CLAIM_EVIDENCE' }),
+      storedUnder: vi.fn().mockResolvedValue(false),
     };
     const storage = {
       buildKey: vi.fn().mockReturnValue('documents/evidence'),
       put: vi.fn(),
+      delete: vi.fn().mockResolvedValue(undefined),
       signedDownloadUrl: vi.fn().mockResolvedValue('https://signed/doc-1'),
     };
     const config = { get: () => 3 * 1024 * 1024 };
@@ -188,6 +190,33 @@ describe('upload', () => {
       .rejects.toMatchObject({ code: 'FILE_SCAN_UNAVAILABLE', status: 503 });
     expect(storage.put).not.toHaveBeenCalled();
     expect(repository.insert).not.toHaveBeenCalled();
+  });
+
+  it('removes the stored object when the row it would belong to was never written', async () => {
+    const { service, repository, storage } = uploadService();
+    const refused = new Error('insert refused');
+    repository.insert.mockRejectedValueOnce(refused);
+
+    await expect(service.upload(file('application/pdf', Buffer.from('%PDF-1.7')), 'CLAIM_ATTACHMENT', { kind: 'claim-attachment', claimNumber: 'x' }, CUSTOMER))
+      .rejects.toBe(refused);
+    expect(repository.storedUnder).toHaveBeenCalledWith('documents/evidence');
+    expect(storage.delete).toHaveBeenCalledWith('documents/evidence');
+  });
+
+  it.each([
+    ['a row already claims the object', false, true],
+    ['the check itself cannot answer', true, false],
+  ])('keeps the stored object when %s', async (_case, checkThrows, stored) => {
+    const { service, repository, storage } = uploadService();
+    repository.insert.mockRejectedValueOnce(new Error('connection terminated during COMMIT'));
+    repository.storedUnder = checkThrows
+      ? vi.fn().mockRejectedValue(new Error('no connection'))
+      : vi.fn().mockResolvedValue(stored);
+
+    await expect(service.upload(file('application/pdf', Buffer.from('%PDF-1.7')), 'CLAIM_ATTACHMENT', { kind: 'claim-attachment', claimNumber: 'x' }, CUSTOMER))
+      .rejects.toThrow('connection terminated during COMMIT');
+    // Deleting here would strand a committed row pointing at bytes that are gone.
+    expect(storage.delete).not.toHaveBeenCalled();
   });
 
   it('keeps the reason for an unavailable scanner out of the refusal and the trail', async () => {

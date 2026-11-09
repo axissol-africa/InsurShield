@@ -11,14 +11,17 @@ const LIVE_AUTH = { AUTH_RATE_LIMIT: 'on', TRUST_PROXY_HOPS: '1' };
  * the rule refuses this configuration in production.
  */
 describe('the provider gate with the application wired for production', () => {
-  it('sees object storage live and every simulated system declared', async () => {
+  it('declares every simulated system, the development bucket among them', async () => {
     const production = await startApp({ env: LIVE_AUTH });
     try {
       const registry = production.app.get(ProviderRegistry);
 
+      // These checks run against the development MinIO, so object storage is
+      // simulated here and the registry says so. A deployment that leaves
+      // S3_ENDPOINT unset, or points it at a hosted bucket, registers it live.
       expect(registry.list()).toEqual([
         { name: 'malware-scanner', mode: 'stand-in', setting: 'MALWARE_SCANNER' },
-        { name: 'object-storage', mode: 'live', setting: 'S3_ENDPOINT' },
+        { name: 'object-storage', mode: 'stand-in', setting: 'S3_ENDPOINT' },
         { name: 'payment-provider', mode: 'stand-in' },
         { name: 'rtsa-vehicle-lookup', mode: 'stand-in' },
       ]);
@@ -27,14 +30,15 @@ describe('the provider gate with the application wired for production', () => {
     }
   });
 
-  it('refuses to start while the scanner is simulated, naming it and its setting', async () => {
+  it('refuses to start on this configuration, naming each simulated system and its setting', async () => {
     const production = await startApp({ env: LIVE_AUTH });
     try {
       const registry = production.app.get(ProviderRegistry);
 
       expect(() => registry.assertNoStandInsInProduction('production')).toThrow(
         'Refusing to start in production on simulated providers: malware-scanner (MALWARE_SCANNER), ' +
-          'payment-provider (no live adapter yet), rtsa-vehicle-lookup (no live adapter yet). ' +
+          'object-storage (S3_ENDPOINT), payment-provider (no live adapter yet), ' +
+          'rtsa-vehicle-lookup (no live adapter yet). ' +
           'Configure a live adapter for each, or deploy a non-production environment.',
       );
     } finally {

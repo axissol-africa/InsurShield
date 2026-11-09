@@ -38,6 +38,19 @@ export class DocumentsRepository {
     return document;
   }
 
+  /**
+   * Whether a row already claims this object. Read on its own connection, after
+   * a failed upload transaction, to tell a rejected insert from a commit whose
+   * outcome was never reported. Uses the unique index on `storageKey`.
+   */
+  async storedUnder(storageKey: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: documents.id })
+      .from(documents)
+      .where(eq(documents.storageKey, storageKey));
+    return row !== undefined;
+  }
+
   async findVisibleTo(principal: Principal, documentId: string): Promise<DocumentRow | undefined> {
     const [document] = await this.db
       .select()

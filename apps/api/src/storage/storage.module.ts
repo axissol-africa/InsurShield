@@ -1,5 +1,8 @@
 import { Global, Module, type OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ProviderRegistry } from '../common/providers/provider-registry.js';
+import type { Env } from '../config/env.js';
+import { isLocalEndpoint } from './endpoint.js';
 import { StorageService } from './storage.service.js';
 
 @Global()
@@ -8,10 +11,23 @@ import { StorageService } from './storage.service.js';
   exports: [StorageService],
 })
 export class StorageModule implements OnModuleInit {
-  constructor(private readonly registry: ProviderRegistry) {}
+  constructor(
+    private readonly registry: ProviderRegistry,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
-  /** Object storage is always a real bucket: MinIO locally, S3 in production. */
+  /**
+   * Derived, not asserted: a deploy that inherits the development bucket is
+   * refused rather than attested as live. A hosted S3-compatible endpoint is
+   * still live, so only the configuration that reaches production by accident
+   * trips the gate.
+   */
   onModuleInit(): void {
-    this.registry.register({ name: 'object-storage', mode: 'live', setting: 'S3_ENDPOINT' });
+    const endpoint = this.config.get('S3_ENDPOINT', { infer: true });
+    this.registry.register({
+      name: 'object-storage',
+      mode: endpoint && isLocalEndpoint(endpoint) ? 'stand-in' : 'live',
+      setting: 'S3_ENDPOINT',
+    });
   }
 }

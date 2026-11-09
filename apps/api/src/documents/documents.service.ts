@@ -90,6 +90,12 @@ export class DocumentsService {
     // network call.
     const verdict = await this.scanner.scan(file.buffer);
     if (verdict.result !== 'clean') {
+      if (verdict.result === 'unavailable') {
+        // The customer is told only to try again, and the audit entry records
+        // no reason, so this log is the only place an operator can tell a
+        // credential failure from a timeout while uploads refuse platform-wide.
+        this.logger.warn(`Malware scan unavailable: ${verdict.reason}`);
+      }
       await this.recordRefusal(kind, principal, verdict.result === 'infected' ? verdict.signature : null);
       throw verdict.result === 'infected'
         ? new ApiException(
@@ -117,6 +123,12 @@ export class DocumentsService {
    * The object is already in the bucket by this point, so a failed insert would
    * leave it with nothing referencing it. Deleting it here keeps storage and
    * the database in step; a failed delete does not mask the original error.
+   *
+   * A rejected promise does not prove the row is absent: a connection lost
+   * during COMMIT reads the same way as a refused insert, and the server may
+   * have committed. Deleting then would strand a row pointing at bytes that no
+   * longer exist, which is worse than leaving an object nothing references, so
+   * the row is checked before anything is removed.
    */
   private async storeMetadata(
     key: string,
@@ -128,9 +140,11 @@ export class DocumentsService {
     try {
       return await this.documentRow(key, file, kind, principal, scannedAt);
     } catch (error) {
-      await this.storage.delete(key).catch((failure: unknown) => {
-        this.logger.error(`Could not remove the stored object of a failed upload: ${String(failure)}`);
-      });
+      if (!(await this.repository.storedUnder(key).catch(() => true))) {
+        await this.storage.delete(key).catch((failure: unknown) => {
+          this.logger.error(`Could not remove the stored object of a failed upload: ${String(failure)}`);
+        });
+      }
       throw error;
     }
   }
