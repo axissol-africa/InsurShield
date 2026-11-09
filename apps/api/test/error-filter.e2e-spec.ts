@@ -111,7 +111,10 @@ describe('the error filter', () => {
   });
 
   it('answers an unhandled unique violation with 409 CONFLICT, naming neither the constraint nor the value', async () => {
-    const existing = await buildCustomer(testApp.db, { email: `${SECRET_EMAIL_LOCAL}@example.invalid` });
+    // The local part stays recognisable so the leak assertions below still
+    // mean something, but it is unique per run: a fixed address is one shared
+    // database away from failing on a duplicate key instead of what it tests.
+    const existing = await buildCustomer(testApp.db, { email: `${unique(SECRET_EMAIL_LOCAL)}@example.invalid` });
 
     const response = await testApp.http
       .post(`/api/v1/error-probe/copy-email-of/${existing.id}`)
