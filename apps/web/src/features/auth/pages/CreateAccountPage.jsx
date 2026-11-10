@@ -207,27 +207,21 @@ export default function CreateAccountPage() {
   const acceptConsent = async (record) => {
     if (httpMode) {
       if (mode === 'create') {
-        const registration = await api.auth.register({
+        await api.auth.register({
           fullName: form.fullName.trim(),
           email: form.email.trim(),
           phone: form.phone.trim(),
           password: form.password,
           noticeVersion: record.noticeVersion,
         });
-        if (!registration?.signedIn) {
-          setNotice('Your account was created. Sign in with the email address and password you chose to continue.');
-          setStage('guidance');
-          return false;
-        }
-        const profile = {
-          userId: registration.userId,
-          customer: { fullName: form.fullName.trim(), email: form.email.trim(), phone: form.phone.trim() },
-          consent: { accepted: true, noticeVersion: record.noticeVersion, acceptedAt: record.acceptedAt },
-          staffSession: null,
-        };
-        const outcome = adoptOwnIdentity({ userId: registration.userId, profile, landing: safeApplicationPath(next) });
-        if (!outcome.transitioned) setStage('done');
-        return true;
+        // Registration signs nobody in: the answer is the same whether or not
+        // the address is already in use, and a session cookie would give that
+        // away. The customer confirms the address, then signs in.
+        setNotice(
+          `Check ${form.email.trim()} for a link confirming your address. Your records open once you have used it.`,
+        );
+        setStage('guidance');
+        return false;
       }
       const accepted = await api.auth.acceptConsent(record.noticeVersion);
       setConsent(true, accepted);
