@@ -6,7 +6,7 @@ import { APIError, createAuthMiddleware } from 'better-auth/api';
 import type { Env } from '../config/env.js';
 import type { Database } from '../db/database.module.js';
 import { describeDatabaseError } from '../db/errors.js';
-import { authAccounts, authRateLimits, authSessions, authUsers, authVerifications } from '../db/schema.js';
+import { authAccounts, authRateLimits, authSessions, authUsers, authVerifications, customers } from '../db/schema.js';
 import {
   CLIENT_ADDRESS_HEADER,
   COOKIE_PREFIX,
@@ -19,6 +19,7 @@ import { identityMailer } from './identity-mailer.js';
 import { resolveIdentity } from './identity.js';
 import { registration } from './registration.plugin.js';
 import { signInLimit } from './sign-in-limit.plugin.js';
+import { and, eq, isNull } from 'drizzle-orm';
 
 export type AuthSettings = Pick<
   Env,
@@ -153,6 +154,27 @@ export function authOptions(
       }),
     },
     databaseHooks: {
+      user: {
+        update: {
+          /**
+           * Better Auth owns `auth_users.emailVerified`; the platform's own
+           * answer lives on the customer row, which is what `resolveIdentity`
+           * reads and what the grandfathering migration wrote. Mirroring it
+           * here keeps one authority rather than two that can disagree.
+           *
+           * Set only when it is not already set, so re-verifying an address
+           * does not move a timestamp that an audit reads as "when this
+           * customer actually proved it".
+           */
+          after: async (user) => {
+            if (!user.emailVerified) return;
+            await db
+              .update(customers)
+              .set({ emailVerifiedAt: new Date() })
+              .where(and(eq(customers.userId, user.id), isNull(customers.emailVerifiedAt)));
+          },
+        },
+      },
       session: {
         create: {
           // Sign-in and registration both end here, so a refused account never gets a session row.

@@ -92,6 +92,13 @@
       "when": 1794296557309,
       "tag": "0012_contact_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794296558309,
+      "tag": "0013_grandfather_verified_customers",
+      "breakpoints": true
     }
   ]
 }

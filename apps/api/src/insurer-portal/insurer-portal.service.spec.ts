@@ -43,7 +43,7 @@ describe('who may use the portal', () => {
   ];
 
   const outsiders: [string, Principal][] = [
-    ['a customer', { kind: 'customer', id: 'customer-1', email: 'c@example.test' }],
+    ['a customer', { kind: 'customer', id: 'customer-1', email: 'c@example.test', emailVerified: true }],
     ['an admin', { kind: 'staff', id: 'staff-2', email: 'a@example.test', role: 'ADMIN', insurerId: null }],
     ['a super admin with an insurer id', { kind: 'staff', id: 'staff-3', email: 'x@example.test', role: 'SUPER_ADMIN', insurerId: 'insurer-1' }],
     ['an insurer user with no insurer', { ...INSURER_USER, insurerId: null }],

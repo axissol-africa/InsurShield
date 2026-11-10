@@ -6,3 +6,11 @@ export const IDENTITY_CHANGED = 'IDENTITY_CHANGED';
 export const IDENTITY_CHANGED_MESSAGE = 'The signed-in account has changed. Reload the page to continue.';
 
 export const STAFF_INACTIVE = 'This staff account is not active on InsurShield.';
+
+export const EMAIL_NOT_VERIFIED = 'EMAIL_NOT_VERIFIED';
+/**
+ * Says what to do and nothing about the account. A customer reading this is
+ * already signed in, so there is nothing to reveal, but the wording is the same
+ * one an unauthenticated caller would see if the gate ever moved.
+ */
+export const EMAIL_NOT_VERIFIED_MESSAGE = 'Confirm your email address to continue.';

@@ -357,7 +357,7 @@ describe('documents', () => {
       service = testApp.app.get(DocumentsService);
     });
 
-    const customerPrincipal = (customer: Customer): Principal => ({ kind: 'customer', id: customer.id, email: customer.email });
+    const customerPrincipal = (customer: Customer): Principal => ({ kind: 'customer', id: customer.id, email: customer.email, emailVerified: true });
     const staffPrincipal = (staff: Staff): Principal => ({
       kind: 'staff',
       id: staff.id,
