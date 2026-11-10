@@ -26,6 +26,16 @@ export const account = {
  * Uploads land here first and are referenced by id afterwards: a quotation,
  * certificate or photo is attached to a record only once its bytes are stored.
  */
+export const notifications = {
+  list: (before) => apiClient.get(`/notifications${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+  markRead: (id) => apiClient.post(`/notifications/${id}/read`),
+};
+
+export const contactPreferences = {
+  read: () => apiClient.get('/contact-preferences'),
+  save: (choice) => apiClient.put('/contact-preferences', choice),
+};
+
 export const documents = {
   upload: (file, kind) => {
     const form = new FormData();

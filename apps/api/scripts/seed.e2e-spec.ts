@@ -16,6 +16,7 @@ import {
 import { DEMO_CUSTOMER } from './demo-data.js';
 import { INSURERS, seedReferenceData } from './reference-data.js';
 import { seedDatabase, type SeedOptions } from './seed-database.js';
+import { MailFake } from '../test/mail-fake.js';
 
 const SEEDED_CODES = INSURERS.flatMap((insurer) =>
   insurer.ncdCodes.map((ncd) => ncd.code),
@@ -117,7 +118,7 @@ async function assertSeededAccountCanSignIn(
   expect(account.password).toEqual(expect.any(String));
 
   await expect(
-    createAuth(db, AUTH_SETTINGS).api.signInEmail({
+    createAuth(db, AUTH_SETTINGS, new MailFake()).api.signInEmail({
       body: { email, password: SEED_PASSWORD },
       headers: new Headers({ Origin: AUTH_SETTINGS.CORS_ORIGINS[0] }),
     }),

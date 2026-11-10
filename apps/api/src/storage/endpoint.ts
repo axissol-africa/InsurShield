@@ -19,7 +19,7 @@ export function isLocalEndpoint(endpoint: string): boolean {
   }
   const bracketless = host.replace(/^\[|\]$/g, '');
   if (bracketless === '::1' || bracketless === '0.0.0.0') return true;
-  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) return true;
+  if (host.startsWith('127.') || host.startsWith('10.') || host.startsWith('192.168.')) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
   // A single-label name is a container or service name on a private network;

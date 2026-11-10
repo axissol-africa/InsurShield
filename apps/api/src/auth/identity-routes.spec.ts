@@ -29,19 +29,21 @@ describe('the client-address middleware', () => {
 });
 
 describe('the identity routes', () => {
-  it('leave out the mail routes in production', () => {
-    expect(identityRoutes('production')).toEqual([
+  it('serve the mail routes everywhere, because a deployment cannot start without an adapter', () => {
+    // They were served only in development and test while the mailer wrote to
+    // a log. The provider gate now refuses a production start on the log
+    // adapter, so there is no environment where these can be reached with
+    // nothing to send with.
+    expect(identityRoutes()).toEqual([
       'POST /register',
       'POST /sign-in/email',
       'POST /sign-out',
       'POST /revoke-sessions',
       'POST /change-password',
+      'POST /request-password-reset',
+      'POST /reset-password',
+      'POST /send-verification-email',
+      'GET /verify-email',
     ]);
-    expect(identityRoutes('development')).toEqual(identityRoutes('test'));
-    expect(identityRoutes('test')).toHaveLength(9);
-  });
-
-  it.each(['staging', '', undefined])('leave out the mail routes for any NODE_ENV but development and test: %j', (nodeEnv) => {
-    expect(identityRoutes(nodeEnv as never)).toEqual(identityRoutes('production'));
   });
 });

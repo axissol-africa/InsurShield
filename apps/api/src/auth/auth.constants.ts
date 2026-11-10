@@ -1,4 +1,3 @@
-import type { Env } from '../config/env.js';
 
 export const AUTH = Symbol('AUTH');
 export const AUTH_SETTINGS = Symbol('AUTH_SETTINGS');
@@ -17,7 +16,3 @@ export function identityBasePath(apiPrefix: string): string {
   return `/${apiPrefix.replace(/^\/+|\/+$/g, '')}/identity`;
 }
 
-/** The password-reset and email-verification routes exist only where a developer can read the mailer's log. */
-export function mailRoutesEnabled(nodeEnv: Env['NODE_ENV']): boolean {
-  return nodeEnv === 'development' || nodeEnv === 'test';
-}

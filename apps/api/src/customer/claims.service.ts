@@ -10,6 +10,7 @@ import { ClaimsRepository } from './claims.repository.js';
 import type { Transaction } from '../db/database.module.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import { toClaimListItem, toClaimNotified, type ClaimListItem, type ClaimNotified } from './dto/claim.response.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type { NotifyClaimDto } from './dto/customer.dto.js';
 
 /**
@@ -28,6 +29,7 @@ export class ClaimsService {
     private readonly repository: ClaimsRepository,
     private readonly documents: DocumentsService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list(customerId: string): Promise<ClaimListItem[]> {
@@ -114,6 +116,15 @@ export class ClaimsService {
         toStatus: created.status,
         note: 'Claim notification submitted.',
         correlationId: created.claimNumber,
+      });
+
+      // Confirms to the customer that the platform has their claim, in the same
+      // transaction that records it.
+      await this.notifications.notify(tx, {
+        customerId: customer.id,
+        key: 'claim.received',
+        entity: { type: 'CLAIM', id: created.claimNumber },
+        values: { insurer: insurer.name, claimNumber: created.claimNumber },
       });
       return { claim: created, insurerName: insurer.name, supportingDocs: records };
     };

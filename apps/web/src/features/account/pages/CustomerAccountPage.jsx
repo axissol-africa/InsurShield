@@ -15,6 +15,7 @@ import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
+import ContactPreferences from '../components/ContactPreferences';
 import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
 import { needsCoverGuideSelection } from '@/store/shared';
 import { Button } from '@/components/ui/primitives/button';
@@ -38,6 +39,7 @@ const ACCOUNT_SECTION_COPY = {
   certificates: { title: 'Certificates', description: 'Track paid quotes while insurers prepare the official policy certificate.' },
   policies: { title: 'Policies', description: 'View active cover, certificates and renewal details.' },
   quotes: { title: 'Quote activity', description: 'Review cover guides, quotations and requests you have sent.' },
+  preferences: { title: 'Notifications', description: 'Choose how InsurShield contacts you about what is optional.' },
 };
 
 const requestDate = (request) => {
@@ -234,6 +236,12 @@ export default function CustomerAccountPage() {
                 ))}
               </CardContent>
             </Card>
+          </section>
+        )}
+
+        {activeSection === 'preferences' && (
+          <section aria-label="Contact preferences" className="mt-6">
+            <ContactPreferences />
           </section>
         )}
 

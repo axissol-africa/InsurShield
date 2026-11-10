@@ -5,7 +5,7 @@ import type { Transaction } from '../db/database.module.js';
 import type { ScanVerdict } from '../scanning/scanner.port.js';
 import { DocumentsService } from './documents.service.js';
 
-const CUSTOMER: Principal = { kind: 'customer', id: 'customer-1', email: 'c@example.test' };
+const CUSTOMER: Principal = { kind: 'customer', id: 'customer-1', email: 'c@example.test', emailVerified: true };
 const STAFF: Principal = {
   kind: 'staff',
   id: 'staff-1',

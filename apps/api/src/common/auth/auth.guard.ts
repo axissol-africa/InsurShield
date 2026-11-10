@@ -12,17 +12,33 @@ import { DATABASE, type Database } from '../../db/database.module.js';
 import { ApiException } from '../errors/api.exception.js';
 import type { Principal, StaffRoleName } from './auth.types.js';
 import { ANONYMOUS, IDENTITY_HEADER, identityHeader, identityMatches } from './identity-precondition.js';
-import { IDENTITY_CHANGED, IDENTITY_CHANGED_MESSAGE } from './messages.js';
+import {
+  EMAIL_NOT_VERIFIED,
+  EMAIL_NOT_VERIFIED_MESSAGE,
+  IDENTITY_CHANGED,
+  IDENTITY_CHANGED_MESSAGE,
+} from './messages.js';
 
 export const IS_PUBLIC = 'isPublic';
 export const IS_OPTIONAL_AUTH = 'isOptionalAuth';
 export const REQUIRED_ROLES = 'requiredRoles';
+export const ALLOWS_UNVERIFIED = 'allowsUnverified';
 
 /** Marks an endpoint as reachable without signing in. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
 /** Serves guests and signed-in callers differently: the principal is set only when there is a valid session. */
 export const OptionalAuth = () => SetMetadata(IS_OPTIONAL_AUTH, true);
+
+/**
+ * Lets a customer who has not yet proved their address reach this endpoint.
+ *
+ * The gate is fail-closed: every other authenticated route is closed to an
+ * unverified customer, so a new endpoint is protected by default and opening
+ * it is a visible decision. Staff are unaffected — they are provisioned, not
+ * registered, and have no unverified state.
+ */
+export const AllowUnverified = () => SetMetadata(ALLOWS_UNVERIFIED, true);
 
 /** Restricts an endpoint to staff holding one of these roles. */
 export const Roles = (...roles: StaffRoleName[]) => SetMetadata(REQUIRED_ROLES, roles);
@@ -93,6 +109,11 @@ export class AuthGuard implements CanActivate {
       throw new ApiException(identity.code, identity.message, identity.status);
     }
     request.principal = identity.principal;
+
+    const allowsUnverified = this.reflector.getAllAndOverride<boolean>(ALLOWS_UNVERIFIED, targets) ?? false;
+    if (identity.principal.kind === 'customer' && !identity.principal.emailVerified && !allowsUnverified) {
+      throw new ApiException(EMAIL_NOT_VERIFIED, EMAIL_NOT_VERIFIED_MESSAGE, HttpStatus.FORBIDDEN);
+    }
 
     const required = this.reflector.getAllAndOverride<StaffRoleName[]>(REQUIRED_ROLES, targets);
     if (!required?.length) return true;

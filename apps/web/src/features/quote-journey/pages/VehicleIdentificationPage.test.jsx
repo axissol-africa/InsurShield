@@ -22,7 +22,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('looks up a vehicle and requires a positive value plus acknowledgement before saving', async () => {
   vi.spyOn(api.vehicles, 'lookupPlate').mockResolvedValue(vehicle);
-  const user = userEvent.setup();
+  const user = userEvent.setup({ delay: null });
   renderPage();
   await user.type(screen.getByPlaceholderText('e.g. BAA 1234'), 'baa 1234');
   await user.click(screen.getByRole('button', { name: 'Find vehicle' }));
@@ -45,7 +45,7 @@ it('looks up a vehicle and requires a positive value plus acknowledgement before
 
 it('allows manual recovery after lookup failure and normalizes an Other country', async () => {
   vi.spyOn(api.vehicles, 'lookupPlate').mockRejectedValue(new Error('RTSA is unavailable'));
-  const user = userEvent.setup();
+  const user = userEvent.setup({ delay: null });
   renderPage();
   await user.type(screen.getByPlaceholderText('e.g. BAA 1234'), 'BAA 1234');
   await user.click(screen.getByRole('button', { name: 'Find vehicle' }));
@@ -66,7 +66,7 @@ it('allows manual recovery after lookup failure and normalizes an Other country'
 });
 
 it('clears abandoned Other country text and keeps identity fields required', async () => {
-  const user = userEvent.setup();
+  const user = userEvent.setup({ delay: null });
   renderPage();
   await user.click(screen.getByRole('tab', { name: 'Manual entry' }));
   expect(await screen.findByLabelText(/Chassis number/)).toBeRequired();

@@ -93,3 +93,40 @@ export type DeliveryKind = (typeof DELIVERY_KINDS)[number];
 
 export const ACTOR_TYPES = ['CUSTOMER', 'STAFF', 'INSURER', 'SYSTEM'] as const;
 export type ActorType = (typeof ACTOR_TYPES)[number];
+
+/**
+ * `RUNNING` means a runner holds a lease on the row, not that work is certainly
+ * in progress: a runner that dies leaves the row `RUNNING` until its lease
+ * expires, which is what makes the work claimable again rather than stuck.
+ */
+export const JOB_STATUSES = ['PENDING', 'RUNNING', 'DONE', 'FAILED'] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+
+/** Decision 16 settles the MVP at these two; the column exists so a later batch adds one. */
+export const NOTIFICATION_CHANNELS = ['IN_APP', 'EMAIL'] as const;
+export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
+
+/**
+ * An IN_APP notification is delivered by existing; only a channel that leaves
+ * the platform has a delivery to succeed or fail, so those rows stay PENDING
+ * until the runner has an answer from the provider.
+ */
+export const NOTIFICATION_DELIVERY_STATUSES = ['PENDING', 'SENT', 'FAILED'] as const;
+export type NotificationDeliveryStatus = (typeof NOTIFICATION_DELIVERY_STATUSES)[number];
+
+/**
+ * What a message is about, which is the grain a customer may switch off at.
+ * Per event would be finer than any requirement asks for and would turn every
+ * new template into a preference migration.
+ */
+export const NOTIFICATION_CATEGORIES = [
+  'QUOTE',
+  'PAYMENT',
+  'POLICY',
+  'CLAIM',
+  'NCD',
+  'INSPECTION',
+  'ACCOUNT',
+  'MARKETING',
+] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];

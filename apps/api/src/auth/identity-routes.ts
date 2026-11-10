@@ -5,8 +5,7 @@ import { IDENTITY_HEADER, identityHeader, identityMatches } from '../common/auth
 import { IDENTITY_CHANGED, IDENTITY_CHANGED_MESSAGE } from '../common/auth/messages.js';
 import { errorBody } from '../common/errors/api.exception.js';
 import { answerFailure } from '../common/filters/api-exception.filter.js';
-import type { Env } from '../config/env.js';
-import { CLIENT_ADDRESS_HEADER, COOKIE_PREFIX, identityBasePath, mailRoutesEnabled } from './auth.constants.js';
+import { CLIENT_ADDRESS_HEADER, COOKIE_PREFIX, identityBasePath } from './auth.constants.js';
 import type { Database } from '../db/database.module.js';
 import type { Auth, AuthSettings } from './auth.instance.js';
 import { resolveIdentity, type Identity } from './identity.js';
@@ -33,8 +32,11 @@ const UNCHECKED = new Set(['POST /register', 'POST /sign-in/email']);
 const OPEN_TO_REFUSED = new Set([...UNCHECKED, 'POST /sign-out']);
 
 /** Every identity route the API serves, as `METHOD /path` under the base path. Everything else is 404. */
-export function identityRoutes(nodeEnv: Env['NODE_ENV']): string[] {
-  return mailRoutesEnabled(nodeEnv) ? [...ALWAYS, ...MAIL] : [...ALWAYS];
+export function identityRoutes(): string[] {
+  // Served everywhere now that a real adapter exists. A deployment that has
+  // not configured one cannot start at all: the provider gate refuses it, so
+  // these routes can no longer be reached without something to send with.
+  return [...ALWAYS, ...MAIL];
 }
 
 function send(response: Response, status: number, code: string, message: string) {
@@ -138,7 +140,7 @@ export function mountIdentity(
   const pattern = `${basePath}/*splat`;
   express.all(
     pattern,
-    allowList(basePath, new Set(identityRoutes(settings.NODE_ENV))),
+    allowList(basePath, new Set(identityRoutes())),
     bodyLimit,
     clientAddress,
     sessionChecks(auth, db, basePath),

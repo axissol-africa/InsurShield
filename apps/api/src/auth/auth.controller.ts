@@ -4,6 +4,7 @@ import { AuthService } from './auth.service.js';
 import { AcceptConsentDto } from './dto/accept-consent.dto.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import { AllowUnverified } from '../common/auth/auth.guard.js';
 
 /**
  * Sign-in, sign-out and registration are Better Auth routes under `/identity`. What remains here is
@@ -13,11 +14,18 @@ import type { Principal } from '../common/auth/auth.types.js';
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  // Reachable unverified on purpose: this is how the browser discovers that it
+  // must show the prompt rather than the account.
+  @AllowUnverified()
   @Get('me')
   me(@CurrentUser() principal: Principal) {
     return this.auth.me(principal);
   }
 
+  // Accepting the notices is part of registering, which happens before the
+  // address is proved. Gating it would leave a customer unable to finish
+  // signing up and unable to verify, since neither can precede the other.
+  @AllowUnverified()
   @Post('consent')
   @HttpCode(HttpStatus.OK)
   acceptConsent(

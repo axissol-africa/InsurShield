@@ -49,6 +49,9 @@ const acknowledgementColumns = {
   status: claimNotifications.status,
   receivedAt: claimNotifications.receivedAt,
   insurerClaimReference: claimNotifications.insurerClaimReference,
+  // Who to tell. `toAcknowledgement` maps field by field, so this does not
+  // reach the response.
+  customerId: claimNotifications.customerId,
 };
 
 const decisionColumns = {
@@ -137,6 +140,9 @@ export class InsurerPortalRepository {
         quoteValidityDays: insurers.quoteValidityDays,
         vehicleValueMinor: quoteRequests.vehicleValueMinor,
         coverageDuration: quoteRequests.coverageDuration,
+        // Who to tell, and whose name to tell them, when the quote lands.
+        customerId: quoteRequests.customerId,
+        insurerName: insurers.name,
       })
       .from(quoteRequestRecipients)
       .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestRecipients.quoteRequestId))
@@ -246,10 +252,11 @@ export class InsurerPortalRepository {
   /** Locks the insurer's policy, so its certificate is issued once. Undefined when the insurer has no such policy. */
   async lockPolicy(tx: Transaction, policyNumber: string, insurerId: string) {
     const [policy] = await tx
-      .select({ status: policies.status })
+      .select({ status: policies.status, customerId: policies.customerId, insurerName: insurers.name })
       .from(policies)
+      .innerJoin(insurers, eq(insurers.id, policies.insurerId))
       .where(and(eq(policies.policyNumber, policyNumber), eq(policies.insurerId, insurerId)))
-      .for('update');
+      .for('update', { of: policies });
     return policy;
   }
 
@@ -308,6 +315,12 @@ export class InsurerPortalRepository {
   }
 
   /** Undefined unless the claim was still waiting to be acknowledged. */
+  /** The insurer's own name, for wording a message the customer will read. */
+  async insurerName(tx: Transaction, insurerId: string): Promise<string> {
+    const [found] = await tx.select({ name: insurers.name }).from(insurers).where(eq(insurers.id, insurerId));
+    return found?.name ?? 'Your insurer';
+  }
+
   async acknowledgeClaim(
     tx: Transaction,
     claimNumber: string,
@@ -364,6 +377,7 @@ export class InsurerPortalRepository {
         applicationNumber: ncdApplications.applicationNumber,
         status: ncdApplications.status,
         yearsClaimFree: ncdApplications.yearsClaimFree,
+        customerId: ncdApplications.customerId,
       })
       .from(ncdApplications)
       .where(and(eq(ncdApplications.id, applicationId), eq(ncdApplications.insurerId, insurerId)))

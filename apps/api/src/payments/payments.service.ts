@@ -22,6 +22,7 @@ import { CHOOSE_A_PAYMENT_METHOD, type PayDto } from './dto/payment.dto.js';
 import type { CustomerPrincipal } from '../customer/customer-principal.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 const IDEMPOTENCY_KEY_CONSTRAINT = 'payments_idempotencyKey_key';
 
@@ -42,6 +43,7 @@ export class PaymentsService {
     private readonly payments: PaymentsRepository,
     private readonly config: ConfigService<Env, true>,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async pay(customer: CustomerPrincipal, idempotencyKey: string, dto: PayDto): Promise<ReceiptResponse> {
@@ -193,6 +195,21 @@ export class PaymentsService {
           toStatus: policy.status,
           note: 'Policy created after payment confirmation.',
           correlationId: payment.transactionId,
+        });
+
+        // In the same transaction as the payment and the policy: a customer is
+        // never told about money that was rolled back.
+        await this.notifications.notify(tx, {
+          customerId,
+          key: 'payment.confirmed',
+          entity: { type: 'PAYMENT', id: payment.transactionId },
+          values: { insurer: quote.insurerName },
+        });
+        await this.notifications.notify(tx, {
+          customerId,
+          key: 'policy.created',
+          entity: { type: 'POLICY', id: policy.policyNumber },
+          values: { insurer: quote.insurerName, policyNumber: policy.policyNumber },
         });
         return { ...payment, policyNumber: policy.policyNumber };
       });

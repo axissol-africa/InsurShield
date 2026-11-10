@@ -20,7 +20,12 @@ function forbidden(message: string): Identity {
  */
 export async function resolveIdentity(db: Database, userId: string): Promise<Identity> {
   const [customer] = await db
-    .select({ id: customers.id, email: customers.email, deletedAt: customers.deletedAt })
+    .select({
+      id: customers.id,
+      email: customers.email,
+      deletedAt: customers.deletedAt,
+      emailVerifiedAt: customers.emailVerifiedAt,
+    })
     .from(customers)
     .where(eq(customers.userId, userId));
   const [staff] = await db
@@ -39,7 +44,17 @@ export async function resolveIdentity(db: Database, userId: string): Promise<Ide
   if (customer && staff) return UNLINKED;
   if (customer) {
     if (customer.deletedAt) return forbidden(ACCOUNT_CLOSED);
-    return { ok: true, principal: { kind: 'customer', id: customer.id, email: customer.email } };
+    return {
+      ok: true,
+      // Carried, not enforced here: resolveIdentity says who somebody is.
+      // What an unverified customer may reach is the guard's decision.
+      principal: {
+        kind: 'customer',
+        id: customer.id,
+        email: customer.email,
+        emailVerified: customer.emailVerifiedAt !== null,
+      },
+    };
   }
   if (staff) {
     if (!staff.isActive || staff.insurerStatus === 'DELETED') return forbidden(STAFF_INACTIVE);

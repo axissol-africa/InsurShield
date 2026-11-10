@@ -8,6 +8,7 @@ import * as schema from '../db/schema.js';
 import { PASSWORD_POLICY, SESSION_LIFETIME_SECONDS } from './auth.constants.js';
 import { createAuth, identityLog, type AuthSettings } from './auth.instance.js';
 import { checkPassword } from './credential-user.js';
+import { MailFake } from '../../test/mail-fake.js';
 
 // Never connected: resolving the auth context runs no query.
 const pool = new Pool({ connectionString: 'postgresql://nobody@127.0.0.1:1/never_test' });
@@ -23,7 +24,7 @@ const settings: AuthSettings = {
   AUTH_RATE_LIMIT: 'on',
 };
 
-const contextFor = (overrides: Partial<AuthSettings> = {}) => createAuth(db, { ...settings, ...overrides }).$context;
+const contextFor = (overrides: Partial<AuthSettings> = {}) => createAuth(db, { ...settings, ...overrides }, new MailFake()).$context;
 
 describe('the auth instance', () => {
   it('keeps the origin and CSRF checks on under NODE_ENV=test', async () => {
@@ -78,7 +79,7 @@ describe('the auth instance', () => {
   });
 
   it('refuses Better Auth’s own sign-up even when called directly', async () => {
-    const auth = createAuth(db, settings);
+    const auth = createAuth(db, settings, new MailFake());
 
     await expect(
       auth.api.signUpEmail({ body: { email: 'someone@example.invalid', password: 'long-enough-1', name: 'Someone' } }),
@@ -152,7 +153,7 @@ describe('Better Auth’s log lines', () => {
 
   it('routes Better Auth’s own logger to it, at Better Auth’s default threshold of warn', async () => {
     const logger = recorder();
-    const context = await createAuth(db, settings, logger).$context;
+    const context = await createAuth(db, settings, new MailFake(), logger).$context;
 
     context.logger.error('INTERNAL_SERVER_ERROR', failedQuery());
     context.logger.warn('Password is too short');

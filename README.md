@@ -129,6 +129,11 @@ Error messages name a variable but never print its value.
 | `S3_SSE_KMS_KEY_ID` | no | The KMS key for `S3_SSE=aws:kms` |
 | `MAX_UPLOAD_BYTES` | no (`3145728`) | Largest accepted upload |
 | `MALWARE_SCANNER` | no (`stand-in`) | Malware-scan adapter for uploads; `stand-in` simulates one and is refused in production |
+| `MAIL_SENDER` | no (`log`) | Mail adapter; `log` writes messages to the log and is refused in production, `http` posts to a provider's API |
+| `MAIL_ENDPOINT` | with `http` | The provider's send endpoint |
+| `MAIL_API_KEY` | with `http` | The provider's key, sent as a bearer token |
+| `MAIL_FROM` | with `http` | The address messages are sent from, as the provider has verified it |
+| `MAIL_TIMEOUT_MS` | no (`10000`) | How long to wait for the provider before treating a send as unanswered |
 
 ### Seed (`npm run db:seed`, read from the same `apps/api/.env`)
 

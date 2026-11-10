@@ -150,7 +150,29 @@ export const envSchema = z.object({
    * is refused in production by the provider gate.
    */
   MALWARE_SCANNER: z.enum(['stand-in']).default('stand-in'),
+
+  /**
+   * Which mail adapter messages go through. 'log' writes them to the log and is
+   * refused in production by the provider gate; 'http' posts to a provider's
+   * API over the runtime's own fetch, so no mail library is needed.
+   */
+  MAIL_SENDER: z.enum(['log', 'http']).default('log'),
+  MAIL_ENDPOINT: z.string().url().optional(),
+  MAIL_API_KEY: z.string().min(1).optional(),
+  /** The address messages are sent from, as the provider has verified it. */
+  MAIL_FROM: z.string().email().optional(),
+  /** A provider that does not answer in time holds a job's lease; bound the wait. */
+  MAIL_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(10_000),
 }).superRefine((env, context) => {
+  if (env.MAIL_SENDER === 'http') {
+    // Named one by one: a message saying only "mail is misconfigured" makes a
+    // deployment guess which of the three it forgot.
+    for (const key of ['MAIL_ENDPOINT', 'MAIL_API_KEY', 'MAIL_FROM'] as const) {
+      if (!env[key]) {
+        context.addIssue({ code: 'custom', path: [key], message: 'is required when MAIL_SENDER is http' });
+      }
+    }
+  }
   if (env.AUTH_RATE_LIMIT === 'off' && env.NODE_ENV !== 'test') {
     context.addIssue({ code: 'custom', path: ['AUTH_RATE_LIMIT'], message: 'may be off only when NODE_ENV is test' });
   }

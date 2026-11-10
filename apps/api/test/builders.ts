@@ -53,13 +53,19 @@ async function loginFor(db: Db, email: string, name: string, overrides: { userId
   return (await createCredentialUser(db, { email, name, password: TEST_PASSWORD })).id;
 }
 
+/**
+ * A customer who has proved their address, because that is what a customer in
+ * the middle of a journey is. The gate added in batch 6 closes protected
+ * records to an unverified one, so a spec that wants that state asks for it:
+ * `buildCustomer(db, { emailVerifiedAt: null })`.
+ */
 export async function buildCustomer(db: Db, overrides: Partial<Insert<typeof customers>> = {}) {
   const email = normalizeEmail(overrides.email ?? `${unique('customer')}@example.invalid`);
   const fullName = overrides.fullName ?? 'Chanda Mwale';
   const userId = await loginFor(db, email, fullName, overrides);
   const [customer] = await db
     .insert(customers)
-    .values({ fullName, phone: uniquePhone(), ...overrides, email, userId })
+    .values({ fullName, phone: uniquePhone(), emailVerifiedAt: new Date(), ...overrides, email, userId })
     .returning();
   return customer;
 }

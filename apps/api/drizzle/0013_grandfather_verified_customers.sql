@@ -1,0 +1,11 @@
+-- `emailVerifiedAt` has existed since the Prisma era and has never been written.
+-- Every customer is therefore unverified, and switching the gate on without a
+-- rule would close protected records for the whole existing user base.
+--
+-- The user's decision (2026-11-09) is to grandfather them. The timestamp taken
+-- is the row's own `createdAt`, not the moment this migration runs, so it says
+-- when the account was made rather than implying the address was checked today.
+-- A later audit asking who actually proved an address can tell the two apart:
+-- a grandfathered customer's `emailVerifiedAt` equals their `createdAt`, while
+-- a verified one's is strictly later.
+UPDATE "customers" SET "emailVerifiedAt" = "createdAt" WHERE "emailVerifiedAt" IS NULL;
