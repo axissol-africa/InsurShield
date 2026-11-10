@@ -431,43 +431,77 @@ describe('the identity routes', () => {
   });
 
   describe('registration', () => {
-    it('creates the login, customer and consent together and signs the person in', async () => {
+    it('creates the login, customer and consent together, and signs nobody in', async () => {
       const body = registrationBody();
 
-      const response = await register(body).expect(201);
+      const response = await register(body).expect(202);
 
-      expect(response.body).toEqual({ signedIn: true, userId: expect.any(String) });
-      const cookie = cookiesSet(response.headers['set-cookie']).find((c) => c.startsWith(`${SESSION_COOKIE}=`));
-      expect(cookie).toBeDefined();
-      const me = await testApp.http.get(ME).set('Cookie', cookie ?? '').expect(200);
+      // No session and no identifier: a cookie is observable, and there is no
+      // honest one to hand back for an address that is already taken, so
+      // registration gives neither to anybody.
+      expect(response.body).toEqual({ checkYourEmail: true });
+      expect(cookiesSet(response.headers['set-cookie'])).toEqual([]);
+
+      const session = await signIn(testApp.http, { email: body.email }, body.password);
+      const me = await testApp.http.get(ME).set(session).expect(200);
       expect(me.body).toMatchObject({
-        userId: response.body.userId,
         customer: { fullName: 'Thandiwe Phiri', email: body.email, phone: body.phone },
         consent: { accepted: true, noticeVersion: 'v1' },
       });
-      const [account] = await side.db.select().from(authAccounts).where(eq(authAccounts.userId, response.body.userId));
-      expect(account).toMatchObject({ providerId: 'credential', accountId: response.body.userId });
+      const [account] = await side.db
+        .select()
+        .from(authAccounts)
+        .where(eq(authAccounts.userId, me.body.userId as string));
+      expect(account).toMatchObject({ providerId: 'credential' });
     });
 
-    it('keeps the account and answers signedIn false when the session cannot be created after the commit', async () => {
-      await side.pool.query(`
-        CREATE OR REPLACE FUNCTION refuse_session_for_test() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN IF NEW."userAgent" = 'refuse-session' THEN RAISE EXCEPTION 'refused for the test'; END IF; RETURN NEW; END $$;
-        CREATE TRIGGER refuse_session_for_test BEFORE INSERT ON auth_sessions
-          FOR EACH ROW EXECUTE FUNCTION refuse_session_for_test();`);
-      const body = registrationBody();
+    it('sends a verification link, so a new customer is not locked out of their own records', async () => {
+      // Without this a registered customer had a session and nothing to use it
+      // on: the verified-email gate closes every route, and nothing had ever
+      // asked them to prove the address.
+      const logger = new RecordingLogger();
+      const logged = await startApp({ logger });
       try {
-        const response = await register(body).set('User-Agent', 'refuse-session').expect(201);
+        const body = registrationBody();
+        await logged.http
+          .post(identityPath('/register'))
+          .set('Origin', trustedOrigin())
+          .send(body)
+          .expect(202);
 
-        expect(response.body).toEqual({ signedIn: false, userId: expect.any(String) });
-        expect(response.headers['set-cookie']).toBeUndefined();
-        expect(await usersWithEmail(body.email)).toBe(1);
+        const link = mailedLink(logger.lines, body.email, 'Confirm your email address');
+        const verified = await logged.http.get(`${link.pathname}${link.search}`);
+        expect(verified.status).toBeLessThan(400);
+
+        const [customer] = await side.db.select().from(customers).where(eq(customers.email, body.email));
+        expect(customer.emailVerifiedAt, 'and the platform’s own answer follows').not.toBeNull();
+        const session = await signIn(logged.http, { email: body.email }, body.password);
+        await logged.http.get('/api/v1/policies').set(session).expect(200);
       } finally {
-        await side.pool.query(
-          'DROP TRIGGER refuse_session_for_test ON auth_sessions; DROP FUNCTION refuse_session_for_test();',
-        );
+        await logged.close();
       }
-      await signIn(testApp.http, { email: body.email }, body.password);
+    });
+
+    it('tells the address that somebody tried, when it already has an account', async () => {
+      const logger = new RecordingLogger();
+      const logged = await startApp({ logger });
+      try {
+        const existing = await buildCustomer(logged.db);
+
+        await logged.http
+          .post(identityPath('/register'))
+          .set('Origin', trustedOrigin())
+          .send(registrationBody({ email: existing.email }))
+          .expect(202);
+
+        const notice = logger.lines.find(
+          (line) => line.includes(`Mail to ${existing.email}`) && line.includes('Someone tried to register'),
+        );
+        expect(notice, 'the owner learns; the person who typed it does not').toBeDefined();
+        expect(await usersWithEmail(existing.email)).toBe(1);
+      } finally {
+        await logged.close();
+      }
     });
 
     it('lets one of two concurrent registrations with one email through and leaves no orphan', async () => {
@@ -479,8 +513,10 @@ describe('the identity routes', () => {
         () => register(registrationBody({ email })),
       ]);
 
-      expect(responses.map((response) => response.status).sort((x, y) => x - y)).toEqual([201, 409]);
-      expect(responses.find((response) => response.status === 409)?.body.code).toBe('ACCOUNT_CONFLICT');
+      // Both are answered the same; only one account is made. The loser cannot
+      // tell it lost, which is the point.
+      expect(responses.map((response) => response.status)).toEqual([202, 202]);
+      expect(responses.map((response) => response.body)).toEqual([{ checkYourEmail: true }, { checkYourEmail: true }]);
       expect(await usersWithEmail(email)).toBe(1);
       const orphans = await side.db.execute(sql`
         SELECT u.id FROM auth_users u LEFT JOIN customers c ON c."userId" = u.id
@@ -494,32 +530,36 @@ describe('the identity routes', () => {
 
       const response = await register(body).expect(409);
 
+      // Phone is deliberately outside the uniform answer: matching it would
+      // need ownership proved before the number is reserved, and that needs an
+      // SMS provider. Recorded in the batch 6 plan as a known gap.
       expect(response.body).toEqual({
         code: 'ACCOUNT_CONFLICT',
-        message: 'Another InsurShield account already uses this email address or phone number.',
+        message: 'Another InsurShield account already uses this phone number.',
       });
       expect(await usersWithEmail(body.email)).toBe(0);
     });
 
-    it('refuses an email a staff member holds, in any letter case', async () => {
+    it('answers an email a staff member holds exactly like a new one, in any letter case', async () => {
       const staff = await buildStaffUser(testApp.db);
 
       for (const email of [staff.email, staff.email.toUpperCase()]) {
-        const response = await register(registrationBody({ email })).expect(409);
-        expect(response.body.code).toBe('ACCOUNT_CONFLICT');
+        const response = await register(registrationBody({ email })).expect(202);
+        expect(response.body).toEqual({ checkYourEmail: true });
+        expect(cookiesSet(response.headers['set-cookie'])).toEqual([]);
       }
       const linked = await side.db.select({ n: count() }).from(customers).where(eq(customers.email, staff.email));
       expect(linked[0].n).toBe(0);
     });
 
-    it('refuses an unlinked legacy customer email in any letter case', async () => {
+    it('answers an unlinked legacy customer email like a new one, in any letter case', async () => {
       const customer = await buildCustomer(testApp.db, { userId: null });
       const legacyEmail = customer.email.toUpperCase();
       await side.db.update(customers).set({ email: legacyEmail }).where(eq(customers.id, customer.id));
 
       for (const email of [customer.email, legacyEmail]) {
-        const response = await register(registrationBody({ email })).expect(409);
-        expect(response.body.code).toBe('ACCOUNT_CONFLICT');
+        const response = await register(registrationBody({ email })).expect(202);
+        expect(response.body).toEqual({ checkYourEmail: true });
       }
 
       const registered = await side.db.execute(sql`
@@ -542,10 +582,12 @@ describe('the identity routes', () => {
       const customer = await buildCustomer(testApp.db);
       const hashes: number[] = [];
 
+      // The same answer for all three is the point: the cost of hashing must
+      // not be what tells somebody which addresses are taken.
       for (const [email, status] of [
-        [staff.email, 409],
-        [customer.email, 409],
-        [uniqueEmail(), 201],
+        [staff.email, 202],
+        [customer.email, 202],
+        [uniqueEmail(), 202],
       ] as const) {
         vi.mocked(hashPassword).mockClear();
         await register(registrationBody({ email })).expect(status);
@@ -558,9 +600,9 @@ describe('the identity routes', () => {
     it('stores a mixed-case email in lower case, and it signs in as typed and in lower case', async () => {
       const email = `Mixed.Case-${randomBytes(4).toString('hex')}@Example.com`;
 
-      const response = await register(registrationBody({ email })).expect(201);
+      await register(registrationBody({ email })).expect(202);
 
-      const [user] = await side.db.select().from(authUsers).where(eq(authUsers.id, response.body.userId));
+      const [user] = await side.db.select().from(authUsers).where(eq(authUsers.email, email.toLowerCase()));
       expect(user.email).toBe(email.toLowerCase());
       const [customer] = await side.db.select().from(customers).where(eq(customers.userId, user.id));
       expect(customer.email).toBe(email.toLowerCase());
@@ -583,7 +625,7 @@ describe('the identity routes', () => {
     it.each([8, 128])('accepts a password of %i characters, which then signs in', async (length) => {
       const body = registrationBody({ password: 'p'.repeat(length) });
 
-      await register(body).expect(201);
+      await register(body).expect(202);
 
       await signIn(testApp.http, { email: body.email }, body.password);
     });
@@ -720,7 +762,10 @@ describe('the identity routes', () => {
     });
 
     it('sets an http session cookie HttpOnly and SameSite=Lax without Secure', async () => {
-      const response = await register(registrationBody()).expect(201);
+      // Registration hands back no cookie now, so the cookie under test is the
+      // one signing in sets.
+      const customer = await buildCustomer(testApp.db);
+      const response = await signInAttempt(testApp.http, { email: customer.email, password: TEST_PASSWORD }).expect(200);
 
       const line = (response.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith(`${SESSION_COOKIE}=`));
       expect(line).toMatch(/; HttpOnly/i);
@@ -731,7 +776,11 @@ describe('the identity routes', () => {
     it('sets an https session cookie Secure with the __Secure- prefix', async () => {
       const secure = await startApp({ env: { BETTER_AUTH_URL: 'https://api.insurshield.invalid' } });
       try {
-        const response = await register(registrationBody(), secure.http).expect(201);
+        const customer = await buildCustomer(secure.db);
+        const response = await signInAttempt(secure.http, {
+          email: customer.email,
+          password: TEST_PASSWORD,
+        }).expect(200);
 
         const line = (response.headers['set-cookie'] as unknown as string[]).find((c) =>
           c.startsWith(`__Secure-${SESSION_COOKIE}=`),
@@ -1139,7 +1188,7 @@ describe('the identity rate limits', () => {
         statuses.push(response.status);
       }
 
-      expect(statuses).toEqual([201, 201, 201, 429]);
+      expect(statuses).toEqual([202, 202, 202, 429]);
     });
 
     it('answers the fourth password change within 10 seconds from one address with 429', async () => {
@@ -1164,13 +1213,14 @@ describe('the identity rate limits', () => {
   it('records the address the proxy appended on consent, not the proxy’s or a forged one', async () => {
     const proxied = await startApp({ env: { TRUST_PROXY_HOPS: '1' } });
     try {
-      const response = await proxied.http
+      const body = registrationBody();
+      await proxied.http
         .post(identityPath('/register'))
         .set({ Origin: trustedOrigin(), 'X-Forwarded-For': '6.6.6.6, 203.0.113.20' })
-        .send(registrationBody())
-        .expect(201);
-      const [customer] = await side.db.select().from(customers).where(eq(customers.userId, response.body.userId));
-      const Cookie = cookiesSet(response.headers['set-cookie']).join('; ');
+        .send(body)
+        .expect(202);
+      const [customer] = await side.db.select().from(customers).where(eq(customers.email, body.email));
+      const { Cookie } = await signIn(proxied.http, { email: body.email }, body.password);
       await proxied.http
         .post(CONSENT)
         .set({ Cookie, Origin: trustedOrigin(), 'X-Forwarded-For': '6.6.6.6, 203.0.113.21' })
@@ -1194,13 +1244,14 @@ describe('the identity rate limits', () => {
     const proxied = await startApp({ env: { TRUST_PROXY_HOPS: '1' } });
     const address = '2001:db8:1:2:3:4:5:6';
     try {
-      const response = await proxied.http
+      const body = registrationBody();
+      await proxied.http
         .post(identityPath('/register'))
         .set({ Origin: trustedOrigin(), 'X-Forwarded-For': address })
-        .send(registrationBody())
-        .expect(201);
-      const [customer] = await side.db.select().from(customers).where(eq(customers.userId, response.body.userId));
-      const Cookie = cookiesSet(response.headers['set-cookie']).join('; ');
+        .send(body)
+        .expect(202);
+      const [customer] = await side.db.select().from(customers).where(eq(customers.email, body.email));
+      const { Cookie } = await signIn(proxied.http, { email: body.email }, body.password);
       await proxied.http
         .post(CONSENT)
         .set({ Cookie, Origin: trustedOrigin(), 'X-Forwarded-For': address })

@@ -190,7 +190,7 @@ export function authOptions(
         },
       },
     },
-    plugins: [registration(db), signInLimit(db, { enabled: rateLimited, logger })],
+    plugins: [registration(db, sender), signInLimit(db, { enabled: rateLimited, logger })],
   } satisfies BetterAuthOptions;
 }
 
