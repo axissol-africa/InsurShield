@@ -38,7 +38,12 @@ describe('the job runner', () => {
 
   const unique = () => `k-${randomUUID()}`;
   /** Claim runs in the caller's transaction, as the runner does. */
-  const claim = (now: Date) => repository.transaction((tx) => repository.claim(tx, 10, LEASE_MS, now));
+  /**
+   * A limit far above anything a test creates. Other work is real now — a
+   * notification and the idempotency purge both enqueue — so claiming a batch
+   * of ten could fill with jobs this spec did not write and never reach its own.
+   */
+  const claim = (now: Date) => repository.transaction((tx) => repository.claim(tx, 500, LEASE_MS, now));
   const row = async (kind: string) => {
     const [found] = await side.db.select().from(jobs).where(eq(jobs.kind, kind));
     return found;

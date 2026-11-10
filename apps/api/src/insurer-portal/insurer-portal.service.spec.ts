@@ -20,6 +20,8 @@ const untouchable = (what: string) =>
 /** Pick functions that always choose `index`, so every drawn code is the same. */
 const always = (index: number) => () => index;
 const audit = { write: async () => undefined, transition: async () => undefined };
+/** These cases never reach a notification; the service still needs one. */
+const notifications = { notify: async () => undefined };
 
 describe('who may use the portal', () => {
   const service = new InsurerPortalService(
@@ -28,6 +30,7 @@ describe('who may use the portal', () => {
     untouchable('pia') as never,
     always(0),
     audit as never,
+    notifications as never,
   );
 
   const calls: [string, (principal: Principal) => Promise<unknown>][] = [
@@ -70,7 +73,7 @@ describe('final quotes', () => {
       hasQuote: async () => false,
     };
     const documents = untouchable('documents');
-    const service = new InsurerPortalService(repository as never, documents as never, untouchable('pia') as never, always(0), audit as never);
+    const service = new InsurerPortalService(repository as never, documents as never, untouchable('pia') as never, always(0), audit as never, notifications as never);
 
     await expect(service.submitQuote(INSURER_USER, 'r', { premium: 1, documentId: 'd' })).rejects.toMatchObject({
       status: 409,
@@ -110,6 +113,7 @@ describe('NCD approvals', () => {
       untouchable('pia') as never,
       pick,
       audit as never,
+      notifications as never,
     );
     return { service, inserted, linked };
   }

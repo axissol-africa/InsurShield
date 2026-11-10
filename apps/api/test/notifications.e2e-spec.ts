@@ -7,7 +7,7 @@ import { MAIL_SENDER, type MailResult } from '../src/mail/mail.port.js';
 import { NOTIFICATION_EMAIL, NotificationsService } from '../src/notifications/notifications.service.js';
 import { NotificationsRepository } from '../src/notifications/notifications.repository.js';
 import { buildCustomer } from './builders.js';
-import { openTestDatabase, startApp, type TestApp } from './helpers.js';
+import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
 
 describe('notifications', () => {
   let testApp: TestApp;
@@ -56,6 +56,23 @@ describe('notifications', () => {
     repository.transaction((tx) =>
       service.notify(tx, { customerId, key, entity: { type: 'QUOTE_REQUEST', id: 'QR-1' }, values }),
     );
+
+  /**
+   * Runs the runner until this message has been dealt with.
+   *
+   * One pass is not enough: the runner claims a bounded batch of whatever is
+   * due, and real work now competes for it — other specs enqueue notifications
+   * and the idempotency purge schedules itself. Waiting on the row rather than
+   * on a single pass is what makes this independent of how busy the table is.
+   */
+  async function settle(notificationId: string): Promise<void> {
+    await until(async () => {
+      const [row] = await side.db.select().from(notifications).where(eq(notifications.id, notificationId));
+      if (row?.deliveryStatus !== 'PENDING') return true;
+      await runner.runOnce();
+      return false;
+    }, 'the message to be delivered or refused');
+  }
 
   it('writes the message and its job with the change it announces, or neither', async () => {
     const customer = await buildCustomer(testApp.db);
@@ -119,7 +136,8 @@ describe('notifications', () => {
     await publish(key, 'EMAIL', 1);
     await notify(customer.id, key, { insurer: 'Global Guard' });
 
-    await runner.runOnce();
+    const [queued] = await rows(key);
+    await settle(queued.id);
 
     const [email] = await rows(key);
     expect(email.deliveryStatus).toBe('SENT');
@@ -138,7 +156,8 @@ describe('notifications', () => {
     sender.send = () => Promise.resolve(refusal);
 
     try {
-      await runner.runOnce();
+      const [queued] = await rows(key);
+      await settle(queued.id);
     } finally {
       sender.send = original;
     }

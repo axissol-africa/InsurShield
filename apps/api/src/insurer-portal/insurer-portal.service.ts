@@ -29,6 +29,7 @@ import {
   toReply,
 } from './dto/portal.response.js';
 import { coverTermLabel, premiumFloorMinor } from './domain/premium-floor.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import type {
   AcknowledgeClaimDto,
   ExtendQuoteDto,
@@ -59,6 +60,7 @@ export class InsurerPortalService {
     private readonly pia: PiaService,
     @Inject(NCD_CODE_PICK) private readonly pick: (n: number) => number,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** The insurer this caller acts for, or a refusal if the account has none. */
@@ -162,6 +164,15 @@ export class InsurerPortalService {
           correlationId: requestId,
         });
       }
+
+      // Told once the insurer has actually quoted, in the same transaction, so
+      // a rolled-back reply never reaches the customer.
+      await this.notifications.notify(tx, {
+        customerId: delivery.customerId,
+        key: 'quote.ready',
+        entity: { type: 'QUOTE_REQUEST', id: requestId },
+        values: { insurer: delivery.insurerName },
+      });
       return toReply(quote, await this.documents.record(quote.documentId, tx));
     });
 
@@ -255,6 +266,13 @@ export class InsurerPortalService {
         note: 'Policy activated when the insurer certificate was issued.',
         correlationId: activated.policyNumber,
       });
+
+      await this.notifications.notify(tx, {
+        customerId: policy.customerId,
+        key: 'policy.certificate_issued',
+        entity: { type: 'POLICY', id: activated.policyNumber },
+        values: { insurer: policy.insurerName, policyNumber: activated.policyNumber },
+      });
       return toIssuedPolicy(activated, await this.documents.record(dto.certificateDocumentId, tx));
     });
 
@@ -313,6 +331,18 @@ export class InsurerPortalService {
           note: 'Insurer acknowledged the claim notification.',
           correlationId: result.claimNumber,
         });
+
+        // A claim may have no account behind it — a guest can notify one, and
+        // closing an account sets the link to null — so there may be nobody to
+        // tell. The claim is still acknowledged either way.
+        if (result.customerId) {
+          await this.notifications.notify(tx, {
+            customerId: result.customerId,
+            key: 'claim.acknowledged',
+            entity: { type: 'CLAIM', id: result.claimNumber },
+            values: { insurer: await this.portal.insurerName(tx, insurerId), claimNumber: result.claimNumber },
+          });
+        }
       }
       return result;
     });
@@ -365,6 +395,15 @@ export class InsurerPortalService {
           note: 'Insurer recorded an NCD decision.',
           correlationId: applicationNumber,
         });
+
+        if (application.customerId) {
+          await this.notifications.notify(tx, {
+            customerId: application.customerId,
+            key: 'ncd.decided',
+            entity: { type: 'NCD_APPLICATION', id: applicationNumber },
+            values: { insurer: await this.portal.insurerName(tx, insurerId) },
+          });
+        }
         return { decision: toNcdDecision(decided), applicationNumber };
       }
 
