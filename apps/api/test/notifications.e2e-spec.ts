@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { jobs, notificationTemplates, notifications } from '../src/db/schema.js';
+import type { NotificationCategory } from '../src/common/domain/enums.js';
+import { jobs, marketingConsents, notificationTemplates, notifications } from '../src/db/schema.js';
 import { JobRunner } from '../src/jobs/job-runner.service.js';
 import { MAIL_SENDER, type MailResult } from '../src/mail/mail.port.js';
 import { NOTIFICATION_EMAIL, NotificationsService } from '../src/notifications/notifications.service.js';
@@ -35,9 +36,17 @@ describe('notifications', () => {
     key: string,
     channel: 'IN_APP' | 'EMAIL',
     version: number,
-    { subject = 'Quote ready', body = 'Your quote from {{insurer}} is ready', activeFrom = new Date('2020-01-01') } = {},
+    {
+      subject = 'Quote ready',
+      body = 'Your quote from {{insurer}} is ready',
+      activeFrom = new Date('2020-01-01'),
+      category = 'QUOTE' as NotificationCategory,
+      mandatory = true,
+    } = {},
   ) {
-    await side.db.insert(notificationTemplates).values({ key, channel, version, subject, body, activeFrom });
+    await side.db
+      .insert(notificationTemplates)
+      .values({ key, channel, version, subject, body, activeFrom, category, mandatory });
   }
 
   const rows = (key: string) =>
@@ -157,6 +166,71 @@ describe('notifications', () => {
     expect(await repository.markRead(customer.id, listed[0].id, new Date())).toBe(true);
     expect(await repository.unreadCount(customer.id)).toBe(1);
     expect(await repository.markRead(customer.id, listed[0].id, new Date()), 'already read').toBe(false);
+  });
+
+  it('does not send an optional message to a customer who turned that category off', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const key = keyFor('optional');
+    await publish(key, 'EMAIL', 1, { category: 'MARKETING', mandatory: false });
+    await repository.setPreference(customer.id, { category: 'MARKETING', channel: 'EMAIL', enabled: false }, new Date());
+
+    await notify(customer.id, key, { insurer: 'Anyone' });
+
+    expect(await rows(key)).toEqual([]);
+  });
+
+  it('still sends a mandatory message to that customer, and records why', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const key = keyFor('mandatory');
+    await publish(key, 'EMAIL', 1, { category: 'PAYMENT', mandatory: true });
+    await repository.setPreference(customer.id, { category: 'PAYMENT', channel: 'EMAIL', enabled: false }, new Date());
+
+    await notify(customer.id, key, { insurer: 'Anyone' });
+
+    const [written] = await rows(key);
+    expect(written, 'an operational notice is not silenced by a preference').toBeDefined();
+    expect(written.mandatory, 'and the row says it went out despite the choice').toBe(true);
+  });
+
+  it('keeps a choice to the channel it was made on', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const key = keyFor('per-channel');
+    await publish(key, 'EMAIL', 1, { category: 'MARKETING', mandatory: false });
+    await publish(key, 'IN_APP', 1, { category: 'MARKETING', mandatory: false });
+    await repository.setPreference(customer.id, { category: 'MARKETING', channel: 'EMAIL', enabled: false }, new Date());
+
+    await notify(customer.id, key, { insurer: 'Anyone' });
+
+    const written = await rows(key);
+    expect(written.map((row) => row.channel), 'the centre still shows it').toEqual(['IN_APP']);
+  });
+
+  it('sends to a customer who has chosen nothing, so silence is not a refusal', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const key = keyFor('default-on');
+    await publish(key, 'IN_APP', 1, { category: 'QUOTE', mandatory: false });
+
+    await notify(customer.id, key, { insurer: 'Anyone' });
+
+    expect(await rows(key)).toHaveLength(1);
+  });
+
+  it('keeps marketing consent as history, so a withdrawal does not erase the agreement', async () => {
+    const customer = await buildCustomer(testApp.db);
+    const consent = { noticeVersion: 'marketing-v1', purpose: 'Product news and offers' };
+
+    expect(await repository.marketingConsent(customer.id), 'never asked is not consent').toBe(false);
+    await repository.recordMarketingConsent(customer.id, { granted: true, ...consent });
+    expect(await repository.marketingConsent(customer.id)).toBe(true);
+    await repository.recordMarketingConsent(customer.id, { granted: false, ...consent });
+    expect(await repository.marketingConsent(customer.id)).toBe(false);
+
+    const history = await side.db
+      .select()
+      .from(marketingConsents)
+      .where(eq(marketingConsents.customerId, customer.id));
+    expect(history, 'both answers survive').toHaveLength(2);
+    expect(history.every((row) => row.noticeVersion === 'marketing-v1')).toBe(true);
   });
 
   it('writes nothing when no version of the key is in use', async () => {

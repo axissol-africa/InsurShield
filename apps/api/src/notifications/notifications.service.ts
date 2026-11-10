@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Transaction } from '../db/database.module.js';
 import { JobsRepository } from '../jobs/jobs.repository.js';
 import { MAIL_SENDER, type MailSender } from '../mail/mail.port.js';
+import { maySend, overriddenBy } from './domain/preference.js';
 import { activeVersion, render } from './domain/template.js';
 import { NotificationsRepository } from './notifications.repository.js';
 
@@ -42,18 +43,33 @@ export class NotificationsService {
       byChannel.set(version.channel, [...(byChannel.get(version.channel) ?? []), version]);
     }
 
+    const preferences = await this.repository.preferencesFor(tx, request.customerId);
+
     let sent = 0;
     for (const [channel, candidates] of byChannel) {
       const template = activeVersion(candidates, now);
       // A key with no active version for this channel is not an error: a
       // template can be retired by letting its successor go unpublished.
       if (!template) continue;
+      const addressed = {
+        category: template.category,
+        channel: channel as 'IN_APP' | 'EMAIL',
+        mandatory: template.mandatory,
+      };
+      // A customer who turned this category off on this channel is not told,
+      // unless the message is one they cannot turn off.
+      if (!maySend(addressed, preferences)) continue;
       const values = request.values ?? {};
       const notification = await this.repository.insert(tx, {
         customerId: request.customerId,
         templateKey: template.key,
         templateVersion: template.version,
-        channel: channel as 'IN_APP' | 'EMAIL',
+        channel: addressed.channel,
+        category: template.category,
+        // Recorded, not inferred: why a customer received a message they had
+        // switched off is answerable from the row rather than from the code
+        // that was running at the time.
+        mandatory: overriddenBy(addressed, preferences) !== null || template.mandatory,
         entityType: request.entity.type,
         entityId: request.entity.id,
         subject: render(template.subject, values),

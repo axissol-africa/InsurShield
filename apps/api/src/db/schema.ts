@@ -43,6 +43,7 @@ import {
   JOB_STATUSES,
   NOTIFICATION_CHANNELS,
   NOTIFICATION_DELIVERY_STATUSES,
+  NOTIFICATION_CATEGORIES,
 } from '../common/domain/enums.js';
 import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/domain/money-limits.js';
 
@@ -70,6 +71,7 @@ export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
 export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
 export const notificationChannel = pgEnum('NotificationChannel', NOTIFICATION_CHANNELS);
+export const notificationCategory = pgEnum('NotificationCategory', NOTIFICATION_CATEGORIES);
 export const notificationDeliveryStatus = pgEnum('NotificationDeliveryStatus', NOTIFICATION_DELIVERY_STATUSES);
 
 const timestamptz = (name: string) =>
@@ -809,6 +811,8 @@ export const notificationTemplates = pgTable(
     id: id(),
     key: text('key').notNull(),
     channel: notificationChannel('channel').notNull(),
+    /** What the message is about, and so which preference governs it. */
+    category: notificationCategory('category').notNull(),
     version: integer('version').notNull(),
     subject: text('subject').notNull(),
     body: text('body').notNull(),
@@ -840,6 +844,13 @@ export const notifications = pgTable(
     templateKey: text('templateKey').notNull(),
     templateVersion: integer('templateVersion').notNull(),
     channel: notificationChannel('channel').notNull(),
+    category: notificationCategory('category').notNull(),
+    /**
+     * Whether this was sent despite a preference. Recorded rather than
+     * inferred from the category, so why a customer received a message
+     * they had switched off can be answered from the row itself.
+     */
+    mandatory: boolean('mandatory').notNull(),
     /** The record this is about, so the centre can link to it. */
     entityType: text('entityType').notNull(),
     entityId: text('entityId').notNull(),
@@ -856,6 +867,49 @@ export const notifications = pgTable(
     index('notifications_customerId_createdAt_idx').on(t.customerId, t.createdAt),
     index('notifications_customerId_readAt_idx').on(t.customerId, t.readAt),
   ],
+);
+
+/**
+ * Which optional messages a customer wants, per category and channel.
+ *
+ * Absence means the default, which is on: a customer who has never visited the
+ * preference screen still hears about their quote. Only a row saying `false`
+ * silences anything, and only for a category whose template is not mandatory.
+ */
+export const contactPreferences = pgTable(
+  'contact_preferences',
+  {
+    id: id(),
+    customerId: uuid('customerId').notNull().references(() => customers.id, { onDelete: 'cascade' }),
+    category: notificationCategory('category').notNull(),
+    channel: notificationChannel('channel').notNull(),
+    enabled: boolean('enabled').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex('contact_preferences_customerId_category_channel_key').on(t.customerId, t.category, t.channel)],
+);
+
+/**
+ * Marketing consent, as consent rather than as a switch.
+ *
+ * Append-only like `consent_records`: a withdrawal is a new row, so what was
+ * agreed and when can be answered later. US-CUS-003 wants the version and the
+ * purpose kept, which a boolean on the customer could not carry.
+ */
+export const marketingConsents = pgTable(
+  'marketing_consents',
+  {
+    id: id(),
+    customerId: uuid('customerId').notNull().references(() => customers.id, { onDelete: 'cascade' }),
+    granted: boolean('granted').notNull(),
+    /** The wording the customer was shown when they answered. */
+    noticeVersion: text('noticeVersion').notNull(),
+    purpose: text('purpose').notNull(),
+    recordedAt: createdAt('recordedAt'),
+    ipAddress: text('ipAddress'),
+    userAgent: text('userAgent'),
+  },
+  (t) => [index('marketing_consents_customerId_recordedAt_idx').on(t.customerId, t.recordedAt)],
 );
 
 export const integrationDeliveries = pgTable(

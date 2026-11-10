@@ -113,3 +113,20 @@ export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
  */
 export const NOTIFICATION_DELIVERY_STATUSES = ['PENDING', 'SENT', 'FAILED'] as const;
 export type NotificationDeliveryStatus = (typeof NOTIFICATION_DELIVERY_STATUSES)[number];
+
+/**
+ * What a message is about, which is the grain a customer may switch off at.
+ * Per event would be finer than any requirement asks for and would turn every
+ * new template into a preference migration.
+ */
+export const NOTIFICATION_CATEGORIES = [
+  'QUOTE',
+  'PAYMENT',
+  'POLICY',
+  'CLAIM',
+  'NCD',
+  'INSPECTION',
+  'ACCOUNT',
+  'MARKETING',
+] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
