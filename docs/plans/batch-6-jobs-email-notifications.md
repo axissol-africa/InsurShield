@@ -262,6 +262,32 @@ when there is something to announce.
 mandatory rather than optional, are a product decision: my proposal is that quote, payment, policy, claim, NCD and
 inspection notices are mandatory operational messages, and only marketing is optional.
 
+## What this batch did not finish
+
+Two acceptance checks have no implementation and therefore no test. Both are
+recorded here rather than quietly dropped, because a batch that closes with an
+unstated gap is how a requirement goes missing.
+
+**Acceptance check 6 — registration answering the same whether or not an address
+is taken.** Still answers `409 ACCOUNT_CONFLICT` for a taken address
+(`registration.plugin.ts:58`, `:65`, `:81`). Three things block a uniform
+answer, none of them hard but none of them small: the endpoint creates the
+account and signs it in immediately, which cannot be mimicked for an address
+that is taken; `customers.email` and `customers.phone` are both NOT NULL and
+uniquely indexed, so a reservation cannot be held loosely; and batch 2's
+question 15 requires the same treatment for phone, which needs an SMS provider
+this batch does not have. The recommendation in decision 3 — email only here,
+phone with the batch that brings SMS — is still unanswered by the user.
+
+**Acceptance check 9 — a changed contact address re-verified before use.** B6.4
+deferred it to B6.5 on the grounds that the verification machinery would exist
+there; B6.5 built the gate and the grandfathering but not this. A customer can
+still change their email and have notifications follow it without proving the
+new address.
+
+Neither blocks what this batch does deliver, and neither is covered by a test
+that would fail: they are absent, not broken.
+
 ## Completion evidence
 
 - Lint, type check, build, API unit tests, API e2e tests and the real-API web journey pass, with counts reported.
