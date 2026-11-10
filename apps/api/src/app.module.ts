@@ -20,6 +20,7 @@ import { AuthGuard } from './common/auth/auth.guard.js';
 import { ApiRateLimitGuard } from './common/rate-limit/api-rate-limit.guard.js';
 import { AuditModule } from './common/audit/audit.module.js';
 import { ProvidersModule } from './common/providers/providers.module.js';
+import { JobsModule } from './jobs/jobs.module.js';
 import { ScanningModule } from './scanning/scanning.module.js';
 
 @Module({
@@ -27,6 +28,7 @@ import { ScanningModule } from './scanning/scanning.module.js';
     ConfigModule,
     DatabaseModule,
     AuditModule,
+    JobsModule,
     // Before any adapter module, so each can register itself as it initialises.
     ProvidersModule,
     StorageModule,
