@@ -21,6 +21,7 @@ export class JobRunner {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
   private draining: Promise<void> = Promise.resolve();
+  private readonly starting: Array<() => Promise<void>> = [];
 
   constructor(
     private readonly jobs: JobsRepository,
@@ -33,6 +34,19 @@ export class JobRunner {
   }
 
   /**
+   * Work to do once, when the runner starts.
+   *
+   * Recurring jobs put their first occurrence on the queue here rather than at
+   * module init: initialising a module should not touch the database. Doing so
+   * opens a connection at an unpredictable moment, which is visible to anything
+   * watching the pool and is a database write on a deployment the provider gate
+   * may be about to refuse.
+   */
+  onStart(work: () => Promise<void>): void {
+    this.starting.push(work);
+  }
+
+  /**
    * Started after the provider gate has passed and the port is open, never at
    * module init: `main.ts` runs the gate after `app.init()` and closes the app
    * when it trips, so a runner started earlier would be doing work on a
@@ -41,6 +55,9 @@ export class JobRunner {
   start(): void {
     if (this.running) return;
     this.running = true;
+    for (const work of this.starting) {
+      void work().catch((error: unknown) => this.logger.error(`Start-up job failed: ${String(error)}`));
+    }
     const tick = async () => {
       if (!this.running) return;
       this.draining = this.runOnce()

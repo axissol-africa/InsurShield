@@ -20,6 +20,7 @@ import { AuthGuard } from './common/auth/auth.guard.js';
 import { ApiRateLimitGuard } from './common/rate-limit/api-rate-limit.guard.js';
 import { AuditModule } from './common/audit/audit.module.js';
 import { ProvidersModule } from './common/providers/providers.module.js';
+import { IdempotencyModule } from './common/idempotency/idempotency.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
@@ -31,6 +32,7 @@ import { ScanningModule } from './scanning/scanning.module.js';
     DatabaseModule,
     AuditModule,
     JobsModule,
+    IdempotencyModule,
     // Before any adapter module, so each can register itself as it initialises.
     ProvidersModule,
     StorageModule,

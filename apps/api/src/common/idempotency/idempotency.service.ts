@@ -32,7 +32,8 @@ export class IdempotencyService {
     work: (tx: Transaction) => Promise<T>,
   ): Promise<IdempotentResult<T>> {
     const requestHash = hashRequest(request);
-    const expiresAt = new Date(Date.now() + RECORD_TTL_MS);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + RECORD_TTL_MS);
 
     return this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -54,6 +55,37 @@ export class IdempotencyService {
               eq(idempotencyRecords.key, key),
             ),
           );
+
+        // An expired record is not a replay. `expiresAt` was written from the
+        // first release and never read, so a day-old key still replayed its
+        // answer; the purge that deletes these arrives with this change, and a
+        // key that outlived its window must stop replaying whether or not the
+        // purge has reached it yet. Taken over rather than deleted, so a
+        // concurrent caller cannot slip between the delete and the insert.
+        if (stored && stored.expiresAt <= now) {
+          await tx
+            .update(idempotencyRecords)
+            .set({ requestHash, expiresAt, responseStatus: null, responseBody: null, createdAt: now })
+            .where(
+              and(
+                eq(idempotencyRecords.callerId, callerId),
+                eq(idempotencyRecords.endpoint, endpoint),
+                eq(idempotencyRecords.key, key),
+              ),
+            );
+          const value = await work(tx);
+          await tx
+            .update(idempotencyRecords)
+            .set({ responseStatus: 201, responseBody: value })
+            .where(
+              and(
+                eq(idempotencyRecords.callerId, callerId),
+                eq(idempotencyRecords.endpoint, endpoint),
+                eq(idempotencyRecords.key, key),
+              ),
+            );
+          return { value, replayed: false };
+        }
 
         if (!stored) {
           throw ApiException.conflict('IDEMPOTENCY_RETRY', 'Please retry this request.');
