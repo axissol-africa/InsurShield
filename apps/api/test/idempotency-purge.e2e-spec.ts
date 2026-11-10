@@ -63,7 +63,10 @@ describe('the idempotency purge', () => {
   });
 
   it('schedules the next hour, and twice in one hour is one job', async () => {
-    const at = new Date('2026-11-10T14:00:00.000Z');
+    // Far from any hour a run against the real clock would schedule: the other
+    // cases here call run() with `new Date()`, which queues now + 1h, and a
+    // suite running in that hour would otherwise collide with this key.
+    const at = new Date('2031-03-04T05:00:00.000Z');
 
     await purge.schedule(at);
     await purge.schedule(at);
@@ -77,7 +80,7 @@ describe('the idempotency purge', () => {
   });
 
   it('leaves its successor on the queue after a run, so the schedule survives', async () => {
-    const now = new Date('2026-11-10T20:00:00.000Z');
+    const now = new Date('2031-03-04T20:00:00.000Z');
 
     await purge.run(now);
 

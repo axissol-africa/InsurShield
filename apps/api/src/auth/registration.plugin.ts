@@ -1,21 +1,29 @@
 import { Logger } from '@nestjs/common';
 import type { BetterAuthPlugin } from 'better-auth';
-import { APIError, createAuthEndpoint } from 'better-auth/api';
-import { setSessionCookie } from 'better-auth/cookies';
+import { APIError, createAuthEndpoint, createEmailVerificationToken } from 'better-auth/api';
 import { hashPassword } from 'better-auth/crypto';
 import { eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Database } from '../db/database.module.js';
 import { describeDatabaseError, isUniqueViolation } from '../db/errors.js';
 import { consentRecords, customers, staffUsers } from '../db/schema.js';
+import type { MailSender } from '../mail/mail.port.js';
 import { CLIENT_ADDRESS_HEADER } from './auth.constants.js';
 import { checkPassword, insertCredentialUser, normalizeEmail } from './credential-user.js';
 
 export const MAX_EMAIL_LENGTH = 254;
 
-const ACCOUNT_CONFLICT = {
+/**
+ * Thrown inside the transaction to abandon it, and never reaching the caller:
+ * answering differently for an address already in use is what tells a stranger
+ * who has an account here.
+ */
+const TAKEN = Symbol('address already registered');
+
+/** Phone is not covered by the uniform answer; see the catch below. */
+const PHONE_CONFLICT = {
   code: 'ACCOUNT_CONFLICT',
-  message: 'Another InsurShield account already uses this email address or phone number.',
+  message: 'Another InsurShield account already uses this phone number.',
 };
 
 const registrationBody = z.strictObject({
@@ -30,7 +38,7 @@ const registrationBody = z.strictObject({
  * Customer sign-up: the login, the customer and the first consent are written in one transaction, so no
  * login exists without its customer. Better Auth's own sign-up stays off.
  */
-export function registration(db: Database) {
+export function registration(db: Database, sender: MailSender) {
   const logger = new Logger('Registration');
   return {
     id: 'insurshield-registration',
@@ -55,14 +63,14 @@ export function registration(db: Database) {
                 .select({ id: staffUsers.id })
                 .from(staffUsers)
                 .where(eq(sql`lower(${staffUsers.email})`, email));
-              if (staff) throw new APIError('CONFLICT', ACCOUNT_CONFLICT);
+              if (staff) throw TAKEN;
               // Some pre-Better-Auth customers may have a legacy, unlinked account. PostgreSQL's
               // normal unique index is case-sensitive, whereas sign-in addresses are not.
               const [legacyCustomer] = await tx
                 .select({ id: customers.id })
                 .from(customers)
                 .where(eq(sql`lower(${customers.email})`, email));
-              if (legacyCustomer) throw new APIError('CONFLICT', ACCOUNT_CONFLICT);
+              if (legacyCustomer) throw TAKEN;
               const created = await insertCredentialUser(tx, { email, name: fullName, passwordHash });
               const [customer] = await tx
                 .insert(customers)
@@ -78,22 +86,65 @@ export function registration(db: Database) {
               return created;
             });
           } catch (error) {
-            if (isUniqueViolation(error)) throw new APIError('CONFLICT', ACCOUNT_CONFLICT);
-            throw error;
+            // A phone already in use still answers plainly. The user's decision
+            // (2026-11-10) narrows the uniform answer to email, because doing
+            // the same for phone needs ownership proved before it is reserved,
+            // and that needs an SMS provider this batch does not have. Phone is
+            // therefore still enumerable here, and recorded as such in the plan.
+            if (isUniqueViolation(error, 'customers_phone_key')) throw new APIError('CONFLICT', PHONE_CONFLICT);
+            if (error !== TAKEN && !isUniqueViolation(error)) throw error;
+            user = undefined;
           }
 
-          ctx.setStatus(201);
-          // The account is committed: a failure from here on must not be answered as a failed registration.
+          // Both paths send to the address and answer the same. The person who
+          // owns it learns either that they have an account to confirm, or that
+          // somebody tried to use their address; the person who typed it learns
+          // nothing either way.
           try {
-            const session = await ctx.context.internalAdapter.createSession(user.id);
-            await setSessionCookie(ctx, { session, user });
+            if (user) {
+              await sendVerification(ctx, user, email);
+            } else {
+              await sender.send({
+                to: email,
+                subject: 'Someone tried to register with your address',
+                body:
+                  'Somebody used this address to register with InsurShield, but an account already exists for it. ' +
+                  'If that was you, sign in instead, or reset your password if you have forgotten it. ' +
+                  'If it was not, nothing has changed and there is nothing you need to do.',
+                idempotencyKey: `register-notice:${email}`,
+              });
+            }
           } catch (error) {
-            logger.error(`A registered account could not be signed in: ${JSON.stringify(describeDatabaseError(error))}`);
-            return ctx.json({ signedIn: false, userId: user.id });
+            // The account is committed if it was created; failing to send must
+            // not be reported as a failed registration, and must not differ
+            // between the two paths.
+            logger.error(`A registration message could not be sent: ${JSON.stringify(describeDatabaseError(error))}`);
           }
-          return ctx.json({ signedIn: true, userId: user.id });
+
+          ctx.setStatus(202);
+          // No session and no identifier: a cookie is observable, and there is
+          // no honest cookie to give for an address that is already taken.
+          return ctx.json({ checkYourEmail: true });
         },
       ),
     },
   } satisfies BetterAuthPlugin;
+}
+
+/** The link Better Auth would have sent, built the way its own routes build it. */
+async function sendVerification(
+  ctx: { context: { secret: string; baseURL: string; options: Record<string, any> }; request?: Request },
+  user: { id: string; email: string; name: string },
+  email: string,
+): Promise<void> {
+  const send = ctx.context.options?.emailVerification?.sendVerificationEmail;
+  if (!send) return;
+  const token = await createEmailVerificationToken(
+    ctx.context.secret,
+    email,
+    undefined,
+    ctx.context.options.emailVerification?.expiresIn,
+  );
+  const url = `${ctx.context.baseURL}/verify-email?token=${token}&callbackURL=${encodeURIComponent('/')}`;
+  await send({ user, url, token }, ctx.request);
 }
