@@ -191,4 +191,36 @@
  * @property {string|null} [deletedAt]       set only while a super admin has removed the insurer
  */
 
+/**
+ * @typedef {Object} Notification
+ * @property {string} id
+ * @property {string} subject
+ * @property {string} body
+ * @property {'QUOTE'|'PAYMENT'|'POLICY'|'CLAIM'|'NCD'|'INSPECTION'|'ACCOUNT'|'MARKETING'} category
+ * @property {string} entityType             the kind of record this is about
+ * @property {string} entityId               the record itself, for the link
+ * @property {boolean} read
+ * @property {string} createdAt
+ */
+
+/**
+ * @typedef {Object} NotificationPage
+ * @property {Notification[]} items          newest first
+ * @property {string|null} nextCursor        pass as `before` to continue
+ * @property {number} unread
+ */
+
+/**
+ * @typedef {Object} ContactPreference
+ * @property {'QUOTE'|'PAYMENT'|'POLICY'|'CLAIM'|'NCD'|'INSPECTION'|'ACCOUNT'|'MARKETING'} category
+ * @property {'IN_APP'|'EMAIL'} channel
+ * @property {boolean} enabled               absent means on; only false silences
+ */
+
+/**
+ * @typedef {Object} ContactPreferences
+ * @property {ContactPreference[]} preferences
+ * @property {boolean} marketingConsent      never asked is not consent
+ */
+
 export {};

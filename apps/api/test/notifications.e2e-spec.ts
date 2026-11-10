@@ -182,9 +182,16 @@ describe('notifications', () => {
     expect(await repository.unreadCount(customer.id)).toBe(2);
 
     expect(await repository.markRead(other.id, listed[0].id, new Date()), 'not this customer’s to read').toBe(false);
-    expect(await repository.markRead(customer.id, listed[0].id, new Date())).toBe(true);
+    const first = new Date('2026-11-10T08:00:00.000Z');
+    expect(await repository.markRead(customer.id, listed[0].id, first)).toBe(true);
     expect(await repository.unreadCount(customer.id)).toBe(1);
-    expect(await repository.markRead(customer.id, listed[0].id, new Date()), 'already read').toBe(false);
+
+    // Reports whether the message is this customer's, not whether it changed:
+    // that is what lets the route answer 404 for somebody else's id without
+    // saying whether it exists. Reading twice keeps the first time.
+    expect(await repository.markRead(customer.id, listed[0].id, new Date()), 'still theirs').toBe(true);
+    const [reread] = await side.db.select().from(notifications).where(eq(notifications.id, listed[0].id));
+    expect(reread.readAt?.toISOString()).toBe(first.toISOString());
   });
 
   it('does not send an optional message to a customer who turned that category off', async () => {

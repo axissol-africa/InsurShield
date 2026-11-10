@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, isNull, lt } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, sql } from 'drizzle-orm';
 import type {
   NotificationCategory,
   NotificationChannel,
@@ -141,12 +141,20 @@ export class NotificationsRepository {
     return rows.length;
   }
 
-  /** Scoped to the customer, so an id from elsewhere marks nothing. */
+  /**
+   * Scoped to the customer, so an id from elsewhere marks nothing and reads as
+   * absent. Marking a message read twice keeps the first time: `coalesce` makes
+   * the call idempotent without a second query to find out whether it was
+   * already read.
+   *
+   * Returns whether the message is this customer's, which is what lets the
+   * route answer 404 for somebody else's id without revealing that it exists.
+   */
   async markRead(customerId: string, id: string, now: Date): Promise<boolean> {
     const updated = await this.db
       .update(notifications)
-      .set({ readAt: now })
-      .where(and(eq(notifications.id, id), eq(notifications.customerId, customerId), isNull(notifications.readAt)))
+      .set({ readAt: sql`coalesce(${notifications.readAt}, ${now})` })
+      .where(and(eq(notifications.id, id), eq(notifications.customerId, customerId)))
       .returning({ id: notifications.id });
     return updated.length > 0;
   }

@@ -9,6 +9,7 @@ import { Toaster } from '@/components/ui/primitives/sonner';
 
 const CUSTOMER_LINKS = [
   { to: '/', label: 'Home' },
+  { to: '/notifications', label: 'Notifications' },
   { to: '/account', label: 'My account' },
   { to: '/claims', label: 'Claims' },
   { to: '/support', label: 'Contact' },

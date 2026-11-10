@@ -57,6 +57,22 @@ export const auth = {
   login: (identifier, password) => auth.signIn(identifier, password),
 };
 
+/**
+ * Mock mode has no job runner and no insurer acting on its own, so nothing
+ * generates a notification. The centre is therefore empty rather than seeded:
+ * showing invented messages would make the empty state the one thing nobody
+ * ever saw, and that is the state most customers will meet first.
+ */
+export const notifications = {
+  list: () => call(() => ({ items: [], nextCursor: null, unread: 0 })),
+  markRead: () => call(() => undefined),
+};
+
+export const contactPreferences = {
+  read: () => call((s) => ({ preferences: s.contactPreferences ?? [], marketingConsent: s.marketingConsent ?? false })),
+  save: (choice) => call((s) => { s.saveContactPreference(choice); }),
+};
+
 export const account = {
   close: () => call((s) => { s.deleteCurrentAccount(); return { ok: true }; }),
 };

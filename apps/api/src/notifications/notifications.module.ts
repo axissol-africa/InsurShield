@@ -1,10 +1,12 @@
 import { Global, Module, type OnModuleInit } from '@nestjs/common';
 import { JobRunner } from '../jobs/job-runner.service.js';
 import { NOTIFICATION_EMAIL, NotificationsService } from './notifications.service.js';
+import { NotificationsController } from './notifications.controller.js';
 import { NotificationsRepository } from './notifications.repository.js';
 
 @Global()
 @Module({
+  controllers: [NotificationsController],
   providers: [NotificationsRepository, NotificationsService],
   exports: [NotificationsRepository, NotificationsService],
 })

@@ -32,6 +32,9 @@ export const JOURNEY_DEFAULTS = {
   selectedQuote: null,
   premiumBreakdown: null,
   paymentReceipt: null,
+  /** Contact choices in mock mode; absence of a row means the category is on. */
+  contactPreferences: [],
+  marketingConsent: false,
   ncdCode: '',
   ncdCodeValidated: null,
   ncdCodeUsed: false,
@@ -196,6 +199,19 @@ export const createJourneySlice = (set, get) => ({
   setActiveQuoteRequest: (activeQuoteRequestId) => set({ activeQuoteRequestId, selectedQuote: null, premiumBreakdown: null }),
   selectQuote: (quote, breakdown) => set({ selectedQuote: quote, premiumBreakdown: breakdown }),
   recordPayment: (paymentReceipt) => set({ paymentReceipt }),
+
+  /** One row per category and channel; saving again replaces the choice. */
+  saveContactPreference: (choice) =>
+    set((state) => ({
+      contactPreferences: [
+        ...state.contactPreferences.filter(
+          (existing) => !(existing.category === choice.category && existing.channel === choice.channel),
+        ),
+        choice,
+      ],
+      marketingConsent:
+        choice.category === 'MARKETING' ? choice.enabled : state.marketingConsent,
+    })),
 
   // ─── NCD code (pre-approved by an insurer) ───────────────
   setNcdCode: (ncdCode) => set({ ncdCode }),

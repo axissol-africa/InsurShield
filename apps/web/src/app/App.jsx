@@ -13,6 +13,7 @@ import QuotesComparisonPage from '@/features/quote-journey/pages/QuotesCompariso
 import PaymentPage from '@/features/payment/pages/PaymentPage';
 import PolicyConfirmationPage from '@/features/payment/pages/PolicyConfirmationPage';
 import CustomerAccountPage from '@/features/account/pages/CustomerAccountPage';
+import NotificationCentrePage from '@/features/notifications/pages/NotificationCentrePage';
 import RenewalPage from '@/features/policies/pages/RenewalPage';
 import ClaimsPage from '@/features/claims/pages/ClaimsPage';
 import SupportPage from '@/features/support/pages/SupportPage';
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="payment" element={customerOnly(<PaymentPage />)} />
           <Route path="confirmation" element={customerOnly(<PolicyConfirmationPage />)} />
           <Route path="account" element={customerOnly(<CustomerAccountPage />)} />
+          <Route path="notifications" element={customerOnly(<NotificationCentrePage />)} />
           <Route path="renewal" element={customerOnly(<RenewalPage />)} />
           <Route path="claims" element={customerOnly(<ClaimsPage />)} />
           <Route path="inspections" element={customerOnly(<InspectionWorkflowPage />)} />
