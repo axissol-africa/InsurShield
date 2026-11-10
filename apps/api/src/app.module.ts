@@ -22,6 +22,7 @@ import { AuditModule } from './common/audit/audit.module.js';
 import { ProvidersModule } from './common/providers/providers.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { MailModule } from './mail/mail.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 import { ScanningModule } from './scanning/scanning.module.js';
 
 @Module({
@@ -35,6 +36,7 @@ import { ScanningModule } from './scanning/scanning.module.js';
     StorageModule,
     ScanningModule,
     MailModule,
+    NotificationsModule,
     AuthModule,
     DocumentsModule,
     InsurersModule,

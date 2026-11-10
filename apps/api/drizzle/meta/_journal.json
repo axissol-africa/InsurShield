@@ -78,6 +78,13 @@
       "when": 1794232214806,
       "tag": "0010_jobs_runner",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794295365674,
+      "tag": "0011_notifications",
+      "breakpoints": true
     }
   ]
 }

@@ -723,7 +723,7 @@ describe('the final schema', () => {
       return rows;
     });
     const timestampColumns = columns.filter((column) => column.type.startsWith('timestamp'));
-    expect(timestampColumns).toHaveLength(80);
+    expect(timestampColumns).toHaveLength(85);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

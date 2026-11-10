@@ -41,6 +41,8 @@ import {
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
   JOB_STATUSES,
+  NOTIFICATION_CHANNELS,
+  NOTIFICATION_DELIVERY_STATUSES,
 } from '../common/domain/enums.js';
 import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/domain/money-limits.js';
 
@@ -67,6 +69,8 @@ export const deliveryStatus = pgEnum('DeliveryStatus', DELIVERY_STATUSES);
 export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
 export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
+export const notificationChannel = pgEnum('NotificationChannel', NOTIFICATION_CHANNELS);
+export const notificationDeliveryStatus = pgEnum('NotificationDeliveryStatus', NOTIFICATION_DELIVERY_STATUSES);
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, precision: 3, mode: 'date' });
@@ -788,6 +792,69 @@ export const jobs = pgTable(
     uniqueIndex('jobs_kind_key_key').on(t.kind, t.key),
     // The claim query orders by runAfter within the rows a runner may take.
     index('jobs_status_runAfter_idx').on(t.status, t.runAfter),
+  ],
+);
+
+/**
+ * The wording a notification is rendered from, kept by version.
+ *
+ * A message records the version it used, so editing a template cannot rewrite
+ * what somebody was already told. `mandatory` is the operational-versus-
+ * marketing line: a mandatory notice ignores a contact preference, and EN-005
+ * wants that decision recorded rather than implied by the template's name.
+ */
+export const notificationTemplates = pgTable(
+  'notification_templates',
+  {
+    id: id(),
+    key: text('key').notNull(),
+    channel: notificationChannel('channel').notNull(),
+    version: integer('version').notNull(),
+    subject: text('subject').notNull(),
+    body: text('body').notNull(),
+    mandatory: boolean('mandatory').notNull().default(true),
+    /** Null means not yet in use; the active version is the latest that has passed. */
+    activeFrom: timestamptz('activeFrom'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('notification_templates_key_channel_version_key').on(t.key, t.channel, t.version),
+    index('notification_templates_key_channel_activeFrom_idx').on(t.key, t.channel, t.activeFrom),
+  ],
+);
+
+/**
+ * One row per message per channel: the IN_APP rows are the notification centre,
+ * and the EMAIL rows carry what the provider said about delivery.
+ *
+ * The row holds the wording that was sent and a link to the record, never the
+ * protected content behind it — US-CUS-019 asks that a notification show
+ * nothing sensitive on an unverified device, and the simplest way to keep that
+ * promise is to have nothing sensitive to show.
+ */
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: id(),
+    customerId: uuid('customerId').notNull().references(() => customers.id, { onDelete: 'cascade' }),
+    templateKey: text('templateKey').notNull(),
+    templateVersion: integer('templateVersion').notNull(),
+    channel: notificationChannel('channel').notNull(),
+    /** The record this is about, so the centre can link to it. */
+    entityType: text('entityType').notNull(),
+    entityId: text('entityId').notNull(),
+    subject: text('subject').notNull(),
+    body: text('body').notNull(),
+    readAt: timestamptz('readAt'),
+    deliveryStatus: notificationDeliveryStatus('deliveryStatus').notNull().default('PENDING'),
+    /** The provider's own reference, for tracing a message that did not arrive. */
+    providerReference: text('providerReference'),
+    deliveredAt: timestamptz('deliveredAt'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('notifications_customerId_createdAt_idx').on(t.customerId, t.createdAt),
+    index('notifications_customerId_readAt_idx').on(t.customerId, t.readAt),
   ],
 );
 
