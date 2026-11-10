@@ -31,7 +31,10 @@ describe('the identity routes in production', () => {
     }
   });
 
-  it('answers 404 to the mail routes in production', async () => {
+  it('serves the mail routes in production, because a deployment cannot start without an adapter', async () => {
+    // They answered 404 while the mailer only wrote to a log. The provider
+    // gate now refuses a production start on the log adapter, so password
+    // reset and verification are reachable wherever the API runs at all.
     const production = await startApp({ env: LIMITED });
     try {
       for (const route of ['POST /request-password-reset', 'POST /reset-password', 'POST /send-verification-email', 'GET /verify-email']) {
@@ -40,8 +43,8 @@ describe('the identity routes in production', () => {
           .set('X-Forwarded-For', uniqueAddress())
           .set('Origin', trustedOrigin())
           .send({});
-        expect(response.status, route).toBe(404);
-        expect(response.body, route).toEqual(OUR_NOT_FOUND);
+        expect(response.status, route).not.toBe(404);
+        expect(response.body, route).not.toEqual(OUR_NOT_FOUND);
       }
     } finally {
       await production.close();

@@ -280,7 +280,14 @@ describe('validateEnv', () => {
 });
 
 // A placeholder whose setting is a number needs a number in its place.
-const FILLERS: Record<string, string> = { TRUST_PROXY_HOPS: '0', RTSA_ANNIVERSARY_FEE_NGWEE: '50000' };
+const FILLERS: Record<string, string> = {
+  TRUST_PROXY_HOPS: '0',
+  RTSA_ANNIVERSARY_FEE_NGWEE: '50000',
+  // A URL and an address cannot be filled with any string, so the placeholder
+  // is replaced with something of the right shape rather than something valid.
+  MAIL_ENDPOINT: 'https://mail.example.invalid/send',
+  MAIL_FROM: 'no-reply@example.invalid',
+};
 
 describe('.env.example', () => {
   const documented = readFileSync(new URL('../../.env.example', import.meta.url), 'utf8');

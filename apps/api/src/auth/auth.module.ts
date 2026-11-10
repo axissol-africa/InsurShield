@@ -7,6 +7,7 @@ import { AuthController } from './auth.controller.js';
 import { authSettings, createAuth, type AuthSettings } from './auth.instance.js';
 import { AuthRepository } from './auth.repository.js';
 import { AuthService } from './auth.service.js';
+import { MAIL_SENDER, type MailSender } from '../mail/mail.port.js';
 
 @Global()
 @Module({
@@ -21,8 +22,8 @@ import { AuthService } from './auth.service.js';
     },
     {
       provide: AUTH,
-      inject: [DATABASE, AUTH_SETTINGS],
-      useFactory: (db: Database, settings: AuthSettings) => createAuth(db, settings),
+      inject: [DATABASE, AUTH_SETTINGS, MAIL_SENDER],
+      useFactory: (db: Database, settings: AuthSettings, sender: MailSender) => createAuth(db, settings, sender),
     },
   ],
   exports: [AuthService, AUTH, AUTH_SETTINGS],

@@ -14,7 +14,8 @@ import {
   PASSWORD_POLICY,
   SESSION_LIFETIME_SECONDS,
 } from './auth.constants.js';
-import { developmentMailer } from './dev-mailer.js';
+import type { MailSender } from '../mail/mail.port.js';
+import { identityMailer } from './identity-mailer.js';
 import { resolveIdentity } from './identity.js';
 import { registration } from './registration.plugin.js';
 import { signInLimit } from './sign-in-limit.plugin.js';
@@ -79,9 +80,14 @@ export function identityLog(logger: LoggerService) {
   };
 }
 
-export function authOptions(db: Database, settings: AuthSettings, logger: LoggerService = new Logger('Identity')) {
+export function authOptions(
+  db: Database,
+  settings: AuthSettings,
+  sender: MailSender,
+  logger: LoggerService = new Logger('Identity'),
+) {
   const rateLimited = settings.AUTH_RATE_LIMIT === 'on';
-  const mailer = developmentMailer(logger, settings.NODE_ENV);
+  const mailer = identityMailer(sender);
   return {
     appName: 'InsurShield',
     baseURL: settings.BETTER_AUTH_URL,
@@ -166,8 +172,8 @@ export function authOptions(db: Database, settings: AuthSettings, logger: Logger
   } satisfies BetterAuthOptions;
 }
 
-export function createAuth(db: Database, settings: AuthSettings, logger?: LoggerService) {
-  return betterAuth(authOptions(db, settings, logger));
+export function createAuth(db: Database, settings: AuthSettings, sender: MailSender, logger?: LoggerService) {
+  return betterAuth(authOptions(db, settings, sender, logger));
 }
 
 export type Auth = ReturnType<typeof createAuth>;

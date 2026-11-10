@@ -80,6 +80,18 @@ function registrationBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The link out of a message the log adapter wrote. The adapter logs one entry
+ * per message as `Mail to <address> — <subject>` and then the body, so a spec
+ * can follow a reset or verification without a provider.
+ */
+function mailedLink(lines: string[], to: string, subject: string): URL {
+  const entry = lines.find((line) => line.includes(`Mail to ${to}`) && line.includes(subject));
+  const found = entry?.match(/https?:\/\/\S+/)?.[0];
+  if (!found) throw new Error(`No mail to ${to} with subject "${subject}" was logged`);
+  return new URL(found);
+}
+
 describe('the identity routes', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
@@ -842,8 +854,7 @@ describe('the identity routes', () => {
           .send({ email: customer.email, redirectTo: resetPage })
           .expect(200);
 
-        const line = logger.lines.find((entry) => entry.includes(`Password reset link for ${customer.email}`));
-        const link = new URL(line?.split(': ').at(-1)?.split(' ')[0] ?? 'http://missing');
+        const link = mailedLink(logger.lines, customer.email, 'Reset your InsurShield password');
         expect(`${link.origin}${link.pathname}`).toBe(resetPage);
         const token = link.searchParams.get('token');
         expect(token).toBeTruthy();
@@ -892,8 +903,7 @@ describe('the identity routes', () => {
           .send({ email: customer.email, callbackURL: `${trustedOrigin()}/account` })
           .expect(200);
 
-        const line = logger.lines.find((entry) => entry.includes(`Email verification link for ${customer.email}`));
-        const link = new URL(line?.split(': ').at(-1)?.split(' ')[0] ?? 'http://missing');
+        const link = mailedLink(logger.lines, customer.email, 'Confirm your email address');
         expect(link.pathname).toBe(identityPath('/verify-email'));
         const response = await logged.http.get(`${link.pathname}${link.search}`);
         expect(response.status).toBeLessThan(400);
