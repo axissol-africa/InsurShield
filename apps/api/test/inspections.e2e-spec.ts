@@ -531,7 +531,7 @@ describe('inspections', () => {
 
       expect(response.body).toEqual({
         code: 'FORBIDDEN',
-        message: 'This endpoint is for customer accounts.',
+        message: 'You do not have access to this resource.',
         details: null,
       });
     });

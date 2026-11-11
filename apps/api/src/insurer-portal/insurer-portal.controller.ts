@@ -8,7 +8,7 @@ import {
   NcdDecisionDto,
   SubmitQuoteDto,
 } from './dto/portal.dto.js';
-import { Roles } from '../common/auth/auth.guard.js';
+import { Needs } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
@@ -20,7 +20,6 @@ import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.gu
  * caller's own staff record. No endpoint takes an insurer id from the request,
  * so the scope cannot be widened by anything a client sends.
  */
-@Roles('INSURER_USER')
 @Controller('insurer')
 export class InsurerPortalController {
   constructor(
@@ -35,6 +34,7 @@ export class InsurerPortalController {
    * and NCD setting to show an indicative premium beside the field where the
    * underwriter types the real one.
    */
+  @Needs('portal:profile:read')
   @Get('profile')
   profile(@CurrentUser() principal: Principal) {
     return this.insurers.profile(this.portal.insurerOf(principal));
@@ -43,11 +43,13 @@ export class InsurerPortalController {
   // ── Quote requests ──────────────────────────────────────────────
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:request:read')
   @Get('quote-requests')
   listQuoteRequests(@CurrentUser() principal: Principal) {
     return this.portal.listQuoteRequests(principal);
   }
 
+  @Needs('portal:quote:send')
   @Post('quote-requests/:id/quote')
   @HttpCode(HttpStatus.CREATED)
   submitQuote(
@@ -58,6 +60,7 @@ export class InsurerPortalController {
     return this.portal.submitQuote(principal, id, dto);
   }
 
+  @Needs('portal:quote:extend')
   @Post('quote-requests/:id/extend')
   @HttpCode(HttpStatus.OK)
   extendQuote(
@@ -71,11 +74,13 @@ export class InsurerPortalController {
   // ── Paid policies ───────────────────────────────────────────────
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:policy:read')
   @Get('policies')
   listPolicies(@CurrentUser() principal: Principal) {
     return this.portal.listPolicies(principal);
   }
 
+  @Needs('portal:certificate:issue')
   @Post('policies/:policyNumber/certificate')
   @HttpCode(HttpStatus.OK)
   issueCertificate(
@@ -89,11 +94,13 @@ export class InsurerPortalController {
   // ── Claims ──────────────────────────────────────────────────────
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:claim:read')
   @Get('claims')
   listClaims(@CurrentUser() principal: Principal) {
     return this.portal.listClaims(principal);
   }
 
+  @Needs('portal:claim:acknowledge')
   @Post('claims/:claimNumber/received')
   @HttpCode(HttpStatus.OK)
   acknowledgeClaim(
@@ -106,11 +113,13 @@ export class InsurerPortalController {
 
   // ── No-claim discount ───────────────────────────────────────────
 
+  @Needs('portal:ncd:read')
   @Get('ncd/applications')
   listNcdApplications(@CurrentUser() principal: Principal) {
     return this.portal.listNcdApplications(principal);
   }
 
+  @Needs('portal:ncd:decide')
   @Post('ncd/applications/:id/decision')
   @HttpCode(HttpStatus.OK)
   decideNcdApplication(

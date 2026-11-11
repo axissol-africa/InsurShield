@@ -532,7 +532,7 @@ describe('payments', () => {
       expect(posted.status).toBe(403);
       expect(posted.body).toEqual({
         code: 'FORBIDDEN',
-        message: 'Only a customer can pay for their own quote.',
+        message: 'You do not have access to this resource.',
         details: null,
       });
       expect(read.status).toBe(403);

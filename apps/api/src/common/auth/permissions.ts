@@ -68,6 +68,11 @@ export const PERMISSIONS = {
   'document:upload': ['customer', ...EVERY_ROLE],
   'document:read': ['customer', ...EVERY_ROLE],
 
+  // Served to guests as well, through @OptionalAuth. A signed-in caller still
+  // needs the permission, because the guard returns early only when there is no
+  // session: whoever is asking, the registry answers the same way.
+  'vehicle:lookup': ['customer', ...EVERY_ROLE],
+
   // ── InsurShield administration ────────────────────────────────────
   'admin:overview': INSURSHIELD_ADMIN,
   'admin:premium-report': INSURSHIELD_ADMIN,

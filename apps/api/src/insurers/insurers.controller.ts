@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPi
 import { InsurersService } from './insurers.service.js';
 import { CreateInsurerDto, SetInsurerStatusDto, UpdateInsurerDto } from './dto/insurer.dto.js';
 import { InsurerListQuery } from './dto/insurer-list.query.js';
-import { Public, Roles } from '../common/auth/auth.guard.js';
+import { Needs, Public } from '../common/auth/auth.guard.js';
 import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
@@ -24,7 +24,7 @@ export class InsurersController {
   }
 
   /** Every insurer in full, including onboarding details. Staff only. */
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Needs('insurer:read')
   @Get()
   list(
     @Query() query: InsurerListQuery,
@@ -33,8 +33,8 @@ export class InsurersController {
     return this.insurers.list(query.status, principal.role);
   }
 
-  @Roles('SUPER_ADMIN')
   @HttpCode(HttpStatus.OK)
+  @Needs('insurer:restore')
   @Post(':id/restore')
   restore(
     @Param('id', ParseUUIDPipe) id: string,
@@ -43,19 +43,19 @@ export class InsurersController {
     return this.insurers.restore(id, principal);
   }
 
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Needs('insurer:read')
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.insurers.get(id);
   }
 
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Needs('insurer:create')
   @Post()
   create(@Body() dto: CreateInsurerDto, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
     return this.insurers.create(dto, principal);
   }
 
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Needs('insurer:update')
   @Patch(':id')
   update(
     @Param('id', ParseUUIDPipe) id: string,
@@ -65,7 +65,7 @@ export class InsurersController {
     return this.insurers.update(id, dto, principal);
   }
 
-  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Needs('insurer:set-status')
   @Patch(':id/status')
   setStatus(
     @Param('id', ParseUUIDPipe) id: string,
@@ -75,7 +75,7 @@ export class InsurersController {
     return this.insurers.setStatus(id, dto.status, principal);
   }
 
-  @Roles('SUPER_ADMIN')
+  @Needs('insurer:delete')
   @Delete(':id')
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
     return this.insurers.remove(id, principal);
