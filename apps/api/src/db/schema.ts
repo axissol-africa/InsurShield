@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -28,6 +29,8 @@ import {
   DOCUMENT_KINDS,
   DOCUMENT_RETENTION_CLASSES,
   DOCUMENT_SCAN_STATUSES,
+  EVIDENCE_KINDS,
+  EVIDENCE_REVIEW_STATES,
   INSPECTION_METHODS,
   INSPECTION_RULES,
   INSPECTION_STATUSES,
@@ -53,6 +56,8 @@ export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STA
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
+export const evidenceKind = pgEnum('EvidenceKind', EVIDENCE_KINDS);
+export const evidenceReviewState = pgEnum('EvidenceReviewState', EVIDENCE_REVIEW_STATES);
 export const policyStatus = pgEnum('PolicyStatus', POLICY_STATUSES);
 export const paymentStatus = pgEnum('PaymentStatus', PAYMENT_STATUSES);
 export const paymentMethod = pgEnum('PaymentMethod', PAYMENT_METHODS);
@@ -286,6 +291,13 @@ export const insurers = pgTable(
     plan: text('plan'),
     licenceNumber: text('licenceNumber'),
     licenceExpiry: timestamptz('licenceExpiry'),
+    // What activation recorded: US-ADM-002 asks for the dates, the approver and
+    // any conditions, so a decision to let an insurer trade can be read back.
+    effectiveFrom: date('effectiveFrom', { mode: 'date' }),
+    renewalDate: date('renewalDate', { mode: 'date' }),
+    approvedBy: uuid('approvedBy'),
+    approvedAt: timestamptz('approvedAt'),
+    activationConditions: text('activationConditions'),
     logoUrl: text('logoUrl'),
     ncdAccepted: boolean('ncdAccepted').notNull().default(true),
     inspectionRule: inspectionRule('inspectionRule').notNull().default('OPTIONAL'),
@@ -335,7 +347,9 @@ export const insurerIntegrations = pgTable(
     claimsCallbackUrl: text('claimsCallbackUrl'),
     policyCallbackUrl: text('policyCallbackUrl'),
     clientId: text('clientId').notNull(),
-    clientSecretEncrypted: text('clientSecretEncrypted').notNull(),
+    // Captured when an insurer integration is actually built, which needs a
+    // decision about where the key lives; onboarding records the rest without it.
+    clientSecretEncrypted: text('clientSecretEncrypted'),
     sandboxMode: boolean('sandboxMode').notNull().default(true),
     activatedAt: timestamptz('activatedAt'),
     createdAt: createdAt(),
@@ -344,6 +358,33 @@ export const insurerIntegrations = pgTable(
   (t) => [
     uniqueIndex('insurer_integrations_clientId_key').on(t.clientId),
     fk('insurer_integrations_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
+  ],
+);
+
+/** Licence, compliance and agreement documents an insurer is reviewed on. */
+export const insurerEvidence = pgTable(
+  'insurer_evidence',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    kind: evidenceKind('kind').notNull(),
+    /** The scanned document itself, under the same rules as every other upload. */
+    documentId: uuid('documentId').notNull(),
+    /** The issuer's own reference, as printed on the document. */
+    reference: text('reference'),
+    expiresAt: date('expiresAt', { mode: 'date' }),
+    state: evidenceReviewState('state').notNull().default('PENDING'),
+    reviewedBy: uuid('reviewedBy'),
+    reviewedAt: timestamptz('reviewedAt'),
+    note: text('note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('insurer_evidence_insurerId_kind_idx').on(t.insurerId, t.kind),
+    fk('insurer_evidence_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
+    fk('insurer_evidence_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+    fk('insurer_evidence_reviewedBy_fkey', [t.reviewedBy], [staffUsers.id], 'restrict'),
   ],
 );
 

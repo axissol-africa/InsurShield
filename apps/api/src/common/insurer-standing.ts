@@ -1,6 +1,7 @@
 import { type SQL, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import { insurers } from '../db/schema.js';
 import type { InsurerStatus } from './domain/enums.js';
+import { currentOn, LUSAKA } from './domain/lusaka.js';
 
 /**
  * Whether an insurer may trade, in one place.
@@ -33,24 +34,9 @@ export const insurerUnavailable = (name: string) =>
   `${name} is not currently taking new business. Request fresh quotes to continue.`;
 
 // A licence lapses at the end of its day in Lusaka, like every other business
-// date here; `admin.repository.ts` reads its calendar months the same way.
-const LUSAKA = 'Africa/Lusaka';
+// date here, and compliance evidence lapses by the same rule -- so the day
+// itself comes from `common/domain/lusaka.ts` rather than being worked out twice.
 const LUSAKA_ZONE = sql.raw(`'${LUSAKA}'`);
-const LUSAKA_PARTS = new Intl.DateTimeFormat('en-US', {
-  timeZone: LUSAKA,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
-/** The Lusaka calendar day a moment falls in, as `YYYY-MM-DD`, which plain comparison orders correctly. */
-export function lusakaDay(moment: Date): string {
-  const parts = LUSAKA_PARTS.formatToParts(moment);
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((found) => found.type === type)?.value;
-  const [year, month, day] = [part('year'), part('month'), part('day')];
-  if (!year || !month || !day) throw new Error(`Could not read a ${LUSAKA} date from ${moment.toISOString()}`);
-  return `${year}-${month}-${day}`;
-}
 
 /**
  * A licence nobody has recorded does not read as expired. That is the one place
@@ -61,7 +47,7 @@ export function lusakaDay(moment: Date): string {
  * of `takesNewBusiness` only bites rows that have an expiry recorded.
  */
 export function licenceValid(licenceExpiry: Date | null, now: Date): boolean {
-  return licenceExpiry === null || lusakaDay(licenceExpiry) >= lusakaDay(now);
+  return currentOn(licenceExpiry, now);
 }
 
 /** New business: this insurer may be shown to customers and sold through. */

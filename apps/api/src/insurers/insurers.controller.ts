@@ -1,6 +1,27 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { InsurersService } from './insurers.service.js';
-import { CreateInsurerDto, SetInsurerStatusDto, UpdateInsurerDto } from './dto/insurer.dto.js';
+import {
+  ActivateInsurerDto,
+  CaptureEvidenceDto,
+  CreateInsurerDto,
+  InsurerIntegrationDto,
+  ReviewEvidenceDto,
+  SetInsurerStatusDto,
+  UpdateInsurerDto,
+} from './dto/insurer.dto.js';
 import { InsurerListQuery } from './dto/insurer-list.query.js';
 import { Needs, Public } from '../common/auth/auth.guard.js';
 import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
@@ -73,6 +94,66 @@ export class InsurersController {
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
     return this.insurers.setStatus(id, dto.status, principal);
+  }
+
+  // ── The onboarding record ───────────────────────────────────────
+
+  @Needs('insurer:evidence:read')
+  @Get(':id/evidence')
+  evidence(@Param('id', ParseUUIDPipe) id: string) {
+    return this.insurers.evidence(id);
+  }
+
+  @Needs('insurer:evidence:add')
+  @Post(':id/evidence')
+  @HttpCode(HttpStatus.CREATED)
+  captureEvidence(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CaptureEvidenceDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.captureEvidence(id, dto, principal);
+  }
+
+  @Needs('insurer:evidence:review')
+  @Post(':id/evidence/:evidenceId/review')
+  @HttpCode(HttpStatus.OK)
+  reviewEvidence(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('evidenceId', ParseUUIDPipe) evidenceId: string,
+    @Body() dto: ReviewEvidenceDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.reviewEvidence(id, evidenceId, dto, principal);
+  }
+
+  @Needs('insurer:integration:set')
+  @Get(':id/integration')
+  integration(@Param('id', ParseUUIDPipe) id: string) {
+    return this.insurers.integration(id);
+  }
+
+  @Needs('insurer:integration:set')
+  @Put(':id/integration')
+  @HttpCode(HttpStatus.OK)
+  setIntegration(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: InsurerIntegrationDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.setIntegration(id, dto, principal);
+  }
+
+  /** Activation is its own route, so the evidence gate cannot be stepped around. */
+  @Needs('insurer:activate')
+  @Post(':id/activate')
+  @HttpCode(HttpStatus.OK)
+  activate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ActivateInsurerDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.activate(id, dto, principal);
   }
 
   @Needs('insurer:delete')

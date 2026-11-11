@@ -33,6 +33,7 @@ const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
   CLAIM_ATTACHMENT: { kind: 'claim-attachment' as const, claimNumber: 'unfiled' },
   INSURER_LOGO: { kind: 'insurer-logo' as const, insurerId: 'unfiled' },
   NCD_EVIDENCE: { kind: 'ncd-evidence' as const, applicationNumber: 'unfiled' },
+  INSURER_EVIDENCE: { kind: 'insurer-evidence' as const, insurerId: 'unfiled' },
 };
 
 /**

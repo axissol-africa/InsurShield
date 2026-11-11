@@ -84,6 +84,13 @@ export const PERMISSIONS = {
   'insurer:create': INSURSHIELD_ADMIN,
   'insurer:update': INSURSHIELD_ADMIN,
   'insurer:set-status': INSURSHIELD_ADMIN,
+  'insurer:evidence:read': INSURSHIELD_ADMIN,
+  'insurer:evidence:add': INSURSHIELD_ADMIN,
+  'insurer:evidence:review': INSURSHIELD_ADMIN,
+  'insurer:integration:set': INSURSHIELD_ADMIN,
+  // Activating is what lets an insurer trade, and it is the subject batch 8
+  // re-routes through two-person approval.
+  'insurer:activate': INSURSHIELD_ADMIN,
   // Removing and bringing back an insurer stay with the super administrator,
   // as they did before this table existed.
   'insurer:delete': SUPER_ADMIN_ONLY,

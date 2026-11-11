@@ -91,11 +91,10 @@ const STAFF_ROLE: Record<StaffRole, string> = {
  * widening this one. Without this list, adding a status to the enum would
  * silently widen what the status route accepts.
  */
-export const INSURER_STATUS_CHANGES = ['ACTIVE', 'INACTIVE', 'DELETED'] as const satisfies readonly InsurerStatus[];
+export const INSURER_STATUS_CHANGES = ['INACTIVE', 'DELETED'] as const satisfies readonly InsurerStatus[];
 export type InsurerStatusChange = (typeof INSURER_STATUS_CHANGES)[number];
 
 const INSURER_STATUS_CHANGE: Record<InsurerStatusChange, string> = {
-  ACTIVE: INSURER_STATUS.ACTIVE,
   INACTIVE: INSURER_STATUS.INACTIVE,
   DELETED: INSURER_STATUS.DELETED,
 };

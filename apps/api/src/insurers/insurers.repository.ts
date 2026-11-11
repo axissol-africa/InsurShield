@@ -1,13 +1,17 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { insurerContacts, insurers } from '../db/schema.js';
+import { insurerContacts, insurerEvidence, insurerIntegrations, insurers, staffUsers } from '../db/schema.js';
 import { takesNewBusinessWhere } from '../common/insurer-standing.js';
-import type { InsurerStatus } from '../common/domain/enums.js';
+import type { EvidenceReviewState, InsurerStatus } from '../common/domain/enums.js';
 
 export type NewInsurer = Omit<typeof insurers.$inferInsert, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'status'>;
 export type InsurerChanges = Partial<NewInsurer>;
 export type NewContact = Omit<typeof insurerContacts.$inferInsert, 'insurerId'>;
+export type NewEvidence = typeof insurerEvidence.$inferInsert;
+export type EvidenceRow = Awaited<ReturnType<InsurersRepository['findEvidence']>>;
+export type NewIntegration = Omit<typeof insurerIntegrations.$inferInsert, 'insurerId' | 'clientSecretEncrypted'>;
+export type IntegrationRow = NonNullable<Awaited<ReturnType<InsurersRepository['findIntegration']>>>;
 
 // What an unauthenticated visitor may see; the credentials in insurer_integrations are never selected.
 const publicColumns = {
@@ -36,6 +40,34 @@ const staffColumns = {
   licenceExpiry: insurers.licenceExpiry,
   registrationNumber: insurers.registrationNumber,
   tpin: insurers.tpin,
+  effectiveFrom: insurers.effectiveFrom,
+  renewalDate: insurers.renewalDate,
+  approvedAt: insurers.approvedAt,
+  activationConditions: insurers.activationConditions,
+};
+
+const evidenceColumns = {
+  id: insurerEvidence.id,
+  kind: insurerEvidence.kind,
+  documentId: insurerEvidence.documentId,
+  reference: insurerEvidence.reference,
+  expiresAt: insurerEvidence.expiresAt,
+  state: insurerEvidence.state,
+  reviewedAt: insurerEvidence.reviewedAt,
+  note: insurerEvidence.note,
+  createdAt: insurerEvidence.createdAt,
+};
+
+// The client secret is never selected, as the integration credentials never were.
+const integrationColumns = {
+  apiBaseUrl: insurerIntegrations.apiBaseUrl,
+  publicSigningKey: insurerIntegrations.publicSigningKey,
+  clientId: insurerIntegrations.clientId,
+  quoteCallbackUrl: insurerIntegrations.quoteCallbackUrl,
+  claimsCallbackUrl: insurerIntegrations.claimsCallbackUrl,
+  policyCallbackUrl: insurerIntegrations.policyCallbackUrl,
+  sandboxMode: insurerIntegrations.sandboxMode,
+  activatedAt: insurerIntegrations.activatedAt,
 };
 
 const contactColumns = {
@@ -110,6 +142,68 @@ export class InsurersRepository {
       .where(eq(insurers.id, id))
       .for('update', { of: insurers });
     return row;
+  }
+
+  // ── The onboarding record ───────────────────────────────────────
+
+  /** What the activation rule needs to judge, in the order a reviewer reads it. */
+  evidenceOf(insurerId: string, executor: Executor = this.db) {
+    return executor
+      .select({ ...evidenceColumns, reviewedByName: staffUsers.fullName })
+      .from(insurerEvidence)
+      .leftJoin(staffUsers, eq(staffUsers.id, insurerEvidence.reviewedBy))
+      .where(eq(insurerEvidence.insurerId, insurerId))
+      .orderBy(asc(insurerEvidence.kind), asc(insurerEvidence.createdAt));
+  }
+
+  async insertEvidence(tx: Transaction, evidence: NewEvidence) {
+    const [created] = await tx.insert(insurerEvidence).values(evidence).returning(evidenceColumns);
+    return created;
+  }
+
+  /** Scoped by insurer as well as id, so one insurer's review cannot touch another's. */
+  async reviewEvidence(
+    tx: Transaction,
+    evidenceId: string,
+    insurerId: string,
+    review: { state: EvidenceReviewState; reviewedBy: string; reviewedAt: Date; note: string | null },
+  ) {
+    const [reviewed] = await tx
+      .update(insurerEvidence)
+      .set({ ...review, updatedAt: review.reviewedAt })
+      .where(and(eq(insurerEvidence.id, evidenceId), eq(insurerEvidence.insurerId, insurerId)))
+      .returning(evidenceColumns);
+    return reviewed;
+  }
+
+  async findEvidence(insurerId: string, evidenceId: string, executor: Executor = this.db) {
+    const [found] = await executor
+      .select({ ...evidenceColumns, reviewedByName: staffUsers.fullName })
+      .from(insurerEvidence)
+      .leftJoin(staffUsers, eq(staffUsers.id, insurerEvidence.reviewedBy))
+      .where(and(eq(insurerEvidence.id, evidenceId), eq(insurerEvidence.insurerId, insurerId)));
+    return found;
+  }
+
+  /** One row per insurer, replaced whole: a technical model is captured, not patched. */
+  async saveIntegration(tx: Transaction, insurerId: string, model: NewIntegration) {
+    const [saved] = await tx
+      .insert(insurerIntegrations)
+      .values({ ...model, insurerId })
+      .onConflictDoUpdate({
+        target: insurerIntegrations.insurerId,
+        set: { ...model, updatedAt: new Date() },
+      })
+      .returning(integrationColumns);
+    return saved;
+  }
+
+  findIntegration(insurerId: string, executor: Executor = this.db) {
+    return executor
+      .select(integrationColumns)
+      .from(insurerIntegrations)
+      .where(eq(insurerIntegrations.insurerId, insurerId))
+      .then((rows) => rows[0]);
   }
 
   async insert(tx: Transaction, insurer: NewInsurer, contact: NewContact): Promise<InsurerRow> {

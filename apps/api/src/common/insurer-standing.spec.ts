@@ -1,17 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { licenceValid, lusakaDay, servicesExistingBusiness, takesNewBusiness } from './insurer-standing.js';
+import { licenceValid, servicesExistingBusiness, takesNewBusiness } from './insurer-standing.js';
 
 // A licence recorded as expiring on 10 November, the way the DTO stores a date-only value.
 const EXPIRES_10_NOV = new Date('2026-11-10T00:00:00.000Z');
-
-describe('lusakaDay', () => {
-  it('is the calendar day in Lusaka, not in UTC', () => {
-    // 22:30 UTC on the 10th is already 00:30 on the 11th in Lusaka.
-    expect(lusakaDay(new Date('2026-11-10T22:30:00.000Z'))).toBe('2026-11-11');
-    expect(lusakaDay(new Date('2026-11-10T21:30:00.000Z'))).toBe('2026-11-10');
-    expect(lusakaDay(new Date('2026-11-10T00:00:00.000Z'))).toBe('2026-11-10');
-  });
-});
 
 describe('licenceValid', () => {
   it('holds for the whole of the day the licence expires, in Lusaka', () => {

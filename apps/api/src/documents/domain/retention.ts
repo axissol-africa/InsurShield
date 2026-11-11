@@ -16,6 +16,11 @@ const CLASS_OF_KIND: Record<DocumentKind, DocumentRetentionClass> = {
   CLAIM_ATTACHMENT: 'CLAIM_EVIDENCE',
   NCD_EVIDENCE: 'CLAIM_EVIDENCE',
   INSURER_LOGO: 'BRAND_ASSET',
+  // An insurer's licence is evidence about the insurer, not about a customer's
+  // risk, policy or claim, and it is kept for as long as regulators ask rather
+  // than for as long as a quotation. The class is stored at upload, so putting
+  // it in an existing class now could not be corrected later.
+  INSURER_EVIDENCE: 'COMPLIANCE_EVIDENCE',
 };
 
 export function retentionClassOf(kind: DocumentKind): DocumentRetentionClass {

@@ -17,6 +17,13 @@ export type CoverageDuration = (typeof COVERAGE_DURATIONS)[number];
 export const INSURER_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED', 'INACTIVE', 'DELETED'] as const;
 export type InsurerStatus = (typeof INSURER_STATUSES)[number];
 
+/** The documents an insurer is reviewed on before it may trade. */
+export const EVIDENCE_KINDS = ['LICENCE', 'TAX_CLEARANCE', 'INCORPORATION', 'AGREEMENT', 'OTHER'] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
+export const EVIDENCE_REVIEW_STATES = ['PENDING', 'APPROVED', 'REJECTED'] as const;
+export type EvidenceReviewState = (typeof EVIDENCE_REVIEW_STATES)[number];
+
 export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
 
@@ -100,6 +107,7 @@ export const DOCUMENT_KINDS = [
   'CLAIM_ATTACHMENT',
   'INSURER_LOGO',
   'NCD_EVIDENCE',
+  'INSURER_EVIDENCE',
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
@@ -117,6 +125,7 @@ export const DOCUMENT_RETENTION_CLASSES = [
   'POLICY_EVIDENCE',
   'CLAIM_EVIDENCE',
   'BRAND_ASSET',
+  'COMPLIANCE_EVIDENCE',
 ] as const;
 export type DocumentRetentionClass = (typeof DOCUMENT_RETENTION_CLASSES)[number];
 

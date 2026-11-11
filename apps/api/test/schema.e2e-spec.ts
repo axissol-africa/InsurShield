@@ -723,7 +723,10 @@ describe('the final schema', () => {
       return rows;
     });
     const timestampColumns = columns.filter((column) => column.type.startsWith('timestamp'));
-    expect(timestampColumns).toHaveLength(87);
+    // Four more than before the onboarding record: the insurer's approvedAt and
+    // the evidence table's reviewedAt, createdAt and updatedAt. Its effective,
+    // renewal and expiry columns are `date`, so they are deliberately not here.
+    expect(timestampColumns).toHaveLength(91);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }
