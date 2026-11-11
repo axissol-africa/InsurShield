@@ -127,6 +127,13 @@
       "when": 1794383863109,
       "tag": "0017_insurer_onboarding_record",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794386038958,
+      "tag": "0018_grandfather_insurer_licences",
+      "breakpoints": true
     }
   ]
 }

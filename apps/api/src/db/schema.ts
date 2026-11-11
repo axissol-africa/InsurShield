@@ -368,8 +368,14 @@ export const insurerEvidence = pgTable(
     id: id(),
     insurerId: uuid('insurerId').notNull(),
     kind: evidenceKind('kind').notNull(),
-    /** The scanned document itself, under the same rules as every other upload. */
-    documentId: uuid('documentId').notNull(),
+    /**
+     * The scanned document, under the same rules as every other upload.
+     *
+     * Null only for a licence grandfathered in: the API requires a document to
+     * capture evidence, so an absent one is itself the mark of a record nobody
+     * has produced papers for yet.
+     */
+    documentId: uuid('documentId'),
     /** The issuer's own reference, as printed on the document. */
     reference: text('reference'),
     expiresAt: date('expiresAt', { mode: 'date' }),
