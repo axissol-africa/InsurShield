@@ -164,6 +164,41 @@ export class InsurerPortalRepository {
     return standing;
   }
 
+  /**
+   * Whether these records exist for anybody, asked only after a scoped lookup
+   * found nothing, so a reach into another insurer's records can be told from a
+   * mistyped reference. The answer never reaches the caller: the response is
+   * the same either way, and only the audit differs.
+   */
+  async quoteRequestExists(id: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx.select({ id: quoteRequests.id }).from(quoteRequests).where(eq(quoteRequests.id, id));
+    return found !== undefined;
+  }
+
+  async policyExists(policyNumber: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx
+      .select({ policyNumber: policies.policyNumber })
+      .from(policies)
+      .where(eq(policies.policyNumber, policyNumber));
+    return found !== undefined;
+  }
+
+  async claimExists(claimNumber: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx
+      .select({ claimNumber: claimNotifications.claimNumber })
+      .from(claimNotifications)
+      .where(eq(claimNotifications.claimNumber, claimNumber));
+    return found !== undefined;
+  }
+
+  async ncdApplicationExists(id: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx
+      .select({ id: ncdApplications.id })
+      .from(ncdApplications)
+      .where(eq(ncdApplications.id, id));
+    return found !== undefined;
+  }
+
   async hasQuote(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db): Promise<boolean> {
     const [quote] = await tx
       .select({ id: insurerQuotes.id })

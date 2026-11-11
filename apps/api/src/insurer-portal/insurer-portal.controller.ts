@@ -37,7 +37,7 @@ export class InsurerPortalController {
   @Needs('portal:profile:read')
   @Get('profile')
   profile(@CurrentUser() principal: Principal) {
-    return this.insurers.profile(this.portal.insurerOf(principal));
+    return this.insurers.profile(this.portal.staffOf(principal));
   }
 
   // ── Quote requests ──────────────────────────────────────────────

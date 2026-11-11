@@ -51,12 +51,17 @@ export class InsurersService {
   }
 
   /**
-   * The signed-in insurer's own record, for its portal. Scoped by the caller's
-   * staff record, so it can only ever return the insurer they belong to.
+   * The signed-in insurer's own record, for its portal.
+   *
+   * The insurer comes from the principal rather than from an argument, so the
+   * method itself can only ever answer with the caller's own insurer. It used
+   * to take an id and say it was scoped, which was true only because its one
+   * caller resolved the id first.
    */
-  async profile(insurerId: string) {
-    const insurer = await this.insurers.find(insurerId);
-    if (!insurer) throw ApiException.notFound('Insurer', insurerId);
+  async profile(principal: Extract<Principal, { kind: 'staff' }>) {
+    if (!principal.insurerId) throw ApiException.forbidden();
+    const insurer = await this.insurers.find(principal.insurerId);
+    if (!insurer) throw ApiException.notFound('Insurer', principal.insurerId);
     return toInsurerResponse(insurer);
   }
 

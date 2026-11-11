@@ -83,6 +83,11 @@ export const INSURER_ROLES = [
 ] as const;
 
 export const STAFF_ROLES = [...INSURSHIELD_ROLES, ...INSURER_ROLES] as const;
+
+/** Whether this role acts for an insurer rather than for InsurShield. */
+export function isInsurerRole(role: StaffRole): role is InsurerRole {
+  return (INSURER_ROLES as readonly StaffRole[]).includes(role);
+}
 export type InsurShieldRole = (typeof INSURSHIELD_ROLES)[number];
 export type InsurerRole = (typeof INSURER_ROLES)[number];
 export type StaffRole = (typeof STAFF_ROLES)[number];

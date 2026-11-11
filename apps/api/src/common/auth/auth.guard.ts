@@ -9,6 +9,8 @@ import type { Auth } from '../../auth/auth.instance.js';
 import { resolveIdentity } from '../../auth/identity.js';
 import type { Env } from '../../config/env.js';
 import { DATABASE, type Database } from '../../db/database.module.js';
+import { AuditService } from '../audit/audit.service.js';
+import { auditActor } from '../audit/audit.types.js';
 import { ApiException } from '../errors/api.exception.js';
 import type { Principal } from './auth.types.js';
 import { holds, type Permission } from './permissions.js';
@@ -84,6 +86,7 @@ export class AuthGuard implements CanActivate {
     @Inject(AUTH) private readonly auth: Auth,
     @Inject(DATABASE) private readonly db: Database,
     private readonly reflector: Reflector,
+    private readonly audit: AuditService,
     config: ConfigService<Env, true>,
   ) {
     this.trustedOrigins = config.get('CORS_ORIGINS', { infer: true });
@@ -132,7 +135,37 @@ export class AuthGuard implements CanActivate {
     // true, so six controllers were reachable by any authenticated caller and
     // were protected only by hand-written checks inside each one.
     const needed = this.reflector.getAllAndOverride<Permission>(REQUIRED_PERMISSION, targets);
-    if (!needed || !holds(identity.principal, needed)) throw ApiException.forbidden();
+    if (!needed || !holds(identity.principal, needed)) {
+      await this.recordRefusal(identity.principal, needed, request);
+      throw ApiException.forbidden();
+    }
     return true;
+  }
+
+  /**
+   * US-VEN-001 asks for an unassigned function to be denied and audited, so the
+   * denial writes a row naming the actor and the permission they lacked -- never
+   * anything about the record behind it, which the caller never reached.
+   *
+   * Staff only. A customer meeting a staff route is not a role reaching past its
+   * assignment, and auditing it would dilute the log while letting any
+   * signed-in caller write rows at will.
+   */
+  private async recordRefusal(
+    principal: Principal,
+    needed: Permission | undefined,
+    request: Request,
+  ): Promise<void> {
+    if (principal.kind !== 'staff') return;
+    const route = `${request.method} ${request.path}`;
+    await this.audit.refusal({
+      actor: auditActor(principal),
+      action: 'access.refused',
+      entityType: 'PERMISSION',
+      // A route naming no permission is the fail-closed case, and worth seeing as itself.
+      entityId: needed ?? 'none',
+      note: needed ? route : `${route} names no permission`,
+      correlationId: principal.insurerId,
+    });
   }
 }

@@ -5,6 +5,10 @@ import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../co
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import { isInsurerRole } from '../common/domain/enums.js';
+
+/** Insurer staff, with the insurer they act for resolved. */
+export type InsurerStaff = Extract<Principal, { kind: 'staff' }> & { insurerId: string };
 import type { Transaction } from '../db/database.module.js';
 import { PiaService } from '../pia/pia.service.js';
 import { AuditService } from '../common/audit/audit.service.js';
@@ -64,12 +68,53 @@ export class InsurerPortalService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** The insurer this caller acts for, or a refusal if the account has none. */
-  insurerOf(principal: Principal): string {
-    if (principal.kind !== 'staff' || principal.role !== 'INSURER_USER' || !principal.insurerId) {
+  /**
+   * The insurer staff member this caller is, or a refusal.
+   *
+   * Any insurer role qualifies, not just the one the portal began with: which
+   * functions each role may reach is the permission matrix's business, and
+   * testing for a single role here left the roles added for decision 7 able to
+   * pass the guard and then be refused by every service behind it.
+   */
+  staffOf(principal: Principal): InsurerStaff {
+    if (principal.kind !== 'staff' || !isInsurerRole(principal.role) || !principal.insurerId) {
       throw ApiException.forbidden('This account is not linked to an insurer.');
     }
-    return principal.insurerId;
+    return { ...principal, insurerId: principal.insurerId };
+  }
+
+  /** The insurer this caller acts for, or a refusal if the account has none. */
+  insurerOf(principal: Principal): string {
+    return this.staffOf(principal).insurerId;
+  }
+
+  /**
+   * A record this insurer cannot see answers as absent. When it exists and
+   * belongs to another insurer, US-VEN-001 asks for the attempt to be audited:
+   * the row names who reached and what they reached for, never anything about
+   * the record, which they never saw.
+   *
+   * The audit is written on its own connection, because this returns an error
+   * the caller throws and that rollback would take the row with it.
+   */
+  private async absent(
+    principal: Principal,
+    entity: { type: string; label: string },
+    entityId: string,
+    exists: boolean,
+  ): Promise<ApiException> {
+    if (exists) {
+      const staff = this.staffOf(principal);
+      await this.audit.refusal({
+        actor: auditActor(staff),
+        action: 'access.refused',
+        entityType: entity.type,
+        entityId,
+        note: "Reached for another insurer's record.",
+        correlationId: staff.insurerId,
+      });
+    }
+    return ApiException.notFound(entity.label, entityId);
   }
 
   // ── Quote requests ──────────────────────────────────────────────
@@ -107,7 +152,14 @@ export class InsurerPortalService {
       }
 
       const delivery = await this.portal.lockDelivery(tx, requestId, insurerId);
-      if (!delivery) throw ApiException.notFound('Quote request', requestId);
+      if (!delivery) {
+        throw await this.absent(
+          principal,
+          { type: 'QUOTE_REQUEST', label: 'Quote request' },
+          requestId,
+          await this.portal.quoteRequestExists(requestId, tx),
+        );
+      }
 
       if (await this.portal.hasQuote(requestId, insurerId, tx)) {
         throw ApiException.conflict(
@@ -250,7 +302,14 @@ export class InsurerPortalService {
 
     const issued = await this.portal.transaction(async (tx) => {
       const policy = await this.portal.lockPolicy(tx, policyNumber, insurerId);
-      if (!policy) throw ApiException.notFound('Policy', policyNumber);
+      if (!policy) {
+        throw await this.absent(
+          principal,
+          { type: 'POLICY', label: 'Policy' },
+          policyNumber,
+          await this.portal.policyExists(policyNumber, tx),
+        );
+      }
       if (policy.status === 'ACTIVE') throw alreadyIssued();
 
       await this.documents.assertAttachable(tx, principal, [dto.certificateDocumentId], 'CERTIFICATE');
@@ -362,7 +421,14 @@ export class InsurerPortalService {
     if (acknowledged) return toAcknowledgement(acknowledged);
 
     const claim = await this.portal.findAcknowledgement(claimNumber, insurerId);
-    if (!claim) throw ApiException.notFound('Claim', claimNumber);
+    if (!claim) {
+      throw await this.absent(
+        principal,
+        { type: 'CLAIM', label: 'Claim' },
+        claimNumber,
+        await this.portal.claimExists(claimNumber),
+      );
+    }
     return toAcknowledgement(claim);
   }
 
@@ -388,7 +454,14 @@ export class InsurerPortalService {
 
     const { decision, applicationNumber } = await this.portal.transaction(async (tx) => {
       const application = await this.portal.lockNcdApplication(tx, applicationId, insurerId);
-      if (!application) throw ApiException.notFound('NCD application', applicationId);
+      if (!application) {
+        throw await this.absent(
+          principal,
+          { type: 'NCD_APPLICATION', label: 'NCD application' },
+          applicationId,
+          await this.portal.ncdApplicationExists(applicationId, tx),
+        );
+      }
       if (!canDecideNcd(application.status)) throw alreadyDecided();
 
       const decidedOn = new Date();
