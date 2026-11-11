@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ApiException } from '../common/errors/api.exception.js';
+import type { InsurerStatusChange } from '../common/contract.js';
+import { canChangeInsurerStatus } from './domain/lifecycle.js';
 import { isUniqueViolation } from '../db/errors.js';
-import type { InsurerStatus } from '../common/domain/enums.js';
 import { toInsurerChanges, toNewContact, toNewInsurer, type CreateInsurerDto, type UpdateInsurerDto } from './dto/insurer.dto.js';
 import { toInsurerResponse, toPublicInsurerResponse } from './dto/insurer-response.dto.js';
 import { InsurersRepository } from './insurers.repository.js';
@@ -104,11 +105,17 @@ export class InsurersService {
   }
 
   /** Deleting is for super admins on either route, so an admin cannot soft-delete through a status change. */
-  async setStatus(id: string, status: InsurerStatus, principal: Extract<Principal, { kind: 'staff' }>) {
+  async setStatus(id: string, status: InsurerStatusChange, principal: Extract<Principal, { kind: 'staff' }>) {
     if (status === 'DELETED' && principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
     const insurer = await this.insurers.transaction(async (tx) => {
       const before = await this.insurers.lock(tx, id);
       if (!before || before.status === 'DELETED') throw ApiException.notFound('Insurer', id);
+      if (!canChangeInsurerStatus(before.status, status)) {
+        throw ApiException.conflict(
+          'INSURER_STATUS_TRANSITION',
+          `An insurer that is ${before.status} cannot become ${status}.`,
+        );
+      }
       const row = await this.insurers.update(tx, id, { status, deletedAt: status === 'DELETED' ? new Date() : null });
       if (!row) throw ApiException.notFound('Insurer', id);
       const updated = { ...row, contact: await this.insurers.findContact(tx, id) };

@@ -63,9 +63,27 @@ const NCD_STATUS: Record<NcdStatus, string> = {
 };
 
 const INSURER_STATUS: Record<InsurerStatus, string> = {
+  PENDING: 'Pending approval',
   ACTIVE: 'Active',
+  SUSPENDED: 'Suspended',
   INACTIVE: 'Inactive',
   DELETED: 'Deleted',
+};
+
+/**
+ * The only statuses an administrator may set directly. Approval and suspension
+ * each carry work beyond the status — an evidence gate, and cancelling the
+ * insurer's open requests and quotes — so each gets its own route rather than
+ * widening this one. Without this list, adding a status to the enum would
+ * silently widen what the status route accepts.
+ */
+export const INSURER_STATUS_CHANGES = ['ACTIVE', 'INACTIVE', 'DELETED'] as const satisfies readonly InsurerStatus[];
+export type InsurerStatusChange = (typeof INSURER_STATUS_CHANGES)[number];
+
+const INSURER_STATUS_CHANGE: Record<InsurerStatusChange, string> = {
+  ACTIVE: INSURER_STATUS.ACTIVE,
+  INACTIVE: INSURER_STATUS.INACTIVE,
+  DELETED: INSURER_STATUS.DELETED,
 };
 
 /** The only NCD statuses an insurer can choose as a decision. */
@@ -129,6 +147,7 @@ export const fromContract = {
   coverageDuration: (value: string): CoverageDuration | undefined => invert(COVERAGE_DURATION)[value],
   paymentMethod: (value: string): PaymentMethod | undefined => invert(PAYMENT_METHOD)[value],
   insurerStatus: readableOrStored(INSURER_STATUS, INSURER_STATUSES),
+  insurerStatusChange: readableOrStored(INSURER_STATUS_CHANGE, INSURER_STATUS_CHANGES),
   ncdDecision: readableOrStored(NCD_DECISION_STATUS, NCD_DECISION_STATUSES),
 };
 
@@ -138,5 +157,6 @@ export const CONTRACT_VALUES = {
   coverageDuration: Object.values(COVERAGE_DURATION),
   paymentMethod: Object.values(PAYMENT_METHOD),
   insurerStatus: [...INSURER_STATUSES, ...Object.values(INSURER_STATUS)],
+  insurerStatusChange: [...INSURER_STATUS_CHANGES, ...Object.values(INSURER_STATUS_CHANGE)],
   ncdDecision: [...NCD_DECISION_STATUSES, ...Object.values(NCD_DECISION_STATUS)],
 };

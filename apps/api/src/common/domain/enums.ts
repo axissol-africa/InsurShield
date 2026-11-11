@@ -9,7 +9,12 @@ export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 export const COVERAGE_DURATIONS = ['Q1', 'Q2', 'Q3', 'Q4'] as const;
 export type CoverageDuration = (typeof COVERAGE_DURATIONS)[number];
 
-export const INSURER_STATUSES = ['ACTIVE', 'INACTIVE', 'DELETED'] as const;
+/**
+ * In lifecycle order. PENDING has never been approved to trade; ACTIVE trades;
+ * SUSPENDED has been stopped and its open work cancelled; INACTIVE has had its
+ * approval withdrawn; DELETED is removed. Only ACTIVE sells.
+ */
+export const INSURER_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED', 'INACTIVE', 'DELETED'] as const;
 export type InsurerStatus = (typeof INSURER_STATUSES)[number];
 
 export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'] as const;

@@ -24,9 +24,8 @@ import {
   type InspectionMethod,
   type InspectionRule,
   type InspectionTiming,
-  type InsurerStatus,
 } from '../../common/domain/enums.js';
-import { CONTRACT_VALUES, fromContract } from '../../common/contract.js';
+import { CONTRACT_VALUES, fromContract, type InsurerStatusChange } from '../../common/contract.js';
 import { MAX_RATE_BPS } from '../../common/domain/money-limits.js';
 import { percentToBps } from '../../common/money.js';
 import type { InsurerChanges, NewContact, NewInsurer } from '../insurers.repository.js';
@@ -128,9 +127,9 @@ export class UpdateInsurerDto {
 }
 
 export class SetInsurerStatusDto {
-  @Transform(({ value }) => (typeof value === 'string' ? (fromContract.insurerStatus(value) ?? value) : value))
-  @IsIn(CONTRACT_VALUES.insurerStatus, { message: 'Status must be Active, Inactive or Deleted.' })
-  status!: InsurerStatus;
+  @Transform(({ value }) => (typeof value === 'string' ? (fromContract.insurerStatusChange(value) ?? value) : value))
+  @IsIn(CONTRACT_VALUES.insurerStatusChange, { message: 'Status must be Active, Inactive or Deleted.' })
+  status!: InsurerStatusChange;
 }
 
 const licenceExpiry = (value: string | undefined) => (value === undefined ? undefined : value ? new Date(value) : null);
