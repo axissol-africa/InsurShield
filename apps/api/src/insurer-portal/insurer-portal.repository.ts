@@ -154,6 +154,16 @@ export class InsurerPortalRepository {
     return delivery;
   }
 
+  /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */
+  async insurerStanding(tx: Transaction, insurerId: string) {
+    const [standing] = await tx
+      .select({ name: insurers.name, status: insurers.status, licenceExpiry: insurers.licenceExpiry })
+      .from(insurers)
+      .where(eq(insurers.id, insurerId))
+      .for('share');
+    return standing;
+  }
+
   async hasQuote(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db): Promise<boolean> {
     const [quote] = await tx
       .select({ id: insurerQuotes.id })

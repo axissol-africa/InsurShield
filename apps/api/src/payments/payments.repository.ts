@@ -105,6 +105,16 @@ export class PaymentsRepository {
     return quote;
   }
 
+  /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */
+  async insurerStanding(tx: Transaction, insurerId: string) {
+    const [standing] = await tx
+      .select({ name: insurers.name, status: insurers.status, licenceExpiry: insurers.licenceExpiry })
+      .from(insurers)
+      .where(eq(insurers.id, insurerId))
+      .for('share');
+    return standing;
+  }
+
   async findPolicyNumberForRequest(tx: Transaction, quoteRequestId: string): Promise<string | undefined> {
     const [policy] = await tx
       .select({ policyNumber: policies.policyNumber })

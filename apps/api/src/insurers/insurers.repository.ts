@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, ne } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { insurerContacts, insurers } from '../db/schema.js';
+import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 import type { InsurerStatus } from '../common/domain/enums.js';
 
 export type NewInsurer = Omit<typeof insurers.$inferInsert, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'status'>;
@@ -51,7 +52,7 @@ const contactColumns = {
 
 type Executor = Database | Transaction;
 
-export type PublicInsurerRow = Awaited<ReturnType<InsurersRepository['listPublic']>>[number];
+export type PublicInsurerRow = Awaited<ReturnType<InsurersRepository['listTakingNewBusiness']>>[number];
 export type InsurerRow = NonNullable<Awaited<ReturnType<InsurersRepository['find']>>>;
 export type ContactRow = NonNullable<InsurerRow['contact']>;
 
@@ -63,12 +64,12 @@ export class InsurersRepository {
     return this.db.transaction(work);
   }
 
-  async listPublic(status: InsurerStatus) {
+  async listTakingNewBusiness(now: Date) {
     return this.db
       .select({ ...publicColumns, contact: contactColumns })
       .from(insurers)
       .leftJoin(insurerContacts, eq(insurerContacts.insurerId, insurers.id))
-      .where(eq(insurers.status, status))
+      .where(and(...takesNewBusinessWhere(now)))
       .orderBy(asc(insurers.name));
   }
 

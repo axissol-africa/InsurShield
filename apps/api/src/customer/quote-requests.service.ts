@@ -184,7 +184,7 @@ export class QuoteRequestsService {
 
   /** Every insurer accepting requests now; none at all is a refusal. */
   async activeInsurerIds(tx: Transaction): Promise<string[]> {
-    const insurerIds = await this.repository.activeInsurerIds(tx);
+    const insurerIds = await this.repository.activeInsurerIds(tx, new Date());
     if (insurerIds.length === 0) {
       throw ApiException.conflict(
         'NO_ACTIVE_INSURERS',

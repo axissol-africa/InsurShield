@@ -35,9 +35,9 @@ export class InsurersService {
     return (await this.insurers.listNotDeleted()).map(toInsurerResponse);
   }
 
-  /** Active insurers only — this is what a quote request fans out to. */
+  /** Insurers that may take new business — the same rule a quote request fans out on. */
   async directory() {
-    return (await this.insurers.listPublic('ACTIVE')).map(toPublicInsurerResponse);
+    return (await this.insurers.listTakingNewBusiness(new Date())).map(toPublicInsurerResponse);
   }
 
   /** One insurer in full. Staff only. */
@@ -174,6 +174,10 @@ export class InsurersService {
 function insurerSnapshot(insurer: {
   name: string;
   status: string;
+  licenceNumber: string | null;
+  licenceExpiry: Date | null;
+  registrationNumber: string | null;
+  tpin: string | null;
   rateBps: number;
   quoteValidityDays: number;
   coverage: string;
@@ -186,6 +190,11 @@ function insurerSnapshot(insurer: {
   return {
     name: insurer.name,
     status: insurer.status,
+    // Eligibility and identity fields, so a change to either is reconstructable from the log.
+    licenceNumber: insurer.licenceNumber,
+    licenceExpiry: insurer.licenceExpiry,
+    registrationNumber: insurer.registrationNumber,
+    tpin: insurer.tpin,
     rateBps: insurer.rateBps,
     quoteValidityDays: insurer.quoteValidityDays,
     coverage: insurer.coverage,

@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
+import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 import {
   customers,
   inspectionShots,
@@ -165,19 +166,11 @@ export class QuoteRequestsRepository {
   }
 
   /** Held shared until `tx` ends, so a deactivation in flight is waited for and none commits under the request. */
-  async activeInsurerIds(tx: Transaction): Promise<string[]> {
-    // A date-only licence expiry is valid until the end of that UTC day.
-    const today = new Date();
-    const currentDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  async activeInsurerIds(tx: Transaction, now: Date): Promise<string[]> {
     const rows = await tx
       .select({ id: insurers.id })
       .from(insurers)
-      .where(
-        and(
-          eq(insurers.status, 'ACTIVE'),
-          or(isNull(insurers.licenceExpiry), gte(insurers.licenceExpiry, currentDay)),
-        ),
-      )
+      .where(and(...takesNewBusinessWhere(now)))
       .orderBy(asc(insurers.name))
       .for('share');
     return rows.map((insurer) => insurer.id);

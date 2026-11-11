@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../common/insurer-standing.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
@@ -99,6 +100,12 @@ export class InsurerPortalService {
       ApiException.conflict('REQUEST_EXPIRED', 'This request has expired and can no longer be quoted.');
 
     const reply = await this.portal.transaction(async (tx) => {
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', insurerId);
+      if (!takesNewBusiness(standing, new Date())) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
+      }
+
       const delivery = await this.portal.lockDelivery(tx, requestId, insurerId);
       if (!delivery) throw ApiException.notFound('Quote request', requestId);
 
@@ -185,7 +192,13 @@ export class InsurerPortalService {
     const insurerId = this.insurerOf(principal);
 
     const extended = await this.portal.transaction(async (tx) => {
-      const result = await this.portal.extendOpenQuote(tx, requestId, insurerId, dto.extraDays, new Date());
+      const extendedAt = new Date();
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', insurerId);
+      if (!takesNewBusiness(standing, extendedAt)) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
+      }
+      const result = await this.portal.extendOpenQuote(tx, requestId, insurerId, dto.extraDays, extendedAt);
       if (result) {
         await this.audit.write(tx, {
           actor: auditActor(principal),
@@ -378,7 +391,8 @@ export class InsurerPortalService {
       if (!application) throw ApiException.notFound('NCD application', applicationId);
       if (!canDecideNcd(application.status)) throw alreadyDecided();
 
-      const decidedAt = ncdDecidedAt(dto.status, new Date());
+      const decidedOn = new Date();
+      const decidedAt = ncdDecidedAt(dto.status, decidedOn);
       const { applicationNumber } = application;
       if (dto.status !== 'APPROVED') {
         const decided = await this.portal.decideNcdApplication(tx, applicationId, insurerId, application.status, {
@@ -405,6 +419,16 @@ export class InsurerPortalService {
           });
         }
         return { decision: toNcdDecision(decided), applicationNumber };
+      }
+
+      // An approved code is a priced offer to a customer, so it is new business
+      // and follows the same rule as a quote. Declining stays open to an insurer
+      // that may no longer sell: answering an application it already holds is
+      // servicing, and leaving it undecidable would strand the customer.
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', insurerId);
+      if (!takesNewBusiness(standing, decidedOn)) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
       }
 
       const percentage = ncdPercentage(application.yearsClaimFree, dto.percentage);
