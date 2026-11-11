@@ -113,6 +113,13 @@
       "when": 1794376762894,
       "tag": "0015_insurer_lifecycle_statuses",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794377382251,
+      "tag": "0016_insurer_staff_roles",
+      "breakpoints": true
     }
   ]
 }

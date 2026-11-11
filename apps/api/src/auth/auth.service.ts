@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ApiException } from '../common/errors/api.exception.js';
-import type { Principal } from '../common/auth/auth.types.js';
+import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
 import { shownPhone } from '../common/auth/phone.js';
 import type { Transaction } from '../db/database.module.js';
 import { AuthRepository } from './auth.repository.js';
@@ -17,12 +17,22 @@ export interface StaffSession {
   insurerName: string | null;
 }
 
-/** Maps the stored role onto the shorthand the staff portals already use. */
-const PORTAL_ROLE = {
+/**
+ * Maps the stored role onto the shorthand the staff portals already use, which
+ * decides only which portal the web app opens. Written out rather than derived,
+ * so the compiler names any role that has no portal yet.
+ */
+const PORTAL_ROLE: Record<StaffRoleName, 'admin' | 'insurer'> = {
   SUPER_ADMIN: 'admin',
   ADMIN: 'admin',
+  INSURER_ADMIN: 'insurer',
+  QUOTE_OFFICER: 'insurer',
+  CLAIMS_OFFICER: 'insurer',
+  SUPPORT: 'insurer',
+  FINANCE: 'insurer',
+  COMPLIANCE_READ_ONLY: 'insurer',
   INSURER_USER: 'insurer',
-} as const;
+};
 
 @Injectable()
 export class AuthService {

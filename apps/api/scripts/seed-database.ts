@@ -3,6 +3,7 @@ import {
   createCredentialUser,
   normalizeEmail,
 } from '../src/auth/credential-user.js';
+import type { InsurerRole, StaffRole } from '../src/common/domain/enums.js';
 import { databaseUrl } from '../src/config/env.js';
 import type { Database, Transaction } from '../src/db/database.module.js';
 import {
@@ -28,9 +29,24 @@ export interface SeedOptions {
 interface StaffSeed {
   email: string;
   fullName: string;
-  role: 'SUPER_ADMIN' | 'INSURER_USER';
+  role: StaffRole;
   insurerId?: string;
 }
+
+/**
+ * One account per insurer role, on the first insurer. Until this batch the seed
+ * made a SUPER_ADMIN and one INSURER_USER each, so ADMIN and every role added
+ * for decision 7 had no account anywhere and nothing could be exercised
+ * end to end against them.
+ */
+const INSURER_ROLE_ACCOUNTS: { role: InsurerRole; localPart: string; title: string }[] = [
+  { role: 'INSURER_ADMIN', localPart: 'insurer.admin', title: 'insurer administrator' },
+  { role: 'QUOTE_OFFICER', localPart: 'quotes', title: 'quote officer' },
+  { role: 'CLAIMS_OFFICER', localPart: 'claims', title: 'claims and NCD officer' },
+  { role: 'SUPPORT', localPart: 'support', title: 'support' },
+  { role: 'FINANCE', localPart: 'finance', title: 'finance' },
+  { role: 'COMPLIANCE_READ_ONLY', localPart: 'compliance', title: 'compliance reader' },
+];
 
 function refusePlaceholder(env: NodeJS.ProcessEnv, name: string) {
   if (env[name]?.includes(PLACEHOLDER)) {
@@ -243,18 +259,35 @@ export async function seedDatabase(
       .from(insurers)
       .where(ne(insurers.status, 'DELETED'))
       .orderBy(asc(insurers.name));
-    const staff = [
+    const domainOf = (name: string) => `${name.toLowerCase().replace(/[^a-z0-9]+/g, '')}.zm`;
+    const [firstInsurer] = portalInsurers;
+    const staff: StaffSeed[] = [
       {
         email: 'admin@insurshield.zm',
         fullName: 'InsurShield Administrator',
-        role: 'SUPER_ADMIN' as const,
+        role: 'SUPER_ADMIN',
+      },
+      {
+        email: 'staff@insurshield.zm',
+        fullName: 'InsurShield Staff',
+        role: 'ADMIN',
       },
       ...portalInsurers.map((insurer): StaffSeed => ({
-        email: `insurer@${insurer.name.toLowerCase().replace(/[^a-z0-9]+/g, '')}.zm`,
+        email: `insurer@${domainOf(insurer.name)}`,
         fullName: `${insurer.name} portal`,
         role: 'INSURER_USER',
         insurerId: insurer.id,
       })),
+      // The role accounts sit on one insurer, which is enough to exercise each
+      // role without multiplying accounts across every insurer.
+      ...(firstInsurer
+        ? INSURER_ROLE_ACCOUNTS.map(({ role, localPart, title }): StaffSeed => ({
+            email: `${localPart}@${domainOf(firstInsurer.name)}`,
+            fullName: `${firstInsurer.name} ${title}`,
+            role,
+            insurerId: firstInsurer.id,
+          }))
+        : []),
     ];
 
     // Reject every unsafe linkage before creating any account or demo record.

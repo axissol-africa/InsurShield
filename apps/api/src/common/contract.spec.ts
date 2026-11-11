@@ -157,6 +157,16 @@ describe('contract vocabulary', () => {
       'ACTIVE', 'INACTIVE', 'DELETED', 'Active', 'Inactive', 'Deleted',
     ]);
     expect(CONTRACT_VALUES.ncdDecision).toEqual(['UNDER_REVIEW', 'APPROVED', 'REJECTED', 'Under Review', 'Approved', 'Rejected']);
+    // InsurShield's own roles first, then the insurer ones, as the role lists group them.
+    expect(CONTRACT_VALUES.staffRole).toEqual([
+      'SUPER_ADMIN', 'ADMIN',
+      'INSURER_ADMIN', 'QUOTE_OFFICER', 'CLAIMS_OFFICER', 'SUPPORT', 'FINANCE', 'COMPLIANCE_READ_ONLY',
+      'INSURER_USER',
+      'Super administrator', 'Administrator',
+      'Insurer administrator', 'Quote officer', 'Claims and NCD officer', 'Support', 'Finance',
+      'Compliance, read only',
+      'Insurer portal user',
+    ]);
   });
 
   it.each([

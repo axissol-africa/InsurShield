@@ -1,5 +1,6 @@
 import {
   INSURER_STATUSES,
+  STAFF_ROLES,
   type ClaimStatus,
   type CoverageDuration,
   type InspectionStatus,
@@ -10,6 +11,7 @@ import {
   type PaymentStatus,
   type PolicyStatus,
   type QuoteRequestStatus,
+  type StaffRole,
 } from './domain/enums.js';
 
 /**
@@ -68,6 +70,18 @@ const INSURER_STATUS: Record<InsurerStatus, string> = {
   SUSPENDED: 'Suspended',
   INACTIVE: 'Inactive',
   DELETED: 'Deleted',
+};
+
+const STAFF_ROLE: Record<StaffRole, string> = {
+  SUPER_ADMIN: 'Super administrator',
+  ADMIN: 'Administrator',
+  INSURER_ADMIN: 'Insurer administrator',
+  QUOTE_OFFICER: 'Quote officer',
+  CLAIMS_OFFICER: 'Claims and NCD officer',
+  SUPPORT: 'Support',
+  FINANCE: 'Finance',
+  COMPLIANCE_READ_ONLY: 'Compliance, read only',
+  INSURER_USER: 'Insurer portal user',
 };
 
 /**
@@ -130,6 +144,7 @@ export const toContract = {
   paymentMethod: (value: PaymentMethod) => PAYMENT_METHOD[value],
   inspectionStatus: (value: InspectionStatus) => INSPECTION_STATUS[value],
   insurerStatus: (value: InsurerStatus) => INSURER_STATUS[value],
+  staffRole: (value: StaffRole) => STAFF_ROLE[value],
 };
 
 const readableOrStored = <T extends string>(map: Record<T, string>, storedValues: readonly T[]) => {
@@ -148,6 +163,7 @@ export const fromContract = {
   paymentMethod: (value: string): PaymentMethod | undefined => invert(PAYMENT_METHOD)[value],
   insurerStatus: readableOrStored(INSURER_STATUS, INSURER_STATUSES),
   insurerStatusChange: readableOrStored(INSURER_STATUS_CHANGE, INSURER_STATUS_CHANGES),
+  staffRole: readableOrStored(STAFF_ROLE, STAFF_ROLES),
   ncdDecision: readableOrStored(NCD_DECISION_STATUS, NCD_DECISION_STATUSES),
 };
 
@@ -158,5 +174,6 @@ export const CONTRACT_VALUES = {
   paymentMethod: Object.values(PAYMENT_METHOD),
   insurerStatus: [...INSURER_STATUSES, ...Object.values(INSURER_STATUS)],
   insurerStatusChange: [...INSURER_STATUS_CHANGES, ...Object.values(INSURER_STATUS_CHANGE)],
+  staffRole: [...STAFF_ROLES, ...Object.values(STAFF_ROLE)],
   ncdDecision: [...NCD_DECISION_STATUSES, ...Object.values(NCD_DECISION_STATUS)],
 };

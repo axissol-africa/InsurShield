@@ -59,7 +59,32 @@ export type InspectionTiming = (typeof INSPECTION_TIMINGS)[number];
 export const INSPECTION_METHODS = ['SELF_CAPTURE', 'PHYSICAL'] as const;
 export type InspectionMethod = (typeof INSPECTION_METHODS)[number];
 
-export const STAFF_ROLES = ['SUPER_ADMIN', 'ADMIN', 'INSURER_USER'] as const;
+/**
+ * InsurShield's own roles first, then the insurer ones. An InsurShield
+ * administrator may grant any of these; an insurer administrator may grant only
+ * the insurer ones, which is why the two groups are named separately below.
+ *
+ * INSURER_USER predates the rest and still carries the whole portal. It is
+ * retired when the permission matrix gives each insurer role its own functions:
+ * moving the rows onto INSURER_ADMIN cannot happen in the same migration run
+ * that adds the value, because this migrator applies every pending migration in
+ * one transaction and PostgreSQL refuses an enum value its own transaction added.
+ */
+export const INSURSHIELD_ROLES = ['SUPER_ADMIN', 'ADMIN'] as const;
+
+export const INSURER_ROLES = [
+  'INSURER_ADMIN',
+  'QUOTE_OFFICER',
+  'CLAIMS_OFFICER',
+  'SUPPORT',
+  'FINANCE',
+  'COMPLIANCE_READ_ONLY',
+  'INSURER_USER',
+] as const;
+
+export const STAFF_ROLES = [...INSURSHIELD_ROLES, ...INSURER_ROLES] as const;
+export type InsurShieldRole = (typeof INSURSHIELD_ROLES)[number];
+export type InsurerRole = (typeof INSURER_ROLES)[number];
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const DOCUMENT_KINDS = [

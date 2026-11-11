@@ -15,6 +15,24 @@ import {
 } from '../test/scratch-database.js';
 import { DEMO_CUSTOMER } from './demo-data.js';
 import { INSURERS, seedReferenceData } from './reference-data.js';
+
+/**
+ * One portal user per insurer, both InsurShield roles, and one account per
+ * insurer role, so every role has something to exercise it end to end. Before
+ * this batch ADMIN existed in eight route role lists with no account anywhere.
+ */
+const SEEDED_STAFF_BY_ROLE: Record<string, number> = {
+  SUPER_ADMIN: 1,
+  ADMIN: 1,
+  INSURER_ADMIN: 1,
+  QUOTE_OFFICER: 1,
+  CLAIMS_OFFICER: 1,
+  SUPPORT: 1,
+  FINANCE: 1,
+  COMPLIANCE_READ_ONLY: 1,
+  INSURER_USER: INSURERS.length,
+};
+const SEEDED_STAFF_TOTAL = Object.values(SEEDED_STAFF_BY_ROLE).reduce((sum, count) => sum + count, 0);
 import { seedDatabase, type SeedOptions } from './seed-database.js';
 import { MailFake } from '../test/mail-fake.js';
 
@@ -150,13 +168,14 @@ async function redeemable(code: string, customerId: string): Promise<boolean> {
 }
 
 describe('seed', () => {
-  it('creates the super admin, every insurer portal user and the demo customer with a working credential account', async () => {
+  it('creates an account for every staff role and the demo customer, each able to sign in', async () => {
     await seedDatabase(db, options());
 
     const staff = await db
       .select({
         email: schema.staffUsers.email,
         userId: schema.staffUsers.userId,
+        role: schema.staffUsers.role,
       })
       .from(schema.staffUsers);
     const [customer] = await db
@@ -168,7 +187,11 @@ describe('seed', () => {
       .where(eq(schema.customers.email, DEMO_CUSTOMER.email));
     const accounts = [...staff, customer];
 
-    expect(staff).toHaveLength(INSURERS.length + 1);
+    const byRole = staff.reduce<Record<string, number>>((counts, member) => {
+      counts[member.role] = (counts[member.role] ?? 0) + 1;
+      return counts;
+    }, {});
+    expect(byRole, 'every role has an account to exercise it').toEqual(SEEDED_STAFF_BY_ROLE);
     expect(customer).toBeDefined();
     for (const account of accounts) {
       if (!account?.userId)
@@ -191,7 +214,7 @@ describe('seed', () => {
       insurers: 5,
       insurer_contacts: 5,
       ncd_codes: 5,
-      staff_users: 6,
+      staff_users: SEEDED_STAFF_TOTAL,
       customers: 1,
       vehicles: 2,
       quote_requests: 3,
@@ -443,7 +466,7 @@ describe('seed', () => {
       insurers: 5,
       insurer_contacts: 5,
       ncd_codes: 5,
-      staff_users: INSURERS.length + 1,
+      staff_users: SEEDED_STAFF_TOTAL,
       customers: 0,
     });
   });
