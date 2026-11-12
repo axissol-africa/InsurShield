@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { BadgePercent, BookOpen, CheckCheck, FileCheck2, FileText, LayoutDashboard, MessageSquareWarning } from 'lucide-react';
+import { BadgePercent, BookOpen, CheckCheck, FileCheck2, FileText, LayoutDashboard, MessageSquareWarning, UsersRound } from 'lucide-react';
 import { toast } from 'sonner';
 import InsurerShell from '@/features/insurer-portal/components/InsurerShell';
 import { useStore } from '@/store';
@@ -22,10 +22,11 @@ import PaidPoliciesTab from '@/features/insurer-portal/components/PaidPoliciesTa
 import PolicyIssuePanel from '@/features/insurer-portal/components/PolicyIssuePanel';
 import ClaimsTab from '@/features/insurer-portal/components/ClaimsTab';
 import NcdTab from '@/features/insurer-portal/components/NcdTab';
+import StaffManagement from '@/features/admin/components/StaffManagement';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const SECTION_IDS = ['overview', 'guides', 'policies', 'claims', 'ncd'];
+const SECTION_IDS = ['overview', 'guides', 'policies', 'claims', 'ncd', 'staff'];
 const QUOTE_QUEUE_ID = 'quote-requests';
 /** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
 const NEXT_OFFER_MS = 20_000;
@@ -58,6 +59,7 @@ export default function InsurerDashboard() {
     ?? insurersList.find((item) => item.name === sessionInsurerName);
   const insurerName = insurer?.name ?? sessionInsurerName;
   const defaultValidityDays = insurer?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
+  const canManageStaff = staffSession?.staffRole === 'INSURER_ADMIN';
 
   const myClaims = claims.filter((claim) => claim.insurer === insurerName);
   const myNcd = ncdApplications.filter((application) => application.insurer === insurerName);
@@ -96,6 +98,7 @@ export default function InsurerDashboard() {
     { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: FileCheck2, badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: MessageSquareWarning, badge: newClaims.length },
     { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: BadgePercent, badge: openNcd.length },
+    ...(canManageStaff ? [{ id: 'staff', label: 'Staff and teams', shortLabel: 'Staff', icon: UsersRound }] : []),
   ];
   // Each number is the way into the work it counts.
   const kpis = [
@@ -246,6 +249,8 @@ export default function InsurerDashboard() {
     content = <PaidPoliciesTab policies={myPolicies} onIssue={(policy) => navigate(portalPath.issue(policy.policyNumber))} />;
   } else if (activeTab === 'claims') {
     content = <ClaimsTab claims={myClaims} />;
+  } else if (activeTab === 'staff' && canManageStaff) {
+    content = <StaffManagement scope="insurer" insurerId={insurer?.id} insurers={insurer ? [insurer] : []} api={api} onChanged={hydrateInsurerPortal} />;
   } else {
     content = <NcdTab applications={myNcd} />;
   }

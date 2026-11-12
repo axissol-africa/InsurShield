@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { auditLogs, stateHistory } from '../../db/schema.js';
-import type { Transaction } from '../../db/database.module.js';
+import { DATABASE, type Database, type Transaction } from '../../db/database.module.js';
 import type { AuditEvent, StateTransition } from './audit.types.js';
 
 const SENSITIVE_KEY = /(?:password|secret|token|private|credential|email|phone|mobile|address|description|storagekey|checksum|url|providerreference)/i;
@@ -14,6 +14,28 @@ const SENSITIVE_KEY = /(?:password|secret|token|private|credential|email|phone|m
  */
 @Injectable()
 export class AuditService {
+  private readonly logger = new Logger(AuditService.name);
+
+  constructor(@Inject(DATABASE) private readonly db: Database) {}
+
+  /**
+   * Records that a caller was refused, on its own connection.
+   *
+   * A refusal changes no business record, so there is nothing for it to be
+   * atomic with, and the transaction it happens in is usually about to roll
+   * back: a cross-insurer reach answers as absent by throwing, which would take
+   * an audit row written in that transaction with it. So this one commits
+   * separately, and a failure to write it is logged rather than thrown --
+   * an audit outage must not turn a refusal into a server error.
+   */
+  async refusal(event: AuditEvent): Promise<void> {
+    try {
+      await this.db.transaction((tx) => this.write(tx, event));
+    } catch (error) {
+      this.logger.error(`Could not record a refused ${event.entityType} access: ${String(error)}`);
+    }
+  }
+
   async write(tx: Transaction, event: AuditEvent): Promise<void> {
     await tx.insert(auditLogs).values({
       actorType: event.actor.type,

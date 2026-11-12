@@ -11,7 +11,7 @@ import { createJSONStorage } from 'zustand/middleware';
  */
 
 export const STORAGE_KEY = 'insurshield-storage';
-export const STORAGE_VERSION = 8;
+export const STORAGE_VERSION = 9;
 
 let httpPersistenceSuspended = false;
 
@@ -58,7 +58,7 @@ const PERSISTED_KEYS = [
   'vehicleDetails', 'vehicleValue', 'vehicleUsage', 'insuranceType', 'coverageDurationId', 'policyStartDate', 'matchRtsaAnniversary', 'rtsaRegistrationDate', 'policyDates',
   'activeQuoteRequestId', 'requotedFromId', 'renewalOfPolicyNumber', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt',
   'ncdCode', 'ncdCodeValidated', 'ncdCodeUsed', 'ncdApplications',
-  'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections', 'insurerReviews',
+  'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections', 'insurerReviews', 'staffUsers', 'staffTeams',
 ];
 
 /** Only data is persisted, never actions. */
@@ -146,5 +146,7 @@ export const migrate = (persisted, version) => {
     delete state.registeredAccounts;
     Object.assign(state, { customer: null, isAuthenticated: false, staffSession: null, consentAccepted: false, consentTimestamp: null, consentRecord: null });
   }
+  // v9: staff and insurer-team data became explicit browser records in mock
+  // mode. Leaving them absent deliberately preserves the defaults on merge.
   return state;
 };

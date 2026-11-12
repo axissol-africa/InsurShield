@@ -9,8 +9,20 @@ export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 export const COVERAGE_DURATIONS = ['Q1', 'Q2', 'Q3', 'Q4'] as const;
 export type CoverageDuration = (typeof COVERAGE_DURATIONS)[number];
 
-export const INSURER_STATUSES = ['ACTIVE', 'INACTIVE', 'DELETED'] as const;
+/**
+ * In lifecycle order. PENDING has never been approved to trade; ACTIVE trades;
+ * SUSPENDED has been stopped and its open work cancelled; INACTIVE has had its
+ * approval withdrawn; DELETED is removed. Only ACTIVE sells.
+ */
+export const INSURER_STATUSES = ['PENDING', 'ACTIVE', 'SUSPENDED', 'INACTIVE', 'DELETED'] as const;
 export type InsurerStatus = (typeof INSURER_STATUSES)[number];
+
+/** The documents an insurer is reviewed on before it may trade. */
+export const EVIDENCE_KINDS = ['LICENCE', 'TAX_CLEARANCE', 'INCORPORATION', 'AGREEMENT', 'OTHER'] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
+export const EVIDENCE_REVIEW_STATES = ['PENDING', 'APPROVED', 'REJECTED'] as const;
+export type EvidenceReviewState = (typeof EVIDENCE_REVIEW_STATES)[number];
 
 export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
@@ -54,7 +66,52 @@ export type InspectionTiming = (typeof INSPECTION_TIMINGS)[number];
 export const INSPECTION_METHODS = ['SELF_CAPTURE', 'PHYSICAL'] as const;
 export type InspectionMethod = (typeof INSPECTION_METHODS)[number];
 
-export const STAFF_ROLES = ['SUPER_ADMIN', 'ADMIN', 'INSURER_USER'] as const;
+/** Maker/checker actions that must never be completed by one staff member alone. */
+export const APPROVAL_ACTIONS = [
+  'PIA_FLOOR_CHANGE',
+  'INSURER_ACTIVATE',
+  'INSURER_DEACTIVATE',
+  'INSURER_SUSPEND',
+  'INSURER_DELETE',
+  'INSURER_RESTORE',
+] as const;
+export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+/** A request reaches EXECUTED only after the business operation commits. */
+export const APPROVAL_STATUSES = ['PENDING', 'REJECTED', 'EXPIRED', 'EXECUTED'] as const;
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+/**
+ * InsurShield's own roles first, then the insurer ones. An InsurShield
+ * administrator may grant any of these; an insurer administrator may grant only
+ * the insurer ones, which is why the two groups are named separately below.
+ *
+ * INSURER_USER predates the rest and still carries the whole portal. It is
+ * retired when the permission matrix gives each insurer role its own functions:
+ * moving the rows onto INSURER_ADMIN cannot happen in the same migration run
+ * that adds the value, because this migrator applies every pending migration in
+ * one transaction and PostgreSQL refuses an enum value its own transaction added.
+ */
+export const INSURSHIELD_ROLES = ['SUPER_ADMIN', 'ADMIN'] as const;
+
+export const INSURER_ROLES = [
+  'INSURER_ADMIN',
+  'QUOTE_OFFICER',
+  'CLAIMS_OFFICER',
+  'SUPPORT',
+  'FINANCE',
+  'COMPLIANCE_READ_ONLY',
+  'INSURER_USER',
+] as const;
+
+export const STAFF_ROLES = [...INSURSHIELD_ROLES, ...INSURER_ROLES] as const;
+
+/** Whether this role acts for an insurer rather than for InsurShield. */
+export function isInsurerRole(role: StaffRole): role is InsurerRole {
+  return (INSURER_ROLES as readonly StaffRole[]).includes(role);
+}
+export type InsurShieldRole = (typeof INSURSHIELD_ROLES)[number];
+export type InsurerRole = (typeof INSURER_ROLES)[number];
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const DOCUMENT_KINDS = [
@@ -65,6 +122,7 @@ export const DOCUMENT_KINDS = [
   'CLAIM_ATTACHMENT',
   'INSURER_LOGO',
   'NCD_EVIDENCE',
+  'INSURER_EVIDENCE',
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
@@ -82,11 +140,20 @@ export const DOCUMENT_RETENTION_CLASSES = [
   'POLICY_EVIDENCE',
   'CLAIM_EVIDENCE',
   'BRAND_ASSET',
+  'COMPLIANCE_EVIDENCE',
 ] as const;
 export type DocumentRetentionClass = (typeof DOCUMENT_RETENTION_CLASSES)[number];
 
 export const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKNOWLEDGED', 'FAILED'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/**
+ * A delivery and a final quote have different lifecycles, but an insurer
+ * suspension can make either unavailable. Keeping the reason separate from
+ * delivery and quote statuses preserves their operational history.
+ */
+export const QUOTE_UNAVAILABILITY_REASONS = ['INSURER_SUSPENDED'] as const;
+export type QuoteUnavailabilityReason = (typeof QUOTE_UNAVAILABILITY_REASONS)[number];
 
 export const DELIVERY_KINDS = ['QUOTE_REQUEST', 'PAID_POLICY', 'CLAIM_NOTIFICATION'] as const;
 export type DeliveryKind = (typeof DELIVERY_KINDS)[number];

@@ -1,7 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { claimAttachments, claimNotifications, customers, insurers, policies } from '../db/schema.js';
+import { servicesExistingBusinessWhere } from '../common/insurer-standing.js';
 
 export type ClaimRow = typeof claimNotifications.$inferSelect;
 export type NewClaim = typeof claimNotifications.$inferInsert;
@@ -44,12 +45,13 @@ export class ClaimsRepository {
       .orderBy(asc(claimAttachments.id));
   }
 
-  /** An insurer a claim can be notified to: any that is not deleted. */
+  /** An insurer a claim can be notified to: servicing continues until the insurer is removed. */
   async findInsurer(tx: Transaction, insurerId: string): Promise<{ id: string; name: string } | undefined> {
     const [insurer] = await tx
       .select({ id: insurers.id, name: insurers.name })
       .from(insurers)
-      .where(and(eq(insurers.id, insurerId), ne(insurers.status, 'DELETED')));
+      .where(and(eq(insurers.id, insurerId), ...servicesExistingBusinessWhere()))
+      .for('share');
     return insurer;
   }
 

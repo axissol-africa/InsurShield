@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, exists, gte, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
@@ -84,6 +84,7 @@ export class InsurerPortalRepository {
         vehicleUsage: quoteRequests.vehicleUsage,
         insuranceType: quoteRequests.insuranceType,
         coverageDuration: quoteRequests.coverageDuration,
+        cancelledAt: quoteRequestRecipients.cancelledAt,
         policyStartDate: quoteRequests.policyStartDate,
         policyEndDate: quoteRequests.policyEndDate,
         coverageDays: quoteRequests.coverageDays,
@@ -143,6 +144,7 @@ export class InsurerPortalRepository {
         // Who to tell, and whose name to tell them, when the quote lands.
         customerId: quoteRequests.customerId,
         insurerName: insurers.name,
+        cancelledAt: quoteRequestRecipients.cancelledAt,
       })
       .from(quoteRequestRecipients)
       .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestRecipients.quoteRequestId))
@@ -152,6 +154,51 @@ export class InsurerPortalRepository {
       )
       .for('update', { of: quoteRequestRecipients });
     return delivery;
+  }
+
+  /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */
+  async insurerStanding(tx: Transaction, insurerId: string) {
+    const [standing] = await tx
+      .select({ name: insurers.name, status: insurers.status, licenceExpiry: insurers.licenceExpiry })
+      .from(insurers)
+      .where(eq(insurers.id, insurerId))
+      .for('share');
+    return standing;
+  }
+
+  /**
+   * Whether these records exist for anybody, asked only after a scoped lookup
+   * found nothing, so a reach into another insurer's records can be told from a
+   * mistyped reference. The answer never reaches the caller: the response is
+   * the same either way, and only the audit differs.
+   */
+  async quoteRequestExists(id: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx.select({ id: quoteRequests.id }).from(quoteRequests).where(eq(quoteRequests.id, id));
+    return found !== undefined;
+  }
+
+  async policyExists(policyNumber: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx
+      .select({ policyNumber: policies.policyNumber })
+      .from(policies)
+      .where(eq(policies.policyNumber, policyNumber));
+    return found !== undefined;
+  }
+
+  async claimExists(claimNumber: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx
+      .select({ claimNumber: claimNotifications.claimNumber })
+      .from(claimNotifications)
+      .where(eq(claimNotifications.claimNumber, claimNumber));
+    return found !== undefined;
+  }
+
+  async ncdApplicationExists(id: string, tx: Database | Transaction = this.db): Promise<boolean> {
+    const [found] = await tx
+      .select({ id: ncdApplications.id })
+      .from(ncdApplications)
+      .where(eq(ncdApplications.id, id));
+    return found !== undefined;
   }
 
   async hasQuote(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db): Promise<boolean> {
@@ -203,11 +250,20 @@ export class InsurerPortalRepository {
         and(
           eq(insurerQuotes.quoteRequestId, quoteRequestId),
           eq(insurerQuotes.insurerId, insurerId),
+          isNull(insurerQuotes.unpayableAt),
           gte(insurerQuotes.validUntil, now),
         ),
       )
       .returning(extensionColumns);
     return extended;
+  }
+
+  async quoteAvailability(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db) {
+    const [quote] = await tx
+      .select({ unpayableAt: insurerQuotes.unpayableAt })
+      .from(insurerQuotes)
+      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.insurerId, insurerId)));
+    return quote;
   }
 
   // ── Paid policies ───────────────────────────────────────────────

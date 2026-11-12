@@ -7,6 +7,7 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { Needs } from '../common/auth/auth.guard.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IsIn } from 'class-validator';
 import { Body } from '@nestjs/common';
@@ -32,6 +33,7 @@ const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
   CLAIM_ATTACHMENT: { kind: 'claim-attachment' as const, claimNumber: 'unfiled' },
   INSURER_LOGO: { kind: 'insurer-logo' as const, insurerId: 'unfiled' },
   NCD_EVIDENCE: { kind: 'ncd-evidence' as const, applicationNumber: 'unfiled' },
+  INSURER_EVIDENCE: { kind: 'insurer-evidence' as const, insurerId: 'unfiled' },
 };
 
 /**
@@ -42,6 +44,7 @@ const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
 export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
+  @Needs('document:upload')
   @Post()
   @ApiRateLimit(API_LIMITS.upload)
   @UseInterceptors(FileTooLargeInterceptor, FileInterceptor('file'))
@@ -54,6 +57,7 @@ export class DocumentsController {
   }
 
   /** A fresh signed URL, because the one issued at upload time expires. */
+  @Needs('document:read')
   @Get(':id')
   @ApiRateLimit(API_LIMITS.download)
   get(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() principal: Principal) {

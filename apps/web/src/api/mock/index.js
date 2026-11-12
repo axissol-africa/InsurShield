@@ -17,6 +17,8 @@ const newReference = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCas
 const insurerNameById = (id) => state().insurersList.find((insurer) => insurer.id === id)?.name ?? '';
 const mine = (records) => records.filter(belongsToCustomer(state().customer));
 const insurerName = () => state().staffSession?.name;
+const insurerIdForSession = () => state().staffSession?.insurerId
+  ?? state().insurersList.find((insurer) => insurer.name === insurerName())?.id;
 // The browser adapter stands in for the API during prototype demos. Production
 // clients always receive this fee from the API configuration, never this value.
 const MOCK_RTSA_ANNIVERSARY_FEE = 500;
@@ -29,7 +31,15 @@ export const auth = {
   signIn: (identifier, password) => call((s) => {
     if (identifier.startsWith('insurer@') || identifier.startsWith('admin@')) {
       const role = identifier.startsWith('insurer@') ? 'insurer' : 'admin';
-      const staffSession = { role, name: role === 'insurer' ? 'Prestige Assurance' : 'Admin', isSuperAdmin: role === 'admin' };
+      const staffSession = {
+        role,
+        // The production identity endpoint keeps this canonical role beside
+        // the short portal-routing role. It lets the UI avoid presenting
+        // staff-management controls to an ordinary insurer officer.
+        staffRole: role === 'insurer' ? 'INSURER_ADMIN' : 'SUPER_ADMIN',
+        name: role === 'insurer' ? 'Prestige Assurance' : 'Admin',
+        isSuperAdmin: role === 'admin',
+      };
       s.applyStaffSession(staffSession);
       return { user: { id: `mock:${identifier}`, email: identifier }, staffSession };
     }
@@ -122,9 +132,67 @@ export const insurers = {
       : s.insurersList.filter((insurer) => insurer.status !== 'Deleted')
   )),
   get: (id) => call((s) => s.insurersList.find((i) => i.id === id) || null),
-  create: (insurer) => call((s) => { s.addInsurer(insurer); return state().insurersList.at(-1); }),
+  create: (insurer) => call((s) => {
+    // A fresh insurer is a review record, never an active trading partner.
+    s.addInsurer({ ...insurer, status: 'Pending' });
+    return state().insurersList.at(-1);
+  }),
   update: (id, updates) => call((s) => { s.updateInsurer(id, updates); return state().insurersList.find((i) => i.id === id); }),
   setStatus: (id, status) => call((s) => { s.setInsurerStatus(id, status); return state().insurersList.find((i) => i.id === id); }),
+  suspend: (id, reason) => call((s) => {
+    const insurer = s.insurersList.find((entry) => entry.id === id);
+    if (!insurer || insurer.status === 'Deleted') throw new Error('Insurer was not found.');
+    if (insurer.status === 'Suspended') return insurer;
+    const unavailableAt = new Date().toISOString();
+    s.updateInsurer(id, { status: 'Suspended', suspensionReason: reason, suspendedAt: unavailableAt });
+    s.setQuoteRequests(s.quoteRequests.map((request) => {
+      if (!request.insurers?.some((name) => name === insurer.name)) return request;
+      const reply = request.insurerQuotes?.[insurer.name];
+      if (reply) {
+        return {
+          ...request,
+          insurerQuotes: { ...request.insurerQuotes, [insurer.name]: { ...reply, unavailableAt } },
+        };
+      }
+      const unavailableInsurers = request.unavailableInsurers || [];
+      return unavailableInsurers.some((entry) => entry.name === insurer.name)
+        ? request
+        : { ...request, unavailableInsurers: [...unavailableInsurers, { name: insurer.name, unavailableAt }] };
+    }));
+    return state().insurersList.find((entry) => entry.id === id);
+  }),
+  evidence: (id) => call((s) => s.insurersList.find((entry) => entry.id === id)?.evidence || []),
+  captureEvidence: (id, evidence) => call((s) => {
+    const insurer = s.insurersList.find((entry) => entry.id === id);
+    if (!insurer) throw new Error('Insurer was not found.');
+    const item = { id: newReference('EVIDENCE'), ...evidence, state: 'PENDING', reviewedBy: null, reviewedAt: null, note: null, capturedAt: new Date().toISOString() };
+    s.updateInsurer(id, { evidence: [...(insurer.evidence || []), item] });
+    return item;
+  }),
+  reviewEvidence: (id, evidenceId, review) => call((s) => {
+    const insurer = s.insurersList.find((entry) => entry.id === id);
+    const evidence = insurer?.evidence?.find((entry) => entry.id === evidenceId);
+    if (!insurer || !evidence) throw new Error('Evidence was not found.');
+    const reviewed = { ...evidence, ...review, reviewedAt: new Date().toISOString(), reviewedBy: s.staffSession?.name || 'Administrator' };
+    s.updateInsurer(id, { evidence: insurer.evidence.map((entry) => entry.id === evidenceId ? reviewed : entry) });
+    return reviewed;
+  }),
+  integration: (id) => call((s) => s.insurersList.find((entry) => entry.id === id)?.integration || null),
+  setIntegration: (id, model) => call((s) => {
+    if (!s.insurersList.some((entry) => entry.id === id)) throw new Error('Insurer was not found.');
+    const integration = { ...model, activatedAt: new Date().toISOString() };
+    s.updateInsurer(id, { integration });
+    return integration;
+  }),
+  activate: (id, approval) => call((s) => {
+    const insurer = s.insurersList.find((entry) => entry.id === id);
+    if (!insurer) throw new Error('Insurer was not found.');
+    const licence = insurer.evidence?.find((item) => item.kind === 'LICENCE');
+    if (!licence || licence.state !== 'APPROVED') throw new Error('This insurer cannot be activated yet: no approved licence is on file.');
+    if (licence.expiresAt && new Date(licence.expiresAt) < new Date()) throw new Error('This insurer cannot be activated yet: the licence has expired.');
+    s.updateInsurer(id, { status: 'Active', activation: { ...approval, approvedAt: new Date().toISOString() } });
+    return state().insurersList.find((entry) => entry.id === id);
+  }),
   remove: (id) => call((s) => { s.deleteInsurer(id); return { ok: true }; }),
   restore: (id) => call((s) => {
     const insurer = s.insurersList.find((entry) => entry.id === id);
@@ -136,10 +204,80 @@ export const insurers = {
   directory: () => call((s) => s.insurersList.filter((insurer) => !insurer.status || insurer.status === 'Active')),
 };
 
+export const staff = {
+  listUsers: () => call((s) => {
+    const insurerId = insurerIdForSession();
+    return s.staffSession?.role === 'insurer' ? s.staffUsers.filter((user) => user.insurerId === insurerId) : s.staffUsers;
+  }),
+  createUser: (user) => call((s) => {
+    const insurerId = s.staffSession?.role === 'insurer' ? insurerIdForSession() : user.insurerId;
+    const insurer = s.insurersList.find((entry) => entry.id === insurerId);
+    if (s.staffUsers.some((entry) => entry.email.toLowerCase() === user.email.toLowerCase())) throw new Error('A staff member already uses that email address.');
+    if (s.staffSession?.role === 'insurer' && !String(user.role || '').startsWith('INSURER_') && !['QUOTE_OFFICER', 'CLAIMS_OFFICER', 'SUPPORT', 'FINANCE', 'COMPLIANCE_READ_ONLY'].includes(user.role)) {
+      throw new Error('An insurer administrator may assign only insurer roles.');
+    }
+    const team = s.staffTeams.find((entry) => entry.id === user.teamId);
+    if (team && team.insurerId !== insurerId) throw new Error('Choose a team belonging to the same insurer.');
+    const created = {
+      id: newReference('STAFF'), fullName: user.fullName, email: user.email, role: user.role, insurerId: insurerId || null,
+      insurerName: insurer?.name || null, isActive: true, team: team ? { id: team.id, name: team.name } : null, lastLoginAt: null, createdAt: new Date().toISOString(),
+    };
+    s.addStaffUser(created);
+    return created;
+  }),
+  updateUser: (id, changes) => call((s) => {
+    const target = s.staffUsers.find((entry) => entry.id === id);
+    const insurerId = s.staffSession?.role === 'insurer' ? insurerIdForSession() : (changes.insurerId === undefined ? target?.insurerId : changes.insurerId);
+    if (!target || (s.staffSession?.role === 'insurer' && target.insurerId !== insurerId)) throw new Error('Staff member was not found.');
+    const insurer = s.insurersList.find((entry) => entry.id === insurerId);
+    const team = changes.teamId === undefined ? target.team : s.staffTeams.find((entry) => entry.id === changes.teamId);
+    if (team && team.insurerId !== insurerId) throw new Error('Choose a team belonging to the same insurer.');
+    const updated = { ...target, ...changes, insurerId: insurerId || null, insurerName: insurer?.name || null, team: team ? { id: team.id, name: team.name } : null };
+    delete updated.teamId;
+    s.updateStaffUser(id, updated);
+    return updated;
+  }),
+  resendInvitation: (id) => call((s) => {
+    if (!s.staffUsers.some((entry) => entry.id === id)) throw new Error('Staff member was not found.');
+    return { id, invitationSent: true };
+  }),
+  listTeams: () => call((s) => {
+    const insurerId = insurerIdForSession();
+    return s.staffSession?.role === 'insurer' ? s.staffTeams.filter((team) => team.insurerId === insurerId) : s.staffTeams;
+  }),
+  createTeam: (team) => call((s) => {
+    const insurerId = s.staffSession?.role === 'insurer' ? insurerIdForSession() : team.insurerId;
+    const insurer = s.insurersList.find((entry) => entry.id === insurerId);
+    if (!insurer) throw new Error('Choose the insurer this team belongs to.');
+    if (s.staffTeams.some((entry) => entry.insurerId === insurerId && entry.name.toLowerCase() === team.name.trim().toLowerCase())) throw new Error('A team with this name already exists for the insurer.');
+    const created = { id: newReference('TEAM'), insurerId, insurerName: insurer.name, name: team.name.trim(), createdAt: new Date().toISOString() };
+    s.addStaffTeam(created);
+    return created;
+  }),
+  updateTeam: (id, changes) => call((s) => {
+    const team = s.staffTeams.find((entry) => entry.id === id);
+    if (!team || (s.staffSession?.role === 'insurer' && team.insurerId !== insurerIdForSession())) throw new Error('Team was not found.');
+    s.updateStaffTeam(id, { name: changes.name.trim() });
+    return { ...team, name: changes.name.trim() };
+  }),
+  removeTeam: (id) => call((s) => {
+    const team = s.staffTeams.find((entry) => entry.id === id);
+    if (!team || (s.staffSession?.role === 'insurer' && team.insurerId !== insurerIdForSession())) throw new Error('Team was not found.');
+    if (s.staffUsers.some((user) => user.team?.id === id)) throw new Error('Move every staff member before deleting this team.');
+    s.removeStaffTeam(id);
+    return { id, deleted: true };
+  }),
+};
+
 export const payments = {
   /** Simulated gateway round-trip: always confirms. */
   pay: ({ amount, method, quoteRequestId }) => call((s) => {
     const request = s.quoteRequests.find((item) => item.id === quoteRequestId);
+    const selectedName = s.selectedQuote?.name;
+    const reply = selectedName && request?.insurerQuotes?.[selectedName];
+    if (reply?.unavailableAt || request?.unavailableInsurers?.some((entry) => entry.name === selectedName)) {
+      throw new Error('This quotation is no longer available for payment. Request a fresh quote from an available insurer.');
+    }
     const receipt = {
       transactionId: `TXN-${Date.now().toString(36).toUpperCase()}`,
       status: 'Confirmed',

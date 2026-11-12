@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { inspectionPhotos, inspections, insurers } from '../db/schema.js';
+import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 
 export type NewInspection = typeof inspections.$inferInsert;
 export type InspectionRow = typeof inspections.$inferSelect;
@@ -54,11 +55,11 @@ export class InspectionsRepository {
       .orderBy(...PHOTO_ORDER);
   }
 
-  async findActiveInsurer(tx: Transaction, insurerId: string) {
+  async findInsurerTakingNewBusiness(tx: Transaction, insurerId: string, now: Date) {
     const [insurer] = await tx
       .select({ id: insurers.id, name: insurers.name })
       .from(insurers)
-      .where(and(eq(insurers.id, insurerId), eq(insurers.status, 'ACTIVE')))
+      .where(and(eq(insurers.id, insurerId), ...takesNewBusinessWhere(now)))
       .for('share');
     return insurer;
   }

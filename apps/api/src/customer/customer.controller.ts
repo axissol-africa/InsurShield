@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
-import { Public } from '../common/auth/auth.guard.js';
+import { Needs, Public } from '../common/auth/auth.guard.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { AccountService } from './account.service.js';
@@ -46,12 +46,14 @@ export class CustomerController {
   // ── Quote requests ──────────────────────────────────────────────
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('quote-request:read')
   @Get('quote-requests')
   listQuoteRequests(@CurrentUser() principal: Principal) {
     return this.quoteRequests.list(this.scope(principal).id);
   }
 
   /** Sends one request to every active insurer at once. */
+  @Needs('quote-request:submit')
   @Post('quote-requests')
   @HttpCode(HttpStatus.CREATED)
   @ApiRateLimit(API_LIMITS.customerWrite)
@@ -72,11 +74,13 @@ export class CustomerController {
   }
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('quote-request:read')
   @Get('quote-requests/:id')
   getQuoteRequest(@Param('id') id: string, @CurrentUser() principal: Principal) {
     return this.quoteRequests.get(this.scope(principal).id, id);
   }
 
+  @Needs('quote-request:submit')
   @Post('quote-requests/:id/requote')
   @HttpCode(HttpStatus.CREATED)
   requote(@Param('id') id: string, @CurrentUser() principal: Principal) {
@@ -86,18 +90,21 @@ export class CustomerController {
   // ── Policies ────────────────────────────────────────────────────
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('policy:read')
   @Get('policies')
   listPolicies(@CurrentUser() principal: Principal) {
     return this.policies.list(this.scope(principal).id);
   }
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('policy:read')
   @Get('policies/:policyNumber')
   getPolicy(@Param('policyNumber') policyNumber: string, @CurrentUser() principal: Principal) {
     return this.policies.get(this.scope(principal).id, policyNumber);
   }
 
   /** Starts a renewal: a new quote request carrying this policy's cover forward. */
+  @Needs('policy:renew')
   @Post('policies/:policyNumber/renew')
   @HttpCode(HttpStatus.CREATED)
   renewPolicy(@Param('policyNumber') policyNumber: string, @CurrentUser() principal: Principal) {
@@ -107,12 +114,14 @@ export class CustomerController {
   // ── Claims and NCD ──────────────────────────────────────────────
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('claim:read')
   @Get('claims')
   listClaims(@CurrentUser() principal: Principal) {
     return this.claims.list(this.scope(principal).id);
   }
 
   /** First notification: issues the claim number the customer quotes by phone. */
+  @Needs('claim:notify')
   @Post('claims')
   @HttpCode(HttpStatus.CREATED)
   @ApiRateLimit(API_LIMITS.customerWrite)
@@ -132,11 +141,13 @@ export class CustomerController {
     return result.value;
   }
 
+  @Needs('ncd-application:read')
   @Get('ncd/applications')
   listNcdApplications(@CurrentUser() principal: Principal) {
     return this.ncd.list(this.scope(principal).id);
   }
 
+  @Needs('ncd-application:apply')
   @Post('ncd/applications')
   @HttpCode(HttpStatus.CREATED)
   applyForNcd(@Body() dto: ApplyForNcdDto, @CurrentUser() principal: Principal) {
@@ -158,6 +169,7 @@ export class CustomerController {
   // ── Account ─────────────────────────────────────────────────────
 
   /** Closes the account. Refused while an active policy is in force. */
+  @Needs('account:close')
   @Delete('account')
   @HttpCode(HttpStatus.OK)
   closeAccount(@CurrentUser() principal: Principal) {

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../common/insurer-standing.js';
 import { fromContract, toContract } from '../common/contract.js';
 import { MAX_NGWEE } from '../common/domain/money-limits.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
@@ -82,9 +83,25 @@ export class PaymentsService {
     let paid: ReceiptRow;
     try {
       paid = await this.payments.transaction(async (tx) => {
+        // Paying is new business, so the insurer behind the quote has to be one
+        // that may still take it. Read first and held shared, so a deactivation
+        // cannot commit between the check and the policy.
+        const standing = await this.payments.insurerStanding(tx, quote.insurerId);
+        if (!standing) throw ApiException.notFound('Insurer', quote.insurerName);
+        if (!takesNewBusiness(standing, confirmedAt)) {
+          throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(quote.insurerName));
+        }
         if (!(await this.payments.lockOpenCustomer(tx, customerId))) throw ApiException.forbidden(ACCOUNT_CLOSED);
         const lockedRequest = await this.payments.lockRequest(tx, request.id);
         if (!lockedRequest) throw ApiException.notFound('Quote request', dto.quoteRequestId);
+        const lockedQuote = await this.payments.lockQuote(tx, quote.id);
+        if (!lockedQuote) throw ApiException.notFound('Quote from', dto.insurer);
+        if (lockedQuote.unpayableAt) {
+          throw ApiException.conflict(
+            'QUOTE_UNAVAILABLE',
+            `${quote.insurerName}'s quote is no longer available for payment. Request fresh quotes to continue.`,
+          );
+        }
 
         // Inserted before the checks, so a second request with this key waits on the first and replays it.
         const payment = await this.payments.insertPayment(tx, {

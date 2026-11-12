@@ -1,6 +1,6 @@
 import { toContract } from '../../common/contract.js';
 import { bpsToPercent } from '../../common/money.js';
-import type { ContactRow, InsurerRow, PublicInsurerRow } from '../insurers.repository.js';
+import type { ContactRow, EvidenceRow, InsurerRow, IntegrationRow, PublicInsurerRow } from '../insurers.repository.js';
 
 function toContactResponse(contact: ContactRow) {
   return {
@@ -48,7 +48,50 @@ export function toInsurerResponse(insurer: InsurerRow) {
     licenceExpiry: insurer.licenceExpiry?.toISOString() ?? null,
     registrationNumber: insurer.registrationNumber,
     tpin: insurer.tpin,
+    activation: toActivationResponse(insurer),
   };
 }
 
 export type InsurerResponse = ReturnType<typeof toInsurerResponse>;
+
+/** What activation decided, for whoever reviews the record afterwards. */
+export function toActivationResponse(insurer: InsurerRow) {
+  return {
+    effectiveFrom: asDay(insurer.effectiveFrom),
+    renewalDate: asDay(insurer.renewalDate),
+    approvedAt: insurer.approvedAt?.toISOString() ?? null,
+    conditions: insurer.activationConditions,
+  };
+}
+
+/** A calendar day on the wire, from a `date` column read as a Date at UTC midnight. */
+const asDay = (value: Date | null) => (value === null ? null : value.toISOString().slice(0, 10));
+
+export function toEvidenceResponse(evidence: NonNullable<EvidenceRow>) {
+  return {
+    id: evidence.id,
+    kind: evidence.kind,
+    documentId: evidence.documentId,
+    reference: evidence.reference,
+    expiresAt: asDay(evidence.expiresAt),
+    state: evidence.state,
+    reviewedBy: evidence.reviewedByName,
+    reviewedAt: evidence.reviewedAt?.toISOString() ?? null,
+    note: evidence.note,
+    capturedAt: evidence.createdAt.toISOString(),
+  };
+}
+
+/** The technical model as a reviewer sees it. The client secret is never selected, so it cannot be returned. */
+export function toIntegrationResponse(model: IntegrationRow) {
+  return {
+    apiBaseUrl: model.apiBaseUrl,
+    publicSigningKey: model.publicSigningKey,
+    clientId: model.clientId,
+    quoteCallbackUrl: model.quoteCallbackUrl,
+    claimsCallbackUrl: model.claimsCallbackUrl,
+    policyCallbackUrl: model.policyCallbackUrl,
+    sandboxMode: model.sandboxMode,
+    activatedAt: model.activatedAt?.toISOString() ?? null,
+  };
+}

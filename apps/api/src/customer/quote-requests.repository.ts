@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notExists } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
+import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 import {
   customers,
   inspectionShots,
@@ -30,6 +31,7 @@ export interface RecipientRow {
   quoteRequestId: string;
   insurerId: string;
   insurerName: string;
+  cancelledAt: Date | null;
 }
 
 export interface QuoteRow {
@@ -43,6 +45,7 @@ export interface QuoteRow {
   validUntil: Date;
   extendedAt: Date | null;
   documentId: string;
+  unpayableAt: Date | null;
 }
 
 export interface RequoteLink {
@@ -116,6 +119,7 @@ export class QuoteRequestsRepository {
         quoteRequestId: quoteRequestRecipients.quoteRequestId,
         insurerId: quoteRequestRecipients.insurerId,
         insurerName: insurers.name,
+        cancelledAt: quoteRequestRecipients.cancelledAt,
       })
       .from(quoteRequestRecipients)
       .innerJoin(insurers, eq(insurers.id, quoteRequestRecipients.insurerId))
@@ -137,6 +141,7 @@ export class QuoteRequestsRepository {
         validUntil: insurerQuotes.validUntil,
         extendedAt: insurerQuotes.extendedAt,
         documentId: insurerQuotes.documentId,
+        unpayableAt: insurerQuotes.unpayableAt,
       })
       .from(insurerQuotes)
       .innerJoin(insurers, eq(insurers.id, insurerQuotes.insurerId))
@@ -165,19 +170,11 @@ export class QuoteRequestsRepository {
   }
 
   /** Held shared until `tx` ends, so a deactivation in flight is waited for and none commits under the request. */
-  async activeInsurerIds(tx: Transaction): Promise<string[]> {
-    // A date-only licence expiry is valid until the end of that UTC day.
-    const today = new Date();
-    const currentDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  async activeInsurerIds(tx: Transaction, now: Date): Promise<string[]> {
     const rows = await tx
       .select({ id: insurers.id })
       .from(insurers)
-      .where(
-        and(
-          eq(insurers.status, 'ACTIVE'),
-          or(isNull(insurers.licenceExpiry), gte(insurers.licenceExpiry, currentDay)),
-        ),
-      )
+      .where(and(...takesNewBusinessWhere(now)))
       .orderBy(asc(insurers.name))
       .for('share');
     return rows.map((insurer) => insurer.id);
@@ -217,6 +214,56 @@ export class QuoteRequestsRepository {
   async insertShots(tx: Transaction, quoteRequestId: string, shots: NewShot[]): Promise<void> {
     if (shots.length === 0) return;
     await tx.insert(inspectionShots).values(shots.map((shot) => ({ quoteRequestId, ...shot })));
+  }
+
+  /**
+   * Marks delivery rows that never received a final quote. This deliberately
+   * leaves `status` alone: delivery and cancellation answer different facts.
+   */
+  async cancelUnansweredForSuspension(tx: Transaction, insurerId: string, cancelledAt: Date) {
+    const finalQuote = tx
+      .select({ id: insurerQuotes.id })
+      .from(insurerQuotes)
+      .where(
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequestRecipients.quoteRequestId),
+          eq(insurerQuotes.insurerId, quoteRequestRecipients.insurerId),
+        ),
+      );
+    return tx
+      .update(quoteRequestRecipients)
+      .set({ cancelledAt, cancelledReason: 'INSURER_SUSPENDED' })
+      .where(
+        and(
+          eq(quoteRequestRecipients.insurerId, insurerId),
+          isNull(quoteRequestRecipients.cancelledAt),
+          notExists(finalQuote),
+        ),
+      )
+      .returning({ quoteRequestId: quoteRequestRecipients.quoteRequestId });
+  }
+
+  /** Final quotes without a confirmed payment stay visible as history but may no longer be paid. */
+  async markUnpaidQuotesUnavailable(tx: Transaction, insurerId: string, unpayableAt: Date) {
+    const confirmedPayment = tx
+      .select({ id: payments.id })
+      .from(payments)
+      .where(and(eq(payments.insurerQuoteId, insurerQuotes.id), eq(payments.status, 'CONFIRMED')));
+    return tx
+      .update(insurerQuotes)
+      .set({ unpayableAt, unpayableReason: 'INSURER_SUSPENDED' })
+      .where(
+        and(eq(insurerQuotes.insurerId, insurerId), isNull(insurerQuotes.unpayableAt), notExists(confirmedPayment)),
+      )
+      .returning({ id: insurerQuotes.id });
+  }
+
+  async customersForRequests(tx: Transaction, quoteRequestIds: string[]) {
+    if (quoteRequestIds.length === 0) return [];
+    return tx
+      .select({ quoteRequestId: quoteRequests.id, customerId: quoteRequests.customerId })
+      .from(quoteRequests)
+      .where(inArray(quoteRequests.id, quoteRequestIds));
   }
 
   /** Stable captured proof that follows the request if it is sent again. */

@@ -192,4 +192,69 @@ describe('quote comparison', () => {
     expect(screen.getByRole('button', { name: /Expired · request a new quote/ })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Choose Global Guard Insurance', exact: true })).toBeEnabled();
   });
+
+  it('shows a recipient cancelled before reply as unavailable instead of waiting', async () => {
+    const user = userEvent.setup();
+    const request = useStore.getState().quoteRequests[0];
+    useStore.setState({
+      quoteRequests: [
+        {
+          ...request,
+          unavailableInsurers: [{ name: 'Prestige Assurance', unavailableAt: '2026-11-12T10:00:00Z' }],
+        },
+      ],
+    });
+    renderPage();
+
+    const unavailableCard = screen.getByRole('listitem', { name: 'Prestige Assurance' });
+    expect(within(unavailableCard).getByText('Unavailable')).toBeVisible();
+    expect(within(unavailableCard).getByText('Quote unavailable', { exact: true })).toBeVisible();
+    expect(within(unavailableCard).getByRole('alert')).toHaveTextContent('This insurer can no longer complete this quote.');
+    expect(within(unavailableCard).queryByRole('button', { name: /Choose Prestige/ })).not.toBeInTheDocument();
+    const freshQuotes = within(unavailableCard).getByRole('button', {
+      name: 'Request fresh quotes after Prestige Assurance became unavailable',
+    });
+    expect(freshQuotes).toBeEnabled();
+    expect(
+      screen.getByText(
+      '0 of 2 insurers have an available final quote. 1 insurer is unavailable. 1 insurer is awaiting a reply.',
+      ),
+    ).toBeVisible();
+
+    await user.click(freshQuotes);
+    expect(useStore.getState().selectedQuote).toBeNull();
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/quote-request?capture=phone-123');
+  });
+
+  it('keeps an unavailable final quote document visible but prevents payment', () => {
+    const request = useStore.getState().quoteRequests[0];
+    useStore.setState({
+      quoteRequests: [
+        {
+          ...request,
+          insurerQuotes: {
+            'Prestige Assurance': {
+              premium: 2300,
+              validUntil: '2099-01-01T00:00:00Z',
+              unavailableAt: '2026-11-12T10:00:00Z',
+              document: { name: 'Prestige quotation.pdf', type: 'application/pdf', size: 4, dataUrl: 'data:application/pdf;base64,AA==' },
+              insurerReference: 'PA-Q-2300',
+            },
+          },
+        },
+      ],
+    });
+    renderPage();
+
+    const unavailableCard = screen.getByRole('listitem', { name: 'Prestige Assurance' });
+    expect(within(unavailableCard).getByText('ZMW 2,300.00')).toBeVisible();
+    expect(within(unavailableCard).getByText('Previously issued quote · no longer available for payment')).toBeVisible();
+    expect(within(unavailableCard).getByRole('button', { name: 'View quotation' })).toBeEnabled();
+    expect(within(unavailableCard).queryByRole('button', { name: /Choose Prestige/ })).not.toBeInTheDocument();
+    expect(
+      within(unavailableCard).getByRole('button', {
+        name: 'Request fresh quotes after Prestige Assurance became unavailable',
+      }),
+    ).toBeEnabled();
+  });
 });

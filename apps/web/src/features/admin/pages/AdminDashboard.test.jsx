@@ -79,6 +79,19 @@ describe('deleted insurer controls', () => {
     expect(screen.queryByRole('button', { name: /Restore / })).not.toBeInTheDocument();
   });
 
+  it('sends an inactive insurer to its evidence review instead of offering an unsafe direct reactivation', async () => {
+    useStore.setState({ staffSession: { role: 'SUPER_ADMIN', name: 'Super Admin', isSuperAdmin: true } });
+    render(<AdminDashboard />);
+    await openInsurers();
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions for Inactive Assurance' }));
+    expect(screen.queryByRole('menuitem', { name: /Reactivate/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Review eligibility' }));
+
+    expect(screen.getByRole('heading', { name: 'Review onboarding' })).toBeVisible();
+    expect(screen.getByLabelText('Insurer under review')).toHaveValue('inactive-insurer');
+  });
+
   it('moves a mock insurer to the removed list and restores it to normal management once', async () => {
     useStore.setState({ insurersList: [activeInsurer], staffSession: { role: 'SUPER_ADMIN', isSuperAdmin: true } });
     api.insurers.list.mockImplementation(mockInsurers.list);

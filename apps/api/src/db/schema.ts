@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -21,6 +22,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   ACTOR_TYPES,
+  APPROVAL_ACTIONS,
+  APPROVAL_STATUSES,
   CLAIM_STATUSES,
   COVERAGE_DURATIONS,
   DELIVERY_KINDS,
@@ -28,6 +31,8 @@ import {
   DOCUMENT_KINDS,
   DOCUMENT_RETENTION_CLASSES,
   DOCUMENT_SCAN_STATUSES,
+  EVIDENCE_KINDS,
+  EVIDENCE_REVIEW_STATES,
   INSPECTION_METHODS,
   INSPECTION_RULES,
   INSPECTION_STATUSES,
@@ -38,6 +43,7 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   POLICY_STATUSES,
+  QUOTE_UNAVAILABILITY_REASONS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
   JOB_STATUSES,
@@ -53,6 +59,8 @@ export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STA
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
+export const evidenceKind = pgEnum('EvidenceKind', EVIDENCE_KINDS);
+export const evidenceReviewState = pgEnum('EvidenceReviewState', EVIDENCE_REVIEW_STATES);
 export const policyStatus = pgEnum('PolicyStatus', POLICY_STATUSES);
 export const paymentStatus = pgEnum('PaymentStatus', PAYMENT_STATUSES);
 export const paymentMethod = pgEnum('PaymentMethod', PAYMENT_METHODS);
@@ -67,12 +75,15 @@ export const documentKind = pgEnum('DocumentKind', DOCUMENT_KINDS);
 export const documentScanStatus = pgEnum('DocumentScanStatus', DOCUMENT_SCAN_STATUSES);
 export const documentRetentionClass = pgEnum('DocumentRetentionClass', DOCUMENT_RETENTION_CLASSES);
 export const deliveryStatus = pgEnum('DeliveryStatus', DELIVERY_STATUSES);
+export const quoteUnavailabilityReason = pgEnum('QuoteUnavailabilityReason', QUOTE_UNAVAILABILITY_REASONS);
 export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
 export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
 export const notificationChannel = pgEnum('NotificationChannel', NOTIFICATION_CHANNELS);
 export const notificationCategory = pgEnum('NotificationCategory', NOTIFICATION_CATEGORIES);
 export const notificationDeliveryStatus = pgEnum('NotificationDeliveryStatus', NOTIFICATION_DELIVERY_STATUSES);
+export const approvalAction = pgEnum('ApprovalAction', APPROVAL_ACTIONS);
+export const approvalStatus = pgEnum('ApprovalStatus', APPROVAL_STATUSES);
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, precision: 3, mode: 'date' });
@@ -250,6 +261,23 @@ export const consentRecords = pgTable(
   ],
 );
 
+/** A team belongs to one insurer; roles, not teams, decide permissions. */
+export const staffTeams = pgTable(
+  'staff_teams',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    name: text('name').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('staff_teams_insurerId_name_key').on(t.insurerId, t.name),
+    index('staff_teams_insurerId_idx').on(t.insurerId),
+    fk('staff_teams_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+  ],
+);
+
 export const staffUsers = pgTable(
   'staff_users',
   {
@@ -259,6 +287,7 @@ export const staffUsers = pgTable(
     role: staffRole('role').notNull(),
     insurerId: uuid('insurerId'),
     isActive: boolean('isActive').notNull().default(true),
+    teamId: uuid('teamId'),
     lastLoginAt: timestamptz('lastLoginAt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -268,7 +297,9 @@ export const staffUsers = pgTable(
     uniqueIndex('staff_users_email_key').on(t.email),
     uniqueIndex('staff_users_userId_key').on(t.userId),
     index('staff_users_insurerId_idx').on(t.insurerId),
+    index('staff_users_teamId_idx').on(t.teamId),
     fk('staff_users_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('staff_users_teamId_fkey', [t.teamId], [staffTeams.id], 'restrict'),
     fk('staff_users_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
   ],
 );
@@ -286,6 +317,13 @@ export const insurers = pgTable(
     plan: text('plan'),
     licenceNumber: text('licenceNumber'),
     licenceExpiry: timestamptz('licenceExpiry'),
+    // What activation recorded: US-ADM-002 asks for the dates, the approver and
+    // any conditions, so a decision to let an insurer trade can be read back.
+    effectiveFrom: date('effectiveFrom', { mode: 'date' }),
+    renewalDate: date('renewalDate', { mode: 'date' }),
+    approvedBy: uuid('approvedBy'),
+    approvedAt: timestamptz('approvedAt'),
+    activationConditions: text('activationConditions'),
     logoUrl: text('logoUrl'),
     ncdAccepted: boolean('ncdAccepted').notNull().default(true),
     inspectionRule: inspectionRule('inspectionRule').notNull().default('OPTIONAL'),
@@ -335,7 +373,9 @@ export const insurerIntegrations = pgTable(
     claimsCallbackUrl: text('claimsCallbackUrl'),
     policyCallbackUrl: text('policyCallbackUrl'),
     clientId: text('clientId').notNull(),
-    clientSecretEncrypted: text('clientSecretEncrypted').notNull(),
+    // Captured when an insurer integration is actually built, which needs a
+    // decision about where the key lives; onboarding records the rest without it.
+    clientSecretEncrypted: text('clientSecretEncrypted'),
     sandboxMode: boolean('sandboxMode').notNull().default(true),
     activatedAt: timestamptz('activatedAt'),
     createdAt: createdAt(),
@@ -344,6 +384,39 @@ export const insurerIntegrations = pgTable(
   (t) => [
     uniqueIndex('insurer_integrations_clientId_key').on(t.clientId),
     fk('insurer_integrations_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
+  ],
+);
+
+/** Licence, compliance and agreement documents an insurer is reviewed on. */
+export const insurerEvidence = pgTable(
+  'insurer_evidence',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    kind: evidenceKind('kind').notNull(),
+    /**
+     * The scanned document, under the same rules as every other upload.
+     *
+     * Null only for a licence grandfathered in: the API requires a document to
+     * capture evidence, so an absent one is itself the mark of a record nobody
+     * has produced papers for yet.
+     */
+    documentId: uuid('documentId'),
+    /** The issuer's own reference, as printed on the document. */
+    reference: text('reference'),
+    expiresAt: date('expiresAt', { mode: 'date' }),
+    state: evidenceReviewState('state').notNull().default('PENDING'),
+    reviewedBy: uuid('reviewedBy'),
+    reviewedAt: timestamptz('reviewedAt'),
+    note: text('note'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('insurer_evidence_insurerId_kind_idx').on(t.insurerId, t.kind),
+    fk('insurer_evidence_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
+    fk('insurer_evidence_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+    fk('insurer_evidence_reviewedBy_fkey', [t.reviewedBy], [staffUsers.id], 'restrict'),
   ],
 );
 
@@ -453,9 +526,14 @@ export const quoteRequestRecipients = pgTable(
     deliveredAt: timestamptz('deliveredAt'),
     acknowledgedAt: timestamptz('acknowledgedAt'),
     lastError: text('lastError'),
+    // Delivery status remains the delivery record. A suspension is a separate
+    // business mark so operations can still see whether it was delivered.
+    cancelledAt: timestamptz('cancelledAt'),
+    cancelledReason: quoteUnavailabilityReason('cancelledReason'),
   },
   (t) => [
     index('quote_request_recipients_insurerId_status_idx').on(t.insurerId, t.status),
+    index('quote_request_recipients_insurerId_cancelledAt_idx').on(t.insurerId, t.cancelledAt),
     uniqueIndex('quote_request_recipients_quoteRequestId_insurerId_key').on(
       t.quoteRequestId,
       t.insurerId,
@@ -467,6 +545,10 @@ export const quoteRequestRecipients = pgTable(
       'cascade',
     ),
     fk('quote_request_recipients_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    check(
+      'quote_request_recipients_cancellation_mark_check',
+      sql`(${t.cancelledAt} IS NULL) = (${t.cancelledReason} IS NULL)`,
+    ),
   ],
 );
 
@@ -484,10 +566,15 @@ export const insurerQuotes = pgTable(
     validUntil: timestamptz('validUntil').notNull(),
     extendedAt: timestamptz('extendedAt'),
     documentId: uuid('documentId').notNull(),
+    // A suspension does not rewrite the quote or its expiry. It marks the
+    // otherwise historical quote as no longer payable.
+    unpayableAt: timestamptz('unpayableAt'),
+    unpayableReason: quoteUnavailabilityReason('unpayableReason'),
   },
   (t) => [
     uniqueIndex('insurer_quotes_documentId_key').on(t.documentId),
     index('insurer_quotes_validUntil_idx').on(t.validUntil),
+    index('insurer_quotes_insurerId_unpayableAt_idx').on(t.insurerId, t.unpayableAt),
     uniqueIndex('insurer_quotes_quoteRequestId_insurerId_key').on(t.quoteRequestId, t.insurerId),
     uniqueIndex('insurer_quotes_quoteRequestId_insurerReference_key').on(
       t.quoteRequestId,
@@ -497,6 +584,10 @@ export const insurerQuotes = pgTable(
     fk('insurer_quotes_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
     fk('insurer_quotes_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
     moneyCheck('insurer_quotes', t.premiumMinor),
+    check(
+      'insurer_quotes_unpayable_mark_check',
+      sql`(${t.unpayableAt} IS NULL) = (${t.unpayableReason} IS NULL)`,
+    ),
   ],
 );
 
@@ -1011,5 +1102,41 @@ export const piaConfigHistory = pgTable(
       'pia_config_history_previousRateBps_check',
       sql`${t.previousRateBps} IS NULL OR (${t.previousRateBps} >= ${sql.raw(String(MIN_RATE_BPS))} AND ${t.previousRateBps} <= ${sql.raw(String(MAX_RATE_BPS))})`,
     ),
+  ],
+);
+
+/**
+ * A maker/checker record freezes a request before anyone may execute it. Its
+ * payload is deliberately an opaque, action-specific snapshot: each executor
+ * validates it again at approval time, so a historical request cannot turn
+ * into a new unreviewed kind of configuration change.
+ */
+export const approvalRequests = pgTable(
+  'approval_requests',
+  {
+    id: id(),
+    action: approvalAction('action').notNull(),
+    status: approvalStatus('status').notNull().default('PENDING'),
+    targetType: text('targetType').notNull(),
+    targetId: text('targetId').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    requestedByStaffId: uuid('requestedByStaffId').notNull(),
+    requestedReason: text('requestedReason').notNull(),
+    decidedByStaffId: uuid('decidedByStaffId'),
+    decisionReason: text('decisionReason'),
+    expiresAt: timestamptz('expiresAt').notNull(),
+    decidedAt: timestamptz('decidedAt'),
+    executedAt: timestamptz('executedAt'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('approval_requests_status_createdAt_idx').on(t.status, t.createdAt),
+    index('approval_requests_target_idx').on(t.targetType, t.targetId),
+    uniqueIndex('approval_requests_one_pending_action_key')
+      .on(t.action, t.targetType, t.targetId)
+      .where(sql`${t.status} = 'PENDING'`),
+    fk('approval_requests_requestedByStaffId_fkey', [t.requestedByStaffId], [staffUsers.id], 'restrict'),
+    fk('approval_requests_decidedByStaffId_fkey', [t.decidedByStaffId], [staffUsers.id], 'restrict'),
   ],
 );

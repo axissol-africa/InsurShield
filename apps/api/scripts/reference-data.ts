@@ -6,7 +6,8 @@
  * Every write is an upsert, so this is safe to re-run against any environment.
  */
 import type { Transaction } from '../src/db/database.module.js';
-import { insurerContacts, insurers, ncdCodes, piaConfig } from '../src/db/schema.js';
+import { and, eq } from 'drizzle-orm';
+import { insurerContacts, insurerEvidence, insurers, ncdCodes, piaConfig } from '../src/db/schema.js';
 import { percentToBps } from '../src/common/money.js';
 
 type NewInsurer = typeof insurers.$inferInsert;
@@ -28,6 +29,20 @@ export interface SeedInsurer
   ratePercentage: number;
   contact: Omit<typeof insurerContacts.$inferInsert, 'insurerId'>;
   ncdCodes: Array<{ code: string; percentage: number; yearsClaimFree: number }>;
+}
+
+/**
+ * A licence for the demo insurers, dated from the seed run rather than fixed.
+ *
+ * A fixed date would make a database seeded after it unable to take new
+ * business, which is a trap for whoever seeds one next year. Like the
+ * grandfathered records in `0018`, these carry no document and no number: an
+ * insurer whose papers nobody has produced is distinguishable from one whose
+ * papers somebody has, and the demo data should not pretend otherwise.
+ */
+function demoLicence(now: Date) {
+  const expiry = new Date(Date.UTC(now.getUTCFullYear() + 1, now.getUTCMonth(), now.getUTCDate()));
+  return { licenceExpiry: expiry, evidenceExpiry: expiry };
 }
 
 /** PIA minimum: no insurer may quote below this percentage of vehicle value. */
@@ -202,8 +217,9 @@ export async function seedReferenceData(tx: Transaction, log: (line: string) => 
     .onConflictDoUpdate({ target: piaConfig.id, set: { piaRateBps } });
   log(`PIA minimum rate set to ${PIA_RATE_PERCENTAGE}% of declared vehicle value`);
 
+  const licence = demoLicence(new Date());
   for (const { contact, ncdCodes: codes, ratePercentage, ...insurer } of INSURERS) {
-    const values = { ...insurer, rateBps: percentToBps(ratePercentage) };
+    const values = { ...insurer, rateBps: percentToBps(ratePercentage), licenceExpiry: licence.licenceExpiry };
     const [record] = await tx
       .insert(insurers)
       .values(values)
@@ -218,6 +234,24 @@ export async function seedReferenceData(tx: Transaction, log: (line: string) => 
     for (const code of codes) {
       const values = { ...code, insurerId: record.id };
       await tx.insert(ncdCodes).values(values).onConflictDoUpdate({ target: ncdCodes.code, set: values });
+    }
+
+    // One licence on file per insurer, so a seeded database can be reviewed and
+    // activated like a real one. Re-seeding leaves an existing licence alone.
+    const [onFile] = await tx
+      .select({ id: insurerEvidence.id })
+      .from(insurerEvidence)
+      .where(and(eq(insurerEvidence.insurerId, record.id), eq(insurerEvidence.kind, 'LICENCE')));
+    if (!onFile) {
+      await tx.insert(insurerEvidence).values({
+        insurerId: record.id,
+        kind: 'LICENCE',
+        documentId: null,
+        expiresAt: licence.evidenceExpiry,
+        state: 'APPROVED',
+        reviewedAt: new Date(),
+        note: 'Seeded demo licence. No document has been produced.',
+      });
     }
 
     log(`Insurer ready: ${record.name} (${ratePercentage}%)`);

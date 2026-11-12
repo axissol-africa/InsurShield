@@ -1,9 +1,14 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../common/insurer-standing.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import { isInsurerRole } from '../common/domain/enums.js';
+
+/** Insurer staff, with the insurer they act for resolved. */
+export type InsurerStaff = Extract<Principal, { kind: 'staff' }> & { insurerId: string };
 import type { Transaction } from '../db/database.module.js';
 import { PiaService } from '../pia/pia.service.js';
 import { AuditService } from '../common/audit/audit.service.js';
@@ -63,12 +68,53 @@ export class InsurerPortalService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** The insurer this caller acts for, or a refusal if the account has none. */
-  insurerOf(principal: Principal): string {
-    if (principal.kind !== 'staff' || principal.role !== 'INSURER_USER' || !principal.insurerId) {
+  /**
+   * The insurer staff member this caller is, or a refusal.
+   *
+   * Any insurer role qualifies, not just the one the portal began with: which
+   * functions each role may reach is the permission matrix's business, and
+   * testing for a single role here left the roles added for decision 7 able to
+   * pass the guard and then be refused by every service behind it.
+   */
+  staffOf(principal: Principal): InsurerStaff {
+    if (principal.kind !== 'staff' || !isInsurerRole(principal.role) || !principal.insurerId) {
       throw ApiException.forbidden('This account is not linked to an insurer.');
     }
-    return principal.insurerId;
+    return { ...principal, insurerId: principal.insurerId };
+  }
+
+  /** The insurer this caller acts for, or a refusal if the account has none. */
+  insurerOf(principal: Principal): string {
+    return this.staffOf(principal).insurerId;
+  }
+
+  /**
+   * A record this insurer cannot see answers as absent. When it exists and
+   * belongs to another insurer, US-VEN-001 asks for the attempt to be audited:
+   * the row names who reached and what they reached for, never anything about
+   * the record, which they never saw.
+   *
+   * The audit is written on its own connection, because this returns an error
+   * the caller throws and that rollback would take the row with it.
+   */
+  private async absent(
+    principal: Principal,
+    entity: { type: string; label: string },
+    entityId: string,
+    exists: boolean,
+  ): Promise<ApiException> {
+    if (exists) {
+      const staff = this.staffOf(principal);
+      await this.audit.refusal({
+        actor: auditActor(staff),
+        action: 'access.refused',
+        entityType: entity.type,
+        entityId,
+        note: "Reached for another insurer's record.",
+        correlationId: staff.insurerId,
+      });
+    }
+    return ApiException.notFound(entity.label, entityId);
   }
 
   // ── Quote requests ──────────────────────────────────────────────
@@ -97,10 +143,27 @@ export class InsurerPortalService {
     const premiumMinor = kwachaToNgwee(dto.premium);
     const requestExpired = () =>
       ApiException.conflict('REQUEST_EXPIRED', 'This request has expired and can no longer be quoted.');
+    const requestUnavailable = () =>
+      ApiException.conflict('REQUEST_UNAVAILABLE', 'This request is no longer available to quote.');
 
     const reply = await this.portal.transaction(async (tx) => {
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', insurerId);
+      if (!takesNewBusiness(standing, new Date())) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
+      }
+
       const delivery = await this.portal.lockDelivery(tx, requestId, insurerId);
-      if (!delivery) throw ApiException.notFound('Quote request', requestId);
+      if (!delivery) {
+        throw await this.absent(
+          principal,
+          { type: 'QUOTE_REQUEST', label: 'Quote request' },
+          requestId,
+          await this.portal.quoteRequestExists(requestId, tx),
+        );
+      }
+
+      if (delivery.cancelledAt) throw requestUnavailable();
 
       if (await this.portal.hasQuote(requestId, insurerId, tx)) {
         throw ApiException.conflict(
@@ -185,7 +248,13 @@ export class InsurerPortalService {
     const insurerId = this.insurerOf(principal);
 
     const extended = await this.portal.transaction(async (tx) => {
-      const result = await this.portal.extendOpenQuote(tx, requestId, insurerId, dto.extraDays, new Date());
+      const extendedAt = new Date();
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', insurerId);
+      if (!takesNewBusiness(standing, extendedAt)) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
+      }
+      const result = await this.portal.extendOpenQuote(tx, requestId, insurerId, dto.extraDays, extendedAt);
       if (result) {
         await this.audit.write(tx, {
           actor: auditActor(principal),
@@ -201,7 +270,15 @@ export class InsurerPortalService {
     });
     if (extended) return toExtension(extended);
 
-    if (!(await this.portal.hasQuote(requestId, insurerId))) {
+    const quote = await this.portal.quoteAvailability(requestId, insurerId);
+    if (quote?.unpayableAt) {
+      throw ApiException.conflict(
+        'QUOTE_UNAVAILABLE',
+        'This quote is no longer available for the customer to pay. They need to request fresh quotes.',
+      );
+    }
+
+    if (!quote) {
       throw ApiException.notFound('Quote for request', requestId);
     }
     throw ApiException.conflict(
@@ -237,7 +314,14 @@ export class InsurerPortalService {
 
     const issued = await this.portal.transaction(async (tx) => {
       const policy = await this.portal.lockPolicy(tx, policyNumber, insurerId);
-      if (!policy) throw ApiException.notFound('Policy', policyNumber);
+      if (!policy) {
+        throw await this.absent(
+          principal,
+          { type: 'POLICY', label: 'Policy' },
+          policyNumber,
+          await this.portal.policyExists(policyNumber, tx),
+        );
+      }
       if (policy.status === 'ACTIVE') throw alreadyIssued();
 
       await this.documents.assertAttachable(tx, principal, [dto.certificateDocumentId], 'CERTIFICATE');
@@ -349,7 +433,14 @@ export class InsurerPortalService {
     if (acknowledged) return toAcknowledgement(acknowledged);
 
     const claim = await this.portal.findAcknowledgement(claimNumber, insurerId);
-    if (!claim) throw ApiException.notFound('Claim', claimNumber);
+    if (!claim) {
+      throw await this.absent(
+        principal,
+        { type: 'CLAIM', label: 'Claim' },
+        claimNumber,
+        await this.portal.claimExists(claimNumber),
+      );
+    }
     return toAcknowledgement(claim);
   }
 
@@ -375,10 +466,18 @@ export class InsurerPortalService {
 
     const { decision, applicationNumber } = await this.portal.transaction(async (tx) => {
       const application = await this.portal.lockNcdApplication(tx, applicationId, insurerId);
-      if (!application) throw ApiException.notFound('NCD application', applicationId);
+      if (!application) {
+        throw await this.absent(
+          principal,
+          { type: 'NCD_APPLICATION', label: 'NCD application' },
+          applicationId,
+          await this.portal.ncdApplicationExists(applicationId, tx),
+        );
+      }
       if (!canDecideNcd(application.status)) throw alreadyDecided();
 
-      const decidedAt = ncdDecidedAt(dto.status, new Date());
+      const decidedOn = new Date();
+      const decidedAt = ncdDecidedAt(dto.status, decidedOn);
       const { applicationNumber } = application;
       if (dto.status !== 'APPROVED') {
         const decided = await this.portal.decideNcdApplication(tx, applicationId, insurerId, application.status, {
@@ -405,6 +504,16 @@ export class InsurerPortalService {
           });
         }
         return { decision: toNcdDecision(decided), applicationNumber };
+      }
+
+      // An approved code is a priced offer to a customer, so it is new business
+      // and follows the same rule as a quote. Declining stays open to an insurer
+      // that may no longer sell: answering an application it already holds is
+      // servicing, and leaving it undecidable would strand the customer.
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', insurerId);
+      if (!takesNewBusiness(standing, decidedOn)) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
       }
 
       const percentage = ncdPercentage(application.yearsClaimFree, dto.percentage);

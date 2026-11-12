@@ -61,6 +61,7 @@ describe('the auth service', () => {
           id: staff.id,
           name: staff.fullName,
           email: staff.email,
+          staffRole: 'INSURER_USER',
           role: 'insurer',
           isSuperAdmin: false,
           insurerId: insurer.id,
@@ -81,6 +82,7 @@ describe('the auth service', () => {
         id: staff.id,
         name: staff.fullName,
         email: staff.email,
+        staffRole: role,
         role: 'admin',
         isSuperAdmin,
         insurerId: null,
@@ -99,7 +101,9 @@ describe('the auth service', () => {
         .send({ noticeVersion: '2026-10' })
         .expect(403);
 
-      expect(response.body.message).toBe('Only a customer account can accept these terms.');
+      // The matrix refuses this before the service is reached, so the answer is
+      // the guard's one wording rather than this route's own.
+      expect(response.body.message).toBe('You do not have access to this resource.');
     });
 
     it('records the acceptance with the request context and returns it', async () => {

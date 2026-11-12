@@ -14,8 +14,8 @@ export const withTimestamp = (record, key = 'updatedAt') => ({ ...record, [key]:
 
 export const updateById = (items, id, updater) => items.map((item) => (item.id === id ? updater(item) : item));
 
-/** Deactivated and removed insurers keep their history but receive no new quote requests. */
-export const insurerReceivesRequests = (insurer) => !['Inactive', 'Deleted'].includes(insurer.status);
+/** Only reviewed, active insurers receive new quote requests. */
+export const insurerReceivesRequests = (insurer) => !insurer.status || insurer.status === 'Active';
 
 /**
  * Requests created before guide selection was introduced have no

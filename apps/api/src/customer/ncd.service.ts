@@ -32,7 +32,7 @@ export class NcdService {
   async apply(customer: CustomerPrincipal, dto: ApplyForNcdDto): Promise<NcdApplicationResponse> {
     const submittedAt = new Date();
     const { application, insurerName } = await this.repository.transaction(async (tx) => {
-      const insurer = await this.repository.findActiveInsurer(tx, dto.insurerId);
+      const insurer = await this.repository.findInsurerTakingNewBusiness(tx, dto.insurerId, submittedAt);
       if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
 
       const created = await this.repository.insertApplication(tx, {

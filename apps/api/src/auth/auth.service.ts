@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ApiException } from '../common/errors/api.exception.js';
-import type { Principal } from '../common/auth/auth.types.js';
+import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
 import { shownPhone } from '../common/auth/phone.js';
 import type { Transaction } from '../db/database.module.js';
 import { AuthRepository } from './auth.repository.js';
@@ -11,18 +11,35 @@ export interface StaffSession {
   id: string;
   name: string;
   email: string;
+  /**
+   * The canonical permission role. `role` remains the small portal-routing
+   * value used by the existing web shell; this value lets the browser hide
+   * management controls a quote or claims officer cannot use. The server
+   * remains the enforcement point for every action.
+   */
+  staffRole: StaffRoleName;
   role: 'admin' | 'insurer' | 'support';
   isSuperAdmin: boolean;
   insurerId: string | null;
   insurerName: string | null;
 }
 
-/** Maps the stored role onto the shorthand the staff portals already use. */
-const PORTAL_ROLE = {
+/**
+ * Maps the stored role onto the shorthand the staff portals already use, which
+ * decides only which portal the web app opens. Written out rather than derived,
+ * so the compiler names any role that has no portal yet.
+ */
+const PORTAL_ROLE: Record<StaffRoleName, 'admin' | 'insurer'> = {
   SUPER_ADMIN: 'admin',
   ADMIN: 'admin',
+  INSURER_ADMIN: 'insurer',
+  QUOTE_OFFICER: 'insurer',
+  CLAIMS_OFFICER: 'insurer',
+  SUPPORT: 'insurer',
+  FINANCE: 'insurer',
+  COMPLIANCE_READ_ONLY: 'insurer',
   INSURER_USER: 'insurer',
-} as const;
+};
 
 @Injectable()
 export class AuthService {
@@ -49,6 +66,7 @@ export class AuthService {
           id: staff.id,
           name: staff.fullName,
           email: staff.email,
+          staffRole: principal.role,
           role: PORTAL_ROLE[principal.role],
           isSuperAdmin: principal.role === 'SUPER_ADMIN',
           insurerId: staff.insurerId,

@@ -11,7 +11,7 @@ import { hashPassword } from 'better-auth/crypto';
 import { AUTH } from '../src/auth/auth.constants.js';
 import type { Auth } from '../src/auth/auth.instance.js';
 import { SIGN_IN_LOCKED } from '../src/auth/sign-in-limit.plugin.js';
-import { OptionalAuth, Public } from '../src/common/auth/auth.guard.js';
+import { Needs, OptionalAuth, Public } from '../src/common/auth/auth.guard.js';
 import type { Principal } from '../src/common/auth/auth.types.js';
 import { errorBody } from '../src/common/errors/api.exception.js';
 import { DatabaseConnectionError } from '../src/db/errors.js';
@@ -58,6 +58,9 @@ class ProbeController {
     return { ip: request.ip ?? null, clientHeader: request.header('x-insurshield-client-ip') ?? null };
   }
 
+  // Declared as a real optional-auth route has to be: a guest is served without
+  // a permission, and a signed-in caller is held to one like anywhere else.
+  @Needs('session:read')
   @OptionalAuth()
   @Get('optional')
   optional(@Req() request: Request & { principal?: Principal }) {

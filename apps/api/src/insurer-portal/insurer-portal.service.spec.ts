@@ -69,6 +69,7 @@ describe('final quotes', () => {
     vi.useFakeTimers({ now, toFake: ['Date'] });
     const repository = {
       transaction: (work: (tx: unknown) => Promise<unknown>) => work({}),
+      insurerStanding: async () => ({ name: 'Prestige Assurance', status: 'ACTIVE', licenceExpiry: null }),
       lockDelivery: async () => ({ status: 'SUBMITTED', expiresAt: new Date(now), quoteValidityDays: 14 }),
       hasQuote: async () => false,
     };
@@ -88,6 +89,7 @@ describe('NCD approvals', () => {
     const linked: (string | undefined)[] = [];
     const repository = {
       transaction: (work: (tx: unknown) => Promise<unknown>) => work({}),
+      insurerStanding: async () => ({ name: 'Prestige Assurance', status: 'ACTIVE', licenceExpiry: null }),
       lockNcdApplication: async () => ({ status: 'SUBMITTED', yearsClaimFree: 3, applicationNumber: 'NCDA-1' }),
       insertNcdCode: async (_tx: unknown, code: { code: string }) => {
         inserted.push(code.code);

@@ -1,7 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import type { Principal } from '../common/auth/auth.types.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
-import { OptionalAuth } from '../common/auth/auth.guard.js';
+import { Needs, OptionalAuth } from '../common/auth/auth.guard.js';
 import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 import { VehiclesService } from './vehicles.service.js';
 
@@ -15,6 +15,7 @@ export class VehiclesController {
    * Guests can identify a vehicle before an account exists. A signed-in
    * customer may also recover only their own previously submitted details.
    */
+  @Needs('vehicle:lookup')
   @OptionalAuth()
   @Get('lookup')
   @ApiRateLimit(API_LIMITS.publicRead)

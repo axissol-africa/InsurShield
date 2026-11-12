@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { IsString } from 'class-validator';
 import { eq, sql } from 'drizzle-orm';
 import { Public } from '../src/common/auth/auth.guard.js';
@@ -33,6 +33,12 @@ class ProbeBody {
 @Public()
 @Controller('harness-probe')
 class ProbeController {
+  /** Somewhere under the prefix that answers 200 without a session, for the prefix and CORS checks. */
+  @Get()
+  reachable() {
+    return { reachable: true };
+  }
+
   @Post()
   echo(@Body() body: ProbeBody) {
     return { name: body.name, isProbeBody: body instanceof ProbeBody };
@@ -51,8 +57,10 @@ describe('the e2e app', () => {
   });
 
   it('serves the routes under the API prefix', async () => {
-    await testApp.http.get('/api/v1').expect(200).expect('Hello World!');
-    await testApp.http.get('/').expect(404);
+    await testApp.http.get('/api/v1/harness-probe').expect(200, { reachable: true });
+    await testApp.http.get('/harness-probe').expect(404);
+    // Nothing is served at the prefix root itself.
+    await testApp.http.get('/api/v1').expect(404);
   });
 
   it('serves the health routes outside the API prefix', async () => {
@@ -77,10 +85,13 @@ describe('the e2e app', () => {
   });
 
   it('allows credentialed requests from the configured origins only', async () => {
-    const allowed = await testApp.http.get('/api/v1').set('Origin', WEB_ORIGIN).expect(200);
+    const allowed = await testApp.http.get('/api/v1/harness-probe').set('Origin', WEB_ORIGIN).expect(200);
     expect(allowed.headers['access-control-allow-origin']).toBe(WEB_ORIGIN);
     expect(allowed.headers['access-control-allow-credentials']).toBe('true');
-    const other = await testApp.http.get('/api/v1').set('Origin', 'https://elsewhere.invalid').expect(200);
+    const other = await testApp.http
+      .get('/api/v1/harness-probe')
+      .set('Origin', 'https://elsewhere.invalid')
+      .expect(200);
     expect(other.headers['access-control-allow-origin']).toBeUndefined();
   });
 

@@ -13,7 +13,15 @@ export interface InsurerQuoteResponse {
   sentAt: string;
   validUntil: string;
   extendedAt: string | null;
+  /** The quote remains viewable for the customer's records but cannot be paid. */
+  unavailableAt: string | null;
   document: DocumentRecord;
+}
+
+/** An insurer that did not answer before it became unavailable. */
+export interface UnavailableInsurerResponse {
+  name: string;
+  unavailableAt: string;
 }
 
 export interface QuoteRequestResponse {
@@ -45,6 +53,7 @@ export interface QuoteRequestResponse {
   insurers: string[];
   insurerIds: string[];
   insurerQuotes: Record<string, InsurerQuoteResponse>;
+  unavailableInsurers: UnavailableInsurerResponse[];
   photosCapturedAt: string | null;
   requotedFromId: string | null;
   requotedAs: string | null;
@@ -71,6 +80,7 @@ export function toQuoteRequestResponse(
       sentAt: quote.sentAt.toISOString(),
       validUntil: quote.validUntil.toISOString(),
       extendedAt: quote.extendedAt?.toISOString() ?? null,
+      unavailableAt: quote.unpayableAt?.toISOString() ?? null,
       document: quote.document,
     };
   }
@@ -115,6 +125,9 @@ export function toQuoteRequestResponse(
     insurers: recipients.map((recipient) => recipient.insurerName),
     insurerIds: recipients.map((recipient) => recipient.insurerId),
     insurerQuotes,
+    unavailableInsurers: recipients.flatMap((recipient) =>
+      recipient.cancelledAt ? [{ name: recipient.insurerName, unavailableAt: recipient.cancelledAt.toISOString() }] : [],
+    ),
     photosCapturedAt: request.photosCapturedAt?.toISOString() ?? null,
     requotedFromId: request.requotedFromId,
     requotedAs,

@@ -3,7 +3,19 @@ import { eq, sql } from 'drizzle-orm';
 import type { Response } from 'supertest';
 import { insurerContacts, insurers, staffUsers } from '../src/db/schema.js';
 import { InsurersService } from '../src/insurers/insurers.service.js';
-import { buildCustomer, buildInsurer, buildStaffUser, unique, type Row } from './builders.js';
+import {
+  buildClaim,
+  buildCustomer,
+  buildInspection,
+  buildInsurer,
+  buildPayment,
+  buildPolicy,
+  buildStaffUser,
+  unique,
+  type Row,
+} from './builders.js';
+import { buildNcdApplication } from './builders/customer.js';
+import { buildPaymentTarget } from './builders/admin.js';
 import { holdLocks, openTestDatabase, queueBehind, startApp, until, type TestApp } from './helpers.js';
 import { signIn, type SessionHeaders } from './sessions.js';
 
@@ -29,7 +41,15 @@ const PUBLIC_KEYS = [
   'tradingName',
   'website',
 ];
-const ADMIN_KEYS = [...PUBLIC_KEYS, 'licenceExpiry', 'licenceNumber', 'registrationNumber', 'tpin'].sort();
+// `activation` carries what approval decided, so a reviewer can read it back.
+const ADMIN_KEYS = [
+  ...PUBLIC_KEYS,
+  'activation',
+  'licenceExpiry',
+  'licenceNumber',
+  'registrationNumber',
+  'tpin',
+].sort();
 const CONTACT_KEYS = ['address', 'contactPerson', 'email', 'hours', 'mobile', 'phone', 'role', 'tagline', 'whatsapp'];
 
 const keysOf = (value: object) => Object.keys(value).sort();
@@ -256,6 +276,8 @@ describe('insurers', () => {
         id: expect.any(String),
         status: 'Active',
         ratePercentage: 7.5,
+        // Nothing has been approved: creating an insurer is not activating it.
+        activation: { effectiveFrom: null, renewalDate: null, approvedAt: null, conditions: null },
       });
       const { row, contact } = await stored(response.body.id);
       expect(row).toMatchObject({ name: body.name, rateBps: 750, licenceExpiry: new Date('2027-01-02T03:04:05.006Z') });
@@ -481,7 +503,7 @@ describe('insurers', () => {
   });
 
   describe('status and removal', () => {
-    it('sets ACTIVE and INACTIVE for an admin, without deletedAt, and answers with the staff keys', async () => {
+    it('sets INACTIVE for an admin, without deletedAt, and answers with the staff keys', async () => {
       const { insurer } = await buildInsurer(testApp.db, { insurer: { updatedAt: new Date('2026-01-01T00:00:00.000Z') } });
 
       const inactive = await setStatus(insurer.id, 'INACTIVE', asAdmin).expect(200);
@@ -492,9 +514,11 @@ describe('insurers', () => {
       expect(row).toMatchObject({ status: 'INACTIVE', deletedAt: null });
       expect(row.updatedAt.getTime()).toBeGreaterThan(new Date('2026-01-01T00:00:00.000Z').getTime());
 
-      const active = await setStatus(insurer.id, 'ACTIVE', asAdmin).expect(200);
-      expect(active.body.status).toBe('Active');
-      expect((await stored(insurer.id)).row).toMatchObject({ status: 'ACTIVE', deletedAt: null });
+      // Activating is its own route with its own evidence gate, so this one
+      // cannot reach ACTIVE at all and the gate cannot be stepped around.
+      const active = await setStatus(insurer.id, 'ACTIVE', asAdmin).expect(400);
+      expect(active.body.details.fields).toEqual(['Status must be Inactive or Deleted.']);
+      expect((await stored(insurer.id)).row).toMatchObject({ status: 'INACTIVE' });
     });
 
     it('refuses DELETED through PATCH status for an admin with 403, and changes nothing', async () => {
@@ -520,7 +544,35 @@ describe('insurers', () => {
       const { row } = await stored(insurer.id);
       expect(row.status).toBe('DELETED');
       expect(row.deletedAt).toBeInstanceOf(Date);
-      await setStatus(insurer.id, 'ACTIVE', asSuperAdmin).expect(404);
+      await setStatus(insurer.id, 'INACTIVE', asSuperAdmin).expect(404);
+    });
+
+    it('refuses deletion while the insurer has customer work or a payment in flight', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const asSuperAdmin = await signIn(testApp.http, superAdmin);
+      const insured = await buildInsurer(testApp.db);
+      const customer = await buildCustomer(testApp.db);
+      const pendingTarget = await buildPaymentTarget(testApp.db, { insurer: insured, customer });
+
+      // Re-use the same insurer in every service record so the blocker query
+      // must find each relation instead of relying on a single table.
+      await buildPayment(testApp.db, pendingTarget, { status: 'PENDING' });
+      await buildPolicy(testApp.db, {
+        insurerId: insured.insurer.id,
+        customerId: customer.id,
+        vehicleId: pendingTarget.vehicleId,
+        paymentId: (await buildPayment(testApp.db, pendingTarget, { status: 'FAILED' })).id,
+      });
+      await buildClaim(testApp.db, { insurerId: insured.insurer.id, customerId: customer.id });
+      await buildNcdApplication(testApp.db, { insurerId: insured.insurer.id, customerId: customer.id });
+      await buildInspection(testApp.db, { insurerId: insured.insurer.id, customerId: customer.id });
+
+      const response = await setStatus(insured.insurer.id, 'DELETED', asSuperAdmin).expect(409);
+      expect(response.body).toMatchObject({
+        code: 'INSURER_HAS_SERVICE_RECORDS',
+        details: { blockers: expect.arrayContaining(['policy', 'claim', 'ncd application', 'inspection', 'payment']) },
+      });
+      expect((await stored(insured.insurer.id)).row).toMatchObject({ status: 'ACTIVE', deletedAt: null });
     });
 
     it('refuses a status outside the list', async () => {
@@ -532,7 +584,7 @@ describe('insurers', () => {
         .send({ status: 'Enabled' })
         .expect(400);
 
-      expect(response.body.details.fields).toEqual(['Status must be Active, Inactive or Deleted.']);
+      expect(response.body.details.fields).toEqual(['Status must be Inactive or Deleted.']);
     });
 
     it('soft-deletes for a super admin', async () => {

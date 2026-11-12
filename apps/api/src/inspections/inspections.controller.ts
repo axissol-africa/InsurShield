@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post } from '@nestjs/common';
+import { Needs } from '../common/auth/auth.guard.js';
 import { InspectionsService } from './inspections.service.js';
 import { RequestInspectionDto, UpdateInspectionDto } from '../customer/dto/customer.dto.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
@@ -17,17 +18,20 @@ export class InspectionsController {
     return principal;
   }
 
+  @Needs('inspection:read')
   @Get()
   list(@CurrentUser() principal: Principal) {
     return this.inspections.list(this.scope(principal).id);
   }
 
+  @Needs('inspection:request')
   @Post()
   @HttpCode(HttpStatus.CREATED)
   request(@Body() dto: RequestInspectionDto, @CurrentUser() principal: Principal) {
     return this.inspections.request(this.scope(principal), dto);
   }
 
+  @Needs('inspection:update')
   @Patch(':id')
   update(
     @Param('id') id: string,

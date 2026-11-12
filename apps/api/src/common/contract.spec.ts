@@ -147,15 +147,30 @@ describe('contract vocabulary', () => {
     expect(CONTRACT_VALUES.insuranceType).toEqual(['Comprehensive', 'ThirdParty']);
     expect(CONTRACT_VALUES.coverageDuration).toEqual(['1q', '2q', '3q', '4q']);
     expect(CONTRACT_VALUES.paymentMethod).toEqual(['Mobile money', 'Card']);
-    expect(CONTRACT_VALUES.insurerStatus).toEqual(['ACTIVE', 'INACTIVE', 'DELETED', 'Active', 'Inactive', 'Deleted']);
+    expect(CONTRACT_VALUES.insurerStatus).toEqual([
+      'PENDING', 'ACTIVE', 'SUSPENDED', 'INACTIVE', 'DELETED',
+      'Pending approval', 'Active', 'Suspended', 'Inactive', 'Deleted',
+    ]);
+    // Narrower on purpose: activation and suspension each carry work beyond the
+    // status -- an evidence gate, and cancelling the insurer's open work -- so
+    // each has its own route and neither can be reached through this one.
+    expect(CONTRACT_VALUES.insurerStatusChange).toEqual(['INACTIVE', 'DELETED', 'Inactive', 'Deleted']);
     expect(CONTRACT_VALUES.ncdDecision).toEqual(['UNDER_REVIEW', 'APPROVED', 'REJECTED', 'Under Review', 'Approved', 'Rejected']);
+    // InsurShield's own roles first, then the insurer ones, as the role lists group them.
+    expect(CONTRACT_VALUES.staffRole).toEqual([
+      'SUPER_ADMIN', 'ADMIN',
+      'INSURER_ADMIN', 'QUOTE_OFFICER', 'CLAIMS_OFFICER', 'SUPPORT', 'FINANCE', 'COMPLIANCE_READ_ONLY',
+      'INSURER_USER',
+      'Super administrator', 'Administrator',
+      'Insurer administrator', 'Quote officer', 'Claims and NCD officer', 'Support', 'Finance',
+      'Compliance, read only',
+      'Insurer portal user',
+    ]);
   });
 
   it.each([
-    [SetInsurerStatusDto, 'Active', 'ACTIVE'],
     [SetInsurerStatusDto, 'Inactive', 'INACTIVE'],
     [SetInsurerStatusDto, 'Deleted', 'DELETED'],
-    [SetInsurerStatusDto, 'ACTIVE', 'ACTIVE'],
     [SetInsurerStatusDto, 'INACTIVE', 'INACTIVE'],
     [SetInsurerStatusDto, 'DELETED', 'DELETED'],
     [NcdDecisionDto, 'Under Review', 'UNDER_REVIEW'],
@@ -172,7 +187,12 @@ describe('contract vocabulary', () => {
   });
 
   it.each([
-    [SetInsurerStatusDto, 'enabled', 'Status must be Active, Inactive or Deleted.'],
+    [SetInsurerStatusDto, 'enabled', 'Status must be Inactive or Deleted.'],
+    // Real statuses, but not ones this route may set: each has its own route.
+    [SetInsurerStatusDto, 'ACTIVE', 'Status must be Inactive or Deleted.'],
+    [SetInsurerStatusDto, 'Active', 'Status must be Inactive or Deleted.'],
+    [SetInsurerStatusDto, 'SUSPENDED', 'Status must be Inactive or Deleted.'],
+    [SetInsurerStatusDto, 'PENDING', 'Status must be Inactive or Deleted.'],
     [NcdDecisionDto, 'Submitted', 'Decision must be Under Review, Approved or Rejected.'],
     [NcdDecisionDto, 'Verification Required', 'Decision must be Under Review, Approved or Rejected.'],
   ])('refuses unsupported %s status input %s', async (Dto, input, message) => {

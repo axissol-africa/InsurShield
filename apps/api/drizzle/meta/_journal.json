@@ -106,6 +106,55 @@
       "when": 1794296559309,
       "tag": "0014_notification_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794376762894,
+      "tag": "0015_insurer_lifecycle_statuses",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794377382251,
+      "tag": "0016_insurer_staff_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794383863109,
+      "tag": "0017_insurer_onboarding_record",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794386038958,
+      "tag": "0018_grandfather_insurer_licences",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794560400000,
+      "tag": "0019_staff_management",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794561400000,
+      "tag": "0020_insurer_suspension_quote_marks",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794486819106,
+      "tag": "0021_salty_sage",
+      "breakpoints": true
     }
   ]
 }

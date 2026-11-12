@@ -43,16 +43,17 @@ export class InspectionsService {
   }
 
   async request(customer: CustomerPrincipal, dto: RequestInspectionDto) {
+    const requestedAt = new Date();
     const inspection = await this.repository.transaction(async (tx) => {
       let insurerName: string | null = null;
       if (dto.insurerId) {
-        const insurer = await this.repository.findActiveInsurer(tx, dto.insurerId);
+        const insurer = await this.repository.findInsurerTakingNewBusiness(tx, dto.insurerId, requestedAt);
         if (!insurer) throw ApiException.notFound('Insurer', dto.insurerId);
         insurerName = insurer.name;
       }
 
       const created = await this.repository.insert(tx, {
-        id: newReference('INS', new Date(), randomInt),
+        id: newReference('INS', requestedAt, randomInt),
         customerId: customer.id,
         insurerId: dto.insurerId ?? null,
         vehiclePlate: dto.vehiclePlate.trim(),

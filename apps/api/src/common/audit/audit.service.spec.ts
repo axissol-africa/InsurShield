@@ -1,16 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Transaction } from '../../db/database.module.js';
+import type { Database, Transaction } from '../../db/database.module.js';
 import { AuditService } from './audit.service.js';
 
-function auditService() {
+function auditService(options: { failTransaction?: boolean } = {}) {
   const values = vi.fn().mockResolvedValue(undefined);
   const insert = vi.fn(() => ({ values }));
   const tx = { insert } as unknown as Transaction;
-  const service = new AuditService();
-  return { service, tx, values, insert };
+  // `refusal` opens its own transaction, so the fake database hands the same tx back.
+  const transaction = vi.fn(async (work: (tx: Transaction) => Promise<unknown>) => {
+    if (options.failTransaction) throw new Error('the database is unavailable');
+    return work(tx);
+  });
+  const db = { transaction } as unknown as Database;
+  const service = new AuditService(db);
+  return { service, tx, values, insert, transaction };
 }
 
 describe('AuditService', () => {
+  describe('refusal', () => {
+    it('records the refusal on its own transaction, so a rollback cannot take it', async () => {
+      const { service, values, transaction } = auditService();
+
+      await service.refusal({
+        actor: { type: 'INSURER', id: 'staff-1' },
+        action: 'access.refused',
+        entityType: 'PERMISSION',
+        entityId: 'portal:quote:send',
+        note: 'POST /insurer/quote-requests/:id/quote',
+      });
+
+      expect(transaction, 'not the caller\u2019s transaction, which is about to roll back').toHaveBeenCalledOnce();
+      expect(values).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'access.refused', entityId: 'portal:quote:send' }),
+      );
+    });
+
+    it('swallows a write failure, because a refusal must not become a server error', async () => {
+      const { service, values } = auditService({ failTransaction: true });
+
+      await expect(
+        service.refusal({
+          actor: { type: 'INSURER', id: 'staff-1' },
+          action: 'access.refused',
+          entityType: 'PERMISSION',
+          entityId: 'portal:quote:send',
+        }),
+      ).resolves.toBeUndefined();
+      expect(values).not.toHaveBeenCalled();
+    });
+  });
+
   it('stores only safe, scalar audit snapshots', async () => {
     const { service, tx, values } = auditService();
 

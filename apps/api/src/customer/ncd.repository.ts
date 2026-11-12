@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { insurers, ncdApplications, ncdCodes } from '../db/schema.js';
+import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 
 export type NcdApplicationRow = typeof ncdApplications.$inferSelect;
 export type NewNcdApplication = typeof ncdApplications.$inferInsert;
@@ -38,12 +39,16 @@ export class NcdRepository {
       .orderBy(desc(ncdApplications.submittedAt));
   }
 
-  /** Held shared until `tx` ends, so the insurer stays active while the application is written. */
-  async findActiveInsurer(tx: Transaction, insurerId: string): Promise<{ id: string; name: string } | undefined> {
+  /** Held shared until `tx` ends, so the insurer's standing cannot change under the application. */
+  async findInsurerTakingNewBusiness(
+    tx: Transaction,
+    insurerId: string,
+    now: Date,
+  ): Promise<{ id: string; name: string } | undefined> {
     const [insurer] = await tx
       .select({ id: insurers.id, name: insurers.name })
       .from(insurers)
-      .where(and(eq(insurers.id, insurerId), eq(insurers.status, 'ACTIVE')))
+      .where(and(eq(insurers.id, insurerId), ...takesNewBusinessWhere(now)))
       .for('share');
     return insurer;
   }

@@ -761,7 +761,10 @@ describe('concurrent runs', () => {
       for (const tag of snapshotAndLater) {
         rmSync(join(beforeM4, `${tag}.sql`));
         rmSync(join(beforeM4, 'catalog', `${tag}.json`));
-        rmSync(join(beforeM4, 'meta', `${tag.split('_', 1)[0]}_snapshot.json`));
+        // Some hand-written data migrations intentionally do not carry a
+        // Drizzle snapshot. The temporary pre-M4 history needs to remove one
+        // when present, not require every migration to have generated metadata.
+        rmSync(join(beforeM4, 'meta', `${tag.split('_', 1)[0]}_snapshot.json`), { force: true });
       }
       const journalPath = join(beforeM4, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as { entries: unknown[] };

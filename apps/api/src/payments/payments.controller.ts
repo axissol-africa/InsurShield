@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import { Needs } from '../common/auth/auth.guard.js';
 import { randomUUID } from 'node:crypto';
 import { PaymentsService } from './payments.service.js';
 import { PayDto } from './dto/payment.dto.js';
@@ -29,6 +30,7 @@ export class PaymentsController {
    * charged twice for one request — the second attempt is refused as already
    * paid — but it loses the ability to retry a lost response.
    */
+  @Needs('payment:make')
   @Post()
   @HttpCode(HttpStatus.CREATED)
   pay(
@@ -52,6 +54,7 @@ export class PaymentsController {
     return key;
   }
 
+  @Needs('payment:read')
   @Get(':transactionId')
   status(@Param('transactionId') transactionId: string, @CurrentUser() principal: Principal) {
     return this.payments.status(this.scope(principal).id, transactionId);

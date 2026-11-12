@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
+import { Needs } from '../common/auth/auth.guard.js';
 import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
@@ -18,6 +19,7 @@ export class NotificationsController {
   }
 
   @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('notification:read')
   @Get('notifications')
   async list(@CurrentUser() principal: Principal, @Query() query: NotificationQueryDto) {
     const customerId = this.customerOf(principal);
@@ -34,6 +36,7 @@ export class NotificationsController {
     };
   }
 
+  @Needs('notification:mark-read')
   @Post('notifications/:id/read')
   @HttpCode(HttpStatus.NO_CONTENT)
   async markRead(@CurrentUser() principal: Principal, @Param('id', ParseUUIDPipe) id: string) {
@@ -45,6 +48,7 @@ export class NotificationsController {
     if (!marked) throw ApiException.notFound('Notification', id);
   }
 
+  @Needs('contact-preference:read')
   @Get('contact-preferences')
   async preferences(@CurrentUser() principal: Principal) {
     const customerId = this.customerOf(principal);
@@ -54,6 +58,7 @@ export class NotificationsController {
     };
   }
 
+  @Needs('contact-preference:save')
   @Put('contact-preferences')
   @HttpCode(HttpStatus.NO_CONTENT)
   async setPreference(@CurrentUser() principal: Principal, @Body() choice: PreferenceDto) {

@@ -147,7 +147,7 @@ export default function PolicyConfirmationPage() {
                 <CardHeader><CardTitle><h2>What happens next</h2></CardTitle></CardHeader>
                 <CardContent className="space-y-4 text-sm leading-relaxed text-muted-foreground">
                   <p>Track your policy in My account. Download your certificate after {selectedQuote.name} issues it.</p>
-                  {selectedQuote.inspectionRules === 'REQUIRED' && <p>{selectedQuote.name} requires a vehicle inspection. They will contact you on {customer?.phone || 'your number'} to arrange it.</p>}
+                  {(selectedQuote.inspectionRule ?? selectedQuote.inspectionRules) === 'REQUIRED' && <p>{selectedQuote.name} requires a vehicle inspection. They will contact you on {customer?.phone || 'your number'} to arrange it.</p>}
                   {rtsaFee > 0 && <p>Your RTSA anniversary fee is included. The road tax disc becomes available once your insurer issues the certificate.</p>}
                 </CardContent>
                 <CardFooter><Button className="w-full" onClick={finish}>My account</Button></CardFooter>

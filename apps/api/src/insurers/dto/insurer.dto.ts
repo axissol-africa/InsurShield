@@ -8,8 +8,10 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   IsUrl,
   Max,
+  MaxLength,
   Min,
   MinLength,
   ValidateBy,
@@ -18,15 +20,16 @@ import {
   isISO8601,
 } from 'class-validator';
 import {
+  EVIDENCE_KINDS,
   INSPECTION_METHODS,
   INSPECTION_RULES,
   INSPECTION_TIMINGS,
+  type EvidenceKind,
   type InspectionMethod,
   type InspectionRule,
   type InspectionTiming,
-  type InsurerStatus,
 } from '../../common/domain/enums.js';
-import { CONTRACT_VALUES, fromContract } from '../../common/contract.js';
+import { CONTRACT_VALUES, fromContract, type InsurerStatusChange } from '../../common/contract.js';
 import { MAX_RATE_BPS } from '../../common/domain/money-limits.js';
 import { percentToBps } from '../../common/money.js';
 import type { InsurerChanges, NewContact, NewInsurer } from '../insurers.repository.js';
@@ -128,9 +131,18 @@ export class UpdateInsurerDto {
 }
 
 export class SetInsurerStatusDto {
-  @Transform(({ value }) => (typeof value === 'string' ? (fromContract.insurerStatus(value) ?? value) : value))
-  @IsIn(CONTRACT_VALUES.insurerStatus, { message: 'Status must be Active, Inactive or Deleted.' })
-  status!: InsurerStatus;
+  @Transform(({ value }) => (typeof value === 'string' ? (fromContract.insurerStatusChange(value) ?? value) : value))
+  @IsIn(CONTRACT_VALUES.insurerStatusChange, { message: 'Status must be Inactive or Deleted.' })
+  status!: InsurerStatusChange;
+}
+
+/** Suspending stops new business and cancels the insurer's open quote work. */
+export class SuspendInsurerDto {
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MinLength(3)
+  @MaxLength(1000)
+  reason!: string;
 }
 
 const licenceExpiry = (value: string | undefined) => (value === undefined ? undefined : value ? new Date(value) : null);
@@ -184,4 +196,68 @@ export function toNewContact(dto: InsurerContactDto): NewContact {
     address: dto.address,
     hours: dto.hours,
   };
+}
+
+// ── The onboarding record ───────────────────────────────────────────
+
+/** A plain calendar day. Evidence expiry and the activation dates are business dates, not instants. */
+const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+const CalendarDay = (what: string) =>
+  applyDecorators(
+    IsString(),
+    ValidateBy({
+      name: 'calendarDay',
+      validator: {
+        validate: (value: unknown) => typeof value === 'string' && CALENDAR_DAY.test(value) && isISO8601(value),
+        defaultMessage: () => `${what} must be a date such as 2026-12-01.`,
+      },
+    }),
+  );
+
+export class CaptureEvidenceDto {
+  @IsIn(EVIDENCE_KINDS, { message: 'Unknown kind of evidence.' })
+  kind!: EvidenceKind;
+
+  @IsUUID('4', { message: 'Upload the document before recording it.' })
+  documentId!: string;
+
+  /** The issuer's own reference, as printed on the document. */
+  @IsOptional() @IsString() @MaxLength(120) @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  reference?: string;
+
+  @IsOptional() @CalendarDay('An expiry')
+  expiresAt?: string;
+}
+
+export class ReviewEvidenceDto {
+  @IsIn(['APPROVED', 'REJECTED'], { message: 'A review approves or rejects.' })
+  state!: 'APPROVED' | 'REJECTED';
+
+  @IsOptional() @IsString() @MaxLength(2000) @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  note?: string;
+}
+
+export class ActivateInsurerDto {
+  /** When the approval takes effect. */
+  @CalendarDay('An effective date')
+  effectiveFrom!: string;
+
+  /** When it must be reviewed again, if the approval is time-bound. */
+  @IsOptional() @CalendarDay('A renewal date')
+  renewalDate?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000) @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  conditions?: string;
+}
+
+export class InsurerIntegrationDto {
+  @IsUrl({ require_tld: false }) apiBaseUrl!: string;
+  @IsString() @MinLength(1) publicSigningKey!: string;
+  @IsString() @MinLength(1) @MaxLength(200) clientId!: string;
+  @IsOptional() @IsUrl({ require_tld: false }) quoteCallbackUrl?: string;
+  @IsOptional() @IsUrl({ require_tld: false }) claimsCallbackUrl?: string;
+  @IsOptional() @IsUrl({ require_tld: false }) policyCallbackUrl?: string;
+  /** A model is captured in sandbox until somebody says otherwise. */
+  @IsOptional() @IsBoolean() sandboxMode?: boolean;
 }

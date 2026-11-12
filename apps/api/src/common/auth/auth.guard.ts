@@ -9,8 +9,11 @@ import type { Auth } from '../../auth/auth.instance.js';
 import { resolveIdentity } from '../../auth/identity.js';
 import type { Env } from '../../config/env.js';
 import { DATABASE, type Database } from '../../db/database.module.js';
+import { AuditService } from '../audit/audit.service.js';
+import { auditActor } from '../audit/audit.types.js';
 import { ApiException } from '../errors/api.exception.js';
-import type { Principal, StaffRoleName } from './auth.types.js';
+import type { Principal } from './auth.types.js';
+import { holds, type Permission } from './permissions.js';
 import { ANONYMOUS, IDENTITY_HEADER, identityHeader, identityMatches } from './identity-precondition.js';
 import {
   EMAIL_NOT_VERIFIED,
@@ -21,13 +24,18 @@ import {
 
 export const IS_PUBLIC = 'isPublic';
 export const IS_OPTIONAL_AUTH = 'isOptionalAuth';
-export const REQUIRED_ROLES = 'requiredRoles';
+export const REQUIRED_PERMISSION = 'requiredPermission';
 export const ALLOWS_UNVERIFIED = 'allowsUnverified';
 
 /** Marks an endpoint as reachable without signing in. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
-/** Serves guests and signed-in callers differently: the principal is set only when there is a valid session. */
+/**
+ * Serves guests and signed-in callers differently: the principal is set only
+ * when there is a valid session. A route marked this way still names a
+ * permission, because the guard returns early only for a caller with no
+ * session; one that is signed in is held to the permission like anywhere else.
+ */
 export const OptionalAuth = () => SetMetadata(IS_OPTIONAL_AUTH, true);
 
 /**
@@ -40,8 +48,15 @@ export const OptionalAuth = () => SetMetadata(IS_OPTIONAL_AUTH, true);
  */
 export const AllowUnverified = () => SetMetadata(ALLOWS_UNVERIFIED, true);
 
-/** Restricts an endpoint to staff holding one of these roles. */
-export const Roles = (...roles: StaffRoleName[]) => SetMetadata(REQUIRED_ROLES, roles);
+/**
+ * The permission a caller must hold to reach this endpoint.
+ *
+ * Every authenticated route carries one. A route that carries none is refused,
+ * so an endpoint added without a decision about who may reach it is closed
+ * rather than open to anybody signed in. `permission-coverage.e2e-spec.ts`
+ * walks the router so that stays true.
+ */
+export const Needs = (permission: Permission) => SetMetadata(REQUIRED_PERMISSION, permission);
 
 export function identityChanged(): ApiException {
   return new ApiException(IDENTITY_CHANGED, IDENTITY_CHANGED_MESSAGE, HttpStatus.CONFLICT);
@@ -71,6 +86,7 @@ export class AuthGuard implements CanActivate {
     @Inject(AUTH) private readonly auth: Auth,
     @Inject(DATABASE) private readonly db: Database,
     private readonly reflector: Reflector,
+    private readonly audit: AuditService,
     config: ConfigService<Env, true>,
   ) {
     this.trustedOrigins = config.get('CORS_ORIGINS', { infer: true });
@@ -115,11 +131,41 @@ export class AuthGuard implements CanActivate {
       throw new ApiException(EMAIL_NOT_VERIFIED, EMAIL_NOT_VERIFIED_MESSAGE, HttpStatus.FORBIDDEN);
     }
 
-    const required = this.reflector.getAllAndOverride<StaffRoleName[]>(REQUIRED_ROLES, targets);
-    if (!required?.length) return true;
-    if (identity.principal.kind !== 'staff' || !required.includes(identity.principal.role)) {
+    // Closed by default. Before this, a route with no roles declared returned
+    // true, so six controllers were reachable by any authenticated caller and
+    // were protected only by hand-written checks inside each one.
+    const needed = this.reflector.getAllAndOverride<Permission>(REQUIRED_PERMISSION, targets);
+    if (!needed || !holds(identity.principal, needed)) {
+      await this.recordRefusal(identity.principal, needed, request);
       throw ApiException.forbidden();
     }
     return true;
+  }
+
+  /**
+   * US-VEN-001 asks for an unassigned function to be denied and audited, so the
+   * denial writes a row naming the actor and the permission they lacked -- never
+   * anything about the record behind it, which the caller never reached.
+   *
+   * Staff only. A customer meeting a staff route is not a role reaching past its
+   * assignment, and auditing it would dilute the log while letting any
+   * signed-in caller write rows at will.
+   */
+  private async recordRefusal(
+    principal: Principal,
+    needed: Permission | undefined,
+    request: Request,
+  ): Promise<void> {
+    if (principal.kind !== 'staff') return;
+    const route = `${request.method} ${request.path}`;
+    await this.audit.refusal({
+      actor: auditActor(principal),
+      action: 'access.refused',
+      entityType: 'PERMISSION',
+      // A route naming no permission is the fail-closed case, and worth seeing as itself.
+      entityId: needed ?? 'none',
+      note: needed ? route : `${route} names no permission`,
+      correlationId: principal.insurerId,
+    });
   }
 }
