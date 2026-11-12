@@ -20,6 +20,7 @@ import {
   InsurerIntegrationDto,
   ReviewEvidenceDto,
   SetInsurerStatusDto,
+  SuspendInsurerDto,
   UpdateInsurerDto,
 } from './dto/insurer.dto.js';
 import { InsurerListQuery } from './dto/insurer-list.query.js';
@@ -94,6 +95,18 @@ export class InsurersController {
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
     return this.insurers.setStatus(id, dto.status, principal);
+  }
+
+  /** Suspension is a named operation because it also marks open quote work unavailable. */
+  @Needs('insurer:set-status')
+  @Post(':id/suspend')
+  @HttpCode(HttpStatus.OK)
+  suspend(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SuspendInsurerDto,
+    @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    return this.insurers.suspend(id, dto.reason, principal);
   }
 
   // ── The onboarding record ───────────────────────────────────────

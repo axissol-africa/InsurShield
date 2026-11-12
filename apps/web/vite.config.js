@@ -84,9 +84,11 @@ export default defineConfig(({ mode }) => {
       include: ['src/**/*.{test,spec}.{js,jsx}', 'tools/**/*.test.js'],
       globals: true,
       setupFiles: './src/test/setup.js',
-      // Running every jsdom file at once causes otherwise fast interaction
-      // tests to time out on developer laptops and CI workers.
-      maxWorkers: 4,
+      // Interaction tests mount the whole journey and use realistic keyboard
+      // events. One worker keeps the suite deterministic on shared developer
+      // machines and modest CI runners instead of letting parallel jsdom work
+      // turn valid interactions into five-second timeouts.
+      maxWorkers: 1,
       css: false,
     },
   }

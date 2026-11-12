@@ -136,6 +136,15 @@ export class SetInsurerStatusDto {
   status!: InsurerStatusChange;
 }
 
+/** Suspending stops new business and cancels the insurer's open quote work. */
+export class SuspendInsurerDto {
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @MinLength(3)
+  @MaxLength(1000)
+  reason!: string;
+}
+
 const licenceExpiry = (value: string | undefined) => (value === undefined ? undefined : value ? new Date(value) : null);
 
 /** The stored fields a change sends; a field left out stays as it is. */

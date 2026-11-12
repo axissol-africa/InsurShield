@@ -11,6 +11,13 @@ export interface StaffSession {
   id: string;
   name: string;
   email: string;
+  /**
+   * The canonical permission role. `role` remains the small portal-routing
+   * value used by the existing web shell; this value lets the browser hide
+   * management controls a quote or claims officer cannot use. The server
+   * remains the enforcement point for every action.
+   */
+  staffRole: StaffRoleName;
   role: 'admin' | 'insurer' | 'support';
   isSuperAdmin: boolean;
   insurerId: string | null;
@@ -59,6 +66,7 @@ export class AuthService {
           id: staff.id,
           name: staff.fullName,
           email: staff.email,
+          staffRole: principal.role,
           role: PORTAL_ROLE[principal.role],
           isSuperAdmin: principal.role === 'SUPER_ADMIN',
           insurerId: staff.insurerId,

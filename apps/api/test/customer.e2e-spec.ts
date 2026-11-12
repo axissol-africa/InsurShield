@@ -77,12 +77,23 @@ const QUOTE_REQUEST_KEYS = [
   'rtsaAnniversaryFee',
   'status',
   'submittedAt',
+  'unavailableInsurers',
   'vehicle',
   'vehicleDetails',
   'vehicleUsage',
   'vehicleValue',
 ];
-const INSURER_QUOTE_KEYS = ['document', 'extendedAt', 'insurerReference', 'notes', 'premium', 'sentAt', 'validUntil', 'validityDays'];
+const INSURER_QUOTE_KEYS = [
+  'document',
+  'extendedAt',
+  'insurerReference',
+  'notes',
+  'premium',
+  'sentAt',
+  'unavailableAt',
+  'validUntil',
+  'validityDays',
+];
 const POLICY_KEYS = [
   'certificateDocument',
   'coverage',
@@ -346,9 +357,11 @@ describe('customer', () => {
             sentAt: '2026-10-02T09:30:00.001Z',
             validUntil: '2026-10-16T09:30:00.001Z',
             extendedAt: '2026-10-10T09:30:00.002Z',
+            unavailableAt: null,
             document: await documentResponse(document),
           },
         },
+        unavailableInsurers: [],
         photosCapturedAt: '2026-10-01T07:59:00.789Z',
         requotedFromId: null,
         requotedAs: again.id,

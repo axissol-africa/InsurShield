@@ -68,9 +68,27 @@ export const insurers = {
   create: (insurer) => apiClient.post('/insurers', insurer),
   update: (id, updates) => apiClient.patch(`/insurers/${id}`, updates),
   setStatus: (id, status) => apiClient.patch(`/insurers/${id}/status`, { status }),
+  suspend: (id, reason) => apiClient.post(`/insurers/${id}/suspend`, { reason }),
+  evidence: (id) => apiClient.get(`/insurers/${id}/evidence`),
+  captureEvidence: (id, evidence) => apiClient.post(`/insurers/${id}/evidence`, evidence),
+  reviewEvidence: (id, evidenceId, review) => apiClient.post(`/insurers/${id}/evidence/${evidenceId}/review`, review),
+  integration: (id) => apiClient.get(`/insurers/${id}/integration`),
+  setIntegration: (id, model) => apiClient.put(`/insurers/${id}/integration`, model),
+  activate: (id, approval) => apiClient.post(`/insurers/${id}/activate`, approval),
   remove: (id) => apiClient.delete(`/insurers/${id}`),
   restore: (id) => apiClient.post(`/insurers/${id}/restore`),
   directory: () => apiClient.get('/insurers/directory'),
+};
+
+export const staff = {
+  listUsers: () => apiClient.get('/staff/users'),
+  createUser: (user) => apiClient.post('/staff/users', user),
+  updateUser: (id, changes) => apiClient.patch(`/staff/users/${id}`, changes),
+  resendInvitation: (id, reason) => apiClient.post(`/staff/users/${id}/invitation`, { reason }),
+  listTeams: () => apiClient.get('/staff/teams'),
+  createTeam: (team) => apiClient.post('/staff/teams', team),
+  updateTeam: (id, changes) => apiClient.patch(`/staff/teams/${id}`, changes),
+  removeTeam: (id, reason) => apiClient.delete(`/staff/teams/${id}`, { data: { reason } }),
 };
 
 export const payments = {

@@ -8,6 +8,8 @@ import { env } from '@/config/env';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
+import InsurerOnboardingReview from '@/features/admin/components/InsurerOnboardingReview';
+import StaffManagement from '@/features/admin/components/StaffManagement';
 import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
 import InsurerTable from '@/features/admin/components/InsurerTable';
 import { Badge as UiBadge } from '@/components/ui/primitives/badge';
@@ -209,6 +211,7 @@ export default function AdminDashboard() {
   const [view, setView] = useState('dashboard');
   const [editingInsurer, setEditingInsurer] = useState(null);
   const [viewingInsurer, setViewingInsurer] = useState(null);
+  const [reviewingInsurerId, setReviewingInsurerId] = useState(null);
   // The insurer awaiting a delete confirmation, if any.
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deletedInsurers, setDeletedInsurers] = useState([]);
@@ -255,7 +258,11 @@ export default function AdminDashboard() {
     setDeletedInsurersLoading(true);
     setDeletedInsurersError(null);
     try {
-      setDeletedInsurers(await api.insurers.list({ status: 'deleted' }));
+      const removed = await api.insurers.list({ status: 'deleted' });
+      // The HTTP contract returns an array. If an interrupted adapter returns
+      // anything else, leave this recovery list empty instead of breaking the
+      // full insurer workspace.
+      setDeletedInsurers(Array.isArray(removed) ? removed : []);
     } catch (error) {
       setDeletedInsurers([]);
       setDeletedInsurersError(error instanceof Error ? error.message : 'Removed insurers could not be loaded.');
@@ -302,10 +309,15 @@ export default function AdminDashboard() {
     void loadDeletedInsurers();
   };
   const saveInsurer = async (insurer) => {
-    if (editingInsurer) await api.insurers.update(editingInsurer.id, insurer);
-    else await api.insurers.create(insurer);
+    const saved = editingInsurer
+      ? await api.insurers.update(editingInsurer.id, insurer)
+      : await api.insurers.create(insurer);
     await refreshInsurers();
-    showInsurers();
+    if (editingInsurer) showInsurers();
+    else {
+      setReviewingInsurerId(saved?.id ?? null);
+      setView('onboarding_review');
+    }
   };
   // Removal is soft: the insurer stops receiving requests but its history
   // stays readable, per INSURER_API_INTEGRATION.md. The dialog says so, since
@@ -326,6 +338,8 @@ export default function AdminDashboard() {
     { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policyCount, matches: ['recent_policies'] },
     { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
+    { id: 'onboarding_review', label: 'Review onboarding', icon: 'fact_check', hint: 'Evidence and activation', matches: ['onboarding_review'] },
+    { id: 'staff_management', label: 'Staff and teams', icon: 'groups', hint: 'Access control', matches: ['staff_management'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
     { id: 'audit_log', label: 'Audit trail', icon: 'history', hint: 'Immutable history', matches: ['audit_log'] },
@@ -361,16 +375,21 @@ export default function AdminDashboard() {
         </Card>
       </>
     );
+  } else if (view === 'onboarding_review') {
+    content = <InsurerOnboardingReview insurers={managedInsurers} api={api} initialInsurerId={reviewingInsurerId} onBack={showInsurers} onChanged={refreshInsurers} />;
+  } else if (view === 'staff_management') {
+    content = <StaffManagement insurers={managedInsurers} api={api} onChanged={refreshInsurers} />;
   } else if (view === 'manage_insurers') {
-    const addButton = <Button type="button" size="lg" onClick={() => { setEditingInsurer(null); setView('add_insurer'); }}><Plus aria-hidden="true" />Add insurer</Button>;
+    const addButton = <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => setView('onboarding_review')}>Review onboarding</Button><Button type="button" size="lg" onClick={() => { setEditingInsurer(null); setView('add_insurer'); }}><Plus aria-hidden="true" />Add insurer</Button></div>;
     content = (
       <>
-        <SubPageHeader title="Manage insurers" description={isSuperAdmin ? 'View, update, deactivate, or restore companies in the marketplace.' : 'View, update, or deactivate companies in the marketplace.'} onBack={() => setView('dashboard')} action={addButton} />
+        <SubPageHeader title="Manage insurers" description={isSuperAdmin ? 'View and update companies, then review evidence before activation or restore a removed record.' : 'View and update companies, then review evidence before activation.'} onBack={() => setView('dashboard')} action={addButton} />
         <InsurerTable
           insurers={managedInsurers}
           piaRatePercentage={piaRate}
           onView={(insurer) => { setViewingInsurer(insurer); setView('view_insurer'); }}
           onEdit={(insurer) => { setEditingInsurer(insurer); setView('edit_insurer'); }}
+          onReview={(insurer) => { setReviewingInsurerId(insurer.id); setView('onboarding_review'); }}
           onRateChange={async (id, ratePercentage) => { await api.insurers.update(id, { ratePercentage }); await refreshInsurers(); }}
           onStatusChange={async (id, status) => { await api.insurers.setStatus(id, status); await refreshInsurers(); }}
           onDelete={confirmDelete}
@@ -839,7 +858,7 @@ function InsurerProfile({ insurer, onBack }) {
     ['Coverage plan', insurer.coverage],
     ['Premium rate', insurer.ratePercentage !== undefined && `${insurer.ratePercentage}% of vehicle value`],
     ['Quote validity', insurer.quoteValidityDays && `${insurer.quoteValidityDays} days`],
-    ['Inspection requirement', insurer.inspectionRules?.replaceAll('_', ' ')],
+    ['Inspection requirement', (insurer.inspectionRule ?? insurer.inspectionRules)?.replaceAll('_', ' ')],
     ['Contact person', contact.contactPerson],
     ['Claims email', contact.email],
     ['Office phone', contact.phone],

@@ -41,6 +41,7 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   POLICY_STATUSES,
+  QUOTE_UNAVAILABILITY_REASONS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
   JOB_STATUSES,
@@ -72,6 +73,7 @@ export const documentKind = pgEnum('DocumentKind', DOCUMENT_KINDS);
 export const documentScanStatus = pgEnum('DocumentScanStatus', DOCUMENT_SCAN_STATUSES);
 export const documentRetentionClass = pgEnum('DocumentRetentionClass', DOCUMENT_RETENTION_CLASSES);
 export const deliveryStatus = pgEnum('DeliveryStatus', DELIVERY_STATUSES);
+export const quoteUnavailabilityReason = pgEnum('QuoteUnavailabilityReason', QUOTE_UNAVAILABILITY_REASONS);
 export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
 export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
@@ -520,9 +522,14 @@ export const quoteRequestRecipients = pgTable(
     deliveredAt: timestamptz('deliveredAt'),
     acknowledgedAt: timestamptz('acknowledgedAt'),
     lastError: text('lastError'),
+    // Delivery status remains the delivery record. A suspension is a separate
+    // business mark so operations can still see whether it was delivered.
+    cancelledAt: timestamptz('cancelledAt'),
+    cancelledReason: quoteUnavailabilityReason('cancelledReason'),
   },
   (t) => [
     index('quote_request_recipients_insurerId_status_idx').on(t.insurerId, t.status),
+    index('quote_request_recipients_insurerId_cancelledAt_idx').on(t.insurerId, t.cancelledAt),
     uniqueIndex('quote_request_recipients_quoteRequestId_insurerId_key').on(
       t.quoteRequestId,
       t.insurerId,
@@ -534,6 +541,10 @@ export const quoteRequestRecipients = pgTable(
       'cascade',
     ),
     fk('quote_request_recipients_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    check(
+      'quote_request_recipients_cancellation_mark_check',
+      sql`(${t.cancelledAt} IS NULL) = (${t.cancelledReason} IS NULL)`,
+    ),
   ],
 );
 
@@ -551,10 +562,15 @@ export const insurerQuotes = pgTable(
     validUntil: timestamptz('validUntil').notNull(),
     extendedAt: timestamptz('extendedAt'),
     documentId: uuid('documentId').notNull(),
+    // A suspension does not rewrite the quote or its expiry. It marks the
+    // otherwise historical quote as no longer payable.
+    unpayableAt: timestamptz('unpayableAt'),
+    unpayableReason: quoteUnavailabilityReason('unpayableReason'),
   },
   (t) => [
     uniqueIndex('insurer_quotes_documentId_key').on(t.documentId),
     index('insurer_quotes_validUntil_idx').on(t.validUntil),
+    index('insurer_quotes_insurerId_unpayableAt_idx').on(t.insurerId, t.unpayableAt),
     uniqueIndex('insurer_quotes_quoteRequestId_insurerId_key').on(t.quoteRequestId, t.insurerId),
     uniqueIndex('insurer_quotes_quoteRequestId_insurerReference_key').on(
       t.quoteRequestId,
@@ -564,6 +580,10 @@ export const insurerQuotes = pgTable(
     fk('insurer_quotes_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
     fk('insurer_quotes_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
     moneyCheck('insurer_quotes', t.premiumMinor),
+    check(
+      'insurer_quotes_unpayable_mark_check',
+      sql`(${t.unpayableAt} IS NULL) = (${t.unpayableReason} IS NULL)`,
+    ),
   ],
 );
 

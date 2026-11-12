@@ -4,6 +4,7 @@ import { createSessionSlice } from './slices/session';
 import { createJourneySlice } from './slices/journey';
 import { createCatalogueSlice } from './slices/catalogue';
 import { createRecordsSlice } from './slices/records';
+import { createStaffSlice } from './slices/staff';
 import { STORAGE_KEY, STORAGE_VERSION, merge, migrate, partialize, storeStorage } from './persistence';
 
 /**
@@ -26,6 +27,7 @@ export const useStore = create(
       ...createJourneySlice(set, get),
       ...createCatalogueSlice(set, get),
       ...createRecordsSlice(set, get),
+      ...createStaffSlice(set, get),
     }),
     { name: STORAGE_KEY, version: STORAGE_VERSION, merge, migrate, partialize, storage: storeStorage },
   ),

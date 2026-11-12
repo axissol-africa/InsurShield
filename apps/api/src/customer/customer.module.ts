@@ -10,6 +10,7 @@ import { PoliciesRepository } from './policies.repository.js';
 import { PoliciesService } from './policies.service.js';
 import { QuoteRequestsRepository } from './quote-requests.repository.js';
 import { QuoteRequestsService } from './quote-requests.service.js';
+import { QuoteAvailabilityService } from './quote-availability.service.js';
 import { IdempotencyService } from '../common/idempotency/idempotency.service.js';
 
 @Module({
@@ -17,6 +18,7 @@ import { IdempotencyService } from '../common/idempotency/idempotency.service.js
   providers: [
     QuoteRequestsService,
     QuoteRequestsRepository,
+    QuoteAvailabilityService,
     PoliciesService,
     PoliciesRepository,
     ClaimsService,
@@ -27,5 +29,6 @@ import { IdempotencyService } from '../common/idempotency/idempotency.service.js
     AccountRepository,
     IdempotencyService,
   ],
+  exports: [QuoteAvailabilityService],
 })
 export class CustomerModule {}

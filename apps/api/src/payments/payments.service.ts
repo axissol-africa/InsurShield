@@ -94,6 +94,14 @@ export class PaymentsService {
         if (!(await this.payments.lockOpenCustomer(tx, customerId))) throw ApiException.forbidden(ACCOUNT_CLOSED);
         const lockedRequest = await this.payments.lockRequest(tx, request.id);
         if (!lockedRequest) throw ApiException.notFound('Quote request', dto.quoteRequestId);
+        const lockedQuote = await this.payments.lockQuote(tx, quote.id);
+        if (!lockedQuote) throw ApiException.notFound('Quote from', dto.insurer);
+        if (lockedQuote.unpayableAt) {
+          throw ApiException.conflict(
+            'QUOTE_UNAVAILABLE',
+            `${quote.insurerName}'s quote is no longer available for payment. Request fresh quotes to continue.`,
+          );
+        }
 
         // Inserted before the checks, so a second request with this key waits on the first and replays it.
         const payment = await this.payments.insertPayment(tx, {

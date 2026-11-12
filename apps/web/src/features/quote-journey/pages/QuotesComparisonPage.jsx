@@ -72,6 +72,13 @@ export default function QuotesComparisonPage() {
           });
           const replyKey = Object.keys(request.insurerQuotes || {}).find((name) => sameInsurerName(name, insurer.name));
           const reply = replyKey ? request.insurerQuotes[replyKey] : null;
+          const unavailableRecipient = request.unavailableInsurers?.find((entry) =>
+            sameInsurerName(entry.name, insurer.name),
+          );
+          // The recipient cancellation and an already-issued final quote can
+          // both make the offer unavailable. The quote document remains a
+          // customer record, but neither state can lead to payment.
+          const unavailableAt = reply?.unavailableAt || unavailableRecipient?.unavailableAt || null;
           // An insurer's final quote replaces the indicative calculation outright.
           const finalBreakdown = reply
             ? {
@@ -97,18 +104,26 @@ export default function QuotesComparisonPage() {
             estimate: breakdown.finalPremium,
             reply,
             isFinal: Boolean(reply),
+            unavailable: Boolean(unavailableAt),
+            unavailableAt,
             validity,
             expired: validity.expired,
             rating,
             ratingCount: reviews.length,
           };
         })
-        // Expired offers sink to the bottom; everything else is ordered by price.
-        .sort((a, b) => Number(a.expired) - Number(b.expired) || a.premium - b.premium)
+        // Unavailable and expired offers sink to the bottom; every other card
+        // stays ordered by price for an easy comparison.
+        .sort(
+          (a, b) =>
+            Number(a.unavailable) - Number(b.unavailable) || Number(a.expired) - Number(b.expired) || a.premium - b.premium,
+        )
     );
   }, [request, insurersList, insurerReviews, piaConfig?.piaRatePercentage]);
 
-  const repliedCount = quotes.filter((quote) => quote.isFinal).length;
+  const repliedCount = quotes.filter((quote) => quote.isFinal && !quote.unavailable).length;
+  const unavailableCount = quotes.filter((quote) => quote.unavailable).length;
+  const waitingCount = quotes.filter((quote) => !quote.isFinal && !quote.unavailable).length;
   const coverageType =
     request?.insuranceType === 'Third Party Only' ? 'ThirdParty' : request?.insuranceType || 'Comprehensive';
   const guideInsurers = useMemo(
@@ -125,7 +140,7 @@ export default function QuotesComparisonPage() {
   const choose = (quote) => {
     // Indicative estimates explain the market but are not an offer a customer
     // can buy. A documented insurer reply is required before payment.
-    if (!quote.isFinal || quote.expired || requestExpired) return;
+    if (!quote.isFinal || quote.unavailable || quote.expired || requestExpired) return;
     selectQuote(
       { ...quote, price: quote.premium, requestId: request.id, validUntil: quote.validity.validUntil },
       quote.breakdown,
@@ -157,9 +172,9 @@ export default function QuotesComparisonPage() {
     <>
       <JourneyLayout
         step={5}
-        title={quotes.length === 1 ? 'Your final quote' : 'Compare your quotes'}
+        title={quotes.length === 1 && !quotes[0]?.unavailable ? 'Your final quote' : 'Compare your quotes'}
         description={
-          quotes.length === 1
+          quotes.length === 1 && !quotes[0]?.unavailable
             ? 'Review the insurer’s final quotation, then continue to payment.'
             : 'Compare each insurer’s final quotation, price and validity before choosing your cover.'
         }
@@ -181,10 +196,8 @@ export default function QuotesComparisonPage() {
                 {request.policyDates?.anchoredToAnniversary ? ', aligned to RTSA anniversary' : ''}
               </p>
             )}
-            <p role="status" className="text-sm">
-              {repliedCount === quotes.length
-                ? 'All insurers have sent their final quotes.'
-                : `${repliedCount} of ${quotes.length} insurers have replied. Only a final insurer quotation can be selected for payment.`}
+            <p role="status" aria-live="polite" className="text-sm">
+              {quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total: quotes.length })}
             </p>
           </CardContent>
         </Card>
@@ -381,10 +394,21 @@ function CoverGuideOption({ insurer, guide, coverageType, selected, expanded, on
 
 /** Premium with its provenance: the insurer's final figure, or our indicative estimate. */
 function PriceBlock({ quote }) {
+  if (quote.unavailable && !quote.isFinal) {
+    return (
+      <div>
+        <p className="text-lg font-semibold leading-none tracking-tight text-foreground">Quote unavailable</p>
+        <p className="mt-1.5 text-[12px] text-ink-muted">This insurer did not provide a final quote before becoming unavailable.</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <p className="text-2xl font-semibold leading-none tracking-tight text-foreground">{formatZMW(quote.premium)}</p>
-      {quote.isFinal ? (
+      {quote.unavailable ? (
+        <p className="mt-1.5 text-[12px] text-ink-muted">Previously issued quote · no longer available for payment</p>
+      ) : quote.isFinal ? (
         <p className="mt-1.5 text-[12px] text-ink-muted">
           Final quote from insurer
           {quote.estimate !== quote.premium && (
@@ -429,6 +453,7 @@ function QuoteDocuments({ reply }) {
 }
 
 function QuoteStatusBadge({ quote }) {
+  if (quote.unavailable) return <Badge variant="destructive">Unavailable</Badge>;
   if (quote.expired) return <Badge variant="secondary">Expired</Badge>;
   if (quote.isFinal)
     return (
@@ -443,6 +468,16 @@ function QuoteStatusBadge({ quote }) {
 /** "Valid until 28 Sep · 5 days left" (final quotes only). */
 function ValidityLine({ quote }) {
   if (!quote.isFinal) return null;
+  if (quote.unavailable) {
+    return (
+      <span className="mt-2 flex items-center gap-1 text-[12px] text-primary">
+        <span className="material-symbols-outlined text-[15px]" aria-hidden="true">
+          block
+        </span>
+        This quote is no longer available for payment.
+      </span>
+    );
+  }
   return (
     <span
       className={`mt-2 flex items-center gap-1 text-[12px] ${quote.expired ? 'text-primary' : quote.validity.expiringSoon ? 'text-primary' : 'text-ink-muted'}`}
@@ -456,6 +491,18 @@ function ValidityLine({ quote }) {
 }
 
 function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
+  if (quote.unavailable)
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        onClick={onRequote}
+        aria-label={`Request fresh quotes after ${quote.name} became unavailable`}
+        className="h-auto min-h-11 w-full whitespace-normal border-primary text-primary hover:bg-primary hover:text-white"
+      >
+        Request fresh quotes
+      </Button>
+    );
   if (!quote.isFinal)
     return (
       <Button type="button" variant="outline" disabled className="h-auto min-h-11 w-full whitespace-normal">
@@ -504,6 +551,20 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
             <PriceBlock quote={quote} />
             <ValidityLine quote={quote} />
           </div>
+          {quote.unavailable && (
+            <Alert className="border-primary/30 bg-primary/[0.04]">
+              <span className="material-symbols-outlined text-[20px] text-primary" aria-hidden="true">
+                info
+              </span>
+              <div>
+                <AlertTitle>What this means</AlertTitle>
+                <AlertDescription>
+                  This insurer can no longer complete this quote. You have not been charged; request fresh quotes to
+                  continue with available insurers.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
           {quote.reply?.notes && (
             <p className="rounded-xl bg-muted p-3 text-sm">
               <strong>Insurer note:</strong> {quote.reply.notes}
@@ -524,6 +585,19 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
         </CardFooter>
       </Card>
   );
+}
+
+function quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total }) {
+  if (!unavailableCount) {
+    return repliedCount === total
+      ? 'All insurers have sent their final quotes.'
+      : `${repliedCount} of ${total} insurers have replied. Only a final insurer quotation can be selected for payment.`;
+  }
+
+  const parts = [`${repliedCount} of ${total} insurers have an available final quote.`];
+  if (unavailableCount) parts.push(`${unavailableCount} insurer${unavailableCount === 1 ? ' is' : 's are'} unavailable.`);
+  if (waitingCount) parts.push(`${waitingCount} insurer${waitingCount === 1 ? ' is' : 's are'} awaiting a reply.`);
+  return parts.join(' ');
 }
 
 function RatingSummary({ quote }) {

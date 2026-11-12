@@ -143,6 +143,8 @@ export class InsurerPortalService {
     const premiumMinor = kwachaToNgwee(dto.premium);
     const requestExpired = () =>
       ApiException.conflict('REQUEST_EXPIRED', 'This request has expired and can no longer be quoted.');
+    const requestUnavailable = () =>
+      ApiException.conflict('REQUEST_UNAVAILABLE', 'This request is no longer available to quote.');
 
     const reply = await this.portal.transaction(async (tx) => {
       const standing = await this.portal.insurerStanding(tx, insurerId);
@@ -160,6 +162,8 @@ export class InsurerPortalService {
           await this.portal.quoteRequestExists(requestId, tx),
         );
       }
+
+      if (delivery.cancelledAt) throw requestUnavailable();
 
       if (await this.portal.hasQuote(requestId, insurerId, tx)) {
         throw ApiException.conflict(
@@ -266,7 +270,15 @@ export class InsurerPortalService {
     });
     if (extended) return toExtension(extended);
 
-    if (!(await this.portal.hasQuote(requestId, insurerId))) {
+    const quote = await this.portal.quoteAvailability(requestId, insurerId);
+    if (quote?.unpayableAt) {
+      throw ApiException.conflict(
+        'QUOTE_UNAVAILABLE',
+        'This quote is no longer available for the customer to pay. They need to request fresh quotes.',
+      );
+    }
+
+    if (!quote) {
       throw ApiException.notFound('Quote for request', requestId);
     }
     throw ApiException.conflict(

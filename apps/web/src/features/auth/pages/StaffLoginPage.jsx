@@ -88,7 +88,11 @@ export default function AdminLogin() {
     setTimeout(() => {
       setLoading(false);
       const name = role === 'insurer' ? 'Prestige Assurance' : 'Admin';
-      startStaffSession({ role, name });
+      startStaffSession({
+        role,
+        staffRole: role === 'insurer' ? 'INSURER_ADMIN' : 'SUPER_ADMIN',
+        name,
+      });
       navigate(role === 'insurer' ? '/insurer' : '/admin', { replace: true });
     }, 900);
   };

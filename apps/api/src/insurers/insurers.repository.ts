@@ -1,7 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, notInArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { insurerContacts, insurerEvidence, insurerIntegrations, insurers, staffUsers } from '../db/schema.js';
+import {
+  claimNotifications,
+  inspections,
+  insurerContacts,
+  insurerEvidence,
+  insurerIntegrations,
+  insurerQuotes,
+  insurers,
+  ncdApplications,
+  payments,
+  policies,
+  staffUsers,
+} from '../db/schema.js';
 import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 import type { EvidenceReviewState, InsurerStatus } from '../common/domain/enums.js';
 
@@ -12,6 +24,8 @@ export type NewEvidence = typeof insurerEvidence.$inferInsert;
 export type EvidenceRow = Awaited<ReturnType<InsurersRepository['findEvidence']>>;
 export type NewIntegration = Omit<typeof insurerIntegrations.$inferInsert, 'insurerId' | 'clientSecretEncrypted'>;
 export type IntegrationRow = NonNullable<Awaited<ReturnType<InsurersRepository['findIntegration']>>>;
+export const DELETION_BLOCKER_KINDS = ['policy', 'claim', 'ncd application', 'inspection', 'payment'] as const;
+export type DeletionBlockerKind = (typeof DELETION_BLOCKER_KINDS)[number];
 
 // What an unauthenticated visitor may see; the credentials in insurer_integrations are never selected.
 const publicColumns = {
@@ -251,5 +265,55 @@ export class InsurersRepository {
   async findContact(tx: Transaction, insurerId: string): Promise<ContactRow | null> {
     const [row] = await tx.select(contactColumns).from(insurerContacts).where(eq(insurerContacts.insurerId, insurerId));
     return row ?? null;
+  }
+
+  /**
+   * A soft-deleted insurer can no longer sign in, so it cannot be left with
+   * customer work that its staff still need to service. Historical completed
+   * NCD and inspection records do not block the transition; active policy and
+   * claim records do because the current schema has no terminal state for them.
+   */
+  async deletionBlockers(tx: Transaction, insurerId: string): Promise<DeletionBlockerKind[]> {
+    const [policy, claim, ncd, inspection, payment] = await Promise.all([
+      tx.select({ id: policies.policyNumber }).from(policies).where(eq(policies.insurerId, insurerId)).limit(1),
+      tx
+        .select({ id: claimNotifications.claimNumber })
+        .from(claimNotifications)
+        .where(eq(claimNotifications.insurerId, insurerId))
+        .limit(1),
+      tx
+        .select({ id: ncdApplications.id })
+        .from(ncdApplications)
+        .where(
+          and(
+            eq(ncdApplications.insurerId, insurerId),
+            inArray(ncdApplications.status, ['SUBMITTED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED']),
+          ),
+        )
+        .limit(1),
+      tx
+        .select({ id: inspections.id })
+        .from(inspections)
+        .where(
+          and(
+            eq(inspections.insurerId, insurerId),
+            notInArray(inspections.status, ['COMPLETED', 'APPROVED', 'FAILED']),
+          ),
+        )
+        .limit(1),
+      tx
+        .select({ id: payments.id })
+        .from(payments)
+        .innerJoin(insurerQuotes, eq(insurerQuotes.id, payments.insurerQuoteId))
+        .where(and(eq(insurerQuotes.insurerId, insurerId), eq(payments.status, 'PENDING')))
+        .limit(1),
+    ]);
+    return [
+      ...(policy.length ? ['policy' as const] : []),
+      ...(claim.length ? ['claim' as const] : []),
+      ...(ncd.length ? ['ncd application' as const] : []),
+      ...(inspection.length ? ['inspection' as const] : []),
+      ...(payment.length ? ['payment' as const] : []),
+    ];
   }
 }

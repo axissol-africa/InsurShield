@@ -21,8 +21,10 @@ import {
  * nothing.
  */
 const TAGS = migrationFileTags();
-const GRANDFATHER = TAGS[TAGS.length - 1];
-const BEFORE = TAGS.length - 1;
+const GRANDFATHER = '0018_grandfather_insurer_licences';
+const BEFORE = TAGS.indexOf(GRANDFATHER);
+
+if (BEFORE < 0) throw new Error(`Expected migration ${GRANDFATHER} to exist.`);
 
 const applyStatements = async (client: ClientBase, tag: string) => {
   for (const statement of statementsOf(tag)) await client.query(statement);

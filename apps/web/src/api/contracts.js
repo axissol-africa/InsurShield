@@ -22,7 +22,10 @@
  *  vehicles    GET  /vehicles/lookup?plate=
  *  quotes      POST /quote-requests · GET /quote-requests · GET /quote-requests/:id · POST /quote-requests/:id/requote
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
- *  insurers    GET  /insurer/profile (signed-in insurer) · GET /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
+ *  insurers    GET  /insurer/profile (signed-in insurer) · GET /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · POST /insurers/:id/suspend · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
+ *              GET /insurers/:id/evidence · POST /insurers/:id/evidence · POST /insurers/:id/evidence/:evidenceId/review · GET/PUT /insurers/:id/integration · POST /insurers/:id/activate
+ *  staff       GET /staff/users · POST /staff/users · PATCH /staff/users/:id · POST /staff/users/:id/invitation
+ *              GET /staff/teams · POST /staff/teams · PATCH /staff/teams/:id · DELETE /staff/teams/:id
  *  payments    POST /payments · GET /payments/:id
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
@@ -74,6 +77,7 @@
  * @property {string} sentAt
  * @property {string} validUntil
  * @property {string} [extendedAt]
+ * @property {string|null} [unavailableAt]  Insurer can no longer complete this unpaid quote
  */
 
 /**
@@ -86,6 +90,7 @@
  * @property {string[]} insurers               names of every insurer the request went to
  * @property {string[]} insurerIds
  * @property {Record<string, InsurerQuote>} insurerQuotes   keyed by insurer name
+ * @property {{name:string, unavailableAt:string}[]} [unavailableInsurers] insurers that could not complete the request
  * @property {string} vehicle                  display label
  * @property {VehicleDetails} vehicleDetails
  * @property {number} vehicleValue             declared value, ZMW

@@ -132,6 +132,14 @@ export type DocumentRetentionClass = (typeof DOCUMENT_RETENTION_CLASSES)[number]
 export const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKNOWLEDGED', 'FAILED'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
+/**
+ * A delivery and a final quote have different lifecycles, but an insurer
+ * suspension can make either unavailable. Keeping the reason separate from
+ * delivery and quote statuses preserves their operational history.
+ */
+export const QUOTE_UNAVAILABILITY_REASONS = ['INSURER_SUSPENDED'] as const;
+export type QuoteUnavailabilityReason = (typeof QUOTE_UNAVAILABILITY_REASONS)[number];
+
 export const DELIVERY_KINDS = ['QUOTE_REQUEST', 'PAID_POLICY', 'CLAIM_NOTIFICATION'] as const;
 export type DeliveryKind = (typeof DELIVERY_KINDS)[number];
 

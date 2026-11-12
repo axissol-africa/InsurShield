@@ -29,6 +29,7 @@ import { InsurersRepository } from './insurers.repository.js';
 import type { Principal, StaffRoleName } from '../common/auth/auth.types.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
+import { QuoteAvailabilityService } from '../customer/quote-availability.service.js';
 
 const NAME_CONSTRAINT = 'insurers_name_key';
 
@@ -45,6 +46,7 @@ export class InsurersService {
   constructor(
     private readonly insurers: InsurersRepository,
     private readonly audit: AuditService,
+    private readonly quoteAvailability: QuoteAvailabilityService,
   ) {}
 
   /** Every insurer the admin portal manages, deleted ones excluded by default. */
@@ -301,6 +303,16 @@ export class InsurersService {
           `An insurer that is ${before.status} cannot become ${status}.`,
         );
       }
+      if (status === 'DELETED') {
+        const blockers = await this.insurers.deletionBlockers(tx, id);
+        if (blockers.length) {
+          throw ApiException.conflict(
+            'INSURER_HAS_SERVICE_RECORDS',
+            'This insurer still has customer work to service or a payment in progress. Suspend it instead until that work is complete.',
+            { blockers },
+          );
+        }
+      }
       const row = await this.insurers.update(tx, id, { status, deletedAt: status === 'DELETED' ? new Date() : null });
       if (!row) throw ApiException.notFound('Insurer', id);
       const updated = { ...row, contact: await this.insurers.findContact(tx, id) };
@@ -312,6 +324,51 @@ export class InsurersService {
         before: { status: before.status },
         after: { status: updated.status },
         note: `Administrator changed the insurer status from ${before.status} to ${updated.status}.`,
+        correlationId: id,
+      });
+      return updated;
+    });
+    return toInsurerResponse(insurer);
+  }
+
+  /**
+   * Stops new sales and makes the insurer's outstanding quote work safe in one
+   * transaction. Existing paid policies and claims are intentionally not
+   * touched: suspension changes future trading, not cover already purchased.
+   */
+  async suspend(id: string, reason: string, principal: Extract<Principal, { kind: 'staff' }>) {
+    const suspendedAt = new Date();
+    const insurer = await this.insurers.transaction(async (tx) => {
+      const before = await this.insurers.lock(tx, id);
+      if (!before || before.status === 'DELETED') throw ApiException.notFound('Insurer', id);
+      // A timeout after a committed suspension is safe to retry. The first
+      // transaction has already cancelled the work; do not reject the retry
+      // or create a second set of customer notices.
+      if (before.status === 'SUSPENDED') {
+        return { ...before, contact: await this.insurers.findContact(tx, id) };
+      }
+      if (!canChangeInsurerStatus(before.status, 'SUSPENDED')) {
+        throw ApiException.conflict(
+          'INSURER_STATUS_TRANSITION',
+          `An insurer that is ${before.status} cannot become SUSPENDED.`,
+        );
+      }
+      const row = await this.insurers.update(tx, id, { status: 'SUSPENDED', deletedAt: null });
+      if (!row) throw ApiException.notFound('Insurer', id);
+      const marks = await this.quoteAvailability.cancelForSuspendedInsurer(tx, {
+        insurerId: id,
+        insurerName: row.name,
+        suspendedAt,
+      });
+      const updated = { ...row, contact: await this.insurers.findContact(tx, id) };
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'insurer.suspended',
+        entityType: 'INSURER',
+        entityId: id,
+        before: { status: before.status },
+        after: { status: updated.status, ...marks },
+        note: reason,
         correlationId: id,
       });
       return updated;

@@ -3,7 +3,7 @@ import { imageToDataUrl } from '@/lib/files';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 
 const INSPECTION_OPTIONS = [
-  ['NOT REQUIRED', 'Not required'],
+  ['NOT_REQUIRED', 'Not required'],
   ['OPTIONAL', 'May be requested'],
   ['REQUIRED', 'Required before policy issue'],
 ];
@@ -11,7 +11,7 @@ const INSPECTION_OPTIONS = [
 const EMPTY = {
   name: '', tradingName: '', registrationNumber: '', tpin: '', licenceNumber: '', licenceExpiry: '', address: '', website: '',
   contactPerson: '', contactRole: '', phone: '', mobile: '', email: '', hours: 'Mon–Fri 08:00–17:00',
-  coverage: '', ratePercentage: '', quoteValidityDays: String(DEFAULT_QUOTE_VALIDITY_DAYS), inspectionRules: 'NOT REQUIRED', ncdAccepted: true,
+  coverage: '', ratePercentage: '', quoteValidityDays: String(DEFAULT_QUOTE_VALIDITY_DAYS), inspectionRule: 'NOT_REQUIRED', ncdAccepted: true,
   logoUrl: '',
 };
 
@@ -23,6 +23,7 @@ const toForm = (insurer) => insurer ? {
   contactPerson: insurer.contact?.contactPerson || '', contactRole: insurer.contact?.role || '',
   phone: insurer.contact?.phone || '', mobile: insurer.contact?.mobile || '', email: insurer.contact?.email || '',
   address: insurer.contact?.address || insurer.address || '', hours: insurer.contact?.hours || EMPTY.hours,
+  inspectionRule: insurer.inspectionRule || insurer.inspectionRules?.replaceAll(' ', '_') || EMPTY.inspectionRule,
 } : EMPTY;
 
 const field = 'w-full rounded-xl border border-border bg-background p-3 text-[15px] outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20';
@@ -56,38 +57,37 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (!form.name.trim() || !form.licenceNumber.trim() || !form.phone.trim() || !form.email.trim() || !form.ratePercentage) {
-      setError('Company name, PIA licence number, claims-desk phone and email, and the premium rate are required.');
+    if (!form.name.trim() || !form.licenceNumber.trim() || !form.contactPerson.trim() || !form.contactRole.trim() || !form.phone.trim() || !form.email.trim() || !form.ratePercentage) {
+      setError('Company name, PIA licence number, claims contact name and role, phone, email, and premium rate are required.');
       return;
     }
-    onSubmit({
+    const submission = {
       name: form.name.trim(),
-      tradingName: form.tradingName.trim() || form.name.trim(),
-      registrationNumber: form.registrationNumber.trim(),
-      tpin: form.tpin.trim(),
+      ...(form.tradingName.trim() ? { tradingName: form.tradingName.trim() } : {}),
+      ...(form.registrationNumber.trim() ? { registrationNumber: form.registrationNumber.trim() } : {}),
+      ...(form.tpin.trim() ? { tpin: form.tpin.trim() } : {}),
       licenceNumber: form.licenceNumber.trim(),
-      licenceExpiry: form.licenceExpiry,
-      website: form.website.trim(),
-      logoUrl: form.logoUrl,
+      ...(form.licenceExpiry ? { licenceExpiry: form.licenceExpiry } : {}),
+      ...(form.website.trim() ? { website: form.website.trim() } : {}),
+      ...(form.logoUrl.startsWith('http') ? { logoUrl: form.logoUrl } : {}),
       coverage: form.coverage.trim() || 'Comprehensive',
       ratePercentage: parseFloat(form.ratePercentage),
       quoteValidityDays: Math.max(1, parseInt(form.quoteValidityDays, 10) || DEFAULT_QUOTE_VALIDITY_DAYS),
-      inspectionRules: form.inspectionRules,
+      inspectionRule: form.inspectionRule,
       ncdAccepted: form.ncdAccepted,
-      timing: 'AFTER PAYMENT', method: 'SELF-CAPTURE', icon: 'business', isBestValue: false,
+      inspectionTiming: 'AFTER_PAYMENT', inspectionMethod: 'SELF_CAPTURE', icon: 'business', isBestValue: false,
       benefits: ['Third Party Property Damage'],
-      // Editing must preserve the company's current operational status and
-      // original onboarding record; only a newly onboarded insurer starts active.
-      status: insurer?.status || 'Active',
-      onboardedAt: insurer?.onboardedAt || new Date().toISOString(),
       contact: {
         tagline: '',
         contactPerson: form.contactPerson.trim(), role: form.contactRole.trim(),
-        phone: form.phone.trim(), mobile: form.mobile.trim() || form.phone.trim(),
-        whatsapp: (form.mobile || form.phone).replace(/[^\d]/g, ''),
-        email: form.email.trim(), address: form.address.trim(), hours: form.hours.trim(),
+        phone: form.phone.trim(),
+        ...(form.mobile.trim() ? { mobile: form.mobile.trim(), whatsapp: form.mobile.replace(/[^\d]/g, '') } : {}),
+        email: form.email.trim(),
+        ...(form.address.trim() ? { address: form.address.trim() } : {}),
+        ...(form.hours.trim() ? { hours: form.hours.trim() } : {}),
       },
-    });
+    };
+    onSubmit(submission);
   };
 
   return (
@@ -112,8 +112,8 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
 
       <Section title="Claims desk and customer contact" hint="Shown to customers in the insurer directory and after a claim notification.">
         <div className="grid gap-4 md:grid-cols-2">
-          <label className="block"><span className={label}>Contact person</span><input value={form.contactPerson} onChange={set('contactPerson')} className={field} placeholder="e.g. Mrs. Chanda Mwale" /></label>
-          <label className="block"><span className={label}>Role</span><input value={form.contactRole} onChange={set('contactRole')} className={field} placeholder="e.g. Motor Claims Manager" /></label>
+          <label className="block"><span className={label}>Contact person *</span><input required value={form.contactPerson} onChange={set('contactPerson')} className={field} placeholder="e.g. Mrs. Chanda Mwale" /></label>
+          <label className="block"><span className={label}>Role *</span><input required value={form.contactRole} onChange={set('contactRole')} className={field} placeholder="e.g. Motor Claims Manager" /></label>
           <label className="block"><span className={label}>Office phone *</span><input required type="tel" value={form.phone} onChange={set('phone')} className={field} placeholder="+260 211 …" /></label>
           <label className="block"><span className={label}>Mobile / WhatsApp</span><input type="tel" value={form.mobile} onChange={set('mobile')} className={field} placeholder="+260 97 …" /></label>
           <label className="block"><span className={label}>Claims email *</span><input required type="email" value={form.email} onChange={set('email')} className={field} placeholder="claims@insurer.zm" /></label>
@@ -134,7 +134,7 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
             <input type="number" min="1" max="30" value={form.quoteValidityDays} onChange={set('quoteValidityDays')} className={field} />
             <span className="mt-1 block text-[11px] text-ink-muted">How long the insurer's final quote stays open unless it sets a different period per quote.</span>
           </label>
-          <label className="block"><span className={label}>Vehicle inspection</span><select value={form.inspectionRules} onChange={set('inspectionRules')} className={field}>{INSPECTION_OPTIONS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+          <label className="block"><span className={label}>Vehicle inspection</span><select value={form.inspectionRule} onChange={set('inspectionRule')} className={field}>{INSPECTION_OPTIONS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
           <label className="flex items-center gap-3 self-end rounded-xl border border-border bg-muted/30 p-3"><input type="checkbox" checked={form.ncdAccepted} onChange={set('ncdAccepted')} className="h-5 w-5 accent-red-600" /><span className="text-sm font-medium">Accepts No Claim Discount codes</span></label>
         </div>
       </Section>
@@ -159,7 +159,7 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <button type="submit" className="flex h-11 flex-1 items-center justify-center rounded-xl bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
-          {insurer ? 'Update insurer' : 'Onboard insurance company'}
+          {insurer ? 'Update insurer' : 'Save insurer for review'}
         </button>
         <button type="button" onClick={onCancel} className="h-11 rounded-xl border border-border bg-background px-6 text-sm font-medium transition-colors hover:bg-muted">Cancel</button>
       </div>

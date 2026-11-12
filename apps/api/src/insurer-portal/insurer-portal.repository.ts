@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, exists, gte, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
@@ -84,6 +84,7 @@ export class InsurerPortalRepository {
         vehicleUsage: quoteRequests.vehicleUsage,
         insuranceType: quoteRequests.insuranceType,
         coverageDuration: quoteRequests.coverageDuration,
+        cancelledAt: quoteRequestRecipients.cancelledAt,
         policyStartDate: quoteRequests.policyStartDate,
         policyEndDate: quoteRequests.policyEndDate,
         coverageDays: quoteRequests.coverageDays,
@@ -143,6 +144,7 @@ export class InsurerPortalRepository {
         // Who to tell, and whose name to tell them, when the quote lands.
         customerId: quoteRequests.customerId,
         insurerName: insurers.name,
+        cancelledAt: quoteRequestRecipients.cancelledAt,
       })
       .from(quoteRequestRecipients)
       .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestRecipients.quoteRequestId))
@@ -248,11 +250,20 @@ export class InsurerPortalRepository {
         and(
           eq(insurerQuotes.quoteRequestId, quoteRequestId),
           eq(insurerQuotes.insurerId, insurerId),
+          isNull(insurerQuotes.unpayableAt),
           gte(insurerQuotes.validUntil, now),
         ),
       )
       .returning(extensionColumns);
     return extended;
+  }
+
+  async quoteAvailability(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db) {
+    const [quote] = await tx
+      .select({ unpayableAt: insurerQuotes.unpayableAt })
+      .from(insurerQuotes)
+      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.insurerId, insurerId)));
+    return quote;
   }
 
   // ── Paid policies ───────────────────────────────────────────────

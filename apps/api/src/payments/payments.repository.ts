@@ -115,6 +115,16 @@ export class PaymentsRepository {
     return standing;
   }
 
+  /** Locked inside the payment transaction, so a suspension mark is never checked only on a stale outer read. */
+  async lockQuote(tx: Transaction, quoteId: string) {
+    const [quote] = await tx
+      .select({ id: insurerQuotes.id, unpayableAt: insurerQuotes.unpayableAt })
+      .from(insurerQuotes)
+      .where(eq(insurerQuotes.id, quoteId))
+      .for('share');
+    return quote;
+  }
+
   async findPolicyNumberForRequest(tx: Transaction, quoteRequestId: string): Promise<string | undefined> {
     const [policy] = await tx
       .select({ policyNumber: policies.policyNumber })

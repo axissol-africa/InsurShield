@@ -6,6 +6,8 @@ const GRID = 'lg:grid-cols-[1.55fr_1fr_.65fr_.85fr_.75fr_2.25fr]';
 /** Accent marks an insurer that is actually receiving requests. */
 const STATUS_BADGE = {
   Active: 'border-primary/30 bg-primary/10 text-primary',
+  'Pending approval': 'border-primary/20 bg-primary/10 text-primary',
+  Suspended: 'border-primary/30 bg-primary/5 text-primary',
   Inactive: 'border-line-strong text-ink-muted',
   Deleted: 'border-line-strong text-ink-faint line-through',
 };
@@ -14,7 +16,7 @@ const STATUS_BADGE = {
  * Manage Insurers list: inline rate editing, view/edit, and a per-row menu to
  * deactivate (no new requests, history kept), reactivate, or delete (soft).
  */
-export default function InsurerTable({ insurers, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore, canRemove = false, canRestore = false }) {
+export default function InsurerTable({ insurers, piaRatePercentage, onView, onEdit, onReview, onRateChange, onStatusChange, onDelete, onRestore, canRemove = false, canRestore = false }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className={`hidden border-b border-border bg-muted/50 px-5 py-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground lg:grid lg:gap-x-5 ${GRID}`}>
@@ -23,7 +25,7 @@ export default function InsurerTable({ insurers, piaRatePercentage, onView, onEd
       <div className="divide-y divide-border">
         {insurers.map((insurer) => (
           <InsurerRow key={insurer.id} insurer={insurer} piaRatePercentage={piaRatePercentage} onView={() => onView(insurer)} onEdit={() => onEdit(insurer)}
-            onRateChange={(rate) => onRateChange(insurer.id, rate)} onStatusChange={(status) => onStatusChange(insurer.id, status)}
+            onRateChange={(rate) => onRateChange(insurer.id, rate)} onReview={() => onReview?.(insurer)} onStatusChange={(status) => onStatusChange(insurer.id, status)}
             onDelete={() => onDelete(insurer)} onRestore={() => onRestore?.(insurer)} canRemove={canRemove} canRestore={canRestore} />
         ))}
       </div>
@@ -31,7 +33,7 @@ export default function InsurerTable({ insurers, piaRatePercentage, onView, onEd
   );
 }
 
-function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, onStatusChange, onDelete, onRestore, canRemove, canRestore }) {
+function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onReview, onRateChange, onStatusChange, onDelete, onRestore, canRemove, canRestore }) {
   const status = insurer.status || 'Active';
   const effectiveRate = Math.max(insurer.ratePercentage, piaRatePercentage);
   return (
@@ -80,7 +82,7 @@ function InsurerRow({ insurer, piaRatePercentage, onView, onEdit, onRateChange, 
             </button>
           )
         ) : (
-          <RowActionsMenu insurer={insurer} status={status} onStatusChange={onStatusChange} onDelete={onDelete} canRemove={canRemove} />
+          <RowActionsMenu insurer={insurer} status={status} onReview={onReview} onStatusChange={onStatusChange} onDelete={onDelete} canRemove={canRemove} />
         )}
       </div>
     </div>
@@ -125,7 +127,7 @@ function RateCell({ insurer, onSave, readOnly = false }) {
 
 const menuItemClass = 'flex w-full items-center gap-2.5 px-4 py-3 text-left text-sm font-medium transition-colors';
 
-function RowActionsMenu({ insurer, status, onStatusChange, onDelete, canRemove }) {
+function RowActionsMenu({ insurer, status, onReview, onStatusChange, onDelete, canRemove }) {
   const [open, setOpen] = useState(false);
 
   // Close on a click anywhere outside the menu or on Escape.
@@ -149,10 +151,10 @@ function RowActionsMenu({ insurer, status, onStatusChange, onDelete, canRemove }
       </button>
       {open && (
         <div role="menu" className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-xl border border-border bg-popover py-1 shadow-lg">
-          {status === 'Inactive' ? (
-            <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Active'))} className={`${menuItemClass} text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">restart_alt</span>Reactivate</button>
-          ) : (
+          {status === 'Active' ? (
             <button type="button" role="menuitem" onClick={() => choose(() => onStatusChange('Inactive'))} className={`${menuItemClass} text-muted-foreground hover:bg-muted`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">pause_circle</span>Deactivate</button>
+          ) : (
+            <button type="button" role="menuitem" onClick={() => choose(onReview)} className={`${menuItemClass} text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">fact_check</span>Review eligibility</button>
           )}
           {canRemove && <button type="button" role="menuitem" onClick={() => choose(onDelete)} className={`${menuItemClass} mt-1 border-t border-border text-primary hover:bg-primary/10`}><span className="material-symbols-outlined text-[17px]" aria-hidden="true">delete</span>Remove</button>}
         </div>

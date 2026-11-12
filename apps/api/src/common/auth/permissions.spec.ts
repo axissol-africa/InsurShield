@@ -31,9 +31,10 @@ describe('the permission table', () => {
     expect(unheld, 'a permission nobody holds makes its route unreachable').toEqual([]);
   });
 
-  it('keeps InsurShield functions away from insurer staff', () => {
+  it('keeps platform-only functions away from insurer staff', () => {
     const insurShieldOnly = ALL.filter(
       (permission) =>
+        !permission.startsWith('staff:') &&
         !SHARED_WITH_EVERYONE.includes(permission) &&
         granteesOf(permission).some((grantee) =>
           (INSURSHIELD_ROLES as readonly string[]).includes(grantee),
@@ -45,7 +46,12 @@ describe('the permission table', () => {
       ),
     );
 
-    expect(leaked, 'an insurer role reaching an InsurShield function').toEqual([]);
+    expect(leaked, 'an insurer role reaching a platform-only function').toEqual([]);
+  });
+
+  it('gives staff management only to the insurer administrator, with service-level tenancy still required', () => {
+    expect(granteesOf('staff:read')).toEqual(['SUPER_ADMIN', 'ADMIN', 'INSURER_ADMIN']);
+    expect(granteesOf('staff:manage')).toEqual(['SUPER_ADMIN', 'ADMIN', 'INSURER_ADMIN']);
   });
 
   it('keeps the insurer portal away from InsurShield staff', () => {

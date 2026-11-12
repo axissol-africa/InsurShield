@@ -90,6 +90,13 @@ beforeEach(() => {
 });
 
 describe('quote screen', () => {
+  it('shows staff and team controls only to an insurer administrator', () => {
+    useStore.setState({ staffSession: { role: 'insurer', staffRole: 'INSURER_ADMIN', name: INSURER } });
+    open('/insurer');
+
+    expect(screen.getByRole('link', { name: /Staff and teams/i })).toBeVisible();
+  });
+
   it('opens from the queue at its own address and returns to the overview once the quote is sent', async () => {
     const user = userEvent.setup();
     api.quotes.reply.mockResolvedValue(undefined);
