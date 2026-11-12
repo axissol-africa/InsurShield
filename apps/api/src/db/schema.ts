@@ -255,6 +255,23 @@ export const consentRecords = pgTable(
   ],
 );
 
+/** A team belongs to one insurer; roles, not teams, decide permissions. */
+export const staffTeams = pgTable(
+  'staff_teams',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    name: text('name').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('staff_teams_insurerId_name_key').on(t.insurerId, t.name),
+    index('staff_teams_insurerId_idx').on(t.insurerId),
+    fk('staff_teams_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+  ],
+);
+
 export const staffUsers = pgTable(
   'staff_users',
   {
@@ -264,6 +281,7 @@ export const staffUsers = pgTable(
     role: staffRole('role').notNull(),
     insurerId: uuid('insurerId'),
     isActive: boolean('isActive').notNull().default(true),
+    teamId: uuid('teamId'),
     lastLoginAt: timestamptz('lastLoginAt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -273,7 +291,9 @@ export const staffUsers = pgTable(
     uniqueIndex('staff_users_email_key').on(t.email),
     uniqueIndex('staff_users_userId_key').on(t.userId),
     index('staff_users_insurerId_idx').on(t.insurerId),
+    index('staff_users_teamId_idx').on(t.teamId),
     fk('staff_users_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('staff_users_teamId_fkey', [t.teamId], [staffTeams.id], 'restrict'),
     fk('staff_users_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
   ],
 );

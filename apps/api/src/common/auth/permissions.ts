@@ -96,6 +96,11 @@ export const PERMISSIONS = {
   'insurer:delete': SUPER_ADMIN_ONLY,
   'insurer:restore': SUPER_ADMIN_ONLY,
 
+  // The service scopes insurer administrators to their own organisation and
+  // rejects roles they may not grant. This only opens the named functions.
+  'staff:read': ['SUPER_ADMIN', 'ADMIN', 'INSURER_ADMIN'],
+  'staff:manage': ['SUPER_ADMIN', 'ADMIN', 'INSURER_ADMIN'],
+
   // ── The insurer portal ────────────────────────────────────────────
   'portal:profile:read': ANY_INSURER,
   'portal:request:read': READS_REQUESTS,

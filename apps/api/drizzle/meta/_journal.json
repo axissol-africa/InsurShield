@@ -134,6 +134,13 @@
       "when": 1794386038958,
       "tag": "0018_grandfather_insurer_licences",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794560400000,
+      "tag": "0019_staff_management",
+      "breakpoints": true
     }
   ]
 }

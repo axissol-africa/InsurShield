@@ -23,6 +23,7 @@ import { JobsModule } from './jobs/jobs.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ScanningModule } from './scanning/scanning.module.js';
+import { StaffModule } from './staff/staff.module.js';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { ScanningModule } from './scanning/scanning.module.js';
     PiaModule,
     InsurerPortalModule,
     AdminModule,
+    StaffModule,
     CustomerModule,
     VehiclesModule,
     PaymentsModule,
