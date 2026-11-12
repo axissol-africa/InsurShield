@@ -66,6 +66,21 @@ export type InspectionTiming = (typeof INSPECTION_TIMINGS)[number];
 export const INSPECTION_METHODS = ['SELF_CAPTURE', 'PHYSICAL'] as const;
 export type InspectionMethod = (typeof INSPECTION_METHODS)[number];
 
+/** Maker/checker actions that must never be completed by one staff member alone. */
+export const APPROVAL_ACTIONS = [
+  'PIA_FLOOR_CHANGE',
+  'INSURER_ACTIVATE',
+  'INSURER_DEACTIVATE',
+  'INSURER_SUSPEND',
+  'INSURER_DELETE',
+  'INSURER_RESTORE',
+] as const;
+export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+/** A request reaches EXECUTED only after the business operation commits. */
+export const APPROVAL_STATUSES = ['PENDING', 'REJECTED', 'EXPIRED', 'EXECUTED'] as const;
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
 /**
  * InsurShield's own roles first, then the insurer ones. An InsurShield
  * administrator may grant any of these; an insurer administrator may grant only

@@ -22,6 +22,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
   ACTOR_TYPES,
+  APPROVAL_ACTIONS,
+  APPROVAL_STATUSES,
   CLAIM_STATUSES,
   COVERAGE_DURATIONS,
   DELIVERY_KINDS,
@@ -80,6 +82,8 @@ export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
 export const notificationChannel = pgEnum('NotificationChannel', NOTIFICATION_CHANNELS);
 export const notificationCategory = pgEnum('NotificationCategory', NOTIFICATION_CATEGORIES);
 export const notificationDeliveryStatus = pgEnum('NotificationDeliveryStatus', NOTIFICATION_DELIVERY_STATUSES);
+export const approvalAction = pgEnum('ApprovalAction', APPROVAL_ACTIONS);
+export const approvalStatus = pgEnum('ApprovalStatus', APPROVAL_STATUSES);
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, precision: 3, mode: 'date' });
@@ -1098,5 +1102,41 @@ export const piaConfigHistory = pgTable(
       'pia_config_history_previousRateBps_check',
       sql`${t.previousRateBps} IS NULL OR (${t.previousRateBps} >= ${sql.raw(String(MIN_RATE_BPS))} AND ${t.previousRateBps} <= ${sql.raw(String(MAX_RATE_BPS))})`,
     ),
+  ],
+);
+
+/**
+ * A maker/checker record freezes a request before anyone may execute it. Its
+ * payload is deliberately an opaque, action-specific snapshot: each executor
+ * validates it again at approval time, so a historical request cannot turn
+ * into a new unreviewed kind of configuration change.
+ */
+export const approvalRequests = pgTable(
+  'approval_requests',
+  {
+    id: id(),
+    action: approvalAction('action').notNull(),
+    status: approvalStatus('status').notNull().default('PENDING'),
+    targetType: text('targetType').notNull(),
+    targetId: text('targetId').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    requestedByStaffId: uuid('requestedByStaffId').notNull(),
+    requestedReason: text('requestedReason').notNull(),
+    decidedByStaffId: uuid('decidedByStaffId'),
+    decisionReason: text('decisionReason'),
+    expiresAt: timestamptz('expiresAt').notNull(),
+    decidedAt: timestamptz('decidedAt'),
+    executedAt: timestamptz('executedAt'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('approval_requests_status_createdAt_idx').on(t.status, t.createdAt),
+    index('approval_requests_target_idx').on(t.targetType, t.targetId),
+    uniqueIndex('approval_requests_one_pending_action_key')
+      .on(t.action, t.targetType, t.targetId)
+      .where(sql`${t.status} = 'PENDING'`),
+    fk('approval_requests_requestedByStaffId_fkey', [t.requestedByStaffId], [staffUsers.id], 'restrict'),
+    fk('approval_requests_decidedByStaffId_fkey', [t.decidedByStaffId], [staffUsers.id], 'restrict'),
   ],
 );

@@ -79,6 +79,8 @@ export const PERMISSIONS = {
   'admin:policy-list': INSURSHIELD_ADMIN,
   'admin:customer-find': INSURSHIELD_ADMIN,
   'admin:audit-read': INSURSHIELD_ADMIN,
+  'approval:read': INSURSHIELD_ADMIN,
+  'approval:decide': INSURSHIELD_ADMIN,
   'pia:set-floor': INSURSHIELD_ADMIN,
   'insurer:read': INSURSHIELD_ADMIN,
   'insurer:create': INSURSHIELD_ADMIN,

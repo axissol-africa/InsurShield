@@ -728,7 +728,8 @@ describe('the final schema', () => {
     // reviewedAt, createdAt and updatedAt, and suspension marks on recipients
     // and quotes. Effective, renewal and expiry columns are `date`, so they
     // are deliberately omitted.
-    expect(timestampColumns).toHaveLength(95);
+    // Approval requests add created, updated, expiry, decision and execution instants.
+    expect(timestampColumns).toHaveLength(100);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }
