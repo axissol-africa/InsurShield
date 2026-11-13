@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { env } from '@/config/env';
 import { imageToDataUrl } from '@/lib/files';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 
@@ -69,7 +70,9 @@ export default function InsurerOnboardingForm({ piaRatePercentage, onSubmit, onC
       licenceNumber: form.licenceNumber.trim(),
       ...(form.licenceExpiry ? { licenceExpiry: form.licenceExpiry } : {}),
       ...(form.website.trim() ? { website: form.website.trim() } : {}),
-      ...(form.logoUrl.startsWith('http') ? { logoUrl: form.logoUrl } : {}),
+      // Browser-storage demos may retain the local preview. The live API only
+      // accepts a hosted URL until logo documents have their own upload flow.
+      ...(form.logoUrl && (env.apiMode === 'mock' || form.logoUrl.startsWith('http')) ? { logoUrl: form.logoUrl } : {}),
       coverage: form.coverage.trim() || 'Comprehensive',
       ratePercentage: parseFloat(form.ratePercentage),
       quoteValidityDays: Math.max(1, parseInt(form.quoteValidityDays, 10) || DEFAULT_QUOTE_VALIDITY_DAYS),

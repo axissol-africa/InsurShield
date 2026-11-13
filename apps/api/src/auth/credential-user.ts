@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { BASE_ERROR_CODES } from 'better-auth';
 import { APIError } from 'better-auth/api';
 import { hashPassword } from 'better-auth/crypto';
+import { eq } from 'drizzle-orm';
 import type { Database, Transaction } from '../db/database.module.js';
-import { authAccounts, authUsers } from '../db/schema.js';
+import { authAccounts, authTwoFactors, authUsers } from '../db/schema.js';
 import { PASSWORD_POLICY } from './auth.constants.js';
 
 /** Better Auth's sign-in finds a password only on this provider, with `accountId` equal to the user id. */
@@ -49,4 +51,29 @@ export async function insertCredentialUser(
     password: input.passwordHash,
   });
   return user;
+}
+
+/**
+ * Provisioned staff must complete email-code MFA. The opaque two-factor row
+ * lets Better Auth keep its account-level failed-code lockout state without
+ * enabling its TOTP or backup-code paths.
+ */
+export async function requireStaffMfa(tx: Database | Transaction, userId: string): Promise<void> {
+  await tx.update(authUsers).set({ twoFactorEnabled: true, updatedAt: new Date() }).where(eq(authUsers.id, userId));
+
+  const [existingTwoFactor] = await tx
+    .select({ id: authTwoFactors.id })
+    .from(authTwoFactors)
+    .where(eq(authTwoFactors.userId, userId))
+    .limit(1);
+
+  if (existingTwoFactor) {
+    return;
+  }
+
+  await tx.insert(authTwoFactors).values({
+    userId,
+    secret: randomBytes(32).toString('base64url'),
+    backupCodes: randomBytes(32).toString('base64url'),
+  });
 }

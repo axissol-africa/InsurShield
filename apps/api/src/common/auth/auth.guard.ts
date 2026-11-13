@@ -7,6 +7,7 @@ import type { Request } from 'express';
 import { AUTH, COOKIE_PREFIX } from '../../auth/auth.constants.js';
 import type { Auth } from '../../auth/auth.instance.js';
 import { resolveIdentity } from '../../auth/identity.js';
+import { revokeStaffSession, staffSessionExpiry, touchStaffSession } from '../../auth/staff-session-security.js';
 import type { Env } from '../../config/env.js';
 import { DATABASE, type Database } from '../../db/database.module.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -125,6 +126,26 @@ export class AuthGuard implements CanActivate {
       throw new ApiException(identity.code, identity.message, identity.status);
     }
     request.principal = identity.principal;
+
+    if (identity.principal.kind === 'staff') {
+      const expiry = staffSessionExpiry(session.session);
+      if (expiry) {
+        await revokeStaffSession(this.db, session.session);
+        await this.audit.refusal({
+          actor: auditActor(identity.principal),
+          action: 'staff_session.expired',
+          entityType: 'AUTH_SESSION',
+          entityId: session.session.id,
+          after: { expiry },
+          note: 'A staff session was refused after its configured lifetime.',
+          correlationId: identity.principal.id,
+        });
+        throw ApiException.unauthorized();
+      }
+      // Better Auth's fixed session configuration intentionally does not refresh a cookie. We still record
+      // server-side activity for the staff idle window, scoped to this exact session and account.
+      await touchStaffSession(this.db, session.session);
+    }
 
     const allowsUnverified = this.reflector.getAllAndOverride<boolean>(ALLOWS_UNVERIFIED, targets) ?? false;
     if (identity.principal.kind === 'customer' && !identity.principal.emailVerified && !allowsUnverified) {

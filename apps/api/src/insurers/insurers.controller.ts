@@ -62,7 +62,7 @@ export class InsurersController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.insurers.restore(id, principal);
+    return this.insurers.proposeRestore(id, principal);
   }
 
   @Needs('insurer:read')
@@ -94,7 +94,7 @@ export class InsurersController {
     @Body() dto: SetInsurerStatusDto,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.insurers.setStatus(id, dto.status, principal);
+    return this.insurers.proposeStatus(id, dto.status, principal);
   }
 
   /** Suspension is a named operation because it also marks open quote work unavailable. */
@@ -106,7 +106,7 @@ export class InsurersController {
     @Body() dto: SuspendInsurerDto,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.insurers.suspend(id, dto.reason, principal);
+    return this.insurers.proposeSuspension(id, dto.reason, principal);
   }
 
   // ── The onboarding record ───────────────────────────────────────
@@ -166,12 +166,12 @@ export class InsurersController {
     @Body() dto: ActivateInsurerDto,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.insurers.activate(id, dto, principal);
+    return this.insurers.proposeActivation(id, dto, principal);
   }
 
   @Needs('insurer:delete')
   @Delete(':id')
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
-    return this.insurers.remove(id, principal);
+    return this.insurers.proposeStatus(id, 'DELETED', principal);
   }
 }

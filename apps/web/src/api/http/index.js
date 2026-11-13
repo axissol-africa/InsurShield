@@ -8,6 +8,8 @@ import { newIdempotencyKey } from '../shared';
 export const auth = {
   register: (account) => apiClient.post('/identity/register', account),
   signIn: (email, password) => apiClient.post('/identity/sign-in/email', { email, password }),
+  sendStaffMfaCode: () => apiClient.post('/identity/two-factor/send-otp', {}),
+  verifyStaffMfaCode: (code) => apiClient.post('/identity/two-factor/verify-otp', { code }),
   signOut: () => apiClient.post('/identity/sign-out'),
   revokeSessions: () => apiClient.post('/identity/revoke-sessions'),
   changePassword: (currentPassword, newPassword) => apiClient.post('/identity/change-password', { currentPassword, newPassword, revokeOtherSessions: true }),
@@ -132,9 +134,15 @@ export const config = {
 
 /** Platform-wide records for the administrator console. */
 export const admin = {
+  approvals: {
+    list: () => apiClient.get('/admin/approvals'),
+    approve: (id, decision = {}) => apiClient.post(`/admin/approvals/${encodeURIComponent(id)}/approve`, decision),
+    reject: (id, decision = {}) => apiClient.post(`/admin/approvals/${encodeURIComponent(id)}/reject`, decision),
+  },
   overview: () => apiClient.get('/admin/overview'),
   premiumByMonth: (months = 12) => apiClient.get('/admin/premium-by-month', { params: { months } }),
   recentPolicies: (limit = 8) => apiClient.get('/admin/policies', { params: { limit } }),
   findCustomer: (query) => apiClient.get('/admin/customers/find', { params: { query } }),
+  requestCustomerPasswordReset: (request) => apiClient.post('/admin/customers/password-reset', request),
   auditLogs: (query = {}) => apiClient.get('/admin/audit-logs', { params: query }),
 };

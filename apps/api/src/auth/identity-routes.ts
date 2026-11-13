@@ -2,6 +2,8 @@ import { getSessionCookie } from 'better-auth/cookies';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import { IDENTITY_HEADER, identityHeader, identityMatches } from '../common/auth/identity-precondition.js';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
 import { IDENTITY_CHANGED, IDENTITY_CHANGED_MESSAGE } from '../common/auth/messages.js';
 import { errorBody } from '../common/errors/api.exception.js';
 import { answerFailure } from '../common/filters/api-exception.filter.js';
@@ -9,6 +11,7 @@ import { CLIENT_ADDRESS_HEADER, COOKIE_PREFIX, identityBasePath } from './auth.c
 import type { Database } from '../db/database.module.js';
 import type { Auth, AuthSettings } from './auth.instance.js';
 import { resolveIdentity, type Identity } from './identity.js';
+import { revokeStaffSession, staffSessionExpiry } from './staff-session-security.js';
 
 const ALWAYS = [
   'POST /register',
@@ -23,11 +26,14 @@ const MAIL = [
   'POST /send-verification-email',
   'GET /verify-email',
 ];
+/** Staff-only second-factor endpoints. The remaining Better Auth 2FA routes stay closed. */
+const STAFF_MFA = ['POST /two-factor/send-otp', 'POST /two-factor/verify-otp'];
+const STAFF_MFA_ROUTES = new Set(STAFF_MFA);
 /** Several times the largest body the identity routes take, a registration. */
 export const IDENTITY_BODY_LIMIT_BYTES = 8 * 1024;
 
 /** These replace the session, and the tab binds to whoever their response names. */
-const UNCHECKED = new Set(['POST /register', 'POST /sign-in/email']);
+const UNCHECKED = new Set(['POST /register', 'POST /sign-in/email', ...STAFF_MFA]);
 /** A refused account is refused a session at sign-in, and may always end one. */
 const OPEN_TO_REFUSED = new Set([...UNCHECKED, 'POST /sign-out']);
 
@@ -36,7 +42,7 @@ export function identityRoutes(): string[] {
   // Served everywhere now that a real adapter exists. A deployment that has
   // not configured one cannot start at all: the provider gate refuses it, so
   // these routes can no longer be reached without something to send with.
-  return [...ALWAYS, ...MAIL];
+  return [...ALWAYS, ...MAIL, ...STAFF_MFA];
 }
 
 function send(response: Response, status: number, code: string, message: string) {
@@ -90,30 +96,67 @@ function configuredUrl(baseUrl: string): RequestHandler {
   };
 }
 
+/** Better Auth names the signed pending challenge from our shared cookie prefix. */
+function hasPendingMfaChallenge(request: Request): boolean {
+  const cookie = request.headers.cookie;
+  return typeof cookie === 'string' && /(?:^|;\s*)(?:__Secure-)?insurshield\.two_factor=/.test(cookie);
+}
+
 /**
  * The identity precondition, and the account rule the guard applies to Nest routes: a refused account may still
  * sign out, but changes nothing else. Without a session Better Auth answers for itself.
  */
-function sessionChecks(auth: Auth, db: Database, basePath: string): RequestHandler {
+function sessionChecks(auth: Auth, db: Database, audit: AuditService, basePath: string): RequestHandler {
   return async (request, response, next) => {
     const route = routeOf(request, basePath);
     if (route === undefined) return next();
     const expected = identityHeader(request.headers[IDENTITY_HEADER]);
     const checkHeader = expected !== undefined && !UNCHECKED.has(route);
     const checkAccount = !OPEN_TO_REFUSED.has(route);
-    if (!checkHeader && !checkAccount) return next();
+    const mfaRoute = STAFF_MFA_ROUTES.has(route);
+    if (!checkHeader && !checkAccount && !mfaRoute) return next();
     const headers = fromNodeHeaders(request.headers);
     let sessionUserId: string | null = null;
     let identity: Identity | undefined;
+    let session: Awaited<ReturnType<Auth['api']['getSession']>> | null = null;
     if (getSessionCookie(headers, { cookiePrefix: COOKIE_PREFIX }) !== null) {
       try {
-        const session = await auth.api.getSession({ headers, query: { disableRefresh: true } });
+        session = await auth.api.getSession({ headers, query: { disableRefresh: true } });
         sessionUserId = session?.user.id ?? null;
-        if (checkAccount && sessionUserId !== null) identity = await resolveIdentity(db, sessionUserId);
+        if ((checkAccount || mfaRoute) && sessionUserId !== null) identity = await resolveIdentity(db, sessionUserId);
       } catch (error) {
         return answerFailure(error, request, response);
       }
     }
+
+    if (session && identity?.ok && identity.principal.kind === 'staff') {
+      const expiry = staffSessionExpiry(session.session);
+      if (expiry) {
+        await revokeStaffSession(db, session.session);
+        await audit.refusal({
+          actor: auditActor(identity.principal),
+          action: 'staff_session.expired',
+          entityType: 'AUTH_SESSION',
+          entityId: session.session.id,
+          after: { expiry },
+          note: 'A staff session was refused after its configured lifetime.',
+          correlationId: identity.principal.id,
+        });
+        return send(response, 401, 'UNAUTHORIZED', 'Your staff session has expired. Sign in again.');
+      }
+    }
+
+    // These endpoints are a pending staff sign-in step, never an account-enrolment mechanism.
+    if (mfaRoute) {
+      if (session) {
+        return send(response, 400, 'STAFF_MFA_CHALLENGE_REQUIRED', 'Start a new staff sign-in before requesting a code.');
+      }
+      if (!hasPendingMfaChallenge(request)) {
+        return send(response, 401, 'STAFF_MFA_CHALLENGE_REQUIRED', 'Start a staff sign-in before requesting a code.');
+      }
+      return next();
+    }
+
     if (checkHeader && !identityMatches(expected, sessionUserId)) {
       return send(response, 409, IDENTITY_CHANGED, IDENTITY_CHANGED_MESSAGE);
     }
@@ -134,6 +177,7 @@ export function mountIdentity(
   express: Express,
   auth: Auth,
   db: Database,
+  audit: AuditService,
   settings: Pick<AuthSettings, 'API_PREFIX' | 'NODE_ENV' | 'BETTER_AUTH_URL'>,
 ) {
   const basePath = identityBasePath(settings.API_PREFIX);
@@ -143,7 +187,7 @@ export function mountIdentity(
     allowList(basePath, new Set(identityRoutes())),
     bodyLimit,
     clientAddress,
-    sessionChecks(auth, db, basePath),
+    sessionChecks(auth, db, audit, basePath),
     configuredUrl(settings.BETTER_AUTH_URL),
     answeringFailures(toNodeHandler(auth)),
   );

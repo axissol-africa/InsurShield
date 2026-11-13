@@ -155,6 +155,20 @@
       "when": 1794486819106,
       "tag": "0021_salty_sage",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794564000000,
+      "tag": "0022_staff_email_mfa",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794565000000,
+      "tag": "0023_support_password_resets",
+      "breakpoints": true
     }
   ]
 }

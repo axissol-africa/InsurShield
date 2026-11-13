@@ -44,6 +44,8 @@ describe('the identity routes', () => {
       'POST /reset-password',
       'POST /send-verification-email',
       'GET /verify-email',
+      'POST /two-factor/send-otp',
+      'POST /two-factor/verify-otp',
     ]);
   });
 });

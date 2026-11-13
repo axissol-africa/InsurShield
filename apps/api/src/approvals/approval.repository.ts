@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, lt } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { approvalRequests, staffUsers } from '../db/schema.js';
 import type { ApprovalAction } from '../common/domain/enums.js';
@@ -102,12 +102,17 @@ export class ApprovalsRepository {
       .limit(1);
   }
 
-  async listPending(executor: Executor = this.db) {
+  /**
+   * Approval work is deliberately a small, bounded operational queue. Recent
+   * concluded requests remain visible so staff can explain what happened;
+   * the database index keeps the pending inbox fast.
+   */
+  async list(executor: Executor = this.db) {
     return executor
       .select({ ...requestColumns, requestedByName: staffUsers.fullName })
       .from(approvalRequests)
       .innerJoin(staffUsers, eq(staffUsers.id, approvalRequests.requestedByStaffId))
-      .where(eq(approvalRequests.status, 'PENDING'))
-      .orderBy(asc(approvalRequests.createdAt));
+      .orderBy(desc(approvalRequests.createdAt))
+      .limit(100);
   }
 }

@@ -10,7 +10,7 @@ vi.mock('@/config/env', () => ({ env: { apiMode: 'http', mockLatencyMs: 0 } }));
 vi.mock('@/api', () => ({
   api: {
     admin: {
-      overview: vi.fn(), premiumByMonth: vi.fn(), recentPolicies: vi.fn(), findCustomer: vi.fn(), auditLogs: vi.fn(),
+      overview: vi.fn(), premiumByMonth: vi.fn(), recentPolicies: vi.fn(), findCustomer: vi.fn(), requestCustomerPasswordReset: vi.fn(), auditLogs: vi.fn(),
     },
     insurers: { list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn(), remove: vi.fn(), restore: vi.fn() },
     config: { getPia: vi.fn(), setPia: vi.fn() },
@@ -73,6 +73,31 @@ describe('administrator HTTP data', () => {
     await waitFor(() => expect(api.admin.findCustomer).toHaveBeenCalledWith('mwiza@example.zm'));
     await waitFor(() => expect(screen.getByText('Mwiza Banda', { selector: 'dd' })).toBeVisible());
     expect(screen.getByText('+260970123456', { selector: 'dd' })).toBeVisible();
+  });
+
+  it('requires the exact customer email and a reason before requesting a password-reset email', async () => {
+    api.admin.findCustomer.mockResolvedValue({
+      id: 'customer-1', fullName: 'Mwiza Banda', email: 'mwiza@example.zm', phone: '+260970123456', createdAt: '2026-01-01T00:00:00.000Z', consent: null,
+      counts: { quoteRequests: 3, policies: 2, claims: 1 },
+    });
+    api.admin.requestCustomerPasswordReset.mockResolvedValue({ id: 'reset-1', deliveryStatus: 'DELIVERED' });
+    const user = userEvent.setup();
+    render(<AdminDashboard />);
+
+    await user.click(screen.getByRole('button', { name: 'Find customer' }));
+    await user.type(screen.getByLabelText('Customer email or mobile number'), 'mwiza@example.zm');
+    await user.click(screen.getByRole('button', { name: 'Find account' }));
+    await screen.findByText('Send password-reset link');
+    await user.type(screen.getByLabelText('Confirm customer email'), 'mwiza@example.zm');
+    await user.type(screen.getByLabelText('Reason for reset'), 'Customer cannot sign in.');
+    await user.click(screen.getByRole('button', { name: 'Send reset link' }));
+
+    await waitFor(() => expect(api.admin.requestCustomerPasswordReset).toHaveBeenCalledWith({
+      customerId: 'customer-1', confirmationEmail: 'mwiza@example.zm', reason: 'Customer cannot sign in.',
+    }));
+    expect(await screen.findByRole('status')).toHaveTextContent('The password-reset email was sent. Its link expires after one hour.');
+    expect(screen.getByLabelText('Confirm customer email')).toHaveValue('');
+    expect(screen.getByLabelText('Reason for reset')).toHaveValue('');
   });
 
   it('loads safe audit summaries only when the audit trail is opened', async () => {

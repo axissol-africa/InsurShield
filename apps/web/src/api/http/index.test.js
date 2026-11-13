@@ -13,14 +13,18 @@ import { account, admin, auth, insurers } from './index';
 beforeEach(() => vi.clearAllMocks());
 
 describe('Better Auth HTTP adapter', () => {
-  it('uses identity routes for registration, sign-in and sign-out', () => {
+  it('uses identity routes for registration, sign-in, staff email codes and sign-out', () => {
     auth.register({ email: 'customer@example.com' });
     auth.signIn('customer@example.com', 'Password1!');
+    auth.sendStaffMfaCode();
+    auth.verifyStaffMfaCode('123456');
     auth.signOut();
 
     expect(transport.post).toHaveBeenNthCalledWith(1, '/identity/register', { email: 'customer@example.com' });
     expect(transport.post).toHaveBeenNthCalledWith(2, '/identity/sign-in/email', { email: 'customer@example.com', password: 'Password1!' });
-    expect(transport.post).toHaveBeenNthCalledWith(3, '/identity/sign-out');
+    expect(transport.post).toHaveBeenNthCalledWith(3, '/identity/two-factor/send-otp', {});
+    expect(transport.post).toHaveBeenNthCalledWith(4, '/identity/two-factor/verify-otp', { code: '123456' });
+    expect(transport.post).toHaveBeenNthCalledWith(5, '/identity/sign-out');
   });
 
   it('restores an unbound tab without an identity header and closes through the API', () => {
@@ -42,8 +46,12 @@ describe('Better Auth HTTP adapter', () => {
   });
 
   it('loads the read-only audit trail with server filters', () => {
+    admin.requestCustomerPasswordReset({ customerId: '1', confirmationEmail: 'customer@example.com', reason: 'Customer cannot sign in.' });
     admin.auditLogs({ entityType: 'POLICY', limit: 25, cursor: 'next-page' });
 
+    expect(transport.post).toHaveBeenCalledWith('/admin/customers/password-reset', {
+      customerId: '1', confirmationEmail: 'customer@example.com', reason: 'Customer cannot sign in.',
+    });
     expect(transport.get).toHaveBeenCalledWith('/admin/audit-logs', {
       params: { entityType: 'POLICY', limit: 25, cursor: 'next-page' },
     });

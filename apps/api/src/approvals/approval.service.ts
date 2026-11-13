@@ -49,8 +49,12 @@ export class ApprovalService {
     return toApprovalResponse(created);
   }
 
-  async listPending() {
-    return (await this.approvals.listPending()).map((request) => toApprovalResponse(request));
+  async list() {
+    const requests = await this.approvals.transaction(async (tx) => {
+      await this.approvals.expirePending(tx, new Date());
+      return this.approvals.list(tx);
+    });
+    return requests.map((request) => toApprovalResponse(request));
   }
 
   /**
@@ -134,6 +138,10 @@ function toApprovalResponse(request: ApprovalRequestRow | (ApprovalRequestRow & 
     requestedReason: request.requestedReason,
     requestedByStaffId: request.requestedByStaffId,
     requestedByName: 'requestedByName' in request ? request.requestedByName : undefined,
+    // The database payload is deliberately opaque. The API only reveals the
+    // action-specific fields a reviewer needs to make this decision; never a
+    // future integration credential, document payload, or customer record.
+    proposal: safeProposal(request.action, request.payload),
     decidedByStaffId: request.decidedByStaffId,
     decisionReason: request.decisionReason,
     expiresAt: request.expiresAt.toISOString(),
@@ -141,4 +149,21 @@ function toApprovalResponse(request: ApprovalRequestRow | (ApprovalRequestRow & 
     decidedAt: request.decidedAt?.toISOString() ?? null,
     executedAt: request.executedAt?.toISOString() ?? null,
   };
+}
+
+function safeProposal(action: ApprovalRequestRow['action'], payload: Record<string, unknown>) {
+  switch (action) {
+    case 'PIA_FLOOR_CHANGE':
+      return typeof payload.piaRatePercentage === 'number' ? { piaRatePercentage: payload.piaRatePercentage } : {};
+    case 'INSURER_ACTIVATE':
+      return {
+        effectiveFrom: typeof payload.effectiveFrom === 'string' ? payload.effectiveFrom : null,
+        renewalDate: typeof payload.renewalDate === 'string' ? payload.renewalDate : null,
+        conditions: typeof payload.conditions === 'string' ? payload.conditions : null,
+      };
+    case 'INSURER_SUSPEND':
+      return { reason: typeof payload.reason === 'string' ? payload.reason : null };
+    default:
+      return {};
+  }
 }

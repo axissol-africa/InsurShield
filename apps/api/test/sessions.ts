@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { identityBasePath } from '../src/auth/auth.constants.js';
 import { TEST_PASSWORD } from './builders.js';
-import type { Http } from './helpers.js';
+import { mailFor, type Http } from './helpers.js';
 
 /** The headers a signed-in browser on the run's trusted origin sends: its session cookie and its `Origin`. */
 export interface SessionHeaders {
@@ -35,12 +35,27 @@ export async function signIn(
   password = TEST_PASSWORD,
 ): Promise<SessionHeaders> {
   const origin = trustedOrigin();
-  const response = await http
+  let response = await http
     .post(identityPath('/sign-in/email'))
     .set('Origin', origin)
     .send({ email: user.email, password });
   if (response.status !== 200) {
     throw new Error(`Sign-in for a built user answered ${response.status}: ${JSON.stringify(response.body)}`);
+  }
+  if (response.body?.twoFactorRedirect === true) {
+    const pendingCookie = cookiesSet(response.headers['set-cookie']).join('; ');
+    const sent = await http
+      .post(identityPath('/two-factor/send-otp'))
+      .set({ Origin: origin, Cookie: pendingCookie })
+      .send({});
+    if (sent.status !== 200) throw new Error(`Staff MFA code request answered ${sent.status}: ${JSON.stringify(sent.body)}`);
+    const code = mailFor(http).lastTo(user.email)?.body.match(/\b\d{6}\b/)?.[0];
+    if (!code) throw new Error('The staff MFA message did not contain a six-digit code.');
+    response = await http
+      .post(identityPath('/two-factor/verify-otp'))
+      .set({ Origin: origin, Cookie: pendingCookie })
+      .send({ code });
+    if (response.status !== 200) throw new Error(`Staff MFA verification answered ${response.status}: ${JSON.stringify(response.body)}`);
   }
   const cookies = cookiesSet(response.headers['set-cookie']);
   if (cookies.length === 0) throw new Error('Sign-in set no cookie');

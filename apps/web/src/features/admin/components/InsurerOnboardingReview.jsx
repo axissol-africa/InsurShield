@@ -47,6 +47,7 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
   const [showIntegration, setShowIntegration] = useState(false);
   const [showActivation, setShowActivation] = useState(false);
   const [showSuspension, setShowSuspension] = useState(false);
+  const [notice, setNotice] = useState('');
 
   // Keep the chosen insurer derived from the current data. A record may be
   // removed or restored while the review screen is open, and deriving here
@@ -154,6 +155,7 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
     if (!insurer) return;
     const form = new FormData(event.currentTarget);
     setError('');
+    setNotice('');
     try {
       await api.insurers.activate(insurer.id, {
         effectiveFrom: String(form.get('effectiveFrom')),
@@ -163,8 +165,9 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
       setShowActivation(false);
       await onChanged?.();
       await reload(selectedInsurerId);
+      setNotice(`Activation of ${insurer.name} was sent for independent approval. It will not receive quote requests until approved.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The insurer could not be activated.');
+      setError(caught instanceof Error ? caught.message : 'The activation request could not be sent.');
     }
   };
 
@@ -177,13 +180,15 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
       return;
     }
     setError('');
+    setNotice('');
     try {
       await api.insurers.suspend(insurer.id, reason);
       setShowSuspension(false);
       await onChanged?.();
       await reload(selectedInsurerId);
+      setNotice(`Suspension of ${insurer.name} was sent for independent approval. It remains active until approved.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The insurer could not be suspended.');
+      setError(caught instanceof Error ? caught.message : 'The suspension request could not be sent.');
     }
   };
 
@@ -199,7 +204,7 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Insurer lifecycle</p>
           <h2 id="onboarding-review-title" className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">Review onboarding</h2>
-          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">Record evidence, approve it, then activate an insurer only when the review is complete.</p>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">Record evidence, then request activation or suspension for independent review.</p>
         </div>
         <Button type="button" variant="outline" onClick={onBack}>Back to insurers</Button>
       </div>
@@ -220,6 +225,7 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
       </Card>
 
       {error && <p role="alert" className="mt-4 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">{error}</p>}
+      {notice && <p role="status" className="mt-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{notice}</p>}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,.8fr)]">
         <Card className="gap-0 border-border shadow-none">
@@ -269,8 +275,8 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
           </CardContent>
         </Card>
         <Card className="gap-0 border-border shadow-none">
-          <CardHeader className="border-b"><div className="flex items-start justify-between gap-4"><div><CardTitle>Activation decision</CardTitle><p className="mt-1 text-sm text-muted-foreground">The server refuses activation if a required document is missing, unapproved, or expired.</p></div>{insurer?.status === 'Active' ? <Button type="button" size="sm" variant="destructive" onClick={() => setShowSuspension(true)}>Suspend</Button> : <Button type="button" size="sm" onClick={() => setShowActivation(true)}><ShieldCheck aria-hidden="true" />Activate</Button>}</div></CardHeader>
-          <CardContent className="pt-5"><p className="text-sm leading-relaxed text-muted-foreground">{insurer?.status === 'Active' ? 'Suspension stops new business and makes outstanding unpaid quotes unavailable. Existing paid policies and claims remain with the insurer.' : 'Approve the licence first, then record when the approval takes effect.'}</p></CardContent>
+          <CardHeader className="border-b"><div className="flex items-start justify-between gap-4"><div><CardTitle>Lifecycle request</CardTitle><p className="mt-1 text-sm text-muted-foreground">The server rechecks required evidence at approval time and a different administrator decides the request.</p></div>{insurer?.status === 'Active' ? <Button type="button" size="sm" variant="destructive" onClick={() => setShowSuspension(true)}>Request suspension</Button> : <Button type="button" size="sm" onClick={() => setShowActivation(true)}><ShieldCheck aria-hidden="true" />Request activation</Button>}</div></CardHeader>
+          <CardContent className="pt-5"><p className="text-sm leading-relaxed text-muted-foreground">{insurer?.status === 'Active' ? 'After independent approval, suspension stops new business and makes outstanding unpaid quotes unavailable. Existing paid policies and claims remain with the insurer.' : 'Approve the licence first, then request the activation date and conditions for independent review.'}</p></CardContent>
         </Card>
       </div>
 
@@ -303,22 +309,22 @@ export default function InsurerOnboardingReview({ insurers, api, onBack, onChang
 
       <Dialog open={showActivation} onOpenChange={setShowActivation}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Activate {insurer?.name}</DialogTitle><DialogDescription>This makes the insurer available for new customer quote requests only after the evidence check succeeds.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Request activation for {insurer?.name}</DialogTitle><DialogDescription>A different administrator must approve this request. The evidence check runs again at approval time.</DialogDescription></DialogHeader>
           <form onSubmit={activate} className="space-y-4">
             <Field label="Effective from"><Input name="effectiveFrom" type="date" required defaultValue={today()} /></Field>
             <Field label="Review or renewal date (optional)"><Input name="renewalDate" type="date" /></Field>
             <Field label="Activation conditions (optional)"><Textarea name="conditions" maxLength={2000} placeholder="Any conditions attached to this approval" /></Field>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setShowActivation(false)}>Cancel</Button><Button type="submit"><Check aria-hidden="true" />Activate insurer</Button></DialogFooter>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setShowActivation(false)}>Cancel</Button><Button type="submit"><Check aria-hidden="true" />Request activation</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
       <Dialog open={showSuspension} onOpenChange={setShowSuspension}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Suspend {insurer?.name}</DialogTitle><DialogDescription>New quote requests stop immediately. The customer is notified about unanswered requests, and unpaid quotes cannot be paid.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Request suspension for {insurer?.name}</DialogTitle><DialogDescription>A different administrator must approve this request. New quote requests are not affected until then.</DialogDescription></DialogHeader>
           <form onSubmit={suspend} className="space-y-4">
             <Field label="Reason"><Textarea name="reason" required minLength={3} maxLength={1000} placeholder="Explain why the insurer must be suspended" /></Field>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setShowSuspension(false)}>Cancel</Button><Button type="submit" variant="destructive">Suspend insurer</Button></DialogFooter>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setShowSuspension(false)}>Cancel</Button><Button type="submit" variant="destructive">Request suspension</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

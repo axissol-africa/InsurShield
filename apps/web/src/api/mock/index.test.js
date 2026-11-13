@@ -6,10 +6,20 @@ import * as mock from './index';
 vi.mock('@/config/env', () => ({ env: { apiMode: 'mock', apiBaseUrl: '/api/v1', mockLatencyMs: 0, appName: 'InsurShield', isProduction: false } }));
 
 const initial = useStore.getInitialState();
-beforeEach(() => useStore.setState({ ...initial, registeredAccounts: [DEMO_CUSTOMER_ACCOUNT], quoteRequests: [], policies: [], claims: [], ncdApplications: [] }, true));
+beforeEach(() => {
+  localStorage.removeItem('insurshield.mock.approvals.v1');
+  useStore.setState({ ...initial, staffSession: null, registeredAccounts: [DEMO_CUSTOMER_ACCOUNT], quoteRequests: [], policies: [], claims: [], ncdApplications: [] }, true);
+});
 
 const signIn = () => mock.auth.login(DEMO_CUSTOMER_ACCOUNT.email, DEMO_CUSTOMER_ACCOUNT.password);
 const asInsurer = () => useStore.getState().startStaffSession({ role: 'insurer', name: 'Prestige Assurance' });
+const asPlatformAdmin = (id, name) => useStore.getState().startStaffSession({
+  id,
+  role: 'admin',
+  staffRole: 'SUPER_ADMIN',
+  isSuperAdmin: true,
+  name,
+});
 
 describe('mock api adapter', () => {
   it('signs in and reports the session', async () => {
@@ -84,13 +94,29 @@ describe('mock api adapter', () => {
   });
 
   it('manages insurers and the customer directory', async () => {
-    await mock.insurers.setStatus('5', 'Inactive');
-    await mock.insurers.remove('4');
+    asPlatformAdmin('mock:maker', 'Maker Admin');
+    const deactivation = await mock.insurers.setStatus('5', 'Inactive');
+    expect((await mock.insurers.get('5')).status).not.toBe('Inactive');
+
+    asPlatformAdmin('mock:checker', 'Checker Admin');
+    await mock.admin.approvals.approve(deactivation.id);
+    expect((await mock.insurers.get('5')).status).toBe('Inactive');
+
+    asPlatformAdmin('mock:maker', 'Maker Admin');
+    const removal = await mock.insurers.remove('4');
+    expect((await mock.insurers.get('4')).status).not.toBe('Deleted');
+
+    asPlatformAdmin('mock:checker', 'Checker Admin');
+    await mock.admin.approvals.approve(removal.id);
     expect((await mock.insurers.directory()).map((insurer) => insurer.id)).toEqual(['1', '2', '3']);
     expect((await mock.insurers.get('4')).status).toBe('Deleted');
 
     expect((await mock.insurers.list({ status: 'deleted' })).map((insurer) => insurer.id)).toEqual(['4']);
-    await expect(mock.insurers.restore('4')).resolves.toMatchObject({ status: 'Inactive', deletedAt: null });
+    asPlatformAdmin('mock:maker', 'Maker Admin');
+    const restoration = await mock.insurers.restore('4');
+    expect((await mock.insurers.get('4')).status).toBe('Deleted');
+    asPlatformAdmin('mock:checker', 'Checker Admin');
+    await expect(mock.admin.approvals.approve(restoration.id)).resolves.toMatchObject({ status: 'EXECUTED' });
     expect(await mock.insurers.list({ status: 'deleted' })).toEqual([]);
     expect((await mock.insurers.directory()).map((insurer) => insurer.id)).not.toContain('4');
   });

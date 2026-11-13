@@ -729,7 +729,9 @@ describe('the final schema', () => {
     // and quotes. Effective, renewal and expiry columns are `date`, so they
     // are deliberately omitted.
     // Approval requests add created, updated, expiry, decision and execution instants.
-    expect(timestampColumns).toHaveLength(100);
+    // Staff MFA adds a lock instant; support-reset attempts add created,
+    // delivered and failed instants.
+    expect(timestampColumns).toHaveLength(104);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

@@ -22,7 +22,7 @@ export class ApprovalsController {
   @Needs('approval:read')
   @Get()
   list() {
-    return this.approvals.listPending();
+    return this.approvals.list();
   }
 
   @Needs('approval:decide')
