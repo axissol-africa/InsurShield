@@ -16,7 +16,7 @@ import {
 } from './builders.js';
 import { buildNcdApplication } from './builders/customer.js';
 import { buildPaymentTarget } from './builders/admin.js';
-import { holdLocks, openTestDatabase, queueBehind, startApp, until, type TestApp } from './helpers.js';
+import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
 import { signIn, type SessionHeaders } from './sessions.js';
 
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -503,16 +503,23 @@ describe('insurers', () => {
   });
 
   describe('status and removal', () => {
-    it('sets INACTIVE for an admin, without deletedAt, and answers with the staff keys', async () => {
+    it('requests INACTIVE for an admin and leaves the insurer unchanged until a checker approves it', async () => {
       const { insurer } = await buildInsurer(testApp.db, { insurer: { updatedAt: new Date('2026-01-01T00:00:00.000Z') } });
+      const checker = await buildStaffUser(testApp.db, { role: 'ADMIN' });
 
       const inactive = await setStatus(insurer.id, 'INACTIVE', asAdmin).expect(200);
 
-      expect(keysOf(inactive.body)).toEqual(ADMIN_KEYS);
-      expect(inactive.body.status).toBe('Inactive');
+      expect(inactive.body).toMatchObject({ action: 'INSURER_DEACTIVATE', status: 'PENDING', targetId: insurer.id });
       const { row } = await stored(insurer.id);
-      expect(row).toMatchObject({ status: 'INACTIVE', deletedAt: null });
-      expect(row.updatedAt.getTime()).toBeGreaterThan(new Date('2026-01-01T00:00:00.000Z').getTime());
+      expect(row).toMatchObject({ status: 'ACTIVE', deletedAt: null });
+      expect(row.updatedAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${inactive.body.id}/approve`)
+        .set(await signIn(testApp.http, checker))
+        .send({ reason: 'Eligibility information needs review.' })
+        .expect(201);
+      expect((await stored(insurer.id)).row).toMatchObject({ status: 'INACTIVE', deletedAt: null });
 
       // Activating is its own route with its own evidence gate, so this one
       // cannot reach ACTIVE at all and the gate cannot be stepped around.
@@ -532,18 +539,24 @@ describe('insurers', () => {
       expect(row.updatedAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
     });
 
-    it('sets DELETED through PATCH status for a super admin, with deletedAt, and then answers 404', async () => {
+    it('sends DELETED through PATCH status for a super admin and applies it only after a second super admin approves', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const checker = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const asSuperAdmin = await signIn(testApp.http, superAdmin);
       const { insurer } = await buildInsurer(testApp.db);
 
       const deleted = await setStatus(insurer.id, 'DELETED', asSuperAdmin).expect(200);
 
-      expect(keysOf(deleted.body)).toEqual(ADMIN_KEYS);
-      expect(deleted.body.status).toBe('Deleted');
+      expect(deleted.body).toMatchObject({ action: 'INSURER_DELETE', status: 'PENDING', targetId: insurer.id });
       const { row } = await stored(insurer.id);
-      expect(row.status).toBe('DELETED');
-      expect(row.deletedAt).toBeInstanceOf(Date);
+      expect(row.status).toBe('ACTIVE');
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${deleted.body.id}/approve`)
+        .set(await signIn(testApp.http, checker))
+        .send({ reason: 'No outstanding customer work.' })
+        .expect(201);
+      expect((await stored(insurer.id)).row.status).toBe('DELETED');
+      expect((await stored(insurer.id)).row.deletedAt).toBeInstanceOf(Date);
       await setStatus(insurer.id, 'INACTIVE', asSuperAdmin).expect(404);
     });
 
@@ -587,8 +600,9 @@ describe('insurers', () => {
       expect(response.body.details.fields).toEqual(['Status must be Inactive or Deleted.']);
     });
 
-    it('soft-deletes for a super admin', async () => {
+    it('requests a soft-delete for a super admin', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const checker = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const { insurer } = await buildInsurer(testApp.db);
 
       const response = await testApp.http
@@ -596,11 +610,16 @@ describe('insurers', () => {
         .set(await signIn(testApp.http, superAdmin))
         .expect(200);
 
-      expect(response.body).toEqual({ id: insurer.id, status: 'Deleted' });
+      expect(response.body).toMatchObject({ action: 'INSURER_DELETE', status: 'PENDING', targetId: insurer.id });
       const { row, contact } = await stored(insurer.id);
-      expect(row.status).toBe('DELETED');
-      expect(row.deletedAt).toBeInstanceOf(Date);
+      expect(row.status).toBe('ACTIVE');
       expect(contact).toBeDefined();
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${response.body.id}/approve`)
+        .set(await signIn(testApp.http, checker))
+        .send({ reason: 'Removal reviewed.' })
+        .expect(201);
+      expect((await stored(insurer.id)).row.status).toBe('DELETED');
     });
   });
 
@@ -623,8 +642,9 @@ describe('insurers', () => {
       expect(await stored(insurer.id)).toEqual(before);
     });
 
-    it('restores a deleted insurer as inactive without losing its staff or product details', async () => {
+    it('restores a deleted insurer as inactive only after a second super admin approves it', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const checker = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const { insurer, staff } = await buildInsurer(testApp.db, {
         insurer: {
           status: 'DELETED',
@@ -636,10 +656,15 @@ describe('insurers', () => {
 
       const response = await restore(insurer.id, await signIn(testApp.http, superAdmin)).expect(200);
 
-      expect(keysOf(response.body)).toEqual(ADMIN_KEYS);
-      expect(response.body).toMatchObject({ status: 'Inactive', plan: 'Comprehensive Gold', benefits: ['Roadside assistance'] });
+      expect(response.body).toMatchObject({ action: 'INSURER_RESTORE', status: 'PENDING', targetId: insurer.id });
       const { row } = await stored(insurer.id);
-      expect(row).toMatchObject({ status: 'INACTIVE', deletedAt: null, plan: 'Comprehensive Gold', benefits: ['Roadside assistance'] });
+      expect(row).toMatchObject({ status: 'DELETED', plan: 'Comprehensive Gold', benefits: ['Roadside assistance'] });
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${response.body.id}/approve`)
+        .set(await signIn(testApp.http, checker))
+        .send({ reason: 'Restoration reviewed.' })
+        .expect(201);
+      expect((await stored(insurer.id)).row).toMatchObject({ status: 'INACTIVE', deletedAt: null, plan: 'Comprehensive Gold', benefits: ['Roadside assistance'] });
       const [storedStaff] = await side.db.select().from(staffUsers).where(eq(staffUsers.id, staff.id));
       expect(storedStaff).toMatchObject({ id: staff.id, insurerId: insurer.id });
     });
@@ -666,25 +691,28 @@ describe('insurers', () => {
       const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
       const asSuperAdmin = await signIn(testApp.http, superAdmin);
 
-      const held = await holdLocks(side.pool, (_db, client) =>
-        client.query('SELECT id FROM insurers WHERE id = $1 FOR UPDATE', [insurer.id]),
-      );
-      const responses = await queueBehind(held, '%update "insurers"%', 2, [
-        async () => restore(insurer.id, asSuperAdmin),
-        async () => restore(insurer.id, asSuperAdmin),
+      const responses = await Promise.all([
+        restore(insurer.id, asSuperAdmin),
+        restore(insurer.id, asSuperAdmin),
       ]);
 
       expect(responses.map((response) => response.status).sort((first, second) => first - second)).toEqual([200, 409]);
-      expect(responses.find((response) => response.status === 409)?.body.code).toBe('INSURER_NOT_DELETED');
-      expect((await stored(insurer.id)).row).toMatchObject({ status: 'INACTIVE', deletedAt: null });
+      expect(responses.find((response) => response.status === 409)?.body.code).toBe('APPROVAL_ALREADY_PENDING');
+      expect((await stored(insurer.id)).row).toMatchObject({ status: 'DELETED' });
     });
 
     it('keeps a restored insurer out of the public directory until a super admin activates it', async () => {
       const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const checker = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
       const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
       const asSuperAdmin = await signIn(testApp.http, superAdmin);
 
-      await restore(insurer.id, asSuperAdmin).expect(200);
+      const requested = await restore(insurer.id, asSuperAdmin).expect(200);
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${requested.body.id}/approve`)
+        .set(await signIn(testApp.http, checker))
+        .send({ reason: 'Restore reviewed.' })
+        .expect(201);
       const { body } = await testApp.http.get('/api/v1/insurers/directory').expect(200);
 
       expect(body.map((entry: { id: string }) => entry.id)).not.toContain(insurer.id);

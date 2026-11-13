@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createCredentialUser, normalizeEmail } from '../src/auth/credential-user.js';
+import { createCredentialUser, normalizeEmail, requireStaffMfa } from '../src/auth/credential-user.js';
 import type { Database, Transaction } from '../src/db/database.module.js';
 import { retentionClassOf } from '../src/documents/domain/retention.js';
 import {
@@ -70,14 +70,21 @@ export async function buildCustomer(db: Db, overrides: Partial<Insert<typeof cus
   return customer;
 }
 
-export async function buildStaffUser(db: Db, overrides: Partial<Insert<typeof staffUsers>> = {}) {
-  const email = normalizeEmail(overrides.email ?? `${unique('staff')}@example.invalid`);
-  const fullName = overrides.fullName ?? 'Mutale Banda';
-  const userId = await loginFor(db, email, fullName, overrides);
+export interface StaffUserOverrides extends Partial<Insert<typeof staffUsers>> {
+  /** Set false only when a test is deliberately asserting staff MFA setup refusal. */
+  withMfa?: boolean;
+}
+
+export async function buildStaffUser(db: Db, overrides: StaffUserOverrides = {}) {
+  const { withMfa = true, ...staffOverrides } = overrides;
+  const email = normalizeEmail(staffOverrides.email ?? `${unique('staff')}@example.invalid`);
+  const fullName = staffOverrides.fullName ?? 'Mutale Banda';
+  const userId = await loginFor(db, email, fullName, staffOverrides);
   const [staff] = await db
     .insert(staffUsers)
-    .values({ role: 'ADMIN', ...overrides, email, fullName, userId })
+    .values({ role: 'ADMIN', ...staffOverrides, email, fullName, userId })
     .returning();
+  if (withMfa && staff.userId) await requireStaffMfa(db, staff.userId);
   return staff;
 }
 

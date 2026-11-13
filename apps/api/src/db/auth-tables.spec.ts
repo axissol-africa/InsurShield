@@ -1,9 +1,10 @@
 import type { BetterAuthOptions } from 'better-auth';
 import { getAuthTables, type DBFieldAttribute } from 'better-auth/db';
+import { twoFactor } from 'better-auth/plugins/two-factor';
 import { getTableColumns } from 'drizzle-orm';
 import { getTableConfig, type AnyPgColumn, type PgTable } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
-import { authAccounts, authRateLimits, authSessions, authUsers, authVerifications } from './schema.js';
+import { authAccounts, authRateLimits, authSessions, authTwoFactors, authUsers, authVerifications } from './schema.js';
 
 // Stand-ins for the auth module's options and adapter schema, which the tables must match.
 const STAND_IN_AUTH_OPTIONS = {
@@ -11,6 +12,7 @@ const STAND_IN_AUTH_OPTIONS = {
   advanced: { database: { generateId: 'uuid' } },
   rateLimit: { storage: 'database' },
   session: { disableSessionRefresh: true },
+  plugins: [twoFactor({ otpOptions: { sendOTP: async () => undefined } })],
 } satisfies BetterAuthOptions;
 
 const STAND_IN_ADAPTER_SCHEMA: Record<string, PgTable> = {
@@ -19,6 +21,7 @@ const STAND_IN_ADAPTER_SCHEMA: Record<string, PgTable> = {
   account: authAccounts,
   verification: authVerifications,
   rateLimit: authRateLimits,
+  twoFactor: authTwoFactors,
 };
 
 const declared = getAuthTables(STAND_IN_AUTH_OPTIONS);

@@ -33,7 +33,8 @@
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
  *  config      GET  /config/pia · PUT /config/pia
- *  admin       GET  /admin/overview · GET /admin/premium-by-month?months= · GET /admin/policies?limit= · GET /admin/customers/find?query= · GET /admin/audit-logs
+ *  admin       GET  /admin/overview · GET /admin/premium-by-month?months= · GET /admin/policies?limit= · GET /admin/customers/find?query= · POST /admin/customers/password-reset · GET /admin/audit-logs
+ *              GET /admin/approvals · POST /admin/approvals/:id/approve · POST /admin/approvals/:id/reject
  *  capture     see `api/capture.js` (photo hand-off relay)
  */
 
@@ -228,4 +229,32 @@
  * @property {boolean} marketingConsent      never asked is not consent
  */
 
+/**
+ * High-risk writes (config.setPia, insurers.activate/setStatus/suspend/remove/restore)
+ * return an ApprovalRequest, not an updated insurer/configuration. Proposing never
+ * applies the change. An independent authorised administrator must approve it;
+ * approval revalidates the target before applying the frozen proposal exactly once.
+ * Delete/restore proposals and their approval require a super administrator.
+ * admin.approvals.list() returns pending ApprovalRequest[]. approve(id, {reason?})
+ * and reject(id, {reason?}) return the decided request. Reasons are at most 2000
+ * characters. Pending proposals expire after seven days; duplicate pending actions
+ * for the same target conflict. Mock records use versioned browser storage.
+ *
+ * @typedef {Object} ApprovalRequest
+ * @property {string} id
+ * @property {'PIA_FLOOR_CHANGE'|'INSURER_ACTIVATE'|'INSURER_DEACTIVATE'|'INSURER_SUSPEND'|'INSURER_DELETE'|'INSURER_RESTORE'} action
+ * @property {'PENDING'|'EXECUTED'|'REJECTED'|'EXPIRED'} status
+ * @property {'SETTING'|'INSURER'} targetType
+ * @property {string} targetId
+ * @property {string} requestedByStaffId
+ * @property {string} [requestedByName]
+ * @property {string} requestedReason
+ * @property {{piaRatePercentage?:number, effectiveFrom?:string, renewalDate?:string|null, conditions?:string|null, reason?:string|null}} [proposal] Action-specific allowlist; never raw payloads, credentials or document data.
+ * @property {string} createdAt
+ * @property {string} expiresAt
+ * @property {string|null} decidedByStaffId
+ * @property {string|null} decidedAt
+ * @property {string|null} decisionReason
+ * @property {string|null} executedAt
+ */
 export {};

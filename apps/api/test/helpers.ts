@@ -11,7 +11,9 @@ import { testDatabase, validateEnv } from '../src/config/env.js';
 import { createDatabase, createPool, DATABASE, type Database } from '../src/db/database.module.js';
 import * as schema from '../src/db/schema.js';
 import { StorageService } from '../src/storage/storage.service.js';
+import { MAIL_SENDER, type MailSender } from '../src/mail/mail.port.js';
 import { StorageFake } from './storage-fake.js';
+import { MailFake } from './mail-fake.js';
 
 export type Http = ReturnType<typeof request>;
 
@@ -26,6 +28,10 @@ export interface StartOptions {
   logger?: LoggerService;
   /** Further `overrideProvider` calls on the testing module. */
   override?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
+  /** A deterministic mail adapter for an identity flow that needs to read its message. */
+  mail?: MailSender;
+  /** Preserve the configured mail adapter for provider and log-output tests. */
+  useConfiguredMailSender?: boolean;
 }
 
 export interface TestApp {
@@ -37,9 +43,21 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
+const testMailByHttp = new WeakMap<object, MailFake>();
+
+/** The per-app fake mailer that `signIn` uses to complete an actual staff MFA challenge. */
+export function mailFor(http: Http): MailFake {
+  const mail = testMailByHttp.get(http as unknown as object);
+  if (!mail) throw new Error('This test app uses the configured mail sender and cannot complete a staff MFA challenge.');
+  return mail;
+}
+
 /** The API as `main.ts` configures it, on a random local port, with storage in memory. */
 export async function startApp(options: StartOptions = {}): Promise<TestApp> {
   const storage = new StorageFake();
+  // Staff tests must complete the same MFA flow as the product. A controlled
+  // fake makes the code observable without weakening production authentication.
+  const mail = (options.useConfiguredMailSender ?? options.logger !== undefined) ? undefined : options.mail ?? new MailFake();
   let builder = Test.createTestingModule({
     imports: [AppModule],
     controllers: options.controllers ?? [],
@@ -47,6 +65,7 @@ export async function startApp(options: StartOptions = {}): Promise<TestApp> {
   })
     .overrideProvider(StorageService)
     .useValue(storage);
+  if (mail) builder = builder.overrideProvider(MAIL_SENDER).useValue(mail);
   if (options.env) {
     builder = builder
       .overrideProvider(ConfigService)
@@ -60,9 +79,12 @@ export async function startApp(options: StartOptions = {}): Promise<TestApp> {
   configureApp(app, { ...appSettings(app.get(ConfigService<Env, true>)), ...options.settings });
   await app.listen(0, '127.0.0.1');
 
+  const http = request(app.getHttpServer());
+  if (mail instanceof MailFake) testMailByHttp.set(http as unknown as object, mail);
+
   return {
     app,
-    http: request(app.getHttpServer()),
+    http,
     db: app.get<Database>(DATABASE),
     storage,
     close: () => app.close(),

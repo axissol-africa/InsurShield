@@ -14,11 +14,13 @@ describe('onboarding an insurer', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
   let admin: Awaited<ReturnType<typeof buildStaffUser>>;
+  let checker: Awaited<ReturnType<typeof buildStaffUser>>;
 
   beforeAll(async () => {
     testApp = await startApp();
     side = openTestDatabase();
     admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+    checker = await buildStaffUser(testApp.db, { role: 'ADMIN' });
   });
 
   afterAll(async () => {
@@ -27,6 +29,7 @@ describe('onboarding an insurer', () => {
   });
 
   const asAdmin = () => signIn(testApp.http, admin);
+  const asChecker = () => signIn(testApp.http, checker);
 
   /** An insurer awaiting approval, as onboarding will create one. */
   const pendingInsurer = async () => (await buildInsurer(testApp.db, { insurer: { status: 'PENDING' } })).insurer;
@@ -127,7 +130,7 @@ describe('onboarding an insurer', () => {
       expect(response.body.message).toContain('an expired licence');
     });
 
-    it('records the dates, the approver and the conditions once the evidence is in order', async () => {
+    it('keeps activation pending until a different administrator records the dates and conditions', async () => {
       const insurer = await pendingInsurer();
       await approvedLicence(insurer.id);
 
@@ -138,27 +141,43 @@ describe('onboarding an insurer', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(response.body.status).toBe('Active');
+      expect(response.body).toMatchObject({ action: 'INSURER_ACTIVATE', status: 'PENDING', targetId: insurer.id });
       const [row] = await side.db.select().from(insurers).where(eq(insurers.id, insurer.id));
-      expect(row.status).toBe('ACTIVE');
-      expect(row.approvedBy).toBe(admin.id);
-      expect(row.activationConditions).toBe('Quarterly solvency returns.');
-      expect(row.approvedAt).not.toBeNull();
-      expect(row.effectiveFrom).not.toBeNull();
-      expect(row.renewalDate).not.toBeNull();
+      expect(row.status).toBe('PENDING');
+      expect(row.approvedBy).toBeNull();
+
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${response.body.id}/approve`)
+        .set(await asChecker())
+        .send({ reason: 'Evidence and activation dates confirmed.' })
+        .expect(201);
+
+      const [approved] = await side.db.select().from(insurers).where(eq(insurers.id, insurer.id));
+      expect(approved.status).toBe('ACTIVE');
+      expect(approved.approvedBy).toBe(checker.id);
+      expect(approved.activationConditions).toBe('Quarterly solvency returns.');
+      expect(approved.approvedAt).not.toBeNull();
+      expect(approved.effectiveFrom).not.toBeNull();
+      expect(approved.renewalDate).not.toBeNull();
     });
 
     it('is recorded in the audit log, naming the approver', async () => {
       const insurer = await pendingInsurer();
       await approvedLicence(insurer.id);
 
-      await activate(insurer.id, { effectiveFrom: '2026-12-01' }).then((response) => expect(response.status).toBe(200));
+      const request = await activate(insurer.id, { effectiveFrom: '2026-12-01' });
+      expect(request.status).toBe(200);
+      await testApp.http
+        .post(`/api/v1/admin/approvals/${request.body.id}/approve`)
+        .set(await asChecker())
+        .send({ reason: 'Evidence checked.' })
+        .expect(201);
 
       const [entry] = await side.db
         .select()
         .from(auditLogs)
         .where(and(eq(auditLogs.action, 'insurer.activated'), eq(auditLogs.entityId, insurer.id)));
-      expect(entry.actorId).toBe(admin.id);
+      expect(entry.actorId).toBe(checker.id);
       expect(entry.actorType).toBe('STAFF');
     });
 

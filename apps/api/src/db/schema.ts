@@ -130,6 +130,8 @@ export const authUsers = pgTable(
     name: text('name').notNull(),
     email: text('email').notNull(),
     emailVerified: boolean('emailVerified').notNull().default(false),
+    /** Enabled only for provisioned staff; customer sign-in remains password based. */
+    twoFactorEnabled: boolean('twoFactorEnabled').default(false),
     image: text('image'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -137,6 +139,30 @@ export const authUsers = pgTable(
   (t) => [
     uniqueIndex('auth_users_email_key').on(t.email),
     check('auth_users_email_check', sql`${t.email} = lower(${t.email})`),
+  ],
+);
+
+/**
+ * Better Auth's 2FA model. Staff use the email-code route only; the required
+ * non-null secret and backup fields are deliberately opaque because this
+ * platform never exposes TOTP or backup-code enrolment.
+ */
+export const authTwoFactors = pgTable(
+  'auth_two_factors',
+  {
+    id: id(),
+    secret: text('secret').notNull(),
+    backupCodes: text('backupCodes').notNull(),
+    userId: uuid('userId').notNull(),
+    verified: boolean('verified').default(true),
+    failedVerificationCount: integer('failedVerificationCount').default(0),
+    lockedUntil: timestamptz('lockedUntil'),
+  },
+  (t) => [
+    index('auth_two_factors_secret_idx').on(t.secret),
+    index('auth_two_factors_userId_idx').on(t.userId),
+    index('auth_two_factors_lockedUntil_idx').on(t.lockedUntil),
+    fk('auth_two_factors_userId_fkey', [t.userId], [authUsers.id], 'cascade'),
   ],
 );
 
@@ -301,6 +327,36 @@ export const staffUsers = pgTable(
     fk('staff_users_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
     fk('staff_users_teamId_fkey', [t.teamId], [staffTeams.id], 'restrict'),
     fk('staff_users_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
+  ],
+);
+
+/**
+ * One immutable support-reset request per delivery attempt. It records only
+ * operational metadata: the reset secret itself stays in Better Auth's
+ * verification table and is never available to a staff browser or audit read.
+ */
+export const supportPasswordResetAttempts = pgTable(
+  'support_password_reset_attempts',
+  {
+    id: id(),
+    customerId: uuid('customerId').notNull(),
+    requestedByStaffId: uuid('requestedByStaffId').notNull(),
+    deliveryChannel: text('deliveryChannel').notNull().default('EMAIL'),
+    reason: text('reason').notNull(),
+    deliveryStatus: deliveryStatus('deliveryStatus').notNull().default('PENDING'),
+    deliveryProvider: text('deliveryProvider'),
+    deliveryReference: text('deliveryReference'),
+    deliveredAt: timestamptz('deliveredAt'),
+    failedAt: timestamptz('failedAt'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('support_password_reset_attempts_customerId_createdAt_idx').on(t.customerId, t.createdAt),
+    index('support_password_reset_attempts_requestedByStaffId_createdAt_idx').on(t.requestedByStaffId, t.createdAt),
+    check('support_password_reset_attempts_deliveryChannel_check', sql`${t.deliveryChannel} = 'EMAIL'`),
+    check('support_password_reset_attempts_reason_check', sql`length(btrim(${t.reason})) >= 10`),
+    fk('support_password_reset_attempts_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
+    fk('support_password_reset_attempts_requestedByStaffId_fkey', [t.requestedByStaffId], [staffUsers.id], 'restrict'),
   ],
 );
 

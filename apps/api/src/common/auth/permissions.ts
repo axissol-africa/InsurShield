@@ -78,6 +78,7 @@ export const PERMISSIONS = {
   'admin:premium-report': INSURSHIELD_ADMIN,
   'admin:policy-list': INSURSHIELD_ADMIN,
   'admin:customer-find': INSURSHIELD_ADMIN,
+  'admin:customer-password-reset': INSURSHIELD_ADMIN,
   'admin:audit-read': INSURSHIELD_ADMIN,
   'approval:read': INSURSHIELD_ADMIN,
   'approval:decide': INSURSHIELD_ADMIN,

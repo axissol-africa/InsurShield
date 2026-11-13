@@ -3,23 +3,32 @@ import type { ConfigService } from '@nestjs/config';
 import { BASE_ERROR_CODES, betterAuth, type BetterAuthOptions } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { twoFactor } from 'better-auth/plugins/two-factor';
+import type { BetterAuthPlugin } from 'better-auth/types';
 import type { Env } from '../config/env.js';
 import type { Database } from '../db/database.module.js';
 import { describeDatabaseError } from '../db/errors.js';
-import { authAccounts, authRateLimits, authSessions, authUsers, authVerifications, customers } from '../db/schema.js';
+import { auditLogs, authAccounts, authRateLimits, authSessions, authTwoFactors, authUsers, authVerifications, customers } from '../db/schema.js';
 import {
   CLIENT_ADDRESS_HEADER,
   COOKIE_PREFIX,
   identityBasePath,
   PASSWORD_POLICY,
+  PASSWORD_RESET_TOKEN_LIFETIME_SECONDS,
   SESSION_LIFETIME_SECONDS,
+  STAFF_MAX_CONCURRENT_SESSIONS,
+  STAFF_MFA_CHALLENGE_LIFETIME_SECONDS,
+  STAFF_MFA_CODE_LIFETIME_MINUTES,
+  STAFF_MFA_LOCKOUT_SECONDS,
+  STAFF_MFA_MAX_CODE_ATTEMPTS,
+  STAFF_SESSION_ABSOLUTE_LIFETIME_SECONDS,
 } from './auth.constants.js';
 import type { MailSender } from '../mail/mail.port.js';
 import { identityMailer } from './identity-mailer.js';
 import { resolveIdentity } from './identity.js';
 import { registration } from './registration.plugin.js';
 import { signInLimit } from './sign-in-limit.plugin.js';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 
 export type AuthSettings = Pick<
   Env,
@@ -81,6 +90,88 @@ export function identityLog(logger: LoggerService) {
   };
 }
 
+/** A staff identity with an incomplete migration/provisioning record must never fall back to password-only access. */
+async function assertStaffMfaEnrollment(db: Database, userId: string): Promise<void> {
+  const [enrollment] = await db
+    .select({ enabled: authUsers.twoFactorEnabled, twoFactorId: authTwoFactors.id })
+    .from(authUsers)
+    .leftJoin(authTwoFactors, eq(authTwoFactors.userId, authUsers.id))
+    .where(eq(authUsers.id, userId))
+    .limit(1);
+  if (enrollment?.enabled && enrollment.twoFactorId) return;
+  throw new APIError('FORBIDDEN', {
+    code: 'STAFF_MFA_SETUP_REQUIRED',
+    message: 'This staff account is not ready for secure sign-in. Contact an administrator.',
+  });
+}
+
+/** The password step creates a short-lived internal session which Better Auth removes before returning its MFA challenge. */
+function staffSessionCap(db: Database): BetterAuthPlugin {
+  return {
+    id: 'staff-session-cap',
+    hooks: {
+      after: [
+        {
+          matcher: (context) => context.path === '/two-factor/verify-otp',
+          handler: createAuthMiddleware(async (ctx) => {
+            const completed = ctx.context.newSession;
+            if (!completed) return;
+            const identity = await resolveIdentity(db, completed.user.id);
+            if (!identity.ok || identity.principal.kind !== 'staff') return;
+
+            const sessions = await db
+              .select({ id: authSessions.id })
+              .from(authSessions)
+              .where(eq(authSessions.userId, completed.user.id))
+              .orderBy(desc(authSessions.createdAt), desc(authSessions.id));
+            const excess = sessions.slice(STAFF_MAX_CONCURRENT_SESSIONS).map((candidate) => candidate.id);
+            if (excess.length > 0) await db.delete(authSessions).where(inArray(authSessions.id, excess));
+          }),
+        },
+      ],
+    },
+  };
+}
+
+/** Failed OTPs are security events even though their caller has not completed authentication. */
+function staffMfaAudit(db: Database): BetterAuthPlugin {
+  return {
+    id: 'staff-mfa-audit',
+    hooks: {
+      after: [
+        {
+          matcher: (context) => context.path === '/two-factor/verify-otp',
+          handler: createAuthMiddleware(async (ctx) => {
+            const result = ctx.context.returned;
+            if (!(result instanceof APIError)) return;
+            const code = result.body?.code;
+            if (code !== 'INVALID_CODE' && code !== 'ACCOUNT_TEMPORARILY_LOCKED') return;
+
+            const cookie = ctx.context.createAuthCookie('two_factor');
+            const challenge = await ctx.getSignedCookie(cookie.name, ctx.context.secret);
+            if (!challenge) return;
+            const pending = await ctx.context.internalAdapter.findVerificationValue(challenge);
+            if (!pending) return;
+            const identity = await resolveIdentity(db, pending.value);
+            if (!identity.ok || identity.principal.kind !== 'staff') return;
+
+            await db.insert(auditLogs).values({
+              actorType: 'SYSTEM',
+              actorId: null,
+              action: code === 'ACCOUNT_TEMPORARILY_LOCKED' ? 'staff_mfa.locked' : 'staff_mfa.failed',
+              entityType: 'STAFF_USER',
+              entityId: identity.principal.id,
+              after: { reason: code },
+              note: 'A staff email-code sign-in attempt was refused.',
+              correlationId: identity.principal.id,
+            });
+          }),
+        },
+      ],
+    },
+  };
+}
+
 export function authOptions(
   db: Database,
   settings: AuthSettings,
@@ -107,6 +198,7 @@ export function authOptions(
         account: authAccounts,
         verification: authVerifications,
         rateLimit: authRateLimits,
+        twoFactor: authTwoFactors,
       },
     }),
     emailAndPassword: {
@@ -114,6 +206,7 @@ export function authOptions(
       disableSignUp: true,
       requireEmailVerification: false,
       ...PASSWORD_POLICY,
+      resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_LIFETIME_SECONDS,
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: mailer.sendResetPassword,
     },
@@ -147,6 +240,10 @@ export function authOptions(
         // A password change ends every other session, and every session lasts its 7 days, whatever the caller asks.
         if (ctx.path === '/change-password') return overriding(ctx.body, { revokeOtherSessions: true });
         if (ctx.path === '/sign-in/email') return overriding(ctx.body, { rememberMe: true });
+        // A staff device is never trusted: a fresh email code is required at every sign-in.
+        if (ctx.path === '/two-factor/send-otp' || ctx.path === '/two-factor/verify-otp') {
+          return overriding(ctx.body ?? {}, { trustDevice: false });
+        }
         // The mailed link is built on this page, so a reset without a usable one is refused before its token exists.
         if (ctx.path === '/request-password-reset' && !onTrustedOrigin(ctx.body?.redirectTo, settings.CORS_ORIGINS)) {
           throw APIError.from('BAD_REQUEST', BASE_ERROR_CODES.INVALID_REDIRECT_URL);
@@ -186,11 +283,42 @@ export function authOptions(
                 message: identity.message,
               });
             }
+            if (identity.principal.kind === 'staff') {
+              await assertStaffMfaEnrollment(db, session.userId);
+              return {
+                data: {
+                  ...session,
+                  expiresAt: new Date(Date.now() + STAFF_SESSION_ABSOLUTE_LIFETIME_SECONDS * 1000),
+                },
+              };
+            }
           },
         },
       },
     },
-    plugins: [registration(db, sender), signInLimit(db, { enabled: rateLimited, logger })],
+    plugins: [
+      registration(db, sender),
+      signInLimit(db, { enabled: rateLimited, logger }),
+      twoFactor({
+        // Only the OTP endpoints are allow-listed. TOTP, backup codes and 2FA disablement remain unreachable.
+        totpOptions: { disable: true },
+        otpOptions: {
+          period: STAFF_MFA_CODE_LIFETIME_MINUTES,
+          digits: 6,
+          storeOTP: 'encrypted',
+          allowedAttempts: STAFF_MFA_MAX_CODE_ATTEMPTS,
+          sendOTP: mailer.sendStaffMfaCode,
+        },
+        twoFactorCookieMaxAge: STAFF_MFA_CHALLENGE_LIFETIME_SECONDS,
+        accountLockout: {
+          enabled: true,
+          maxFailedAttempts: STAFF_MFA_MAX_CODE_ATTEMPTS,
+          durationSeconds: STAFF_MFA_LOCKOUT_SECONDS,
+        },
+      }),
+      staffSessionCap(db),
+      staffMfaAudit(db),
+    ],
   } satisfies BetterAuthOptions;
 }
 

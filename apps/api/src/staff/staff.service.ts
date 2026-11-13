@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { AUTH, AUTH_SETTINGS } from '../auth/auth.constants.js';
 import type { Auth, AuthSettings } from '../auth/auth.instance.js';
-import { createCredentialUser, normalizeEmail } from '../auth/credential-user.js';
+import { createCredentialUser, normalizeEmail, requireStaffMfa } from '../auth/credential-user.js';
 import { AuthService } from '../auth/auth.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
 import { AuditService } from '../common/audit/audit.service.js';
@@ -70,6 +70,7 @@ export class StaffService {
           name: dto.fullName,
           password: randomBytes(48).toString('base64url'),
         });
+        await requireStaffMfa(tx, identity.id);
         const row = await this.staff.insertStaff(tx, {
           email: identity.email,
           fullName: dto.fullName,

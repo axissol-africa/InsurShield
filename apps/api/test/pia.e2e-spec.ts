@@ -5,7 +5,6 @@ import { buildPiaConfig } from './builders/admin.js';
 import { openTestDatabase, startApp, type TestApp } from './helpers.js';
 import { signIn } from './sessions.js';
 
-const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 const PATH = '/api/v1/config/pia';
 
 describe('PIA minimum rate', () => {
@@ -32,6 +31,9 @@ describe('PIA minimum rate', () => {
     return signIn(testApp.http, staff);
   };
 
+  const approve = (id: string, session: Awaited<ReturnType<typeof asAdmin>>) =>
+    testApp.http.post(`/api/v1/admin/approvals/${id}/approve`).set(session).send({ reason: 'Published PIA floor confirmed.' });
+
   it('answers the regulatory default when no rate is stored', async () => {
     await side.db.delete(piaConfig);
 
@@ -57,43 +59,53 @@ describe('PIA minimum rate', () => {
     expect((await testApp.http.get(PATH).expect(200)).body).toMatchObject({ piaRatePercentage: 0.01, updatedBy: null });
   });
 
-  it('creates the row when none exists, in basis points, naming who set it', async () => {
+  it('creates the row only after an independent administrator approves the requested rate', async () => {
     await side.db.delete(piaConfig);
+    const maker = await asAdmin('First Setter');
+    const checker = await asAdmin('Independent Checker');
 
-    const response = await testApp.http.put(PATH).set(await asAdmin('First Setter')).send({ piaRatePercentage: 4.75 }).expect(200);
+    const response = await testApp.http.put(PATH).set(maker).send({ piaRatePercentage: 4.75 }).expect(200);
 
-    expect(response.body).toEqual({ piaRatePercentage: 4.75, lastUpdated: expect.stringMatching(ISO_MS), updatedBy: 'First Setter' });
+    expect(response.body).toMatchObject({ action: 'PIA_FLOOR_CHANGE', status: 'PENDING', proposal: { piaRatePercentage: 4.75 } });
+    expect(await storedRow()).toBeUndefined();
+    await approve(response.body.id, checker).expect(201);
     const row = await storedRow();
     expect(row.piaRateBps).toBe(475);
-    expect(row.updatedAt.toISOString()).toBe(response.body.lastUpdated);
+    expect((await testApp.http.get(PATH).expect(200)).body).toMatchObject({ piaRatePercentage: 4.75, updatedBy: 'Independent Checker' });
   });
 
   it('replaces the stored rate and advances updatedAt (T-AD3)', async () => {
     await buildPiaConfig(testApp.db, { piaRateBps: 400 });
     await side.db.update(piaConfig).set({ updatedAt: new Date('2026-01-01T00:00:00.000Z') }).where(eq(piaConfig.id, 'current'));
+    const maker = await asAdmin('Second Setter');
+    const checker = await asAdmin('Independent Checker');
 
-    const response = await testApp.http.put(PATH).set(await asAdmin('Second Setter')).send({ piaRatePercentage: 5 }).expect(200);
+    const response = await testApp.http.put(PATH).set(maker).send({ piaRatePercentage: 5 }).expect(200);
 
-    expect(response.body).toMatchObject({ piaRatePercentage: 5, updatedBy: 'Second Setter' });
+    expect(response.body).toMatchObject({ status: 'PENDING', proposal: { piaRatePercentage: 5 } });
+    expect((await storedRow()).piaRateBps).toBe(400);
+    await approve(response.body.id, checker).expect(201);
     const row = await storedRow();
     expect(row.piaRateBps).toBe(500);
     expect(row.updatedAt.getTime()).toBeGreaterThan(new Date('2026-01-01T00:00:00.000Z').getTime());
-    expect(response.body.lastUpdated).toBe(row.updatedAt.toISOString());
-    expect((await testApp.http.get(PATH).expect(200)).body).toEqual(response.body);
+    expect((await testApp.http.get(PATH).expect(200)).body).toMatchObject({ piaRatePercentage: 5, updatedBy: 'Independent Checker' });
   });
 
   it('keeps an append-only rate history and an administrator audit event', async () => {
     await side.db.delete(piaConfig);
-    const staff = await buildStaffUser(testApp.db, { role: 'ADMIN', fullName: 'History Setter' });
-    const session = await signIn(testApp.http, staff);
+    const maker = await asAdmin('History Setter');
+    const checkerStaff = await buildStaffUser(testApp.db, { role: 'ADMIN', fullName: 'History Checker' });
+    const checker = await signIn(testApp.http, checkerStaff);
 
-    await testApp.http.put(PATH).set(session).send({ piaRatePercentage: 4 }).expect(200);
-    await testApp.http.put(PATH).set(session).send({ piaRatePercentage: 5.25 }).expect(200);
+    const first = await testApp.http.put(PATH).set(maker).send({ piaRatePercentage: 4 }).expect(200);
+    await approve(first.body.id, checker).expect(201);
+    const second = await testApp.http.put(PATH).set(maker).send({ piaRatePercentage: 5.25 }).expect(200);
+    await approve(second.body.id, checker).expect(201);
 
     const history = await side.db
       .select()
       .from(piaConfigHistory)
-      .where(eq(piaConfigHistory.changedByStaffId, staff.id))
+      .where(eq(piaConfigHistory.changedByStaffId, checkerStaff.id))
       .orderBy(piaConfigHistory.changedAt);
     expect(history.map(({ piaRateBps, previousRateBps }) => ({ piaRateBps, previousRateBps })))
       .toEqual([{ piaRateBps: 400, previousRateBps: null }, { piaRateBps: 525, previousRateBps: 400 }]);
@@ -101,8 +113,8 @@ describe('PIA minimum rate', () => {
     const events = await side.db
       .select({ actorId: auditLogs.actorId, action: auditLogs.action, after: auditLogs.after })
       .from(auditLogs)
-      .where(eq(auditLogs.actorId, staff.id));
-    expect(events).toContainEqual({ actorId: staff.id, action: 'setting.pia_floor_updated', after: { piaRateBps: 525 } });
+      .where(eq(auditLogs.actorId, checkerStaff.id));
+    expect(events).toContainEqual({ actorId: checkerStaff.id, action: 'setting.pia_floor_updated', after: { piaRateBps: 525 } });
   });
 
   it.each([
@@ -110,7 +122,8 @@ describe('PIA minimum rate', () => {
     [100, 200],
     [12.34, 200],
   ])('accepts a rate of %s', async (piaRatePercentage, status) => {
-    await testApp.http.put(PATH).set(await asAdmin()).send({ piaRatePercentage }).expect(status);
+    const response = await testApp.http.put(PATH).set(await asAdmin('Rate Maker')).send({ piaRatePercentage }).expect(status);
+    await approve(response.body.id, await asAdmin('Rate Checker')).expect(201);
     expect((await storedRow()).piaRateBps).toBe(Math.round(piaRatePercentage * 100));
   });
 

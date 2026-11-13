@@ -5,6 +5,7 @@ import { AUTH, AUTH_SETTINGS } from './auth/auth.constants.js';
 import type { Auth, AuthSettings } from './auth/auth.instance.js';
 import { mountIdentity } from './auth/identity-routes.js';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter.js';
+import { AuditService } from './common/audit/audit.service.js';
 import type { Env } from './config/env.js';
 import { DATABASE, type Database } from './db/database.module.js';
 import { LinkIssueInterceptor } from './documents/link-issue.interceptor.js';
@@ -29,7 +30,13 @@ export function configureApp(app: INestApplication, settings: AppSettings) {
   // Routes are served under this prefix so they line up with `apps/web/src/api/contracts.js`.
   app.setGlobalPrefix(settings.API_PREFIX, { exclude: ['health', 'health/ready'] });
   app.enableCors({ origin: settings.CORS_ORIGINS, credentials: true });
-  mountIdentity(express, app.get<Auth>(AUTH), app.get<Database>(DATABASE), app.get<AuthSettings>(AUTH_SETTINGS));
+  mountIdentity(
+    express,
+    app.get<Auth>(AUTH),
+    app.get<Database>(DATABASE),
+    app.get(AuditService),
+    app.get<AuthSettings>(AUTH_SETTINGS),
+  );
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new ApiExceptionFilter());
   // Embedded download links are recorded once per response; see link-issues.ts.

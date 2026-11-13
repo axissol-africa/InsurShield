@@ -38,6 +38,8 @@ export default function AdminLogin() {
   const [searchParams] = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [stage, setStage] = useState('password');
   const [role, setRole] = useState('admin');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(() => (searchParams.get('reason') === 'not-staff' ? 'This is not a staff account. Sign in through customer access instead.' : ''));
@@ -55,6 +57,19 @@ export default function AdminLogin() {
     }
   };
 
+  const finishStaffSignIn = async (signIn) => {
+    const profile = await api.auth.me();
+    const userId = profile?.userId || signIn?.user?.id;
+    if (!userId || !profile?.staffSession) {
+      await api.auth.signOut();
+      requestIdentityTransition({ landing: '/admin-login?reason=not-staff', userId: null, announce: true });
+      return;
+    }
+    const destination = profile.staffSession.role === 'insurer' ? '/insurer' : '/admin';
+    const outcome = adoptOwnIdentity({ userId, profile, landing: '/admin-login' });
+    if (!outcome.transitioned) navigate(destination, { replace: true });
+  };
+
   const handleLogin = async (event) => {
     event.preventDefault();
     setError('');
@@ -62,16 +77,16 @@ export default function AdminLogin() {
       setLoading(true);
       try {
         const signIn = await api.auth.signIn(email.trim(), password);
-        const profile = await api.auth.me();
-        const userId = profile?.userId || signIn?.user?.id;
-        if (!userId || !profile?.staffSession) {
-          await api.auth.signOut();
-          requestIdentityTransition({ landing: '/admin-login?reason=not-staff', userId: null, announce: true });
+        if (signIn?.twoFactorRedirect) {
+          if (!signIn.twoFactorMethods?.includes('otp')) {
+            throw new Error('This staff account cannot receive an email sign-in code. Contact an administrator.');
+          }
+          await api.auth.sendStaffMfaCode();
+          setStage('code');
+          setMfaCode('');
           return;
         }
-        const destination = profile.staffSession.role === 'insurer' ? '/insurer' : '/admin';
-        const outcome = adoptOwnIdentity({ userId, profile, landing: '/admin-login' });
-        if (!outcome.transitioned) navigate(destination, { replace: true });
+        await finishStaffSignIn(signIn);
       } catch (error) {
         setError(error instanceof Error ? error.message : 'We could not sign you in. Please try again.');
       } finally {
@@ -95,6 +110,20 @@ export default function AdminLogin() {
       });
       navigate(role === 'insurer' ? '/insurer' : '/admin', { replace: true });
     }, 900);
+  };
+
+  const handleCodeVerification = async (event) => {
+    event.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const signIn = await api.auth.verifyStaffMfaCode(mfaCode.trim());
+      await finishStaffSignIn(signIn);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'We could not verify that code. Request a new code and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const selectedRole = ROLES.find((item) => item.id === role);
@@ -184,7 +213,7 @@ export default function AdminLogin() {
           })}
         </div>
 
-        <form onSubmit={handleLogin} className="mt-8 space-y-6">
+        {stage === 'password' ? <form onSubmit={handleLogin} className="mt-8 space-y-6">
           <label className="block">
             <Meta className="mb-2 block text-ink-muted">Email address</Meta>
             <input
@@ -241,11 +270,28 @@ export default function AdminLogin() {
             </span>
             <span className="relative">{loading ? 'Signing in…' : `Continue to ${selectedRole?.label.toLowerCase()}`}</span>
           </button>
-        </form>
+        </form> : <form onSubmit={handleCodeVerification} className="mt-8 space-y-6">
+          <div className="border-l-2 border-primary pl-4">
+            <Meta className="text-ink-muted">Email code required</Meta>
+            <p className="mt-2 text-[14px] leading-[1.55] text-ink-muted">Check {email} for a six-digit sign-in code. It expires in five minutes; if it does not arrive, request a new code.</p>
+          </div>
+          <label className="block">
+            <Meta className="mb-2 block text-ink-muted">Six-digit code</Meta>
+            <input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} required autoFocus className={`${inputClass} font-mono tracking-[0.22em]`} />
+          </label>
+          {error && <p role="alert" className="flex items-start gap-2.5 rounded-[1px] border border-primary bg-primary/[0.04] p-3.5 text-[13px] leading-[1.5] text-primary"><span className="material-symbols-outlined mt-px shrink-0 text-[16px]" aria-hidden="true">error</span>{error}</p>}
+          <button type="submit" disabled={mfaCode.length !== 6 || loading} className="group relative flex min-h-[52px] w-full items-center justify-center gap-2.5 overflow-hidden rounded-[1px] bg-primary text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint">
+            <span className="material-symbols-outlined relative text-[19px]" aria-hidden="true">{loading ? 'sync' : 'verified_user'}</span><span className="relative">{loading ? 'Checking code…' : 'Verify and continue'}</span>
+          </button>
+          <div className="flex items-center justify-between gap-4 text-[13px]">
+            <button type="button" onClick={() => { setStage('password'); setMfaCode(''); setError(''); }} className="text-ink-muted underline-offset-4 hover:text-primary hover:underline">Use a different account</button>
+            <button type="button" disabled={loading} onClick={async () => { setError(''); setLoading(true); try { await api.auth.sendStaffMfaCode(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'We could not send another code.'); } finally { setLoading(false); } }} className="text-primary underline-offset-4 hover:underline disabled:text-ink-faint">Send a new code</button>
+          </div>
+        </form>}
 
         {/* Nothing is verified off the device, so the credentials are
             stated plainly rather than implied. */}
-        {!httpMode && <div className="mt-8 border border-dashed border-line-strong p-4">
+        {!httpMode && stage === 'password' && <div className="mt-8 border border-dashed border-line-strong p-4">
           <div className="flex items-center gap-2.5">
             <span className="material-symbols-outlined text-[16px] text-primary" aria-hidden="true">info</span>
             <Meta className="text-ink-muted">Prototype credentials</Meta>

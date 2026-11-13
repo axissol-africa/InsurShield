@@ -120,6 +120,7 @@ async function demoCustomerId(): Promise<string> {
 async function assertSeededAccountCanSignIn(
   email: string,
   userId: string,
+  { requiresMfa = false }: { requiresMfa?: boolean } = {},
 ): Promise<void> {
   const [account] = await db
     .select({
@@ -135,12 +136,24 @@ async function assertSeededAccountCanSignIn(
   });
   expect(account.password).toEqual(expect.any(String));
 
-  await expect(
-    createAuth(db, AUTH_SETTINGS, new MailFake()).api.signInEmail({
-      body: { email, password: SEED_PASSWORD },
-      headers: new Headers({ Origin: AUTH_SETTINGS.CORS_ORIGINS[0] }),
-    }),
-  ).resolves.toMatchObject({ user: { email } });
+  const response = await createAuth(
+    db,
+    AUTH_SETTINGS,
+    new MailFake(),
+  ).api.signInEmail({
+    body: { email, password: SEED_PASSWORD },
+    headers: new Headers({ Origin: AUTH_SETTINGS.CORS_ORIGINS[0] }),
+  });
+
+  if (requiresMfa) {
+    expect(response).toMatchObject({
+      twoFactorRedirect: true,
+      twoFactorMethods: ['otp'],
+    });
+    return;
+  }
+
+  expect(response).toMatchObject({ user: { email } });
 }
 
 class RolledBack extends Error {}
@@ -185,21 +198,24 @@ describe('seed', () => {
       })
       .from(schema.customers)
       .where(eq(schema.customers.email, DEMO_CUSTOMER.email));
-    const accounts = [...staff, customer];
-
     const byRole = staff.reduce<Record<string, number>>((counts, member) => {
       counts[member.role] = (counts[member.role] ?? 0) + 1;
       return counts;
     }, {});
     expect(byRole, 'every role has an account to exercise it').toEqual(SEEDED_STAFF_BY_ROLE);
-    expect(customer).toBeDefined();
-    for (const account of accounts) {
+    if (!customer?.userId) {
+      throw new Error('The seeded demo customer has no login');
+    }
+    for (const account of staff) {
       if (!account?.userId)
         throw new Error(
           `The seeded account ${account?.email ?? 'unknown'} has no login`,
         );
-      await assertSeededAccountCanSignIn(account.email, account.userId);
+      await assertSeededAccountCanSignIn(account.email, account.userId, {
+        requiresMfa: true,
+      });
     }
+    await assertSeededAccountCanSignIn(customer.email, customer.userId);
   });
 
   it('leaves every row as it was when it runs a second time on a freshly migrated database', async () => {
@@ -255,7 +271,9 @@ describe('seed', () => {
       )
       .where(eq(schema.staffUsers.email, 'admin@insurshield.zm'));
     expect(after.password).not.toBe(before.password);
-    await assertSeededAccountCanSignIn('admin@insurshield.zm', after.userId);
+    await assertSeededAccountCanSignIn('admin@insurshield.zm', after.userId, {
+      requiresMfa: true,
+    });
   });
 
   it('relinks a case-variant legacy staff row by email without creating a duplicate', async () => {

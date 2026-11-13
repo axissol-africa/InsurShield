@@ -9,6 +9,7 @@ import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
 import InsurerOnboardingReview from '@/features/admin/components/InsurerOnboardingReview';
+import AdminApprovalInbox from '@/features/admin/components/AdminApprovalInbox';
 import StaffManagement from '@/features/admin/components/StaffManagement';
 import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
 import InsurerTable from '@/features/admin/components/InsurerTable';
@@ -219,6 +220,7 @@ export default function AdminDashboard() {
   const [deletedInsurersError, setDeletedInsurersError] = useState(null);
   const [serverDashboard, setServerDashboard] = useState(null);
   const [serverDashboardError, setServerDashboardError] = useState(null);
+  const [approvalNotice, setApprovalNotice] = useState('');
 
   const loadServerDashboard = useCallback(async () => {
     if (env.apiMode !== 'http') return;
@@ -326,11 +328,13 @@ export default function AdminDashboard() {
   const runDelete = async () => {
     await api.insurers.remove(pendingDelete.id);
     await refreshInsurers();
+    setApprovalNotice(`Removal of ${pendingDelete.name} was sent for independent approval. The insurer remains unchanged until it is approved.`);
     setPendingDelete(null);
   };
   const restoreInsurer = async (insurer) => {
     await api.insurers.restore(insurer.id);
     await refreshInsurers();
+    setApprovalNotice(`Restoration of ${insurer.name} was sent for independent approval.`);
   };
 
   const sidebarItems = [
@@ -339,6 +343,7 @@ export default function AdminDashboard() {
     { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'onboarding_review', label: 'Review onboarding', icon: 'fact_check', hint: 'Evidence and activation', matches: ['onboarding_review'] },
+    { id: 'approvals', label: 'Approvals', icon: 'approval', hint: 'Independent decisions', matches: ['approvals'] },
     { id: 'staff_management', label: 'Staff and teams', icon: 'groups', hint: 'Access control', matches: ['staff_management'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
@@ -377,13 +382,16 @@ export default function AdminDashboard() {
     );
   } else if (view === 'onboarding_review') {
     content = <InsurerOnboardingReview insurers={managedInsurers} api={api} initialInsurerId={reviewingInsurerId} onBack={showInsurers} onChanged={refreshInsurers} />;
+  } else if (view === 'approvals') {
+    content = <AdminApprovalInbox api={api} onChanged={refreshInsurers} onBack={() => setView('dashboard')} />;
   } else if (view === 'staff_management') {
     content = <StaffManagement insurers={managedInsurers} api={api} onChanged={refreshInsurers} />;
   } else if (view === 'manage_insurers') {
     const addButton = <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => setView('onboarding_review')}>Review onboarding</Button><Button type="button" size="lg" onClick={() => { setEditingInsurer(null); setView('add_insurer'); }}><Plus aria-hidden="true" />Add insurer</Button></div>;
     content = (
       <>
-        <SubPageHeader title="Manage insurers" description={isSuperAdmin ? 'View and update companies, then review evidence before activation or restore a removed record.' : 'View and update companies, then review evidence before activation.'} onBack={() => setView('dashboard')} action={addButton} />
+        <SubPageHeader title="Manage insurers" description={isSuperAdmin ? 'View and update companies, then review evidence before activation or request restoration of a removed record.' : 'View and update companies, then review evidence before requesting activation.'} onBack={() => setView('dashboard')} action={addButton} />
+        {approvalNotice && <p role="status" className="mb-5 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{approvalNotice}</p>}
         <InsurerTable
           insurers={managedInsurers}
           piaRatePercentage={piaRate}
@@ -391,7 +399,12 @@ export default function AdminDashboard() {
           onEdit={(insurer) => { setEditingInsurer(insurer); setView('edit_insurer'); }}
           onReview={(insurer) => { setReviewingInsurerId(insurer.id); setView('onboarding_review'); }}
           onRateChange={async (id, ratePercentage) => { await api.insurers.update(id, { ratePercentage }); await refreshInsurers(); }}
-          onStatusChange={async (id, status) => { await api.insurers.setStatus(id, status); await refreshInsurers(); }}
+          onStatusChange={async (id, status) => {
+            const insurer = managedInsurers.find((entry) => entry.id === id);
+            await api.insurers.setStatus(id, status);
+            await refreshInsurers();
+            setApprovalNotice(`${status === 'Deleted' ? 'Removal' : 'Deactivation'} of ${insurer?.name || 'this insurer'} was sent for independent approval.`);
+          }}
           onDelete={confirmDelete}
           canRemove={isSuperAdmin}
         />
@@ -428,9 +441,9 @@ export default function AdminDashboard() {
   } else if (view === 'audit_log') {
     content = <AuditTrail onBack={() => setView('dashboard')} />;
   } else if (view === 'find_account') {
-    content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} onBack={() => setView('dashboard')} />;
+    content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} requestCustomerPasswordReset={api.admin.requestCustomerPasswordReset} onBack={() => setView('dashboard')} />;
   } else if (view === 'pia_config') {
-    content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => { await api.config.setPia({ piaRatePercentage: rate }); await hydrateAdmin(); }} onBack={() => setView('dashboard')} />;
+    content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => api.config.setPia({ piaRatePercentage: rate })} onBack={() => setView('dashboard')} />;
   } else {
     content = renderOverview();
   }
@@ -445,15 +458,15 @@ export default function AdminDashboard() {
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         destructive
-        title={`Remove ${pendingDelete?.name ?? ''}?`}
-        description="This insurer stops receiving quote requests immediately. Nothing already in the system is destroyed."
+        title={`Request removal of ${pendingDelete?.name ?? ''}?`}
+        description="This sends a removal request to an independent super administrator. Nothing changes unless that request is approved."
         consequences={[
-          { text: 'No new quote requests are sent to this insurer.' },
-          { text: 'Its portal login stops resolving to an active insurer.' },
+          { text: 'No new quote requests are sent to this insurer after approval.' },
+          { text: 'Its portal login stops resolving to an active insurer after approval.' },
           { text: 'Existing quotes, policies and claims stay readable.', kept: true },
           { text: 'You can restore the insurer from this list afterwards.', kept: true },
         ]}
-        confirmLabel="Remove insurer"
+        confirmLabel="Request removal"
         cancelLabel="Keep it"
         onConfirm={runDelete}
         onCancel={() => setPendingDelete(null)}
@@ -892,10 +905,15 @@ function InsurerProfile({ insurer, onBack }) {
   );
 }
 
-function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer, onBack }) {
+function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer, requestCustomerPasswordReset, onBack }) {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState(null);
   const [searchError, setSearchError] = useState(null);
+  const [confirmationEmail, setConfirmationEmail] = useState('');
+  const [resetReason, setResetReason] = useState('');
+  const [resetError, setResetError] = useState(null);
+  const [resetStatus, setResetStatus] = useState(null);
+  const [resetLoading, setResetLoading] = useState(false);
 
   const search = async (event) => {
     event.preventDefault();
@@ -910,6 +928,10 @@ function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer
           requests: account.counts.quoteRequests,
           policies: account.counts.policies,
         });
+        setConfirmationEmail('');
+        setResetReason('');
+        setResetError(null);
+        setResetStatus(null);
       } catch (error) {
         setResult(null);
         setSearchError(error instanceof Error ? error.message : 'The customer account could not be found.');
@@ -922,6 +944,32 @@ function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer
       requests: quoteRequests.filter((item) => item.customer?.email === account.email || item.customer?.phone === account.phone).length,
       policies: policies.filter((item) => item.customerEmail === account.email || item.customerPhone === account.phone).length,
     } : { notFound: true });
+    setConfirmationEmail('');
+    setResetReason('');
+    setResetError(null);
+    setResetStatus(null);
+  };
+
+  const requestReset = async (event) => {
+    event.preventDefault();
+    if (!result?.account || !requestCustomerPasswordReset) return;
+    setResetLoading(true);
+    setResetError(null);
+    setResetStatus(null);
+    try {
+      await requestCustomerPasswordReset({
+        customerId: result.account.id,
+        confirmationEmail,
+        reason: resetReason,
+      });
+      setResetStatus('The password-reset email was sent. Its link expires after one hour.');
+      setConfirmationEmail('');
+      setResetReason('');
+    } catch (error) {
+      setResetError(error instanceof Error ? error.message : 'The password-reset request could not be completed.');
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   return (
@@ -965,6 +1013,26 @@ function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer
               <div><dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Quote requests</dt><dd className="mt-2 text-sm">{result.requests}</dd></div>
               <div><dt className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Policies</dt><dd className="mt-2 text-sm">{result.policies}</dd></div>
             </dl>
+            {requestCustomerPasswordReset && (
+              <form onSubmit={requestReset} className="border-t border-border pt-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold">Send password-reset link</h3>
+                    <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">A secure, one-time link is emailed to the customer. Passwords and reset links are never shown to staff.</p>
+                  </div>
+                  <span className="rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-[11px] font-medium text-primary">Exact email required</span>
+                </div>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <label className="block"><span className={labelClass}>Confirm customer email</span><input required type="email" autoComplete="off" value={confirmationEmail} onChange={(event) => setConfirmationEmail(event.target.value)} className={inputClass} placeholder="Re-enter the email above" /></label>
+                  <label className="block"><span className={labelClass}>Reason for reset</span><input required minLength={10} maxLength={1000} value={resetReason} onChange={(event) => setResetReason(event.target.value)} className={inputClass} placeholder="e.g. Customer cannot sign in" /></label>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <Button type="submit" disabled={resetLoading}>{resetLoading ? 'Sending reset link…' : 'Send reset link'}</Button>
+                  {resetStatus && <p role="status" className="text-sm text-primary">{resetStatus}</p>}
+                  {resetError && <p role="alert" className="text-sm text-destructive">{resetError}</p>}
+                </div>
+              </form>
+            )}
           </motion.div>
         )}
         </CardContent>
@@ -977,7 +1045,17 @@ function FindCustomerAccount({ accounts, quoteRequests, policies, lookupCustomer
 function PiaConfiguration({ piaRate, onSave, onBack }) {
   const [draft, setDraft] = useState(String(piaRate));
   const [saved, setSaved] = useState(false);
-  const save = () => { onSave(Math.max(0, parseFloat(draft) || 0)); setSaved(true); };
+  const [error, setError] = useState('');
+  const save = async () => {
+    setSaved(false);
+    setError('');
+    try {
+      await onSave(Math.max(0, parseFloat(draft) || 0));
+      setSaved(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The PIA change could not be requested.');
+    }
+  };
 
   return (
     <>
@@ -993,8 +1071,9 @@ function PiaConfiguration({ piaRate, onSave, onBack }) {
           </div>
           <span className="mt-2 block text-xs leading-relaxed text-muted-foreground">Current: {piaRate}% · e.g. ZMW {((250000 * piaRate) / 100).toLocaleString()} on a ZMW 250,000 vehicle</span>
         </label>
-        <Button type="button" size="lg" onClick={save} className="w-full">Save PIA configuration</Button>
-        {saved && <p className="text-center text-sm text-primary">PIA configuration updated.</p>}
+        <Button type="button" size="lg" onClick={() => { void save(); }} className="w-full">Request PIA change</Button>
+        {saved && <p role="status" className="text-center text-sm text-primary">PIA change sent for independent approval. The current floor stays in force until it is approved.</p>}
+        {error && <p role="alert" className="text-center text-sm text-destructive">{error}</p>}
         </CardContent>
         </Card>
 

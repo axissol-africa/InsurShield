@@ -27,18 +27,20 @@ test('admin onboards an insurer with an uploaded logo', async ({ page }) => {
   await page.getByPlaceholder('Name shown to customers').fill('Zambezi General');
   await page.getByPlaceholder('e.g. PIA/GI/2026/017').fill('PIA/GI/2026/031');
   await page.locator('input[type="date"]').fill('2027-06-30');
+  await page.getByPlaceholder('e.g. Mrs. Chanda Mwale').fill('Chanda Mwale');
+  await page.getByPlaceholder('e.g. Motor Claims Manager').fill('Motor Claims Manager');
   await page.getByPlaceholder('+260 211 …').fill('+260 211 999 000');
   await page.getByPlaceholder('claims@insurer.zm').fill('claims@zambezi.zm');
   await page.getByPlaceholder('e.g. 4.0').fill('4.1');
   await page.locator('input[type="file"]').setInputFiles(logoFile);
   await expect(page.getByAltText('Company logo preview')).toBeVisible();
-  await page.getByRole('button', { name: 'Onboard insurance company' }).click();
+  await page.getByRole('button', { name: 'Save insurer for review' }).click();
 
-  await expect(page.getByRole('button', { name: 'Add insurer' })).toBeVisible();
-  await expect(page.getByText('Zambezi General Insurance Limited')).toBeVisible();
-  await expect(page.getByText('PIA/GI/2026/031')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review onboarding' })).toBeVisible();
+  await expect(page.getByLabel('Insurer under review').locator('option:checked')).toHaveText(/Zambezi General Insurance Limited/);
 
-  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('insurshield-storage')).state.insurersList.at(-1));
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('insurshield-storage')).state.insurersList
+    .find((insurer) => insurer.name === 'Zambezi General Insurance Limited'));
   expect(stored.logoUrl).toMatch(/^data:image\/png/);
   expect(stored.contact.email).toBe('claims@zambezi.zm');
   expect(stored.quoteValidityDays).toBe(5);
@@ -78,7 +80,7 @@ test('insurer uploads a quotation document and the customer can open it', async 
   expect(popup).toBeTruthy();
 });
 
-test('admin can edit, deactivate and delete an insurer, and deactivated insurers get no requests', async ({ page }) => {
+test('admin can edit insurers and submits lifecycle changes for independent approval', async ({ page }) => {
   await seedStaff('admin', 'Admin')({ page });
   await page.evaluate(() => {
     const store = JSON.parse(localStorage.getItem('insurshield-storage'));
@@ -93,16 +95,16 @@ test('admin can edit, deactivate and delete an insurer, and deactivated insurers
   const rows = page.locator('div.divide-y > div');
   await page.getByRole('button', { name: 'More actions for Metro Safe Assurance' }).click();
   await page.getByRole('menuitem', { name: /Deactivate/ }).click();
-  await page.getByRole('button', { name: 'More actions for Metro Safe Assurance' }).click();
-  await expect(page.getByRole('menuitem', { name: /Reactivate/ })).toBeVisible();
+  await expect(page.getByText(/sent for independent approval/i)).toBeVisible();
+  await expect(rows.filter({ hasText: 'Metro Safe Assurance' }).getByText('Active', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Add insurer' }).hover(); // moving away closes the menu
   await page.mouse.click(4, 4);
   await page.getByRole('button', { name: 'More actions for Madison General' }).click();
   await page.getByRole('menuitem', { name: /Remove/ }).click();
   // Removal is confirmed in the app's own dialog, which spells out what is kept.
-  await expect(page.getByRole('heading', { name: /Remove Madison General/ })).toBeVisible();
-  await page.getByRole('button', { name: 'Remove insurer' }).click();
-  await expect(rows.filter({ hasText: 'Madison General' }).getByText('Deleted')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Request removal of Madison General/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Request removal' }).click();
+  await expect(rows.filter({ hasText: 'Madison General' }).getByText('Active', { exact: true })).toBeVisible();
 
   await rows.filter({ hasText: 'Prestige Assurance' }).getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('heading', { name: /Edit Prestige Assurance/ })).toBeVisible();
@@ -111,9 +113,9 @@ test('admin can edit, deactivate and delete an insurer, and deactivated insurers
   await expect(page.getByText('PIA/GI/2026/001')).toBeVisible();
 
   await page.goto('/quote-request');
-  await expect(page.getByRole('button', { name: 'See cover guides from 3 insurers' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'See cover guides from 5 insurers' })).toBeVisible();
   await page.goto('/support');
-  await expect(page.getByText('Madison General')).toHaveCount(0);
+  await expect(page.getByText('Madison General')).toBeVisible();
 });
 
 test('insurer can find a claim by its number and mark it received', async ({ page }) => {

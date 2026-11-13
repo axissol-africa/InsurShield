@@ -23,6 +23,113 @@ const insurerIdForSession = () => state().staffSession?.insurerId
 // clients always receive this fee from the API configuration, never this value.
 const MOCK_RTSA_ANNIVERSARY_FEE = 500;
 
+// Versioned separately from the catalogue; only allowlisted proposal data is stored.
+const APPROVAL_STORAGE = 'insurshield.mock.approvals.v1';
+const approvalRecords = () => JSON.parse(localStorage.getItem(APPROVAL_STORAGE) || '[]').map((record) => (
+  record.status === 'PENDING' && Date.parse(record.expiresAt) <= Date.now()
+    ? { ...record, status: 'EXPIRED' } : record
+));
+const saveApprovals = (records) => localStorage.setItem(APPROVAL_STORAGE, JSON.stringify(records));
+const approvalResponse = ({ payload, ...record }) => ({
+  ...record,
+  proposal: record.action === 'PIA_FLOOR_CHANGE' ? { piaRatePercentage: payload.piaRatePercentage }
+    : record.action === 'INSURER_ACTIVATE' ? { effectiveFrom: payload.effectiveFrom, renewalDate: payload.renewalDate, conditions: payload.conditions }
+      : record.action === 'INSURER_SUSPEND' ? { reason: payload.reason } : {},
+});
+
+function approvalActor(s, superOnly = false) {
+  const session = s.staffSession;
+  const role = session?.staffRole || session?.role;
+  if (!['SUPER_ADMIN', 'ADMIN', 'admin'].includes(role) || (superOnly && role !== 'SUPER_ADMIN' && !session?.isSuperAdmin)) {
+    throw new Error('Only an authorised administrator may review this action.');
+  }
+  let id = session.id || session.staffId || session.userId || session.email;
+  // The existing prototype login creates this one demo account without an id.
+  // Bind it consistently: signing out and back in must never create a checker.
+  if (!id && session.role === 'admin' && session.name === 'Admin') {
+    id = 'mock:admin@insurshield.zm';
+    s.startStaffSession({ ...session, id });
+  }
+  if (!id) throw new Error('Sign in again to establish your reviewer identity.');
+  return { id, name: session.name || id };
+}
+
+function proposeApproval(s, action, targetId, payload, requestedReason) {
+  const actor = approvalActor(s, ['INSURER_DELETE', 'INSURER_RESTORE'].includes(action));
+  if (action !== 'PIA_FLOOR_CHANGE' && !s.insurersList.some((entry) => entry.id === targetId)) throw new Error('Insurer was not found.');
+  const reason = requestedReason?.trim();
+  if (!reason) throw new Error('Explain why this high-risk action is needed.');
+  const records = approvalRecords();
+  if (records.some((entry) => entry.action === action && entry.targetId === targetId && entry.status === 'PENDING')) {
+    throw new Error('An approval for this action is already waiting for review.');
+  }
+  const record = {
+    id: newReference('APPROVAL'), action, targetType: action === 'PIA_FLOOR_CHANGE' ? 'SETTING' : 'INSURER', targetId,
+    payload, requestedReason: reason, requestedByStaffId: actor.id, requestedByName: actor.name,
+    status: 'PENDING', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+    decidedByStaffId: null, decidedAt: null, decisionReason: null, executedAt: null,
+  };
+  saveApprovals([...records, record]);
+  return approvalResponse(record);
+}
+
+function decideApproval(s, id, decision, approve) {
+  const actor = approvalActor(s);
+  const records = approvalRecords();
+  const record = records.find((entry) => entry.id === id);
+  if (!record) throw new Error('Approval request was not found.');
+  if (record.status !== 'PENDING') throw new Error('This approval request is no longer pending or has expired.');
+  if (record.requestedByStaffId === actor.id) throw new Error('A different authorised administrator must review this request.');
+  if (decision.reason !== undefined && (typeof decision.reason !== 'string' || decision.reason.length > 2000)) throw new Error('Decision reason must be at most 2000 characters.');
+  if (approve) executeApproval(s, record);
+  const now = new Date().toISOString();
+  const result = { ...record, status: approve ? 'EXECUTED' : 'REJECTED', decidedByStaffId: actor.id, decisionReason: decision.reason?.trim() || null, decidedAt: now, executedAt: approve ? now : null };
+  saveApprovals(records.map((entry) => entry.id === id ? result : entry));
+  return approvalResponse(result);
+}
+
+function executeApproval(s, record) {
+  const { action, targetId: id, payload } = record;
+  if (action === 'PIA_FLOOR_CHANGE') {
+    s.setPiaConfig({ piaRatePercentage: payload.piaRatePercentage });
+    return;
+  }
+  const insurer = s.insurersList.find((entry) => entry.id === id);
+  if (!insurer) throw new Error('Insurer was not found.');
+  if (['INSURER_DELETE', 'INSURER_RESTORE'].includes(action)) approvalActor(s, true);
+  if (action === 'INSURER_RESTORE') {
+    if (insurer.status !== 'Deleted') throw new Error('This insurer has not been deleted.');
+    s.updateInsurer(id, { status: 'Inactive', deletedAt: null });
+    return;
+  }
+  if (insurer.status === 'Deleted') throw new Error('Restore this insurer before changing its status.');
+  switch (action) {
+    case 'INSURER_ACTIVATE': {
+      const licence = insurer.evidence?.find((item) => item.kind === 'LICENCE');
+      if (!licence || licence.state !== 'APPROVED') throw new Error('This insurer cannot be activated yet: no approved licence is on file.');
+      if (licence.expiresAt && Date.parse(licence.expiresAt) < Date.now()) throw new Error('This insurer cannot be activated yet: the licence has expired.');
+      s.updateInsurer(id, { status: 'Active', activation: { ...payload, approvedAt: new Date().toISOString() } });
+      break;
+    }
+    case 'INSURER_DEACTIVATE': s.setInsurerStatus(id, 'Inactive'); break;
+    case 'INSURER_DELETE': s.deleteInsurer(id); break;
+    case 'INSURER_SUSPEND': {
+      const unavailableAt = new Date().toISOString();
+      s.updateInsurer(id, { status: 'Suspended', suspensionReason: payload.reason, suspendedAt: unavailableAt });
+      s.setQuoteRequests(s.quoteRequests.map((request) => {
+        if (!request.insurers?.includes(insurer.name)) return request;
+        const reply = request.insurerQuotes?.[insurer.name];
+        if (reply) return { ...request, insurerQuotes: { ...request.insurerQuotes, [insurer.name]: { ...reply, unavailableAt } } };
+        const unavailableInsurers = request.unavailableInsurers || [];
+        return unavailableInsurers.some((entry) => entry.name === insurer.name) ? request
+          : { ...request, unavailableInsurers: [...unavailableInsurers, { name: insurer.name, unavailableAt }] };
+      }));
+      break;
+    }
+    default: throw new Error('This approval action cannot be executed.');
+  }
+}
+
 export const auth = {
   register: (account) => call((s) => {
     s.registerCustomerAccount(account);
@@ -32,6 +139,7 @@ export const auth = {
     if (identifier.startsWith('insurer@') || identifier.startsWith('admin@')) {
       const role = identifier.startsWith('insurer@') ? 'insurer' : 'admin';
       const staffSession = {
+        id: `mock:${identifier.toLowerCase()}`,
         role,
         // The production identity endpoint keeps this canonical role beside
         // the short portal-routing role. It lets the UI avoid presenting
@@ -58,7 +166,7 @@ export const auth = {
     return record;
   }),
   me: () => call((s) => ({
-    userId: s.staffSession ? `mock:${s.staffSession.role}` : (s.customer ? `mock:${s.customer.email}` : null),
+    userId: s.staffSession ? s.staffSession.id : (s.customer ? `mock:${s.customer.email}` : null),
     customer: s.customer,
     consent: { accepted: s.consentAccepted, noticeVersion: s.consentRecord?.noticeVersion ?? null, acceptedAt: s.consentTimestamp },
     staffSession: s.staffSession,
@@ -138,28 +246,13 @@ export const insurers = {
     return state().insurersList.at(-1);
   }),
   update: (id, updates) => call((s) => { s.updateInsurer(id, updates); return state().insurersList.find((i) => i.id === id); }),
-  setStatus: (id, status) => call((s) => { s.setInsurerStatus(id, status); return state().insurersList.find((i) => i.id === id); }),
+  setStatus: (id, status) => call((s) => {
+    if (!['Inactive', 'Deleted'].includes(status)) throw new Error('Use the evidence review to request activation.');
+    return proposeApproval(s, status === 'Deleted' ? 'INSURER_DELETE' : 'INSURER_DEACTIVATE', id, {}, status === 'Deleted' ? 'Remove insurer from the platform.' : 'Deactivate insurer for new business.');
+  }),
   suspend: (id, reason) => call((s) => {
-    const insurer = s.insurersList.find((entry) => entry.id === id);
-    if (!insurer || insurer.status === 'Deleted') throw new Error('Insurer was not found.');
-    if (insurer.status === 'Suspended') return insurer;
-    const unavailableAt = new Date().toISOString();
-    s.updateInsurer(id, { status: 'Suspended', suspensionReason: reason, suspendedAt: unavailableAt });
-    s.setQuoteRequests(s.quoteRequests.map((request) => {
-      if (!request.insurers?.some((name) => name === insurer.name)) return request;
-      const reply = request.insurerQuotes?.[insurer.name];
-      if (reply) {
-        return {
-          ...request,
-          insurerQuotes: { ...request.insurerQuotes, [insurer.name]: { ...reply, unavailableAt } },
-        };
-      }
-      const unavailableInsurers = request.unavailableInsurers || [];
-      return unavailableInsurers.some((entry) => entry.name === insurer.name)
-        ? request
-        : { ...request, unavailableInsurers: [...unavailableInsurers, { name: insurer.name, unavailableAt }] };
-    }));
-    return state().insurersList.find((entry) => entry.id === id);
+    if (typeof reason !== 'string' || reason.trim().length < 3 || reason.length > 1000) throw new Error('Provide a suspension reason between 3 and 1000 characters.');
+    return proposeApproval(s, 'INSURER_SUSPEND', id, { reason: reason.trim() }, reason);
   }),
   evidence: (id) => call((s) => s.insurersList.find((entry) => entry.id === id)?.evidence || []),
   captureEvidence: (id, evidence) => call((s) => {
@@ -185,22 +278,11 @@ export const insurers = {
     return integration;
   }),
   activate: (id, approval) => call((s) => {
-    const insurer = s.insurersList.find((entry) => entry.id === id);
-    if (!insurer) throw new Error('Insurer was not found.');
-    const licence = insurer.evidence?.find((item) => item.kind === 'LICENCE');
-    if (!licence || licence.state !== 'APPROVED') throw new Error('This insurer cannot be activated yet: no approved licence is on file.');
-    if (licence.expiresAt && new Date(licence.expiresAt) < new Date()) throw new Error('This insurer cannot be activated yet: the licence has expired.');
-    s.updateInsurer(id, { status: 'Active', activation: { ...approval, approvedAt: new Date().toISOString() } });
-    return state().insurersList.find((entry) => entry.id === id);
+    if (!approval?.effectiveFrom || !Number.isFinite(Date.parse(approval.effectiveFrom))) throw new Error('Provide a valid activation date.');
+    return proposeApproval(s, 'INSURER_ACTIVATE', id, { effectiveFrom: approval.effectiveFrom, renewalDate: approval.renewalDate || null, conditions: approval.conditions || null }, approval.conditions || 'Activate insurer after evidence review.');
   }),
-  remove: (id) => call((s) => { s.deleteInsurer(id); return { ok: true }; }),
-  restore: (id) => call((s) => {
-    const insurer = s.insurersList.find((entry) => entry.id === id);
-    if (!insurer) throw new Error('Insurer was not found.');
-    if (insurer.status !== 'Deleted') throw new Error('This insurer has not been deleted.');
-    s.updateInsurer(id, { status: 'Inactive', deletedAt: null });
-    return state().insurersList.find((entry) => entry.id === id);
-  }),
+  remove: (id) => call((s) => proposeApproval(s, 'INSURER_DELETE', id, {}, 'Remove insurer from the platform.')),
+  restore: (id) => call((s) => proposeApproval(s, 'INSURER_RESTORE', id, {}, 'Restore the deleted insurer as inactive.')),
   directory: () => call((s) => s.insurersList.filter((insurer) => !insurer.status || insurer.status === 'Active')),
 };
 
@@ -337,7 +419,10 @@ export const inspections = {
 
 export const config = {
   getPia: () => call((s) => s.piaConfig),
-  setPia: (piaConfig) => call((s) => { s.setPiaConfig(piaConfig); return state().piaConfig; }),
+  setPia: ({ piaRatePercentage }) => call((s) => {
+    if (!Number.isFinite(piaRatePercentage) || piaRatePercentage < 0 || piaRatePercentage > 100) throw new Error('Provide a valid PIA percentage between 0 and 100.');
+    return proposeApproval(s, 'PIA_FLOOR_CHANGE', 'pia.minimum_rate_bps', { piaRatePercentage }, 'Update the PIA minimum rate.');
+  }),
 };
 
 /**
@@ -346,6 +431,11 @@ export const config = {
  * from the API rather than reusing persisted demo records.
  */
 export const admin = {
+  approvals: {
+    list: () => call((s) => { approvalActor(s); return approvalRecords().map(approvalResponse); }),
+    approve: (id, decision = {}) => call((s) => decideApproval(s, id, decision, true)),
+    reject: (id, decision = {}) => call((s) => decideApproval(s, id, decision, false)),
+  },
   overview: () => call((s) => {
     const activePolicies = s.policies.filter((policy) => policy.status === 'Active').length;
     const awaitingCertificate = s.policies.filter((policy) => policy.status === 'Awaiting insurer certificate').length;
@@ -404,6 +494,20 @@ export const admin = {
         claims: s.claims.filter((item) => item.email === account.email || item.phone === account.phone).length,
       },
     };
+  }),
+  requestCustomerPasswordReset: ({ customerId, confirmationEmail, reason }) => call((s) => {
+    approvalActor(s);
+    const account = s.registeredAccounts.find((item) => (item.id || item.email) === customerId);
+    if (!account) throw new Error('Customer account was not found.');
+    if (account.email.toLowerCase() !== String(confirmationEmail || '').trim().toLowerCase()) {
+      throw new Error('Re-enter the customer email address exactly before requesting a reset.');
+    }
+    if (typeof reason !== 'string' || reason.trim().length < 10) {
+      throw new Error('Enter a short reason of at least 10 characters.');
+    }
+    // Browser-storage mode never creates a token or reveals one. The live API
+    // records the attempt and asks the configured mail provider to send it.
+    return { id: newReference('RESET'), deliveryStatus: 'DELIVERED', requestedAt: new Date().toISOString() };
   }),
   // Audit history needs the server's append-only database. Prototype mode
   // states that boundary plainly rather than inventing compliance records.

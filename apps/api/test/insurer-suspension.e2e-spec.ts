@@ -37,6 +37,7 @@ describe('insurer suspension', () => {
 
   it('cancels only unanswered deliveries, makes unpaid quotes unpayable and leaves paid business serviceable', async () => {
     const admin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+    const checker = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
     const insurer = await buildInsurer(testApp.db);
     const awaitingCustomer = await buildCustomer(testApp.db);
     const { quoteRequest: awaitingRequest } = await buildQuoteRequest(testApp.db, {
@@ -56,16 +57,24 @@ describe('insurer suspension', () => {
       .set(await signIn(testApp.http, admin))
       .send({ reason: 'The insurer is under regulatory review.' })
       .expect(200);
-    expect(suspended.body).toMatchObject({ id: insurer.insurer.id, status: 'Suspended' });
+    expect(suspended.body).toMatchObject({ action: 'INSURER_SUSPEND', status: 'PENDING', targetId: insurer.insurer.id });
+    expect((await side.db.select().from(insurers).where(eq(insurers.id, insurer.insurer.id)))[0].status).toBe('ACTIVE');
 
-    // Admin actions can be retried after a network timeout. A second request
-    // is harmless and must not start the cancellation work again.
+    // A timed-out maker request is never executed twice: the same action and
+    // target may have only one pending decision.
     await testApp.http
       .post(`/api/v1/insurers/${insurer.insurer.id}/suspend`)
       .set(await signIn(testApp.http, admin))
       .send({ reason: 'Retry after a timed-out admin request.' })
-      .expect(200)
-      .expect(({ body }) => expect(body).toMatchObject({ id: insurer.insurer.id, status: 'Suspended' }));
+      .expect(409)
+      .expect(({ body }) => expect(body.code).toBe('APPROVAL_ALREADY_PENDING'));
+
+    await testApp.http
+      .post(`/api/v1/admin/approvals/${suspended.body.id}/approve`)
+      .set(await signIn(testApp.http, checker))
+      .send({ reason: 'Regulatory review confirmed.' })
+      .expect(201)
+      .expect(({ body }) => expect(body.status).toBe('EXECUTED'));
 
     const [cancelled] = await side.db
       .select()

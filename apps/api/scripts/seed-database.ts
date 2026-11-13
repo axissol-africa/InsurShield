@@ -2,6 +2,7 @@ import { asc, eq, ne, sql } from 'drizzle-orm';
 import {
   createCredentialUser,
   normalizeEmail,
+  requireStaffMfa,
 } from '../src/auth/credential-user.js';
 import type { InsurerRole, StaffRole } from '../src/common/domain/enums.js';
 import { databaseUrl } from '../src/config/env.js';
@@ -191,6 +192,7 @@ async function seedStaff(
     name: seed.fullName,
     password: options.password,
   });
+  await requireStaffMfa(tx, user.id);
 
   if (existing) {
     await tx

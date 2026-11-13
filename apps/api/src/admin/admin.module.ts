@@ -6,10 +6,12 @@ import { ApprovalsController } from './approvals.controller.js';
 import { ApprovalsModule } from '../approvals/approvals.module.js';
 import { InsurersModule } from '../insurers/insurers.module.js';
 import { PiaModule } from '../pia/pia.module.js';
+import { SupportPasswordResetRepository } from './support-password-reset.repository.js';
+import { SupportPasswordResetService } from './support-password-reset.service.js';
 
 @Module({
   imports: [ApprovalsModule, InsurersModule, PiaModule],
   controllers: [AdminController, ApprovalsController],
-  providers: [AdminService, AdminRepository],
+  providers: [AdminService, AdminRepository, SupportPasswordResetRepository, SupportPasswordResetService],
 })
 export class AdminModule {}

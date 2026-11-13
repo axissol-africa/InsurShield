@@ -249,26 +249,7 @@ export class InsurersService {
 
   async executeActivation(tx: Transaction, id: string, dto: ActivateInsurerDto, principal: StaffPrincipal) {
     const approvedAt = new Date();
-    const before = await this.insurers.lock(tx, id);
-    if (!before || before.status === 'DELETED') throw ApiException.notFound('Insurer', id);
-    if (!canChangeInsurerStatus(before.status, 'ACTIVE')) {
-      throw ApiException.conflict(
-        'INSURER_STATUS_TRANSITION',
-        `An insurer that is ${before.status} cannot become ACTIVE.`,
-      );
-    }
-
-    const onFile = await this.insurers.evidenceOf(id, tx);
-    const blocks = activationBlocks(
-      onFile.map((piece) => ({ kind: piece.kind, state: piece.state, expiresAt: piece.expiresAt })),
-      approvedAt,
-    );
-    if (blocks.length > 0) {
-      throw ApiException.conflict(
-        'ACTIVATION_BLOCKED',
-        `This insurer cannot be activated yet: ${describeBlocks(blocks)}.`,
-      );
-    }
+    const before = await this.assertActivationAllowed(tx, id, approvedAt);
 
     const row = await this.insurers.update(tx, id, {
       status: 'ACTIVE',
@@ -300,6 +281,69 @@ export class InsurersService {
     return insurer;
   }
 
+  /** Read-only preflight used by both the request and final decision paths. */
+  private async assertActivationAllowed(tx: Transaction, id: string, at = new Date()) {
+    const insurer = await this.insurers.lock(tx, id);
+    if (!insurer || insurer.status === 'DELETED') throw ApiException.notFound('Insurer', id);
+    this.assertStatusTransition(insurer.status, 'ACTIVE');
+
+    const onFile = await this.insurers.evidenceOf(id, tx);
+    const blocks = activationBlocks(
+      onFile.map((piece) => ({ kind: piece.kind, state: piece.state, expiresAt: piece.expiresAt })),
+      at,
+    );
+    if (blocks.length > 0) {
+      throw ApiException.conflict(
+        'ACTIVATION_BLOCKED',
+        `This insurer cannot be activated yet: ${describeBlocks(blocks)}.`,
+      );
+    }
+    return insurer;
+  }
+
+  /** Does not mutate; approval execution calls it again under the final lock. */
+  private async assertStatusChangeAllowed(
+    tx: Transaction,
+    id: string,
+    status: InsurerStatusChange,
+    principal: Extract<Principal, { kind: 'staff' }>,
+  ) {
+    if (status === 'DELETED' && principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
+    const insurer = await this.insurers.lock(tx, id);
+    if (!insurer || insurer.status === 'DELETED') throw ApiException.notFound('Insurer', id);
+    this.assertStatusTransition(insurer.status, status);
+    if (status === 'DELETED') {
+      const blockers = await this.insurers.deletionBlockers(tx, id);
+      if (blockers.length) {
+        throw ApiException.conflict(
+          'INSURER_HAS_SERVICE_RECORDS',
+          'This insurer still has customer work to service or a payment in progress. Suspend it instead until that work is complete.',
+          { blockers },
+        );
+      }
+    }
+    return insurer;
+  }
+
+  private async assertSuspensionAllowed(tx: Transaction, id: string) {
+    const insurer = await this.insurers.lock(tx, id);
+    if (!insurer || insurer.status === 'DELETED') throw ApiException.notFound('Insurer', id);
+    if (insurer.status === 'SUSPENDED') {
+      throw ApiException.conflict('INSURER_STATUS_TRANSITION', 'This insurer is already SUSPENDED.');
+    }
+    this.assertStatusTransition(insurer.status, 'SUSPENDED');
+    return insurer;
+  }
+
+  private assertStatusTransition(current: string, next: 'ACTIVE' | 'SUSPENDED' | InsurerStatusChange) {
+    if (!canChangeInsurerStatus(current as Parameters<typeof canChangeInsurerStatus>[0], next)) {
+      throw ApiException.conflict(
+        'INSURER_STATUS_TRANSITION',
+        `An insurer that is ${current} cannot become ${next}.`,
+      );
+    }
+  }
+
   /** Deleting is for super admins on either route, so an admin cannot soft-delete through a status change. */
   async setStatus(id: string, status: InsurerStatusChange, principal: StaffPrincipal) {
     const insurer = await this.insurers.transaction(async (tx) => {
@@ -317,25 +361,7 @@ export class InsurersService {
     status: InsurerStatusChange,
     principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    if (status === 'DELETED' && principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
-    const before = await this.insurers.lock(tx, id);
-    if (!before || before.status === 'DELETED') throw ApiException.notFound('Insurer', id);
-    if (!canChangeInsurerStatus(before.status, status)) {
-      throw ApiException.conflict(
-        'INSURER_STATUS_TRANSITION',
-        `An insurer that is ${before.status} cannot become ${status}.`,
-      );
-    }
-    if (status === 'DELETED') {
-      const blockers = await this.insurers.deletionBlockers(tx, id);
-      if (blockers.length) {
-        throw ApiException.conflict(
-          'INSURER_HAS_SERVICE_RECORDS',
-          'This insurer still has customer work to service or a payment in progress. Suspend it instead until that work is complete.',
-          { blockers },
-        );
-      }
-    }
+    const before = await this.assertStatusChangeAllowed(tx, id, status, principal);
     const row = await this.insurers.update(tx, id, { status, deletedAt: status === 'DELETED' ? new Date() : null });
     if (!row) throw ApiException.notFound('Insurer', id);
     const updated = { ...row, contact: await this.insurers.findContact(tx, id) };
@@ -379,12 +405,7 @@ export class InsurersService {
     // transaction has already cancelled the work; do not reject the retry
     // or create a second set of customer notices.
     if (before.status === 'SUSPENDED') return;
-    if (!canChangeInsurerStatus(before.status, 'SUSPENDED')) {
-      throw ApiException.conflict(
-        'INSURER_STATUS_TRANSITION',
-        `An insurer that is ${before.status} cannot become SUSPENDED.`,
-      );
-    }
+    this.assertStatusTransition(before.status, 'SUSPENDED');
     const row = await this.insurers.update(tx, id, { status: 'SUSPENDED', deletedAt: null });
     if (!row) throw ApiException.notFound('Insurer', id);
     const marks = await this.quoteAvailability.cancelForSuspendedInsurer(tx, {
@@ -455,7 +476,10 @@ export class InsurersService {
   }
 
   async proposeActivation(id: string, dto: ActivateInsurerDto, principal: StaffPrincipal) {
-    await this.mustExist(id);
+    // Reject an unreviewable request early, while executeApproved repeats the
+    // same gate inside its decision transaction to protect against stale
+    // evidence or a concurrent lifecycle change.
+    await this.insurers.transaction((tx) => this.assertActivationAllowed(tx, id));
     return this.approvals.request({
       action: 'INSURER_ACTIVATE',
       targetType: 'INSURER',
@@ -467,7 +491,7 @@ export class InsurersService {
 
   async proposeStatus(id: string, status: InsurerStatusChange, principal: StaffPrincipal) {
     if (status === 'DELETED' && principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
-    await this.mustExist(id);
+    await this.insurers.transaction((tx) => this.assertStatusChangeAllowed(tx, id, status, principal));
     return this.approvals.request({
       action: status === 'DELETED' ? 'INSURER_DELETE' : 'INSURER_DEACTIVATE',
       targetType: 'INSURER',
@@ -478,7 +502,7 @@ export class InsurersService {
   }
 
   async proposeSuspension(id: string, reason: string, principal: StaffPrincipal) {
-    await this.mustExist(id);
+    await this.insurers.transaction((tx) => this.assertSuspensionAllowed(tx, id));
     return this.approvals.request({
       action: 'INSURER_SUSPEND',
       targetType: 'INSURER',
@@ -492,6 +516,9 @@ export class InsurersService {
     if (principal.role !== 'SUPER_ADMIN') throw ApiException.forbidden();
     const insurer = await this.insurers.find(id);
     if (!insurer) throw ApiException.notFound('Insurer', id);
+    if (insurer.status !== 'DELETED') {
+      throw ApiException.conflict('INSURER_NOT_DELETED', 'This insurer has not been deleted.');
+    }
     return this.approvals.request({
       action: 'INSURER_RESTORE',
       targetType: 'INSURER',

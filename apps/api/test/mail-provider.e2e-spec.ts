@@ -16,7 +16,7 @@ const HTTP_MAIL = {
  */
 describe('the mail adapter and the provider gate', () => {
   it('registers the log adapter as a stand-in, and refuses production on it', async () => {
-    const app = await startApp();
+    const app = await startApp({ useConfiguredMailSender: true });
     try {
       const registry = app.app.get(ProviderRegistry);
 
@@ -29,7 +29,7 @@ describe('the mail adapter and the provider gate', () => {
   });
 
   it('registers the http adapter as live, so configuring one stops blocking the gate', async () => {
-    const app = await startApp({ env: HTTP_MAIL });
+    const app = await startApp({ env: HTTP_MAIL, useConfiguredMailSender: true });
     try {
       const registry = app.app.get(ProviderRegistry);
 

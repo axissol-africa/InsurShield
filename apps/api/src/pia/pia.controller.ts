@@ -25,6 +25,6 @@ export class PiaController {
   @Needs('pia:set-floor')
   @Put()
   set(@Body() dto: SetPiaConfigDto, @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>) {
-    return this.pia.set(dto.piaRatePercentage, principal);
+    return this.pia.proposeSet(dto.piaRatePercentage, principal);
   }
 }

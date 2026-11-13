@@ -88,31 +88,24 @@ describe('deleted insurer controls', () => {
     expect(screen.queryByRole('menuitem', { name: /Reactivate/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('menuitem', { name: 'Review eligibility' }));
 
-    expect(screen.getByRole('heading', { name: 'Review onboarding' })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Review onboarding' })).toBeVisible());
     expect(screen.getByLabelText('Insurer under review')).toHaveValue('inactive-insurer');
   });
 
-  it('moves a mock insurer to the removed list and restores it to normal management once', async () => {
-    useStore.setState({ insurersList: [activeInsurer], staffSession: { role: 'SUPER_ADMIN', isSuperAdmin: true } });
+  it('requests an insurer removal without changing the insurer before approval', async () => {
+    useStore.setState({ insurersList: [activeInsurer], staffSession: { id: 'super-admin', name: 'Super Admin', role: 'SUPER_ADMIN', isSuperAdmin: true } });
     api.insurers.list.mockImplementation(mockInsurers.list);
     api.insurers.remove.mockImplementation(mockInsurers.remove);
-    api.insurers.restore.mockImplementation(mockInsurers.restore);
 
     render(<AdminDashboard />);
     await openInsurers();
     await userEvent.click(screen.getByRole('button', { name: 'More actions for Active Assurance' }));
     await userEvent.click(screen.getByRole('menuitem', { name: /Remove/ }));
-    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Remove/ }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Request removal/ }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getAllByText('Active Assurance')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Edit rate for Active Assurance' })).not.toBeInTheDocument();
-    expect(useStore.getState().insurersList[0].status).toBe('Deleted');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Restore Active Assurance' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rate for Active Assurance' })).toBeVisible());
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore Active Assurance' })).not.toBeInTheDocument());
-    expect(screen.getAllByText('Active Assurance')).toHaveLength(1);
-    expect(screen.getByText('Inactive')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit rate for Active Assurance' })).toBeVisible();
+    expect(useStore.getState().insurersList[0].status).toBe('Active');
+    expect(screen.getByRole('status')).toHaveTextContent('sent for independent approval');
   });
 });
