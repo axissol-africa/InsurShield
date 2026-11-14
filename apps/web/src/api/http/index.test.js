@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const transport = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  patch: vi.fn(),
   delete: vi.fn(),
 }));
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers } from './index';
+import { account, admin, auth, insurers, products } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -55,5 +56,23 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.get).toHaveBeenCalledWith('/admin/audit-logs', {
       params: { entityType: 'POLICY', limit: 25, cursor: 'next-page' },
     });
+  });
+
+  it('uses the versioned insurer product endpoints without a browser-selected insurer id', () => {
+    products.insurer.list();
+    products.insurer.create({ code: 'MOTOR-COMP-01' });
+    products.insurer.updateDraft('product-1', 'version-1', { name: 'Comprehensive Gold' });
+    products.insurer.submit('product-1', 'version-1');
+    products.admin.list({ status: 'SUBMITTED' });
+    products.admin.approve('product-1', 'version-1', { comment: 'Reviewed.' });
+    products.directory({ coverType: 'COMPREHENSIVE', limit: 5 });
+
+    expect(transport.get).toHaveBeenCalledWith('/insurer/products');
+    expect(transport.post).toHaveBeenCalledWith('/insurer/products', { code: 'MOTOR-COMP-01' });
+    expect(transport.patch).toHaveBeenCalledWith('/insurer/products/product-1/versions/version-1', { name: 'Comprehensive Gold' });
+    expect(transport.post).toHaveBeenCalledWith('/insurer/products/product-1/versions/version-1/submit');
+    expect(transport.get).toHaveBeenCalledWith('/admin/products', { params: { status: 'SUBMITTED' } });
+    expect(transport.post).toHaveBeenCalledWith('/admin/products/product-1/versions/version-1/approve', { comment: 'Reviewed.' });
+    expect(transport.get).toHaveBeenCalledWith('/products/directory', { params: { coverType: 'COMPREHENSIVE', limit: 5 } });
   });
 });

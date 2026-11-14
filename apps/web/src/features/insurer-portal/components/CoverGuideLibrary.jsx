@@ -41,13 +41,23 @@ const sameAnswers = (first, second, coverType) =>
  * Nothing is published until it is complete: a half-written guide would be
  * worse than none, because it reads as though this insurer simply offers less.
  */
-export default function CoverGuideLibrary({ insurer, onSave }) {
-  const [coverType, setCoverType] = useState(COVER_TYPES[0]);
+export default function CoverGuideLibrary({
+  insurer,
+  onSave,
+  coverTypes = COVER_TYPES,
+  saveLabel,
+  savingLabel,
+  savedMessage,
+  description,
+  requireCompleteOnSave = true,
+  compact = false,
+}) {
+  const [coverType, setCoverType] = useState(coverTypes[0]);
   // A published guide is normalised on the way in, not just on the way out:
   // one saved before benefits became plain lines holds `{ item, limit }` pairs,
   // and those would reach a text input as "[object Object]".
   const [drafts, setDrafts] = useState(() =>
-    Object.fromEntries(COVER_TYPES.map((type) => [type, asDraft(insurer?.coverGuides?.[type], type)])));
+    Object.fromEntries(coverTypes.map((type) => [type, asDraft(insurer?.coverGuides?.[type], type)])));
   const [showErrors, setShowErrors] = useState(false);
   const [savingType, setSavingType] = useState('');
   const [saved, setSaved] = useState('');
@@ -66,7 +76,7 @@ export default function CoverGuideLibrary({ insurer, onSave }) {
   const { errors } = useMemo(() => validateCoverGuide(draft), [draft]);
   const published = insurer?.coverGuides?.[coverType];
   const isPublished = (type) => isCoverGuideComplete(asDraft(insurer?.coverGuides?.[type], type));
-  const publishedCount = COVER_TYPES.filter(isPublished).length;
+  const publishedCount = coverTypes.filter(isPublished).length;
   const unsaved = !sameAnswers(draft, published, coverType);
   const publishing = saving.pending && savingType === coverType;
   const waitingForOther = saving.pending && !publishing;
@@ -92,7 +102,7 @@ export default function CoverGuideLibrary({ insurer, onSave }) {
 
   const publish = async () => {
     const check = validateCoverGuide(draft);
-    if (!check.valid) {
+    if (requireCompleteOnSave && !check.valid) {
       setShowErrors(true);
       saving.clearError();
       setUnanswered('Answer the highlighted questions before publishing this guide.');
@@ -110,18 +120,20 @@ export default function CoverGuideLibrary({ insurer, onSave }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Cover guides"
-        description="Answer these once per cover type. Every insurer on InsurShield answers the same questions, so customers compare policies rather than documents — and your plan is read on its terms, not on how well it was laid out."
-      >
-        <StatusBadge tone={publishedCount < COVER_TYPES.length ? 'open' : 'settled'} className="px-3 py-1">
-          {publishedCount} of {COVER_TYPES.length} published
-        </StatusBadge>
-      </PageHeader>
+      {!compact && (
+        <PageHeader
+          title="Cover guides"
+          description={description || 'Answer these once per cover type. Every insurer on InsurShield answers the same questions, so customers compare policies rather than documents — and your plan is read on its terms, not on how well it was laid out.'}
+        >
+          <StatusBadge tone={publishedCount < coverTypes.length ? 'open' : 'settled'} className="px-3 py-1">
+            {publishedCount} of {coverTypes.length} published
+          </StatusBadge>
+        </PageHeader>
+      )}
 
       <Tabs value={coverType} onValueChange={switchType} className="max-w-4xl gap-6">
         <TabsList>
-          {COVER_TYPES.map((type) => (
+          {coverTypes.map((type) => (
             <TabsTrigger key={type} value={type}>
               {COVER_TYPE_LABELS[type]}
               {/* A phone has room for the mark but not the word; the word stays for screen readers. */}
@@ -201,7 +213,7 @@ export default function CoverGuideLibrary({ insurer, onSave }) {
                     <ItemMedia variant="icon"><CircleCheck className="text-primary" aria-hidden="true" /></ItemMedia>
                     <ItemContent>
                       <ItemDescription className="line-clamp-none text-foreground">
-                        Published. Customers comparing {COVER_TYPE_LABELS[coverType].toLowerCase()} quotes see this guide on quotes you send from now on.
+                        {savedMessage || `Published. Customers comparing ${COVER_TYPE_LABELS[coverType].toLowerCase()} quotes see this guide on quotes you send from now on.`}
                       </ItemDescription>
                     </ItemContent>
                   </Item>
@@ -212,13 +224,13 @@ export default function CoverGuideLibrary({ insurer, onSave }) {
                 <CardContent className="flex flex-wrap items-center gap-x-4 gap-y-3">
                   <Button type="submit" size="lg" disabled={saving.pending} aria-busy={publishing}>
                     {publishing ? <Spinner aria-hidden="true" /> : <Upload aria-hidden="true" />}
-                    {publishing ? 'Publishing…' : published ? 'Update the guide' : 'Publish the guide'}
+                    {publishing ? (savingLabel || 'Publishing…') : (saveLabel || (published ? 'Update the guide' : 'Publish the guide'))}
                   </Button>
                   {unsaved && <Badge variant="outline">Unsaved changes</Badge>}
                   <p className="min-w-48 flex-1 text-xs text-muted-foreground">
                     {waitingForOther
-                      ? `Your ${COVER_TYPE_LABELS[savingType].toLowerCase()} guide is still publishing.`
-                      : published ? 'Published — changes apply to quotes sent from now on.' : 'Quotes for this cover type cannot be sent until this is published.'}
+                      ? `Your ${COVER_TYPE_LABELS[savingType].toLowerCase()} guide is still ${saveLabel ? 'saving' : 'publishing'}.`
+                      : saveLabel ? 'Save the guide draft before you submit this product for review.' : (published ? 'Published — changes apply to quotes sent from now on.' : 'Quotes for this cover type cannot be sent until this is published.')}
                   </p>
                 </CardContent>
               </Card>

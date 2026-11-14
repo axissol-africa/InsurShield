@@ -6,6 +6,15 @@ export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
 export const INSURANCE_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'] as const;
 export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 
+/**
+ * A product version is never edited after it leaves DRAFT. An insurer submits
+ * a complete draft for review; an administrator either approves, rejects, or
+ * later withdraws that immutable version. Editing a reviewed version starts a
+ * new draft instead, which is what keeps a customer's comparison auditable.
+ */
+export const PRODUCT_VERSION_STATUSES = ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
+export type ProductVersionStatus = (typeof PRODUCT_VERSION_STATUSES)[number];
+
 export const COVERAGE_DURATIONS = ['Q1', 'Q2', 'Q3', 'Q4'] as const;
 export type CoverageDuration = (typeof COVERAGE_DURATIONS)[number];
 

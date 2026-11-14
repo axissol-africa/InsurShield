@@ -13,11 +13,10 @@ import {
 } from '@/features/insurer-portal/portal';
 import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
-import { COVER_TYPES, isCoverGuideComplete } from '@/domain/coverGuide';
 import { PageHeader, StatusBadge } from '@/features/insurer-portal/components/ui';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
-import CoverGuideLibrary from '@/features/insurer-portal/components/CoverGuideLibrary';
+import ProductLibrary from '@/features/insurer-portal/components/ProductLibrary';
 import PaidPoliciesTab from '@/features/insurer-portal/components/PaidPoliciesTab';
 import PolicyIssuePanel from '@/features/insurer-portal/components/PolicyIssuePanel';
 import ClaimsTab from '@/features/insurer-portal/components/ClaimsTab';
@@ -40,7 +39,7 @@ const byNewest = (key) => (first, second) => new Date(second[key] || 0) - new Da
  * insurer's systems.
  */
 export default function InsurerDashboard() {
-  const { staffSession, claims, ncdApplications, quoteRequests, policies, insurersList, piaConfig, updateInsurer } = useStore();
+  const { staffSession, claims, ncdApplications, quoteRequests, policies, insurersList, piaConfig } = useStore();
 
   // The queue is shared with customers and other staff, so it is loaded on
   // open and again after every action rather than kept on the device.
@@ -94,7 +93,7 @@ export default function InsurerDashboard() {
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, badge: awaitingQuote.length },
-    { id: 'guides', label: 'Cover guides', shortLabel: 'Guides', icon: BookOpen, badge: COVER_TYPES.filter((type) => !isCoverGuideComplete(insurer?.coverGuides?.[type])).length },
+    { id: 'guides', label: 'Product terms', shortLabel: 'Terms', icon: BookOpen },
     { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: FileCheck2, badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: MessageSquareWarning, badge: newClaims.length },
     { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: BadgePercent, badge: openNcd.length },
@@ -233,16 +232,9 @@ export default function InsurerDashboard() {
     );
   } else if (activeTab === 'guides') {
     content = (
-      <CoverGuideLibrary
+      <ProductLibrary
         insurer={insurer}
-        onSave={async (coverageType, guide) => {
-          if (!insurer) throw new Error('Your insurer profile could not be found.');
-          const coverGuides = { ...(insurer.coverGuides || {}), [coverageType]: guide };
-          // Cover guides move to insurer products in Batch 9. Until then this
-          // prototype-only editor must not send a field the insurer API does
-          // not own or persist.
-          updateInsurer(insurer.id, { coverGuides });
-        }}
+        canManage={staffSession?.staffRole === 'INSURER_ADMIN'}
       />
     );
   } else if (activeTab === 'policies') {

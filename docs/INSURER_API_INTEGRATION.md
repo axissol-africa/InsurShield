@@ -34,6 +34,31 @@ InsurShield sends one standard motor-insurance request to each active insurer. E
 
 In the prototype, steps 3–5 happen inside the insurer portal: the paid quote appears under **Paid policies** and the insurer uploads the certificate there, which activates the policy in the shared local store. In production this must happen only from the backend after a verified payment callback and a signed insurer response; it must never be triggered by browser code.
 
+## Versioned product terms and cover guides
+
+Each insurer manages its own customer-facing product terms before it receives a quote request. This is the product
+catalogue foundation for the later multi-product quote flow; it does not change the current legacy quote-delivery
+contract yet.
+
+1. An authorised insurer administrator creates a product draft at `POST /api/v1/insurer/products`. A draft includes a
+   stable product code, a customer-facing name, `COMPREHENSIVE` or `THIRD_PARTY` cover type, structured cover-guide
+   terms, inspection rule, effective dates and the first version number.
+2. The administrator can update only that draft with `PATCH /api/v1/insurer/products/:productId/versions/:versionId`.
+   To correct a submitted, rejected, approved or withdrawn version, they use `POST .../revise`, which creates the
+   next draft version and preserves the earlier terms.
+3. `POST .../submit` sends a complete draft to the InsurShield review queue. Submission is refused unless the insurer
+   is active, licensed and has verified onboarding evidence.
+4. Platform administrators list `GET /api/v1/admin/products?status=SUBMITTED` and approve, return or withdraw a
+   version through the matching `approve`, `reject` and `withdraw` actions. Every decision is audited with the actor,
+   time and comment or reason.
+5. Customers and future quote-selection screens read only `GET /api/v1/products/directory`. It returns approved,
+   currently effective terms from insurers that may accept new business; it never exposes insurer evidence, reviewer
+   comments or internal workflow data.
+
+The inspection method and timing belong to the product version, rather than the insurer profile. A version that does
+not require an inspection has neither an inspection method nor timing. A later quote request will store the exact
+product-version identifier it was made from, so changing terms cannot rewrite what a customer previously saw.
+
 ## Required safeguards
 
 - Authenticate server-to-server with OAuth client credentials or mTLS; never from the browser.

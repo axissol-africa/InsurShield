@@ -76,7 +76,7 @@ test('staff portal navigation and actions work on a phone', async ({ page }) => 
   await header.getByRole('button', { name: 'Toggle navigation' }).click();
   await expect(navigation).toBeVisible();
   await expect(page.getByRole('link', { name: 'Customer site', exact: true })).toBeVisible();
-  for (const name of ['Overview', 'Cover guides', 'Paid policies', 'Claims', 'NCD applications']) {
+  for (const name of ['Overview', 'Product terms', 'Paid policies', 'Claims', 'NCD applications']) {
     await expect(navigation.getByRole('link', { name, exact: true })).toBeInViewport();
   }
   await navigation.getByRole('link', { name: 'Claims', exact: true }).click();

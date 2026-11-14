@@ -1408,13 +1408,18 @@ describe('insurer portal', () => {
       await pool.end();
     });
 
-    const postSmall = async (insurer: BuiltInsurer, path: string, body: Record<string, unknown>) =>
-      small.http.post(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff)).send(body);
+    const postSmall = (headers: Awaited<ReturnType<typeof asStaff>>, path: string, body: Record<string, unknown>) =>
+      small.http.post(`/api/v1/insurer/${path}`).set(headers).send(body);
 
     it('lets one of two concurrent final quotes win and refuses the other with 409 ALREADY_QUOTED', async () => {
       const insurer = await buildInsurer(testApp.db);
       const request = await openRequest(insurer);
       const documents = [await upload(insurer, 'QUOTATION'), await upload(insurer, 'QUOTATION')];
+      // Complete staff MFA before the two requests race for the recipient
+      // lock. Concurrent login helpers can otherwise read the same latest OTP
+      // from the fake mailbox, which tests authentication rather than the
+      // quote's database race.
+      const headers = await asStaff(insurer.staff);
 
       const responses = await race(
         {
@@ -1423,8 +1428,8 @@ describe('insurer portal', () => {
         },
         LOCKING_THE_RECIPIENT,
         [
-          () => postSmall(insurer, `quote-requests/${request.id}/quote`, { premium: 500, documentId: documents[0].id }),
-          () => postSmall(insurer, `quote-requests/${request.id}/quote`, { premium: 450, documentId: documents[1].id }),
+          () => postSmall(headers, `quote-requests/${request.id}/quote`, { premium: 500, documentId: documents[0].id }),
+          () => postSmall(headers, `quote-requests/${request.id}/quote`, { premium: 450, documentId: documents[1].id }),
         ],
       );
 
@@ -1437,8 +1442,9 @@ describe('insurer portal', () => {
       const insurer = await buildInsurer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { insurer });
       const certificates = [await upload(insurer, 'CERTIFICATE'), await upload(insurer, 'CERTIFICATE')];
+      const headers = await asStaff(insurer.staff);
       const certify = (certificateDocumentId: string) =>
-        postSmall(insurer, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId });
+        postSmall(headers, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId });
 
       const responses = await race(
         { sql: 'SELECT "policyNumber" FROM policies WHERE "policyNumber" = $1 FOR UPDATE', params: [policy.policyNumber] },

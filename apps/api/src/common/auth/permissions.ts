@@ -31,6 +31,8 @@ const QUOTING = ['INSURER_ADMIN', 'QUOTE_OFFICER', 'INSURER_USER'] as const;
 const CLAIMS_AND_NCD = ['INSURER_ADMIN', 'CLAIMS_OFFICER', 'INSURER_USER'] as const;
 /** Issuing a certificate commits the insurer to cover, so it stays with the administrator. */
 const ISSUING = ['INSURER_ADMIN', 'INSURER_USER'] as const;
+/** Product terms are a compliance-controlled insurer administrator function. */
+const PRODUCT_MANAGERS = ['INSURER_ADMIN'] as const;
 /** Reading a queue: whoever works it, plus the two roles whose whole job is reading. */
 const READS_REQUESTS = ['INSURER_ADMIN', 'QUOTE_OFFICER', 'SUPPORT', 'COMPLIANCE_READ_ONLY', 'INSURER_USER'] as const;
 const READS_CLAIMS = ['INSURER_ADMIN', 'CLAIMS_OFFICER', 'SUPPORT', 'COMPLIANCE_READ_ONLY', 'INSURER_USER'] as const;
@@ -98,6 +100,8 @@ export const PERMISSIONS = {
   // as they did before this table existed.
   'insurer:delete': SUPER_ADMIN_ONLY,
   'insurer:restore': SUPER_ADMIN_ONLY,
+  'admin:product:read': INSURSHIELD_ADMIN,
+  'admin:product:review': INSURSHIELD_ADMIN,
 
   // The service scopes insurer administrators to their own organisation and
   // rejects roles they may not grant. This only opens the named functions.
@@ -115,6 +119,9 @@ export const PERMISSIONS = {
   'portal:claim:acknowledge': CLAIMS_AND_NCD,
   'portal:ncd:read': READS_CLAIMS,
   'portal:ncd:decide': CLAIMS_AND_NCD,
+  'product:read-own': PRODUCT_MANAGERS,
+  'product:draft:manage': PRODUCT_MANAGERS,
+  'product:submit': PRODUCT_MANAGERS,
 } as const satisfies Record<string, readonly Grantee[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

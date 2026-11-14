@@ -44,13 +44,13 @@ test.describe('mobile insurer sidebar', () => {
     await expect(navigation).not.toBeVisible();
     await trigger.click();
     await expect(page.getByRole('dialog')).toBeVisible();
-    await navigation.getByRole('link', { name: 'Cover guides', exact: true }).click();
+    await navigation.getByRole('link', { name: 'Product terms', exact: true }).click();
     await expect(page).toHaveURL(/\/insurer\?view=guides$/);
     await expect(page.getByRole('dialog')).not.toBeVisible();
-    await expect(page.getByLabel('Plan name *')).toBeVisible();
+    await expect(page.getByText('Your products', { exact: true })).toBeVisible();
 
     await trigger.click();
-    await expect(navigation.getByRole('link', { name: 'Cover guides', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(navigation.getByRole('link', { name: 'Product terms', exact: true })).toHaveAttribute('aria-current', 'page');
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).not.toBeVisible();
     await expect(trigger).toBeFocused();
