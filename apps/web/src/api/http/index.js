@@ -82,6 +82,28 @@ export const insurers = {
   directory: () => apiClient.get('/insurers/directory'),
 };
 
+/**
+ * Versioned policy terms. Insurers own the draft and submit it for review;
+ * only platform administrators can approve, reject, or withdraw a version.
+ */
+export const products = {
+  insurer: {
+    list: () => apiClient.get('/insurer/products'),
+    get: (productId) => apiClient.get(`/insurer/products/${encodeURIComponent(productId)}`),
+    create: (product) => apiClient.post('/insurer/products', product),
+    updateDraft: (productId, versionId, changes) => apiClient.patch(`/insurer/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}`, changes),
+    revise: (productId, versionId) => apiClient.post(`/insurer/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/revise`),
+    submit: (productId, versionId) => apiClient.post(`/insurer/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/submit`),
+  },
+  admin: {
+    list: (query = {}) => apiClient.get('/admin/products', { params: query }),
+    approve: (productId, versionId, decision = {}) => apiClient.post(`/admin/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/approve`, decision),
+    reject: (productId, versionId, decision) => apiClient.post(`/admin/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/reject`, decision),
+    withdraw: (productId, versionId, decision) => apiClient.post(`/admin/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/withdraw`, decision),
+  },
+  directory: (query = {}) => apiClient.get('/products/directory', { params: query }),
+};
+
 export const staff = {
   listUsers: () => apiClient.get('/staff/users'),
   createUser: (user) => apiClient.post('/staff/users', user),

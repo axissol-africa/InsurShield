@@ -8,6 +8,7 @@ vi.mock('@/config/env', () => ({ env: { apiMode: 'mock', apiBaseUrl: '/api/v1', 
 const initial = useStore.getInitialState();
 beforeEach(() => {
   localStorage.removeItem('insurshield.mock.approvals.v1');
+  localStorage.removeItem('insurshield.mock.products.v1');
   useStore.setState({ ...initial, staffSession: null, registeredAccounts: [DEMO_CUSTOMER_ACCOUNT], quoteRequests: [], policies: [], claims: [], ncdApplications: [] }, true);
 });
 
@@ -91,6 +92,51 @@ describe('mock api adapter', () => {
     expect(approved.approvedCode).toMatch(/^NCD-/);
     expect(await mock.ncd.validateCode(approved.approvedCode)).toEqual({ valid: true });
     expect(await mock.ncd.validateCode('NCD-NOPE')).toEqual({ valid: false });
+  });
+
+  it('keeps insurer product versions immutable through draft, review and approval', async () => {
+    asInsurer();
+    const created = await mock.products.insurer.create({
+      code: 'MOTOR-COMP-02', name: 'Comprehensive Select', coverType: 'COMPREHENSIVE',
+      coverGuide: {}, inspectionRule: 'NOT_REQUIRED', effectiveFrom: '2026-11-13',
+    });
+    const guide = {
+      planName: 'Comprehensive Select', summary: 'A full motor policy for private vehicles.',
+      coveredItems: ['Own damage'], exclusions: ['Driving without a valid licence'],
+      notifyWithinDays: 7, howToNotify: 'Call the claims line.', documentsRequired: ['Police report'],
+      claimsContact: '+260 211 255 100', settlementTime: '14 working days', territorialLimit: 'Zambia',
+      ncdAccepted: true, quoteValidityDays: 7,
+    };
+    const saved = await mock.products.insurer.updateDraft(created.product.id, created.id, { coverGuide: guide });
+    expect(saved.status).toBe('DRAFT');
+    await expect(mock.products.insurer.submit(created.product.id, created.id)).resolves.toMatchObject({ status: 'SUBMITTED' });
+    await expect(mock.products.insurer.updateDraft(created.product.id, created.id, { name: 'Changed after review' })).rejects.toThrow('Create a new draft');
+
+    asPlatformAdmin('mock:reviewer', 'Reviewer Admin');
+    const submitted = await mock.products.admin.list({ status: 'SUBMITTED' });
+    expect(submitted).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: created.id,
+      product: expect.objectContaining({ id: created.product.id, code: 'MOTOR-COMP-02', coverType: 'COMPREHENSIVE' }),
+    })]));
+    await expect(mock.products.admin.approve(created.product.id, created.id, { comment: 'Terms reviewed.' })).resolves.toMatchObject({ status: 'APPROVED' });
+    expect(await mock.products.directory({ coverType: 'COMPREHENSIVE' })).toEqual(expect.arrayContaining([expect.objectContaining({ version: expect.objectContaining({ id: created.id, number: 1 }) })]));
+
+    asInsurer();
+    const revised = await mock.products.insurer.revise(created.product.id, created.id);
+    expect(revised).toMatchObject({ status: 'DRAFT', versionNumber: 2, name: 'Comprehensive Select' });
+  });
+
+  it('adds a fixed cover type to persisted product drafts from the earlier browser prototype', async () => {
+    asInsurer();
+    const insurer = useStore.getState().insurersList.find((entry) => entry.name === 'Prestige Assurance');
+    localStorage.setItem('insurshield.mock.products.v1', JSON.stringify([{
+      id: 'PROD-LEGACY', insurerId: insurer.id, code: 'LEGACY-TP',
+      versions: [{ id: 'PV-LEGACY', versionNumber: 1, status: 'DRAFT', coverType: 'THIRD_PARTY' }],
+    }]));
+
+    const [product] = await mock.products.insurer.list();
+    expect(product).toMatchObject({ code: 'LEGACY-TP', coverType: 'THIRD_PARTY' });
+    expect(JSON.parse(localStorage.getItem('insurshield.mock.products.v1'))[0].coverType).toBe('THIRD_PARTY');
   });
 
   it('manages insurers and the customer directory', async () => {

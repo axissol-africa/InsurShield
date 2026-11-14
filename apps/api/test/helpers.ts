@@ -198,8 +198,11 @@ export async function queueBehind<T>(
 ): Promise<T[]> {
   const requests = calls.map((call) => call());
   const settled = Promise.allSettled(requests);
+  let waitingFailure: unknown;
   try {
     await until(async () => (await held.waiters(statement)) === queued, `${queued} requests to wait in ${statement}`);
+  } catch (error) {
+    waitingFailure = error;
   } finally {
     try {
       await held.release();
@@ -207,7 +210,18 @@ export async function queueBehind<T>(
       await settled;
     }
   }
-  return Promise.all(requests);
+
+  const results = await settled;
+  const values: T[] = [];
+  for (const result of results) {
+    // A client-side failure (for example a rejected MFA sign-in) means the
+    // second database request never existed. Surface that root cause instead
+    // of reporting a misleading lock-wait timeout fifteen seconds later.
+    if (result.status === 'rejected') throw result.reason;
+    values.push(result.value);
+  }
+  if (waitingFailure) throw waitingFailure;
+  return values;
 }
 
 /** Records every log line so a spec can check what the server wrote. */

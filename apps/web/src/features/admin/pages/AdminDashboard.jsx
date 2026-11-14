@@ -10,6 +10,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
 import InsurerOnboardingReview from '@/features/admin/components/InsurerOnboardingReview';
 import AdminApprovalInbox from '@/features/admin/components/AdminApprovalInbox';
+import ProductReviewQueue from '@/features/admin/components/ProductReviewQueue';
 import StaffManagement from '@/features/admin/components/StaffManagement';
 import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
 import InsurerTable from '@/features/admin/components/InsurerTable';
@@ -341,6 +342,7 @@ export default function AdminDashboard() {
     { id: 'dashboard', label: 'Overview', icon: 'dashboard', hint: 'Platform totals', matches: ['dashboard'] },
     { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policyCount, matches: ['recent_policies'] },
     { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
+    { id: 'product_reviews', label: 'Product reviews', icon: 'policy', hint: 'Approve insurer terms', matches: ['product_reviews'] },
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'onboarding_review', label: 'Review onboarding', icon: 'fact_check', hint: 'Evidence and activation', matches: ['onboarding_review'] },
     { id: 'approvals', label: 'Approvals', icon: 'approval', hint: 'Independent decisions', matches: ['approvals'] },
@@ -384,6 +386,8 @@ export default function AdminDashboard() {
     content = <InsurerOnboardingReview insurers={managedInsurers} api={api} initialInsurerId={reviewingInsurerId} onBack={showInsurers} onChanged={refreshInsurers} />;
   } else if (view === 'approvals') {
     content = <AdminApprovalInbox api={api} onChanged={refreshInsurers} onBack={() => setView('dashboard')} />;
+  } else if (view === 'product_reviews') {
+    content = <ProductReviewQueue api={api} onBack={() => setView('dashboard')} />;
   } else if (view === 'staff_management') {
     content = <StaffManagement insurers={managedInsurers} api={api} onChanged={refreshInsurers} />;
   } else if (view === 'manage_insurers') {

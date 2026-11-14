@@ -8,6 +8,7 @@
  */
 import { env } from '@/config/env';
 import { useStore, belongsToCustomer } from '@/store';
+import { demoCoverGuides } from '@/domain/insurers';
 import { wait } from '../shared';
 import { documentToRecord } from '@/lib/files';
 
@@ -22,6 +23,137 @@ const insurerIdForSession = () => state().staffSession?.insurerId
 // The browser adapter stands in for the API during prototype demos. Production
 // clients always receive this fee from the API configuration, never this value.
 const MOCK_RTSA_ANNIVERSARY_FEE = 500;
+const PRODUCT_STORAGE = 'insurshield.mock.products.v1';
+const PRODUCT_COVER_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'];
+const INSPECTION_RULES = ['NOT_REQUIRED', 'OPTIONAL', 'REQUIRED'];
+const INSPECTION_TIMINGS = ['BEFORE_QUOTATION', 'BEFORE_PAYMENT', 'AFTER_PAYMENT'];
+const INSPECTION_METHODS = ['SELF_CAPTURE', 'PHYSICAL'];
+const PRODUCT_GUIDE_FIELDS = new Set([
+  'planName', 'summary', 'coveredItems', 'exclusions', 'notifyWithinDays', 'howToNotify',
+  'documentsRequired', 'claimsContact', 'settlementTime', 'territorialLimit', 'ncdAccepted', 'quoteValidityDays',
+]);
+
+const today = () => new Date().toISOString().slice(0, 10);
+const productRecords = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PRODUCT_STORAGE) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+};
+const saveProducts = (records) => localStorage.setItem(PRODUCT_STORAGE, JSON.stringify(records));
+const productGuide = (guide = {}) => {
+  const terms = { ...(guide || {}) };
+  delete terms.coverType;
+  return terms;
+};
+
+/**
+ * Browser mode starts with one approved version for each existing demo guide.
+ * Those records stay independent from the legacy guide field so Batch 12 can
+ * move customer selection to this API without rewriting the old prototype.
+ */
+function seededProducts(s) {
+  const existing = productRecords();
+  if (existing.length) {
+    // Product cover type was added after the first browser prototype. Derive
+    // it once from historical version one instead of discarding a user's
+    // drafts while upgrading their local demo state.
+    const migrated = existing.map((product) => (
+      product.coverType ? product : { ...product, coverType: product.versions?.[0]?.coverType || 'COMPREHENSIVE' }
+    ));
+    if (migrated.some((product, index) => product !== existing[index])) saveProducts(migrated);
+    return migrated;
+  }
+  const createdAt = new Date().toISOString();
+  const records = s.insurersList.flatMap((insurer) => {
+    // Deliberately use the built-in demonstration seed, not a persisted
+    // `insurer.coverGuides` value. A browser upgrade must never silently turn
+    // an insurer's old editable guide into an approved product version.
+    const guides = demoCoverGuides(insurer);
+    return PRODUCT_COVER_TYPES.map((coverType) => {
+      const inspectionRule = insurer.inspectionRules?.replaceAll(' ', '_') || 'NOT_REQUIRED';
+      const guideType = coverType === 'THIRD_PARTY' ? 'ThirdParty' : 'Comprehensive';
+      return {
+      id: newReference('PROD'),
+      insurerId: insurer.id,
+      code: `${String(insurer.id).toUpperCase()}-${coverType === 'COMPREHENSIVE' ? 'COMP' : 'TP'}`,
+      coverType,
+      createdAt,
+      updatedAt: createdAt,
+      versions: [{
+        id: newReference('PV'), versionNumber: 1, status: 'APPROVED',
+        name: guides[guideType]?.planName || `${insurer.name} ${guideType}`,
+        coverType, coverGuide: productGuide(guides[guideType]),
+        inspection: {
+          rule: inspectionRule,
+          timing: inspectionRule === 'NOT_REQUIRED' ? null : insurer.timing?.replaceAll(' ', '_') || null,
+          method: inspectionRule === 'NOT_REQUIRED' ? null : insurer.method?.replaceAll('-', '_') || null,
+        },
+        effectiveFrom: today(), effectiveUntil: null, submittedAt: createdAt, reviewedAt: createdAt,
+        reviewComment: 'Initial prototype catalogue version.', withdrawnAt: null, withdrawalReason: null,
+        createdAt, updatedAt: createdAt,
+      }],
+    }; });
+  });
+  saveProducts(records);
+  return records;
+}
+
+const ownProducts = (s) => seededProducts(s).filter((product) => product.insurerId === insurerIdForSession());
+const versionFor = (s, productId, versionId) => {
+  const product = seededProducts(s).find((entry) => entry.id === productId);
+  const version = product?.versions?.find((entry) => entry.id === versionId);
+  return { product, version };
+};
+const toProduct = (product) => ({ ...product, versions: [...(product.versions || [])].sort((a, b) => b.versionNumber - a.versionNumber) });
+const toAdminProduct = (s, product, version) => {
+  const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
+  return {
+    insurer: { id: insurer?.id || product.insurerId, name: insurer?.name || 'Unknown insurer', tradingName: insurer?.tradingName || null, logoUrl: insurer?.logoUrl || null },
+    product: { id: product.id, code: product.code, coverType: product.coverType }, ...version,
+  };
+};
+const assertInsurerEditor = (s) => {
+  if (s.staffSession?.role !== 'insurer' || !insurerIdForSession()) throw new Error('Sign in as an insurer administrator to manage products.');
+};
+const assertProductStanding = (s) => {
+  const insurer = s.insurersList.find((entry) => entry.id === insurerIdForSession());
+  // Browser mode has no evidence store. The production API additionally
+  // verifies evidence and licence validity in the same database transaction.
+  if (!insurer || (insurer.status && insurer.status !== 'Active')) {
+    throw new Error('Only an active, verified insurer can manage product terms.');
+  }
+};
+const assertProductInput = (input, existing = {}) => {
+  const next = {
+    name: input.name ?? existing.name,
+    coverType: input.coverType ?? existing.coverType,
+    coverGuide: input.coverGuide === undefined ? existing.coverGuide || {} : { ...(existing.coverGuide || {}), ...input.coverGuide },
+    inspection: {
+      rule: input.inspectionRule ?? existing.inspection?.rule,
+      timing: input.inspectionRule === 'NOT_REQUIRED' ? null : input.inspectionTiming ?? existing.inspection?.timing ?? null,
+      method: input.inspectionRule === 'NOT_REQUIRED' ? null : input.inspectionMethod ?? existing.inspection?.method ?? null,
+    },
+    effectiveFrom: input.effectiveFrom ?? existing.effectiveFrom,
+    effectiveUntil: input.effectiveUntil === undefined ? existing.effectiveUntil ?? null : input.effectiveUntil || null,
+  };
+  if (typeof next.name !== 'string' || next.name.trim().length < 2 || next.name.trim().length > 120) throw new Error('Enter a product name between 2 and 120 characters.');
+  if (!PRODUCT_COVER_TYPES.includes(next.coverType)) throw new Error('Choose a supported cover type.');
+  if (!INSPECTION_RULES.includes(next.inspection.rule)) throw new Error('Choose whether an inspection is required.');
+  if (next.inspection.rule !== 'NOT_REQUIRED' && (!INSPECTION_TIMINGS.includes(next.inspection.timing) || !INSPECTION_METHODS.includes(next.inspection.method))) {
+    throw new Error('Choose both an inspection timing and method.');
+  }
+  const unknownGuideField = Object.keys(next.coverGuide || {}).find((key) => !PRODUCT_GUIDE_FIELDS.has(key));
+  if (unknownGuideField) throw new Error(`“${unknownGuideField}” is not a supported cover-guide field.`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(next.effectiveFrom || '')) throw new Error('Choose an effective-from date.');
+  if (next.effectiveUntil && (!/^\d{4}-\d{2}-\d{2}$/.test(next.effectiveUntil) || next.effectiveUntil < next.effectiveFrom)) throw new Error('The end date cannot be before the start date.');
+  return { ...next, name: next.name.trim() };
+};
+const completeProductGuide = (guide) => [
+  'planName', 'summary', 'coveredItems', 'exclusions', 'notifyWithinDays', 'howToNotify', 'documentsRequired', 'claimsContact', 'settlementTime', 'territorialLimit', 'ncdAccepted', 'quoteValidityDays',
+].every((key) => Array.isArray(guide?.[key]) ? guide[key].some(Boolean) : guide?.[key] !== '' && guide?.[key] !== undefined && guide?.[key] !== null);
 
 // Versioned separately from the catalogue; only allowlisted proposal data is stored.
 const APPROVAL_STORAGE = 'insurshield.mock.approvals.v1';
@@ -284,6 +416,159 @@ export const insurers = {
   remove: (id) => call((s) => proposeApproval(s, 'INSURER_DELETE', id, {}, 'Remove insurer from the platform.')),
   restore: (id) => call((s) => proposeApproval(s, 'INSURER_RESTORE', id, {}, 'Restore the deleted insurer as inactive.')),
   directory: () => call((s) => s.insurersList.filter((insurer) => !insurer.status || insurer.status === 'Active')),
+};
+
+/**
+ * A faithful browser-storage version of the product workflow. It is separate
+ * from `insurers.coverGuides`: the latter remains the existing B12 customer
+ * prototype until customer product selection is moved to this API.
+ */
+export const products = {
+  insurer: {
+    list: () => call((s) => {
+      assertInsurerEditor(s);
+      return ownProducts(s).map(toProduct);
+    }),
+    get: (productId) => call((s) => {
+      assertInsurerEditor(s);
+      const product = ownProducts(s).find((entry) => entry.id === productId);
+      if (!product) throw new Error('Product was not found.');
+      return toProduct(product);
+    }),
+    create: (input) => call((s) => {
+      assertInsurerEditor(s);
+      assertProductStanding(s);
+      const code = String(input?.code || '').trim().toUpperCase();
+      if (!/^[A-Z0-9][A-Z0-9_-]{1,79}$/.test(code)) throw new Error('Use 2–80 uppercase letters, numbers, hyphens or underscores for the product code.');
+      const records = seededProducts(s);
+      const insurerId = insurerIdForSession();
+      if (records.some((entry) => entry.insurerId === insurerId && entry.code === code)) throw new Error('This insurer already uses that product code.');
+      const model = assertProductInput(input);
+      const now = new Date().toISOString();
+      const product = {
+        id: newReference('PROD'), insurerId, code, coverType: model.coverType, createdAt: now, updatedAt: now,
+        versions: [{
+          id: newReference('PV'), versionNumber: 1, status: 'DRAFT',
+          ...model, submittedAt: null, reviewedAt: null, reviewComment: null,
+          withdrawnAt: null, withdrawalReason: null, createdAt: now, updatedAt: now,
+        }],
+      };
+      saveProducts([...records, product]);
+      return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...product.versions[0] };
+    }),
+    updateDraft: (productId, versionId, input) => call((s) => {
+      assertInsurerEditor(s);
+      assertProductStanding(s);
+      const records = seededProducts(s);
+      const { product, version } = versionFor(s, productId, versionId);
+      if (!product || product.insurerId !== insurerIdForSession() || !version) throw new Error('Product version was not found.');
+      if (version.status !== 'DRAFT') throw new Error('Create a new draft to change a submitted or reviewed product version.');
+      if (input.coverType !== undefined) throw new Error('Cover type is fixed for this product. Create a new product for a different cover type.');
+      const model = assertProductInput(input, version);
+      const now = new Date().toISOString();
+      const updated = { ...version, ...model, updatedAt: now };
+      const next = records.map((entry) => entry.id === productId
+        ? { ...entry, updatedAt: now, versions: entry.versions.map((item) => item.id === versionId ? updated : item) }
+        : entry);
+      saveProducts(next);
+      return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...updated };
+    }),
+    revise: (productId, versionId) => call((s) => {
+      assertInsurerEditor(s);
+      assertProductStanding(s);
+      const records = seededProducts(s);
+      const { product, version } = versionFor(s, productId, versionId);
+      if (!product || product.insurerId !== insurerIdForSession() || !version) throw new Error('Product version was not found.');
+      if (version.status === 'DRAFT') throw new Error('This version is already a draft; update it instead of creating a copy.');
+      const now = new Date().toISOString();
+      const draft = {
+        ...version, id: newReference('PV'), versionNumber: Math.max(...product.versions.map((item) => item.versionNumber)) + 1,
+        status: 'DRAFT', submittedAt: null, reviewedAt: null, reviewComment: null,
+        withdrawnAt: null, withdrawalReason: null, createdAt: now, updatedAt: now,
+      };
+      saveProducts(records.map((entry) => entry.id === productId ? { ...entry, updatedAt: now, versions: [...entry.versions, draft] } : entry));
+      return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...draft };
+    }),
+    submit: (productId, versionId) => call((s) => {
+      assertInsurerEditor(s);
+      assertProductStanding(s);
+      const records = seededProducts(s);
+      const { product, version } = versionFor(s, productId, versionId);
+      if (!product || product.insurerId !== insurerIdForSession() || !version) throw new Error('Product version was not found.');
+      if (version.status !== 'DRAFT') throw new Error('Only a draft product version can be submitted for review.');
+      if (!completeProductGuide(version.coverGuide)) throw new Error('Complete the cover guide before submitting this product for review.');
+      const now = new Date().toISOString();
+      const submitted = { ...version, status: 'SUBMITTED', submittedAt: now, updatedAt: now };
+      saveProducts(records.map((entry) => entry.id === productId ? { ...entry, updatedAt: now, versions: entry.versions.map((item) => item.id === versionId ? submitted : item) } : entry));
+      return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...submitted };
+    }),
+  },
+  admin: {
+    list: ({ status } = {}) => call((s) => {
+      approvalActor(s);
+      const records = seededProducts(s).flatMap((product) => product.versions.map((version) => toAdminProduct(s, product, version)));
+      return records.filter((record) => !status || record.status === status).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    }),
+    approve: (productId, versionId, decision = {}) => call((s) => {
+      approvalActor(s);
+      const records = seededProducts(s);
+      const { product, version } = versionFor(s, productId, versionId);
+      if (!product || !version) throw new Error('Product version was not found.');
+      if (version.status !== 'SUBMITTED') throw new Error('Only a submitted product version can be approved.');
+      const effectiveFrom = decision.effectiveFrom || version.effectiveFrom;
+      const effectiveUntil = decision.effectiveUntil === undefined ? version.effectiveUntil : decision.effectiveUntil || null;
+      if (effectiveUntil && effectiveUntil < effectiveFrom) throw new Error('The end date cannot be before the start date.');
+      const now = new Date().toISOString();
+      const approved = { ...version, status: 'APPROVED', effectiveFrom, effectiveUntil, reviewedAt: now, reviewComment: decision.comment?.trim() || null, updatedAt: now };
+      saveProducts(records.map((entry) => entry.id === productId ? { ...entry, updatedAt: now, versions: entry.versions.map((item) => item.id === versionId ? approved : item) } : entry));
+      return toAdminProduct(s, product, approved);
+    }),
+    reject: (productId, versionId, decision = {}) => call((s) => {
+      approvalActor(s);
+      const comment = String(decision.comment || '').trim();
+      if (comment.length < 3) throw new Error('Explain what the insurer must correct before rejecting this version.');
+      const records = seededProducts(s);
+      const { product, version } = versionFor(s, productId, versionId);
+      if (!product || !version || version.status !== 'SUBMITTED') throw new Error('Only a submitted product version can be rejected.');
+      const now = new Date().toISOString();
+      const rejected = { ...version, status: 'REJECTED', reviewedAt: now, reviewComment: comment, updatedAt: now };
+      saveProducts(records.map((entry) => entry.id === productId ? { ...entry, updatedAt: now, versions: entry.versions.map((item) => item.id === versionId ? rejected : item) } : entry));
+      return toAdminProduct(s, product, rejected);
+    }),
+    withdraw: (productId, versionId, decision = {}) => call((s) => {
+      approvalActor(s);
+      const reason = String(decision.reason || '').trim();
+      if (reason.length < 3) throw new Error('Give a withdrawal reason.');
+      const records = seededProducts(s);
+      const { product, version } = versionFor(s, productId, versionId);
+      if (!product || !version || version.status !== 'APPROVED') throw new Error('Only an approved product version can be withdrawn.');
+      const now = new Date().toISOString();
+      const withdrawn = { ...version, status: 'WITHDRAWN', withdrawnAt: now, withdrawalReason: reason, updatedAt: now };
+      saveProducts(records.map((entry) => entry.id === productId ? { ...entry, updatedAt: now, versions: entry.versions.map((item) => item.id === versionId ? withdrawn : item) } : entry));
+      return toAdminProduct(s, product, withdrawn);
+    }),
+  },
+  directory: ({ coverType, limit = 100 } = {}) => call((s) => seededProducts(s)
+    .flatMap((product) => product.versions.map((version) => ({ product, version })))
+    .filter(({ product, version }) => {
+      const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
+      return version.status === 'APPROVED' && (!coverType || version.coverType === coverType)
+        && (!insurer?.status || insurer.status === 'Active')
+        && version.effectiveFrom <= today() && (!version.effectiveUntil || version.effectiveUntil >= today());
+    })
+    .slice(0, Math.max(1, Math.min(Number(limit) || 100, 100)))
+    .map(({ product, version }) => {
+      const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
+      return {
+        insurer: { id: insurer?.id || product.insurerId, name: insurer?.name || 'Unknown insurer', tradingName: insurer?.tradingName || null, logoUrl: insurer?.logoUrl || null },
+        product: { id: product.id, code: product.code, coverType: product.coverType },
+        version: {
+          id: version.id, number: version.versionNumber, name: version.name, coverType: version.coverType,
+          coverGuide: version.coverGuide, inspection: version.inspection,
+          effectiveFrom: version.effectiveFrom, effectiveUntil: version.effectiveUntil,
+        },
+      };
+    })),
 };
 
 export const staff = {

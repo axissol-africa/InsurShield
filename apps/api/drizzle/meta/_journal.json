@@ -169,6 +169,20 @@
       "when": 1794565000000,
       "tag": "0023_support_password_resets",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794573541173,
+      "tag": "0024_versioned_insurer_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794579325301,
+      "tag": "0025_dark_gunslinger",
+      "breakpoints": true
     }
   ]
 }

@@ -24,6 +24,9 @@
  *              GET  /insurer/quote-requests · POST /insurer/quote-requests/:id/quote · POST /insurer/quote-requests/:id/extend
  *  insurers    GET  /insurer/profile (signed-in insurer) · GET /insurers · GET /insurers?status=deleted (super admin) · GET /insurers/:id · POST /insurers · PATCH /insurers/:id · PATCH /insurers/:id/status · POST /insurers/:id/suspend · DELETE /insurers/:id · POST /insurers/:id/restore (super admin) · GET /insurers/directory
  *              GET /insurers/:id/evidence · POST /insurers/:id/evidence · POST /insurers/:id/evidence/:evidenceId/review · GET/PUT /insurers/:id/integration · POST /insurers/:id/activate
+ *  products    GET  /insurer/products · GET /insurer/products/:id · POST /insurer/products
+ *              PATCH /insurer/products/:id/versions/:versionId · POST /insurer/products/:id/versions/:versionId/revise · POST /insurer/products/:id/versions/:versionId/submit
+ *              GET /admin/products · POST /admin/products/:id/versions/:versionId/(approve|reject|withdraw) · GET /products/directory
  *  staff       GET /staff/users · POST /staff/users · PATCH /staff/users/:id · POST /staff/users/:id/invitation
  *              GET /staff/teams · POST /staff/teams · PATCH /staff/teams/:id · DELETE /staff/teams/:id
  *  payments    POST /payments · GET /payments/:id

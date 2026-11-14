@@ -24,6 +24,7 @@ import { MailModule } from './mail/mail.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { ScanningModule } from './scanning/scanning.module.js';
 import { StaffModule } from './staff/staff.module.js';
+import { ProductsModule } from './products/products.module.js';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { StaffModule } from './staff/staff.module.js';
     VehiclesModule,
     PaymentsModule,
     InspectionsModule,
+    ProductsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -3,6 +3,7 @@ import { ApiException } from '../common/errors/api.exception.js';
 import type { InsurerStatusChange } from '../common/contract.js';
 import type { Transaction } from '../db/database.module.js';
 import { activationBlocks, describeBlocks } from './domain/onboarding.js';
+import { licenceValid } from '../common/insurer-standing.js';
 
 /** A staff member making an onboarding decision. */
 type StaffPrincipal = Extract<Principal, { kind: 'staff' }>;
@@ -169,6 +170,10 @@ export class InsurersService {
   async reviewEvidence(id: string, evidenceId: string, dto: ReviewEvidenceDto, principal: StaffPrincipal) {
     const reviewedAt = new Date();
     const reviewed = await this.insurers.transaction(async (tx) => {
+      // Product approval locks this same insurer before reading evidence. Keep
+      // evidence decisions on that lock too, so a rejected licence cannot race
+      // an approval that just checked it.
+      await this.mustExist(id, tx);
       const before = await this.insurers.findEvidence(id, evidenceId, tx);
       if (!before) throw ApiException.notFound('Evidence', evidenceId);
       const row = await this.insurers.reviewEvidence(tx, evidenceId, id, {
@@ -296,6 +301,43 @@ export class InsurersService {
       throw ApiException.conflict(
         'ACTIVATION_BLOCKED',
         `This insurer cannot be activated yet: ${describeBlocks(blocks)}.`,
+      );
+    }
+    return insurer;
+  }
+
+  /**
+   * A product may be submitted or published only by an insurer that is still
+   * allowed to trade. This is intentionally stricter than checking ACTIVE in
+   * a controller: the insurer row and its evidence are read under the same
+   * transaction lock as the product transition, so suspension or a newly
+   * expired licence cannot race a submission into the public catalogue.
+   */
+  async assertVerifiedActiveForProducts(tx: Transaction, id: string, at = new Date()) {
+    const insurer = await this.insurers.lock(tx, id);
+    if (!insurer || insurer.status === 'DELETED') throw ApiException.notFound('Insurer', id);
+    if (insurer.status !== 'ACTIVE') {
+      throw ApiException.conflict(
+        'INSURER_NOT_TRADING',
+        'Only an active insurer with verified evidence may submit or publish products.',
+      );
+    }
+    if (!licenceValid(insurer.licenceExpiry, at)) {
+      throw ApiException.conflict(
+        'INSURER_NOT_TRADING',
+        'Only an active insurer with a current licence and verified evidence may submit or publish products.',
+      );
+    }
+
+    const onFile = await this.insurers.evidenceOf(id, tx);
+    const blocks = activationBlocks(
+      onFile.map((piece) => ({ kind: piece.kind, state: piece.state, expiresAt: piece.expiresAt })),
+      at,
+    );
+    if (blocks.length > 0) {
+      throw ApiException.conflict(
+        'INSURER_PRODUCT_EVIDENCE_BLOCKED',
+        `This insurer cannot submit or publish products yet: ${describeBlocks(blocks)}.`,
       );
     }
     return insurer;

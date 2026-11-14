@@ -11,7 +11,7 @@ const seedStaff = (role, name) => async ({ page }) => {
   await page.goto('/');
   await page.evaluate(([r, n]) => {
     const store = JSON.parse(localStorage.getItem('insurshield-storage') || '{"state":{}}');
-    store.state.staffSession = { role: r, name: n, isSuperAdmin: r === 'admin' };
+    store.state.staffSession = { role: r, name: n, isSuperAdmin: r === 'admin', staffRole: r === 'insurer' ? 'INSURER_ADMIN' : undefined };
     store.version = 5;
     localStorage.setItem('insurshield-storage', JSON.stringify(store));
   }, [role, name]);
@@ -195,79 +195,67 @@ test('an insurer quote needs the quotation document and a premium', async ({ pag
   await expect(page.getByText('Quote sent', { exact: true })).toBeVisible();
 });
 
-test('an insurer states its cover in the shared form, and the customer reads that same document', async ({ page }) => {
+test('an insurer revises product terms and previews the customer cover guide', async ({ page }) => {
   await seedStaff('insurer', 'Prestige Assurance')({ page });
   await page.goto('/insurer');
-  await page.getByRole('link', { name: 'Cover guides', exact: true }).click();
+  await page.getByRole('link', { name: 'Product terms', exact: true }).click();
 
-  // Catalogue insurers arrive published, so the form opens complete.
-  await expect(page.getByText('11 of 11 answered')).toBeVisible();
+  // Catalogue terms arrive reviewed. Changing them always begins a new draft
+  // so a later edit can never rewrite the version customers already saw.
+  await page.getByRole('button', { name: 'Create revised draft' }).first().click();
+  await expect(page.getByLabel('Plan name *')).toBeVisible();
 
-  // Change one answer and watch it reach the customer's document.
+  // Change one answer and preview the exact guide a customer will compare.
   await page.getByLabel('Plan name *').fill('Comprehensive Platinum');
   await page.getByRole('button', { name: 'Preview as a customer' }).click();
   await expect(page.getByRole('heading', { name: 'Comprehensive Platinum' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Back to the form' }).click();
-  await page.getByRole('button', { name: /Update the guide/ }).click();
-  await expect(page.getByText(/Published\. Customers comparing/)).toBeVisible();
-
-  // Third party answers the same questions, so the two documents line up.
-  await page.getByRole('tab', { name: /Third party only/ }).click();
-  await expect(page.getByLabel('Plan name *')).toBeVisible();
-  await expect(page.getByLabel('Claims contact *')).toBeVisible();
+  await page.getByRole('button', { name: 'Save guide draft' }).click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('insurshield.mock.products.v1') || '[]')
+    .some((product) => product.versions.some((version) => version.status === 'DRAFT' && version.coverGuide?.planName === 'Comprehensive Platinum')));
 });
 
-test('a guide must be complete before that cover type can be quoted', async ({ page }) => {
+test('a product version cannot be submitted until its cover guide is complete', async ({ page }) => {
   await seedStaff('insurer', 'Prestige Assurance')({ page });
   await page.goto('/insurer');
-  await page.getByRole('link', { name: 'Cover guides', exact: true }).click();
+  await page.getByRole('link', { name: 'Product terms', exact: true }).click();
 
-  // Empty one required answer: the guide stops being publishable, and says why.
+  await page.getByRole('button', { name: 'Create revised draft' }).first().click();
+  // Drafts may be saved while incomplete, but platform review is blocked until
+  // every comparison field has an answer.
   await page.getByLabel('Claims contact *').fill('');
-  await page.getByRole('button', { name: /Update the guide/ }).click();
-  // Both the summary and the field itself say so, which is what makes a long
-  // form navigable.
-  await expect(page.getByText('Answer the highlighted questions before publishing this guide.')).toBeVisible();
-  await expect(page.getByText('“Claims contact” is needed.')).toBeVisible();
+  await page.getByRole('button', { name: 'Save guide draft' }).click();
+  await page.getByRole('button', { name: 'Submit for review' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Complete the cover guide before submitting this product for review.');
 });
 
-test('a guide published before benefits became plain lines opens as readable text', async ({ page }) => {
+test('a legacy product guide renders structured benefits as readable text', async ({ page }) => {
   await seedStaff('insurer', 'Prestige Assurance')({ page });
-  // The shape guides were saved in when a benefit and its limit were two
-  // separate boxes. Loaded carelessly these reach a text input as
-  // "[object Object]".
   await page.evaluate(() => {
     const store = JSON.parse(localStorage.getItem('insurshield-storage'));
-    store.state.insurersList = [{
-      id: '1',
-      name: 'Prestige Assurance',
-      ratePercentage: 4.5,
-      quoteValidityDays: 7,
-      coverage: 'Comprehensive Gold Plan',
-      coverGuides: {
-        Comprehensive: {
-          coverType: 'Comprehensive',
-          planName: 'Comprehensive Gold Plan',
-          summary: 'Full cover for your vehicle and for damage you cause to others.',
-          coveredItems: [{ item: 'Own damage', limit: 'Market value' }, { item: 'Theft and fire', limit: '' }],
-          exclusions: ['Driving without a valid licence'],
-          notifyWithinDays: '7',
-          howToNotify: 'Call the claims line.',
-          documentsRequired: ['Police report'],
-          claimsContact: '+260 211 255 100',
-          settlementTime: '14 working days',
-          territorialLimit: 'Zambia',
-          ncdAccepted: true,
-          quoteValidityDays: '7',
+    const insurer = store.state.insurersList.find((entry) => entry.name === 'Prestige Assurance');
+    const timestamp = new Date().toISOString();
+    // Earlier guide saves expressed benefits as { item, limit }. Versioned
+    // products still need to display those records without exposing an object
+    // string in an editable field.
+    localStorage.setItem('insurshield.mock.products.v1', JSON.stringify([{
+      id: 'PROD-LEGACY', insurerId: insurer.id, code: 'LEGACY-COMP', coverType: 'COMPREHENSIVE', createdAt: timestamp, updatedAt: timestamp,
+      versions: [{
+        id: 'PV-LEGACY', versionNumber: 1, status: 'DRAFT', name: 'Comprehensive Gold Plan', coverType: 'COMPREHENSIVE',
+        coverGuide: {
+          planName: 'Comprehensive Gold Plan', summary: 'Full cover for your vehicle and for damage you cause to others.',
+          coveredItems: [{ item: 'Own damage', limit: 'Market value' }, { item: 'Theft and fire', limit: '' }], exclusions: ['Driving without a valid licence'],
+          notifyWithinDays: '7', howToNotify: 'Call the claims line.', documentsRequired: ['Police report'], claimsContact: '+260 211 255 100',
+          settlementTime: '14 working days', territorialLimit: 'Zambia', ncdAccepted: true, quoteValidityDays: '7',
         },
-      },
-    }];
-    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+        inspection: { rule: 'NOT_REQUIRED', timing: null, method: null }, effectiveFrom: '2026-01-01', effectiveUntil: null, createdAt: timestamp, updatedAt: timestamp,
+      }],
+    }]));
   });
 
   await page.goto('/insurer');
-  await page.getByRole('link', { name: 'Cover guides', exact: true }).click();
+  await page.getByRole('link', { name: 'Product terms', exact: true }).click();
 
   const benefits = page.getByRole('textbox', { name: /Covered benefits/ }).or(page.locator('input[placeholder^="e.g. Medical expenses"]'));
   await expect(benefits.first()).toHaveValue('Own damage — Market value');

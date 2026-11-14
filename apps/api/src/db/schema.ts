@@ -43,6 +43,7 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   POLICY_STATUSES,
+  PRODUCT_VERSION_STATUSES,
   QUOTE_UNAVAILABILITY_REASONS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
@@ -62,6 +63,7 @@ export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
 export const evidenceKind = pgEnum('EvidenceKind', EVIDENCE_KINDS);
 export const evidenceReviewState = pgEnum('EvidenceReviewState', EVIDENCE_REVIEW_STATES);
 export const policyStatus = pgEnum('PolicyStatus', POLICY_STATUSES);
+export const productVersionStatus = pgEnum('ProductVersionStatus', PRODUCT_VERSION_STATUSES);
 export const paymentStatus = pgEnum('PaymentStatus', PAYMENT_STATUSES);
 export const paymentMethod = pgEnum('PaymentMethod', PAYMENT_METHODS);
 export const claimStatus = pgEnum('ClaimStatus', CLAIM_STATUSES);
@@ -473,6 +475,83 @@ export const insurerEvidence = pgTable(
     fk('insurer_evidence_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
     fk('insurer_evidence_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
     fk('insurer_evidence_reviewedBy_fkey', [t.reviewedBy], [staffUsers.id], 'restrict'),
+  ],
+);
+
+/**
+ * The durable identity of an insurer's product. The code is stable within the
+ * insurer; every customer-facing term belongs to an immutable version below.
+ */
+export const insurerProducts = pgTable(
+  'insurer_products',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    code: varchar('code', { length: 80 }).notNull(),
+    // Cover type belongs to the durable product identity. A correction can
+    // revise its terms, but cannot turn a comprehensive product into a
+    // different third-party product under the same code and history.
+    coverType: insuranceType('coverType').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('insurer_products_insurerId_code_key').on(t.insurerId, t.code),
+    index('insurer_products_insurerId_idx').on(t.insurerId),
+    fk('insurer_products_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+  ],
+);
+
+/**
+ * A point-in-time set of product terms. Versions are updated only while they
+ * are drafts; submitted and reviewed versions remain immutable evidence of
+ * what customers could compare and what administrators approved.
+ */
+export const insurerProductVersions = pgTable(
+  'insurer_product_versions',
+  {
+    id: id(),
+    productId: uuid('productId').notNull(),
+    versionNumber: integer('versionNumber').notNull(),
+    status: productVersionStatus('status').notNull().default('DRAFT'),
+    name: text('name').notNull(),
+    coverType: insuranceType('coverType').notNull(),
+    coverGuide: jsonb('coverGuide').$type<Record<string, unknown>>().notNull(),
+    inspectionRule: inspectionRule('inspectionRule').notNull(),
+    inspectionTiming: inspectionTiming('inspectionTiming'),
+    inspectionMethod: inspectionMethod('inspectionMethod'),
+    effectiveFrom: date('effectiveFrom', { mode: 'date' }).notNull(),
+    effectiveUntil: date('effectiveUntil', { mode: 'date' }),
+    createdByStaffId: uuid('createdByStaffId').notNull(),
+    submittedByStaffId: uuid('submittedByStaffId'),
+    submittedAt: timestamptz('submittedAt'),
+    reviewedByStaffId: uuid('reviewedByStaffId'),
+    reviewedAt: timestamptz('reviewedAt'),
+    reviewComment: text('reviewComment'),
+    withdrawnByStaffId: uuid('withdrawnByStaffId'),
+    withdrawnAt: timestamptz('withdrawnAt'),
+    withdrawalReason: text('withdrawalReason'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('insurer_product_versions_productId_versionNumber_key').on(t.productId, t.versionNumber),
+    index('insurer_product_versions_status_effectiveFrom_idx').on(t.status, t.effectiveFrom),
+    index('insurer_product_versions_productId_status_idx').on(t.productId, t.status),
+    fk('insurer_product_versions_productId_fkey', [t.productId], [insurerProducts.id], 'restrict'),
+    fk('insurer_product_versions_createdByStaffId_fkey', [t.createdByStaffId], [staffUsers.id], 'restrict'),
+    fk('insurer_product_versions_submittedByStaffId_fkey', [t.submittedByStaffId], [staffUsers.id], 'restrict'),
+    fk('insurer_product_versions_reviewedByStaffId_fkey', [t.reviewedByStaffId], [staffUsers.id], 'restrict'),
+    fk('insurer_product_versions_withdrawnByStaffId_fkey', [t.withdrawnByStaffId], [staffUsers.id], 'restrict'),
+    check(
+      'insurer_product_versions_effective_window_check',
+      sql`${t.effectiveUntil} IS NULL OR ${t.effectiveUntil} >= ${t.effectiveFrom}`,
+    ),
+    check(
+      'insurer_product_versions_inspection_rule_check',
+      sql`(${t.inspectionRule} = 'NOT_REQUIRED' AND ${t.inspectionTiming} IS NULL AND ${t.inspectionMethod} IS NULL)
+        OR (${t.inspectionRule} <> 'NOT_REQUIRED' AND ${t.inspectionTiming} IS NOT NULL AND ${t.inspectionMethod} IS NOT NULL)`,
+    ),
   ],
 );
 

@@ -17,7 +17,9 @@ describe('notifications', () => {
   let runner: JobRunner;
 
   beforeAll(async () => {
-    testApp = await startApp();
+    // This suite verifies the configured log sender's delivery reference;
+    // authentication suites use the deterministic MailFake instead.
+    testApp = await startApp({ useConfiguredMailSender: true });
     side = openTestDatabase();
     service = testApp.app.get(NotificationsService);
     repository = testApp.app.get(NotificationsRepository);

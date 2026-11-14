@@ -235,6 +235,11 @@ describe('the identity routes', () => {
           'POST /reset-password',
           'POST /send-verification-email',
           'GET /verify-email',
+          // Staff sign-in is completed with an email code. These are the two
+          // deliberately exposed second-factor endpoints; every other Better
+          // Auth endpoint remains blocked by the identity route allow-list.
+          'POST /two-factor/send-otp',
+          'POST /two-factor/verify-otp',
         ].sort(),
       );
     });

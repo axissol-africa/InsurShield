@@ -1,0 +1,1 @@
+ALTER TABLE "insurer_products" ADD COLUMN "coverType" "InsuranceType" NOT NULL;
