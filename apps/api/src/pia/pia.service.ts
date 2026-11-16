@@ -9,6 +9,7 @@ import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
 import { ApprovalService } from '../approvals/approval.service.js';
 import type { ApprovalRequestRow } from '../approvals/approval.repository.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 @Injectable()
 export class PiaService {
@@ -16,6 +17,7 @@ export class PiaService {
     private readonly pia: PiaRepository,
     private readonly audit: AuditService,
     private readonly approvals: ApprovalService,
+    private readonly settings: SettingsService,
   ) {}
 
   async get() {
@@ -75,6 +77,7 @@ export class PiaService {
       previousRateBps: previous?.piaRateBps ?? null,
       changedByStaffId: principal.id,
     });
+    await this.settings.recordConfirmedPiaFloor(tx, piaRateBps, principal, correlationId);
     await this.audit.write(tx, {
       actor: auditActor(principal),
       action: 'setting.pia_floor_updated',

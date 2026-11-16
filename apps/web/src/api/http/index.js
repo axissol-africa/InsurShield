@@ -89,6 +89,7 @@ export const insurers = {
 export const products = {
   insurer: {
     list: () => apiClient.get('/insurer/products'),
+    comparisonTaxonomy: () => apiClient.get('/insurer/products/comparison-taxonomy'),
     get: (productId) => apiClient.get(`/insurer/products/${encodeURIComponent(productId)}`),
     create: (product) => apiClient.post('/insurer/products', product),
     updateDraft: (productId, versionId, changes) => apiClient.patch(`/insurer/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}`, changes),
@@ -102,6 +103,22 @@ export const products = {
     withdraw: (productId, versionId, decision) => apiClient.post(`/admin/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/withdraw`, decision),
   },
   directory: (query = {}) => apiClient.get('/products/directory', { params: query }),
+  estimate: (productId, versionId, query) => apiClient.get(`/products/${encodeURIComponent(productId)}/versions/${encodeURIComponent(versionId)}/estimate`, { params: query }),
+};
+
+/** Versioned platform rules and the insurer-comparison vocabulary. */
+export const settings = {
+  rules: {
+    list: () => apiClient.get('/admin/settings/rules'),
+    history: (key) => apiClient.get(`/admin/settings/rules/${encodeURIComponent(key)}`),
+    create: (key, input) => apiClient.post(`/admin/settings/rules/${encodeURIComponent(key)}/versions`, input),
+    confirm: (key, versionId) => apiClient.post(`/admin/settings/rules/${encodeURIComponent(key)}/versions/${encodeURIComponent(versionId)}/confirm`),
+  },
+  taxonomy: {
+    list: () => apiClient.get('/admin/settings/comparison-taxonomy'),
+    create: (input) => apiClient.post('/admin/settings/comparison-taxonomy', input),
+    update: (id, input) => apiClient.patch(`/admin/settings/comparison-taxonomy/${encodeURIComponent(id)}`, input),
+  },
 };
 
 export const staff = {

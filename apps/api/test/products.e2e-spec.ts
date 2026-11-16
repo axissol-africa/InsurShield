@@ -26,6 +26,9 @@ const draftBody = (overrides: Record<string, unknown> = {}) => ({
   coverType: 'COMPREHENSIVE',
   coverGuide: completeGuide(),
   inspectionRule: 'NOT_REQUIRED',
+  rateBps: 525,
+  showEstimate: true,
+  allowedDurations: ['Q1', 'Q2', 'Q3', 'Q4'],
   effectiveFrom: '2026-11-01',
   ...overrides,
 });
@@ -119,7 +122,7 @@ describe('versioned insurer products', () => {
     expect(publicProduct).toEqual({
       insurer: { id: insurer.insurer.id, name: insurer.insurer.name, tradingName: null, logoUrl: null },
       product: { id: created.body.product.id, code: created.body.product.code, coverType: 'COMPREHENSIVE' },
-      version: expect.objectContaining({ id: created.body.id, number: 1, coverGuide: completeGuide() }),
+      version: expect.objectContaining({ id: created.body.id, number: 1, coverGuide: completeGuide(), comparisonItems: [] }),
     });
     expect(publicProduct).not.toHaveProperty('reviewedByStaffId');
 
@@ -278,5 +281,103 @@ describe('versioned insurer products', () => {
     await create(insurer.headers, draftBody({ code })).expect(201);
     const duplicate = await create(insurer.headers, draftBody({ code })).expect(409);
     expect(duplicate.body).toMatchObject({ code: 'PRODUCT_CODE_EXISTS' });
+  });
+
+  it('calculates a rate-limited customer estimate from the approved product version and never below the PIA floor', async () => {
+    const insurer = await insurerAdmin();
+    await verifyForTrading(insurer);
+    const created = await create(insurer.headers, draftBody({
+      code: `EST-${randomUUID().slice(0, 8)}`,
+      effectiveFrom: '2026-01-01',
+      rateBps: 300,
+      showEstimate: true,
+      allowedDurations: ['Q1'],
+    })).expect(201);
+    await submit(insurer.headers, created.body.product.id, created.body.id).expect(200);
+    await approve(created.body.product.id, created.body.id).expect(200);
+
+    const estimate = await testApp.http
+      .get(`/api/v1/products/${created.body.product.id}/versions/${created.body.id}/estimate`)
+      .query({ vehicleValue: 100_000, vehicleUsage: 'Individual', coverageDuration: 'Q1' })
+      .expect(200);
+    expect(estimate.body).toMatchObject({
+      product: { id: created.body.product.id, name: 'Comprehensive Gold' },
+      estimatedPremium: 1_000,
+      currency: 'ZMW',
+      floorApplied: true,
+      provisionalInputs: true,
+    });
+
+    const unavailableDuration = await testApp.http
+      .get(`/api/v1/products/${created.body.product.id}/versions/${created.body.id}/estimate`)
+      .query({ vehicleValue: 100_000, vehicleUsage: 'Individual', coverageDuration: 'Q2' })
+      .expect(400);
+    expect(unavailableDuration.body).toMatchObject({ code: 'PRODUCT_DURATION_UNAVAILABLE' });
+
+    await testApp.db.update(insurerProductVersions).set({ showEstimate: false }).where(eq(insurerProductVersions.id, created.body.id));
+    const hidden = await testApp.http
+      .get(`/api/v1/products/${created.body.product.id}/versions/${created.body.id}/estimate`)
+      .query({ vehicleValue: 100_000, vehicleUsage: 'Individual', coverageDuration: 'Q1' })
+      .expect(409);
+    expect(hidden.body).toMatchObject({ code: 'PRODUCT_ESTIMATE_UNAVAILABLE' });
+  });
+
+  it('preserves the approved comparison-term snapshot when an administrator later changes the taxonomy', async () => {
+    const taxonomy = await testApp.http
+      .post('/api/v1/admin/settings/comparison-taxonomy')
+      .set(asAdmin)
+      .send({
+        code: `ROADSIDE_${randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()}`,
+        label: 'Roadside assistance',
+        description: 'Emergency help after a breakdown.',
+        category: 'ADD_ON',
+        dataType: 'LIST',
+        allowedValues: ['Included', 'Optional'],
+        displayRule: 'ALWAYS_SHOW',
+        displayOrder: 20,
+      })
+      .expect(201);
+    const insurer = await insurerAdmin();
+    await verifyForTrading(insurer);
+    const availableTerms = await testApp.http.get('/api/v1/insurer/products/comparison-taxonomy').set(insurer.headers).expect(200);
+    expect(availableTerms.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: taxonomy.body.id, label: 'Roadside assistance', dataType: 'LIST' }),
+    ]));
+
+    const created = await create(insurer.headers, draftBody({
+      code: `MAP-${randomUUID().slice(0, 8)}`,
+      effectiveFrom: '2026-01-01',
+      comparisonItems: [{ taxonomyItemId: taxonomy.body.id, included: true, valueText: 'Included' }],
+    })).expect(201);
+    await submit(insurer.headers, created.body.product.id, created.body.id).expect(200);
+    await approve(created.body.product.id, created.body.id).expect(200);
+
+    await testApp.http
+      .patch(`/api/v1/admin/settings/comparison-taxonomy/${taxonomy.body.id}`)
+      .set(asAdmin)
+      .send({ label: '24-hour roadside support', allowedValues: ['Included', 'Optional', 'Not available'] })
+      .expect(200)
+      .expect(({ body }) => expect(body).toMatchObject({ label: '24-hour roadside support', versionNumber: 2 }));
+
+    const directory = await testApp.http.get(`/api/v1/products/directory?coverType=COMPREHENSIVE`).expect(200);
+    const publicProduct = directory.body.find((item: { product: { id: string } }) => item.product.id === created.body.product.id);
+    expect(publicProduct.version.comparisonItems).toEqual([
+      expect.objectContaining({
+        taxonomyItemId: taxonomy.body.id,
+        taxonomyVersion: 1,
+        code: taxonomy.body.code,
+        label: 'Roadside assistance',
+        allowedValues: ['Included', 'Optional'],
+        valueText: 'Included',
+      }),
+    ]);
+
+    // This test's temporary term must not change the submission contract for
+    // the neighbouring product tests that share the integration database.
+    await testApp.http
+      .patch(`/api/v1/admin/settings/comparison-taxonomy/${taxonomy.body.id}`)
+      .set(asAdmin)
+      .send({ status: 'DISABLED' })
+      .expect(200);
   });
 });

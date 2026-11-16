@@ -1,15 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { isInsurerRole, type InspectionMethod, type InspectionRule, type InspectionTiming, type InsuranceType, type ProductVersionStatus } from '../common/domain/enums.js';
+import { isInsurerRole, type ComparisonDisplayRule, type ComparisonTaxonomyCategory, type ComparisonValueType, type CoverageDuration, type InspectionMethod, type InspectionRule, type InspectionTiming, type InsuranceType, type ProductVersionStatus } from '../common/domain/enums.js';
 import { holds, type Permission } from '../common/auth/permissions.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { InsurersService } from '../insurers/insurers.service.js';
+import { PiaService } from '../pia/pia.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import {
   ApproveProductVersionDto,
+  type ComparisonItemInputDto,
   CreateProductDto,
   type ProductDirectoryQueryDto,
+  type ProductEstimateQueryDto,
   RejectProductVersionDto,
   UpdateDraftProductVersionDto,
   WithdrawProductVersionDto,
@@ -27,6 +31,9 @@ import {
 import { ProductsRepository, type ProductRow, type ProductVersionRow } from './products.repository.js';
 import type { Transaction } from '../db/database.module.js';
 import { isUniqueViolation } from '../db/errors.js';
+import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
+import { usageLoadingBps } from '../settings/domain/rules.js';
+import { estimateProductPremiumMinor } from './domain/product-estimate.js';
 
 type StaffPrincipal = Extract<Principal, { kind: 'staff' }>;
 type VersionRecord = { product: ProductRow; version: ProductVersionRow; insurer: { id: string; name: string; tradingName: string | null; logoUrl: string | null } };
@@ -38,6 +45,10 @@ type InternalVersion = {
   coverType: InsuranceType;
   coverGuide: CoverGuide;
   inspection: { rule: InspectionRule; timing: InspectionTiming | null; method: InspectionMethod | null };
+  rateBps: number;
+  showEstimate: boolean;
+  allowedDurations: CoverageDuration[];
+  comparisonItems: ProductComparisonItem[];
   effectiveFrom: string;
   effectiveUntil: string | null;
   submittedAt: string | null;
@@ -48,6 +59,20 @@ type InternalVersion = {
   createdAt: string;
   updatedAt: string;
 };
+type ProductComparisonItem = {
+  taxonomyItemId: string;
+  taxonomyVersion: number;
+  code: string;
+  label: string;
+  description: string | null;
+  category: ComparisonTaxonomyCategory;
+  dataType: ComparisonValueType;
+  unit: string | null;
+  allowedValues: string[];
+  displayRule: ComparisonDisplayRule;
+  included: boolean;
+  valueText: string | null;
+};
 type VersionChanges = {
   name?: string;
   /** Present only when the durable product and its first version are created. */
@@ -56,6 +81,9 @@ type VersionChanges = {
   inspectionRule?: InspectionRule;
   inspectionTiming?: InspectionTiming | null;
   inspectionMethod?: InspectionMethod | null;
+  rateBps?: number;
+  showEstimate?: boolean;
+  allowedDurations?: CoverageDuration[];
   effectiveFrom?: string;
   effectiveUntil?: string | null;
 };
@@ -67,14 +95,19 @@ type NormalisedVersion = {
   inspectionRule: InspectionRule | undefined;
   inspectionTiming: InspectionTiming | null;
   inspectionMethod: InspectionMethod | null;
+  rateBps: number | undefined;
+  showEstimate: boolean;
+  allowedDurations: CoverageDuration[] | undefined;
   effectiveFrom: Date | undefined;
   effectiveUntil: Date | null;
 };
-type CompleteProductVersion = Omit<NormalisedVersion, 'name' | 'coverType' | 'inspectionRule' | 'effectiveFrom'> & {
+type CompleteProductVersion = Omit<NormalisedVersion, 'name' | 'coverType' | 'inspectionRule' | 'effectiveFrom' | 'rateBps' | 'allowedDurations'> & {
   name: string;
   coverType: InsuranceType;
   inspectionRule: InspectionRule;
   effectiveFrom: Date;
+  rateBps: number;
+  allowedDurations: CoverageDuration[];
 };
 
 const PRODUCT_CODE_CONSTRAINT = 'insurer_products_insurerId_code_key';
@@ -85,6 +118,8 @@ export class ProductsService {
     private readonly products: ProductsRepository,
     private readonly insurers: InsurersService,
     private readonly audit: AuditService,
+    private readonly pia: PiaService,
+    private readonly settings: SettingsService,
   ) {}
 
   async listOwn(principal: Principal) {
@@ -92,6 +127,7 @@ export class ProductsService {
     const insurerId = this.insurerId(principal);
     const records = await this.products.listForInsurer(insurerId);
     const grouped = new Map<string, { id: string; code: string; coverType: InsuranceType; createdAt: string; updatedAt: string; versions: InternalVersion[] }>();
+    const comparisons = await this.comparisonsFor(records);
     for (const record of records) {
       const product = grouped.get(record.product.id) ?? {
         id: record.product.id,
@@ -101,7 +137,7 @@ export class ProductsService {
         updatedAt: record.product.updatedAt.toISOString(),
         versions: [],
       };
-      if (record.version) product.versions.push(this.toInternalVersion(record.version));
+      if (record.version) product.versions.push(this.toInternalVersion(record.version, comparisons.get(record.version.id)));
       grouped.set(record.product.id, product);
     }
     return [...grouped.values()];
@@ -116,14 +152,22 @@ export class ProductsService {
       throw ApiException.notFound('Product', productId);
     }
     const records = (await this.products.listForInsurer(insurerId)).filter((row) => row.product.id === productId);
+    const comparisons = await this.comparisonsFor(records);
     return {
       id: product.id,
       code: product.code,
       coverType: product.coverType,
       createdAt: product.createdAt.toISOString(),
       updatedAt: product.updatedAt.toISOString(),
-      versions: records.flatMap((row) => (row.version ? [this.toInternalVersion(row.version)] : [])),
+      versions: records.flatMap((row) => (row.version ? [this.toInternalVersion(row.version, comparisons.get(row.version.id))] : [])),
     };
+  }
+
+  /** Active, platform-owned terms an insurer can map into a product draft. */
+  async activeComparisonTaxonomy(principal: Principal) {
+    this.require(principal, 'product:read-own');
+    this.insurerId(principal);
+    return this.settings.activeTaxonomy();
   }
 
   async create(dto: CreateProductDto, principal: Principal) {
@@ -142,6 +186,7 @@ export class ProductsService {
           ...normalized,
           createdByStaffId: principal.id,
         });
+        const comparisonItems = await this.saveComparisonItems(tx, version.id, dto.comparisonItems ?? []);
         await this.audit.write(tx, {
           actor: auditActor(principal),
           action: 'product.created',
@@ -151,7 +196,7 @@ export class ProductsService {
           note: 'Insurer administrator created a product draft.',
           correlationId: product.id,
         });
-        return this.toInternalProductVersion(product, version);
+        return this.toInternalProductVersion(product, version, comparisonItems);
       });
     } catch (error) {
       if (this.isUniqueProductCode(error)) {
@@ -173,6 +218,9 @@ export class ProductsService {
       this.assertDraftInput(normalized);
       const version = await this.products.updateVersion(tx, versionId, normalized);
       if (!version) throw ApiException.notFound('Product version', versionId);
+      const comparisonItems = dto.comparisonItems === undefined
+        ? await this.comparisonItems(version.id, tx)
+        : await this.saveComparisonItems(tx, version.id, dto.comparisonItems);
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'product_version.draft_updated',
@@ -183,7 +231,7 @@ export class ProductsService {
         note: 'Insurer administrator updated a product draft.',
         correlationId: productId,
       });
-      return this.toInternalProductVersion(record.product, version);
+      return this.toInternalProductVersion(record.product, version, comparisonItems);
     });
   }
 
@@ -209,10 +257,14 @@ export class ProductsService {
         inspectionRule: source.version.inspectionRule,
         inspectionTiming: source.version.inspectionTiming,
         inspectionMethod: source.version.inspectionMethod,
+        rateBps: source.version.rateBps,
+        showEstimate: source.version.showEstimate,
+        allowedDurations: source.version.allowedDurations,
         effectiveFrom: source.version.effectiveFrom,
         effectiveUntil: source.version.effectiveUntil,
         createdByStaffId: principal.id,
       });
+      await this.products.copyComparisonItems(tx, source.version.id, version.id);
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'product_version.revised',
@@ -223,7 +275,7 @@ export class ProductsService {
         note: 'Insurer administrator started a new draft from a reviewed product version.',
         correlationId: productId,
       });
-      return this.toInternalProductVersion(product, version);
+      return this.toInternalProductVersion(product, version, await this.comparisonItems(version.id, tx));
     });
   }
 
@@ -235,7 +287,7 @@ export class ProductsService {
         throw ApiException.conflict('PRODUCT_VERSION_NOT_DRAFT', 'Only a draft product version can be submitted for review.');
       }
       await this.insurers.assertVerifiedActiveForProducts(tx, record.product.insurerId);
-      this.assertSubmittable(record.version);
+      await this.assertSubmittable(record.version, tx);
       const at = new Date();
       const version = await this.products.updateVersion(tx, versionId, {
         status: 'SUBMITTED',
@@ -253,13 +305,15 @@ export class ProductsService {
         note: 'Insurer administrator submitted product terms for platform review.',
         correlationId: productId,
       });
-      return this.toInternalProductVersion(record.product, version);
+      return this.toInternalProductVersion(record.product, version, await this.comparisonItems(version.id, tx));
     });
   }
 
   async reviewQueue(principal: Principal, status?: ProductVersionStatus) {
     this.require(principal, 'admin:product:read');
-    return (await this.products.listForReview(status)).map((record) => this.toAdminVersion(record));
+    const records = await this.products.listForReview(status);
+    const comparisons = await this.comparisonsFor(records);
+    return records.map((record) => this.toAdminVersion(record, comparisons.get(record.version.id)));
   }
 
   async approve(productId: string, versionId: string, dto: ApproveProductVersionDto, principal: StaffPrincipal) {
@@ -272,7 +326,7 @@ export class ProductsService {
       await this.insurers.assertVerifiedActiveForProducts(tx, record.product.insurerId);
       const candidate = this.normaliseVersion(dto, record.version);
       this.assertDraftInput(candidate);
-      this.assertSubmittable(candidate);
+      await this.assertSubmittable(record.version, tx);
       const at = new Date();
       const version = await this.products.updateVersion(tx, versionId, {
         effectiveFrom: candidate.effectiveFrom,
@@ -293,7 +347,7 @@ export class ProductsService {
         note: dto.comment ?? 'Platform administrator approved the product version.',
         correlationId: productId,
       });
-      return this.toAdminVersion({ ...record, version });
+      return this.toAdminVersion({ ...record, version }, await this.comparisonItems(version.id, tx));
     });
   }
 
@@ -322,7 +376,7 @@ export class ProductsService {
         note: dto.comment,
         correlationId: productId,
       });
-      return this.toAdminVersion({ ...record, version });
+      return this.toAdminVersion({ ...record, version }, await this.comparisonItems(version.id, tx));
     });
   }
 
@@ -351,12 +405,56 @@ export class ProductsService {
         note: dto.reason,
         correlationId: productId,
       });
-      return this.toAdminVersion({ ...record, version });
+      return this.toAdminVersion({ ...record, version }, await this.comparisonItems(version.id, tx));
     });
   }
 
   async directory(query: ProductDirectoryQueryDto) {
-    return (await this.products.directory(new Date(), query.coverType, query.limit ?? 100)).map((record) => this.toPublicVersion(record));
+    const records = await this.products.directory(new Date(), query.coverType, query.limit ?? 100);
+    const comparisons = await this.comparisonsFor(records);
+    return records.map((record) => this.toPublicVersion(record, comparisons.get(record.version.id)));
+  }
+
+  async estimate(productId: string, versionId: string, query: ProductEstimateQueryDto) {
+    const [record, usage] = await Promise.all([
+      this.products.directory(new Date(), undefined, 1, productId, versionId).then((records) => records[0]),
+      this.settings.effective('USAGE_LOADINGS'),
+    ]);
+    if (!record) throw ApiException.notFound('Product version', versionId);
+    if (!record.version.showEstimate) {
+      throw ApiException.conflict('PRODUCT_ESTIMATE_UNAVAILABLE', 'This insurer has not enabled an estimate for this product.');
+    }
+    if (!record.version.allowedDurations.includes(query.coverageDuration)) {
+      throw new ApiException('PRODUCT_DURATION_UNAVAILABLE', 'This product is not offered for the selected cover period.', 400, { coverageDuration: query.coverageDuration });
+    }
+    let vehicleValueMinor: number;
+    try {
+      vehicleValueMinor = kwachaToNgwee(query.vehicleValue);
+    } catch {
+      throw new ApiException('ESTIMATE_VALUE_INVALID', 'Enter a valid vehicle value for an estimate.', 400, { vehicleValue: 'Enter a valid amount.' });
+    }
+    const piaRateBps = await this.pia.currentRateBps();
+    const loadingBps = usageLoadingBps(usage.value, query.vehicleUsage);
+    const calculation = estimateProductPremiumMinor(
+      vehicleValueMinor,
+      record.version.rateBps,
+      loadingBps,
+      piaRateBps,
+      query.coverageDuration,
+    );
+    return {
+      insurer: record.insurer,
+      product: { id: record.product.id, code: record.product.code, name: record.version.name, coverType: record.version.coverType },
+      versionId: record.version.id,
+      coverageDuration: query.coverageDuration,
+      vehicleValue: query.vehicleValue,
+      vehicleUsage: query.vehicleUsage,
+      estimatedPremium: ngweeToKwacha(calculation.premiumMinor),
+      currency: 'ZMW',
+      floorApplied: calculation.floorApplied,
+      provisionalInputs: usage.provisional,
+      notice: 'This is an estimate. The insurer confirms the final premium after reviewing your request.',
+    };
   }
 
   private insurerId(principal: Principal) {
@@ -423,6 +521,9 @@ export class ProductsService {
       inspectionRule,
       inspectionTiming,
       inspectionMethod,
+      rateBps: dto.rateBps ?? existing?.rateBps,
+      showEstimate: dto.showEstimate ?? existing?.showEstimate ?? false,
+      allowedDurations: dto.allowedDurations ?? existing?.allowedDurations,
       effectiveFrom: dto.effectiveFrom === undefined ? existing?.effectiveFrom : calendarDate(dto.effectiveFrom),
       effectiveUntil: dto.effectiveUntil === undefined
         ? existing?.effectiveUntil ?? null
@@ -435,6 +536,8 @@ export class ProductsService {
     if (!candidate.name) errors.name = 'Enter a product name.';
     if (!candidate.coverType) errors.coverType = 'Choose a cover type.';
     if (!candidate.inspectionRule) errors.inspectionRule = 'Choose whether an inspection is required.';
+    if (candidate.rateBps === undefined) errors.rateBps = 'Enter the product rate.';
+    if (!candidate.allowedDurations?.length) errors.allowedDurations = 'Choose at least one available cover period.';
     if (!candidate.effectiveFrom) errors.effectiveFrom = 'Choose an effective-from date.';
     Object.assign(errors, candidate.inspectionRule ? inspectionErrors(candidate.inspectionRule, candidate.inspectionTiming, candidate.inspectionMethod) : {});
     if (candidate.effectiveFrom && candidate.effectiveUntil && candidate.effectiveUntil < candidate.effectiveFrom) {
@@ -443,21 +546,28 @@ export class ProductsService {
     if (Object.keys(errors).length) throw new ApiException('PRODUCT_DRAFT_INVALID', 'Correct the highlighted product fields.', 400, errors);
   }
 
-  private assertSubmittable(version: Pick<ProductVersionRow, 'name' | 'coverType' | 'coverGuide' | 'inspectionRule' | 'inspectionTiming' | 'inspectionMethod' | 'effectiveFrom' | 'effectiveUntil'> | CompleteProductVersion) {
+  private async assertSubmittable(version: Pick<ProductVersionRow, 'id' | 'name' | 'coverType' | 'coverGuide' | 'inspectionRule' | 'inspectionTiming' | 'inspectionMethod' | 'rateBps' | 'allowedDurations' | 'effectiveFrom' | 'effectiveUntil'> | CompleteProductVersion, tx: Transaction) {
     const checked = checkCoverGuide(version.coverGuide, true);
     const errors: Record<string, string> = {
       ...checked.errors,
       ...inspectionErrors(version.inspectionRule, version.inspectionTiming, version.inspectionMethod),
     };
     if (version.effectiveUntil && version.effectiveUntil < version.effectiveFrom) errors.effectiveUntil = 'The end date cannot be before the start date.';
+    if (!version.allowedDurations.length) errors.allowedDurations = 'Choose at least one available cover period.';
+    if ('id' in version) {
+      const [activeTaxonomy, mappings] = await Promise.all([this.settings.activeTaxonomy(tx), this.comparisonItems(version.id, tx)]);
+      const mapped = new Set(mappings.map((item) => item.taxonomyItemId));
+      const missing = activeTaxonomy.filter((item) => !mapped.has(item.id));
+      if (missing.length) errors.comparisonItems = `Map every active comparison term before submission: ${missing.map((item) => item.label).join(', ')}.`;
+    }
     if (Object.keys(errors).length) throw new ApiException('PRODUCT_VERSION_INCOMPLETE', 'Complete the product terms before submitting them for review.', 400, errors);
   }
 
-  private toInternalProductVersion(product: ProductRow, version: ProductVersionRow) {
-    return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...this.toInternalVersion(version) };
+  private toInternalProductVersion(product: ProductRow, version: ProductVersionRow, comparisonItems: ProductComparisonItem[] = []) {
+    return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...this.toInternalVersion(version, comparisonItems) };
   }
 
-  private toInternalVersion(version: ProductVersionRow): InternalVersion {
+  private toInternalVersion(version: ProductVersionRow, comparisonItems: ProductComparisonItem[] = []): InternalVersion {
     return {
       id: version.id,
       versionNumber: version.versionNumber,
@@ -466,6 +576,10 @@ export class ProductsService {
       coverType: version.coverType,
       coverGuide: checkCoverGuide(version.coverGuide, false).guide,
       inspection: { rule: version.inspectionRule, timing: version.inspectionTiming, method: version.inspectionMethod },
+      rateBps: version.rateBps,
+      showEstimate: version.showEstimate,
+      allowedDurations: version.allowedDurations,
+      comparisonItems,
       effectiveFrom: asDay(version.effectiveFrom)!,
       effectiveUntil: asDay(version.effectiveUntil),
       submittedAt: version.submittedAt?.toISOString() ?? null,
@@ -478,10 +592,10 @@ export class ProductsService {
     };
   }
 
-  private toAdminVersion(record: VersionRecord) {
+  private toAdminVersion(record: VersionRecord, comparisonItems: ProductComparisonItem[] = []) {
     return {
       insurer: record.insurer,
-      ...this.toInternalProductVersion(record.product, record.version),
+      ...this.toInternalProductVersion(record.product, record.version, comparisonItems),
       createdByStaffId: record.version.createdByStaffId,
       submittedByStaffId: record.version.submittedByStaffId,
       reviewedByStaffId: record.version.reviewedByStaffId,
@@ -489,7 +603,7 @@ export class ProductsService {
     };
   }
 
-  private toPublicVersion(record: VersionRecord) {
+  private toPublicVersion(record: VersionRecord, comparisonItems: ProductComparisonItem[] = []) {
     return {
       insurer: record.insurer,
       product: { id: record.product.id, code: record.product.code, coverType: record.product.coverType },
@@ -500,6 +614,9 @@ export class ProductsService {
         coverType: record.version.coverType,
         coverGuide: checkCoverGuide(record.version.coverGuide, false).guide as CoverGuide,
         inspection: { rule: record.version.inspectionRule, timing: record.version.inspectionTiming, method: record.version.inspectionMethod },
+        showEstimate: record.version.showEstimate,
+        allowedDurations: record.version.allowedDurations,
+        comparisonItems,
         effectiveFrom: asDay(record.version.effectiveFrom),
         effectiveUntil: asDay(record.version.effectiveUntil),
       },
@@ -508,5 +625,82 @@ export class ProductsService {
 
   private isUniqueProductCode(error: unknown) {
     return isUniqueViolation(error, PRODUCT_CODE_CONSTRAINT);
+  }
+
+  private async comparisonsFor(records: Array<{ version: ProductVersionRow | null }>): Promise<Map<string, ProductComparisonItem[]>> {
+    const rows = await this.products.comparisonItemsForVersions(records.flatMap((record) => record.version ? [record.version.id] : []));
+    const result = new Map<string, ProductComparisonItem[]>();
+    for (const { mapping } of rows) {
+      const items = result.get(mapping.productVersionId) ?? [];
+      items.push(this.toComparisonItem(mapping));
+      result.set(mapping.productVersionId, items);
+    }
+    return result;
+  }
+
+  private async comparisonItems(versionId: string, tx: Transaction): Promise<ProductComparisonItem[]> {
+    const rows = await this.products.comparisonItemsForVersions([versionId], tx);
+    return rows.map(({ mapping }) => this.toComparisonItem(mapping));
+  }
+
+  private async saveComparisonItems(tx: Transaction, versionId: string, inputs: ComparisonItemInputDto[]): Promise<ProductComparisonItem[]> {
+    const ids = inputs.map((item) => item.taxonomyItemId);
+    if (new Set(ids).size !== ids.length) throw new ApiException('PRODUCT_COMPARISON_DUPLICATE', 'Use each comparison item only once.');
+    const taxonomy = await this.products.activeTaxonomyForIds(tx, ids);
+    if (taxonomy.length !== ids.length) throw new ApiException('PRODUCT_COMPARISON_ITEM_UNAVAILABLE', 'One or more comparison items are no longer available.');
+    const byId = new Map(taxonomy.map((item) => [item.id, item]));
+    await this.products.replaceComparisonItems(tx, versionId, inputs.map((item) => {
+      const term = byId.get(item.taxonomyItemId)!;
+      const valueText = item.valueText?.trim() || null;
+      this.assertComparisonValue(term, valueText);
+      return {
+        taxonomyItemId: term.id,
+        taxonomyVersion: term.versionNumber,
+        taxonomyCode: term.code,
+        taxonomyLabel: term.label,
+        taxonomyDescription: term.description,
+        taxonomyCategory: term.category,
+        taxonomyDataType: term.dataType,
+        taxonomyUnit: term.unit,
+        taxonomyAllowedValues: term.allowedValues,
+        taxonomyDisplayRule: term.displayRule,
+        included: item.included ?? true,
+        valueText,
+      };
+    }));
+    return this.comparisonItems(versionId, tx);
+  }
+
+  private toComparisonItem(mapping: Awaited<ReturnType<ProductsRepository['comparisonItemsForVersions']>>[number]['mapping']): ProductComparisonItem {
+    return {
+      taxonomyItemId: mapping.taxonomyItemId,
+      taxonomyVersion: mapping.taxonomyVersion,
+      code: mapping.taxonomyCode,
+      label: mapping.taxonomyLabel,
+      description: mapping.taxonomyDescription,
+      category: mapping.taxonomyCategory,
+      dataType: mapping.taxonomyDataType,
+      unit: mapping.taxonomyUnit,
+      allowedValues: mapping.taxonomyAllowedValues,
+      displayRule: mapping.taxonomyDisplayRule,
+      included: mapping.included,
+      valueText: mapping.valueText,
+    };
+  }
+
+  private assertComparisonValue(
+    term: Awaited<ReturnType<ProductsRepository['activeTaxonomyForIds']>>[number],
+    valueText: string | null,
+  ) {
+    if (!valueText) return;
+    if ((term.dataType === 'NUMBER' || term.dataType === 'CURRENCY') && !/^\d+(?:\.\d{1,2})?$/.test(valueText)) {
+      throw new ApiException('PRODUCT_COMPARISON_VALUE_INVALID', `${term.label} needs a numeric value.`);
+    }
+    if (term.dataType === 'BOOLEAN' && !/^(yes|no|true|false)$/i.test(valueText)) {
+      throw new ApiException('PRODUCT_COMPARISON_VALUE_INVALID', `${term.label} must be Yes or No.`);
+    }
+    if (term.dataType === 'LIST' && !term.allowedValues.some((value) => value.localeCompare(valueText, 'en-ZM', { sensitivity: 'accent' }) === 0)) {
+      throw new ApiException('PRODUCT_COMPARISON_VALUE_INVALID', `${term.label} must use one of the platform's allowed values.`);
+    }
   }
 }

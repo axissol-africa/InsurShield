@@ -56,4 +56,28 @@ describe('ProductLibrary', () => {
     expect(screen.queryByText('Cover guide draft saved. Submit when every answer is ready for review.')).not.toBeInTheDocument();
     save.mockRestore();
   });
+
+  it('loads the active comparison taxonomy and saves a typed product mapping', async () => {
+    const user = userEvent.setup();
+    const insurer = useStore.getState().insurersList.find((entry) => entry.name === 'Prestige Assurance');
+    render(<ProductLibrary insurer={insurer} canManage />);
+
+    await user.click(await screen.findByRole('button', { name: 'New product' }));
+    await user.type(screen.getByLabelText('Product code'), 'motor-comp-04');
+    await user.type(screen.getByLabelText('Product name'), 'Comprehensive Compare');
+    await user.click(screen.getByRole('button', { name: 'Create draft' }));
+
+    expect(await screen.findByText('Third-party property damage')).toBeVisible();
+    const included = screen.getAllByRole('checkbox', { name: 'Included' })[0];
+    await user.click(included);
+    await user.type(screen.getByLabelText('Third-party property damage value'), 'Yes');
+    await user.click(screen.getByRole('button', { name: 'Save comparison terms' }));
+
+    await waitFor(async () => {
+      const product = (await api.products.insurer.list()).find((entry) => entry.code === 'MOTOR-COMP-04');
+      expect(product.versions[0].comparisonItems).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'THIRD_PARTY_DAMAGE', label: 'Third-party property damage', included: true, valueText: 'Yes' }),
+      ]));
+    });
+  });
 });

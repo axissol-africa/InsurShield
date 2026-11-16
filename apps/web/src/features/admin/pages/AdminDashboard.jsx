@@ -11,6 +11,7 @@ import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboarding
 import InsurerOnboardingReview from '@/features/admin/components/InsurerOnboardingReview';
 import AdminApprovalInbox from '@/features/admin/components/AdminApprovalInbox';
 import ProductReviewQueue from '@/features/admin/components/ProductReviewQueue';
+import RuleSettingsWorkspace from '@/features/admin/components/RuleSettingsWorkspace';
 import StaffManagement from '@/features/admin/components/StaffManagement';
 import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
 import InsurerTable from '@/features/admin/components/InsurerTable';
@@ -348,6 +349,7 @@ export default function AdminDashboard() {
     { id: 'approvals', label: 'Approvals', icon: 'approval', hint: 'Independent decisions', matches: ['approvals'] },
     { id: 'staff_management', label: 'Staff and teams', icon: 'groups', hint: 'Access control', matches: ['staff_management'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
+    { id: 'rule_settings', label: 'Rules and terms', icon: 'tune', hint: 'Rules and comparison fields', matches: ['rule_settings'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
     { id: 'audit_log', label: 'Audit trail', icon: 'history', hint: 'Immutable history', matches: ['audit_log'] },
   ];
@@ -448,6 +450,8 @@ export default function AdminDashboard() {
     content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} requestCustomerPasswordReset={api.admin.requestCustomerPasswordReset} onBack={() => setView('dashboard')} />;
   } else if (view === 'pia_config') {
     content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => api.config.setPia({ piaRatePercentage: rate })} onBack={() => setView('dashboard')} />;
+  } else if (view === 'rule_settings') {
+    content = <RuleSettingsWorkspace api={api} onBack={() => setView('dashboard')} onOpenPia={() => setView('pia_config')} />;
   } else {
     content = renderOverview();
   }

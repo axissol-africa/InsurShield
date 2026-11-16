@@ -17,6 +17,12 @@ export class InsurerProductsController {
   }
 
   @Needs('product:read-own')
+  @Get('comparison-taxonomy')
+  taxonomy(@CurrentUser() principal: Principal) {
+    return this.products.activeComparisonTaxonomy(principal);
+  }
+
+  @Needs('product:read-own')
   @Get(':productId')
   get(@Param('productId', ParseUUIDPipe) productId: string, @CurrentUser() principal: Principal) {
     return this.products.getOwn(productId, principal);

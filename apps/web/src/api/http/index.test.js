@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers, products } from './index';
+import { account, admin, auth, insurers, products, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -60,19 +60,41 @@ describe('Better Auth HTTP adapter', () => {
 
   it('uses the versioned insurer product endpoints without a browser-selected insurer id', () => {
     products.insurer.list();
+    products.insurer.comparisonTaxonomy();
     products.insurer.create({ code: 'MOTOR-COMP-01' });
     products.insurer.updateDraft('product-1', 'version-1', { name: 'Comprehensive Gold' });
     products.insurer.submit('product-1', 'version-1');
     products.admin.list({ status: 'SUBMITTED' });
     products.admin.approve('product-1', 'version-1', { comment: 'Reviewed.' });
     products.directory({ coverType: 'COMPREHENSIVE', limit: 5 });
+    products.estimate('product-1', 'version-1', { vehicleValue: 100000, vehicleUsage: 'Individual', coverageDuration: 'Q1' });
 
-    expect(transport.get).toHaveBeenCalledWith('/insurer/products');
+    expect(transport.get).toHaveBeenNthCalledWith(1, '/insurer/products');
+    expect(transport.get).toHaveBeenNthCalledWith(2, '/insurer/products/comparison-taxonomy');
     expect(transport.post).toHaveBeenCalledWith('/insurer/products', { code: 'MOTOR-COMP-01' });
     expect(transport.patch).toHaveBeenCalledWith('/insurer/products/product-1/versions/version-1', { name: 'Comprehensive Gold' });
     expect(transport.post).toHaveBeenCalledWith('/insurer/products/product-1/versions/version-1/submit');
     expect(transport.get).toHaveBeenCalledWith('/admin/products', { params: { status: 'SUBMITTED' } });
     expect(transport.post).toHaveBeenCalledWith('/admin/products/product-1/versions/version-1/approve', { comment: 'Reviewed.' });
     expect(transport.get).toHaveBeenCalledWith('/products/directory', { params: { coverType: 'COMPREHENSIVE', limit: 5 } });
+    expect(transport.get).toHaveBeenCalledWith('/products/product-1/versions/version-1/estimate', { params: { vehicleValue: 100000, vehicleUsage: 'Individual', coverageDuration: 'Q1' } });
+  });
+
+  it('uses versioned rules and comparison taxonomy endpoints', () => {
+    settings.rules.list();
+    settings.rules.history('NCD_POLICY');
+    settings.rules.create('NCD_POLICY', { value: { tiers: [] }, effectiveFrom: '2026-11-15' });
+    settings.rules.confirm('NCD_POLICY', 'version-1');
+    settings.taxonomy.list();
+    settings.taxonomy.create({ code: 'EXCESS', label: 'Excess', category: 'EXCESS', dataType: 'CURRENCY' });
+    settings.taxonomy.update('term-1', { status: 'DISABLED' });
+
+    expect(transport.get).toHaveBeenCalledWith('/admin/settings/rules');
+    expect(transport.get).toHaveBeenCalledWith('/admin/settings/rules/NCD_POLICY');
+    expect(transport.post).toHaveBeenCalledWith('/admin/settings/rules/NCD_POLICY/versions', { value: { tiers: [] }, effectiveFrom: '2026-11-15' });
+    expect(transport.post).toHaveBeenCalledWith('/admin/settings/rules/NCD_POLICY/versions/version-1/confirm');
+    expect(transport.get).toHaveBeenCalledWith('/admin/settings/comparison-taxonomy');
+    expect(transport.post).toHaveBeenCalledWith('/admin/settings/comparison-taxonomy', { code: 'EXCESS', label: 'Excess', category: 'EXCESS', dataType: 'CURRENCY' });
+    expect(transport.patch).toHaveBeenCalledWith('/admin/settings/comparison-taxonomy/term-1', { status: 'DISABLED' });
   });
 });

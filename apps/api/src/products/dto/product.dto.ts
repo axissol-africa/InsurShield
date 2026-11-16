@@ -1,5 +1,9 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -20,11 +24,14 @@ import {
   INSPECTION_RULES,
   INSPECTION_TIMINGS,
   INSURANCE_TYPES,
+  COVERAGE_DURATIONS,
   type InspectionMethod,
   type InspectionRule,
   type InspectionTiming,
   type InsuranceType,
+  type CoverageDuration,
 } from '../../common/domain/enums.js';
+import { MAX_KWACHA, MAX_RATE_BPS, MIN_RATE_BPS } from '../../common/domain/money-limits.js';
 
 const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const CalendarDay = (what: string) =>
@@ -46,8 +53,19 @@ export class ProductVersionInputDto {
   @IsIn(INSPECTION_RULES) inspectionRule!: InspectionRule;
   @IsOptional() @IsIn(INSPECTION_TIMINGS) inspectionTiming?: InspectionTiming;
   @IsOptional() @IsIn(INSPECTION_METHODS) inspectionMethod?: InspectionMethod;
+  /** Percentage expressed as basis points; 450 means 4.50%. */
+  @IsInt() @Min(MIN_RATE_BPS) @Max(MAX_RATE_BPS) rateBps!: number;
+  @IsOptional() @IsBoolean() showEstimate?: boolean;
+  @IsArray() @ArrayNotEmpty() @ArrayUnique() @IsIn(COVERAGE_DURATIONS, { each: true }) allowedDurations!: CoverageDuration[];
+  @IsOptional() @IsArray() @ArrayUnique((item: ComparisonItemInputDto) => item.taxonomyItemId) comparisonItems?: ComparisonItemInputDto[];
   @CalendarDay('An effective-from date') effectiveFrom!: string;
   @IsOptional() @CalendarDay('An effective-until date') effectiveUntil?: string;
+}
+
+export class ComparisonItemInputDto {
+  @IsString() @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i) taxonomyItemId!: string;
+  @IsOptional() @IsBoolean() included?: boolean;
+  @IsOptional() @IsString() @Transform(trim) @MaxLength(2_000) valueText?: string;
 }
 
 /** A new product starts with its first editable version. */
@@ -65,6 +83,10 @@ export class UpdateDraftProductVersionDto {
   @IsOptional() @IsIn(INSPECTION_RULES) inspectionRule?: InspectionRule;
   @IsOptional() @IsIn(INSPECTION_TIMINGS) inspectionTiming?: InspectionTiming | null;
   @IsOptional() @IsIn(INSPECTION_METHODS) inspectionMethod?: InspectionMethod | null;
+  @IsOptional() @IsInt() @Min(MIN_RATE_BPS) @Max(MAX_RATE_BPS) rateBps?: number;
+  @IsOptional() @IsBoolean() showEstimate?: boolean;
+  @IsOptional() @IsArray() @ArrayNotEmpty() @ArrayUnique() @IsIn(COVERAGE_DURATIONS, { each: true }) allowedDurations?: CoverageDuration[];
+  @IsOptional() @IsArray() @ArrayUnique((item: ComparisonItemInputDto) => item.taxonomyItemId) comparisonItems?: ComparisonItemInputDto[];
   // `IsOptional` treats null as absent; an omitted start is fine for a patch,
   // but an explicit null must never become an accidental 1970 publication.
   @ValidateIf((_, value) => value !== undefined) @CalendarDay('An effective-from date') effectiveFrom?: string;
@@ -90,4 +112,11 @@ export class WithdrawProductVersionDto {
 export class ProductDirectoryQueryDto {
   @IsOptional() @IsIn(INSURANCE_TYPES) coverType?: InsuranceType;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}
+
+/** Inputs are deliberately limited to the pre-quote information a customer has. */
+export class ProductEstimateQueryDto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(MAX_KWACHA) vehicleValue!: number;
+  @IsString() @Transform(trim) @MinLength(2) @MaxLength(120) vehicleUsage!: string;
+  @IsIn(COVERAGE_DURATIONS) coverageDuration!: CoverageDuration;
 }

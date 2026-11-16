@@ -102,6 +102,11 @@ export const PERMISSIONS = {
   'insurer:restore': SUPER_ADMIN_ONLY,
   'admin:product:read': INSURSHIELD_ADMIN,
   'admin:product:review': INSURSHIELD_ADMIN,
+  'admin:rule:read': INSURSHIELD_ADMIN,
+  'admin:rule:manage': INSURSHIELD_ADMIN,
+  'admin:rule:confirm': INSURSHIELD_ADMIN,
+  'admin:taxonomy:read': INSURSHIELD_ADMIN,
+  'admin:taxonomy:manage': INSURSHIELD_ADMIN,
 
   // The service scopes insurer administrators to their own organisation and
   // rejects roles they may not grant. This only opens the named functions.

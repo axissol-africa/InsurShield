@@ -15,6 +15,42 @@ export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 export const PRODUCT_VERSION_STATUSES = ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
 export type ProductVersionStatus = (typeof PRODUCT_VERSION_STATUSES)[number];
 
+/**
+ * Platform rules have typed payloads in `settings/domain/rules.ts`; this enum
+ * keeps their durable identity stable without making every configuration value
+ * an unstructured database column.
+ */
+export const RULE_SETTING_KEYS = [
+  'PIA_FLOOR',
+  'QUOTE_REPLY_DEADLINE',
+  'NCD_POLICY',
+  'DRIVER_QUESTIONS',
+  'RISK_QUESTIONS',
+  'ADD_ON_CATALOGUE',
+  'USAGE_LOADINGS',
+  'DOCUMENT_RETENTION',
+] as const;
+export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
+
+/** A value may guide a non-production journey before compliance confirms it. */
+export const RULE_SETTING_STATES = ['PROVISIONAL', 'CONFIRMED'] as const;
+export type RuleSettingState = (typeof RULE_SETTING_STATES)[number];
+
+/** The fixed vocabulary customers use to compare terms across insurers. */
+export const COMPARISON_TAXONOMY_CATEGORIES = ['COVERAGE', 'EXCLUSION', 'LIMIT', 'EXCESS', 'ADD_ON'] as const;
+export type ComparisonTaxonomyCategory = (typeof COMPARISON_TAXONOMY_CATEGORIES)[number];
+
+export const COMPARISON_TAXONOMY_STATUSES = ['ACTIVE', 'DISABLED'] as const;
+export type ComparisonTaxonomyStatus = (typeof COMPARISON_TAXONOMY_STATUSES)[number];
+
+/** How a canonical comparison value is validated and presented. */
+export const COMPARISON_VALUE_TYPES = ['TEXT', 'NUMBER', 'BOOLEAN', 'CURRENCY', 'LIST'] as const;
+export type ComparisonValueType = (typeof COMPARISON_VALUE_TYPES)[number];
+
+/** The customer comparison can either reserve a row or show it only when supplied. */
+export const COMPARISON_DISPLAY_RULES = ['ALWAYS_SHOW', 'SHOW_WHEN_PROVIDED'] as const;
+export type ComparisonDisplayRule = (typeof COMPARISON_DISPLAY_RULES)[number];
+
 export const COVERAGE_DURATIONS = ['Q1', 'Q2', 'Q3', 'Q4'] as const;
 export type CoverageDuration = (typeof COVERAGE_DURATIONS)[number];
 
