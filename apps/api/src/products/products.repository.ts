@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, exists, gte, isNotNull, isNull, lt, lte, ne, not, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, lte, ne, not, or, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { insurerEvidence, insurerProductVersions, insurerProducts, insurers } from '../db/schema.js';
+import { comparisonTaxonomyItems, insurerEvidence, insurerProductVersions, insurerProducts, insurers, productVersionComparisonItems } from '../db/schema.js';
 import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 import { lusakaDay } from '../common/domain/lusaka.js';
 import { calendarDate } from './domain/product-version.js';
@@ -30,6 +30,9 @@ const versionColumns = {
   inspectionRule: insurerProductVersions.inspectionRule,
   inspectionTiming: insurerProductVersions.inspectionTiming,
   inspectionMethod: insurerProductVersions.inspectionMethod,
+  rateBps: insurerProductVersions.rateBps,
+  showEstimate: insurerProductVersions.showEstimate,
+  allowedDurations: insurerProductVersions.allowedDurations,
   effectiveFrom: insurerProductVersions.effectiveFrom,
   effectiveUntil: insurerProductVersions.effectiveUntil,
   createdByStaffId: insurerProductVersions.createdByStaffId,
@@ -43,6 +46,37 @@ const versionColumns = {
   withdrawalReason: insurerProductVersions.withdrawalReason,
   createdAt: insurerProductVersions.createdAt,
   updatedAt: insurerProductVersions.updatedAt,
+};
+const comparisonColumns = {
+  id: productVersionComparisonItems.id,
+  productVersionId: productVersionComparisonItems.productVersionId,
+  taxonomyItemId: productVersionComparisonItems.taxonomyItemId,
+  taxonomyVersion: productVersionComparisonItems.taxonomyVersion,
+  taxonomyCode: productVersionComparisonItems.taxonomyCode,
+  taxonomyLabel: productVersionComparisonItems.taxonomyLabel,
+  taxonomyDescription: productVersionComparisonItems.taxonomyDescription,
+  taxonomyCategory: productVersionComparisonItems.taxonomyCategory,
+  taxonomyDataType: productVersionComparisonItems.taxonomyDataType,
+  taxonomyUnit: productVersionComparisonItems.taxonomyUnit,
+  taxonomyAllowedValues: productVersionComparisonItems.taxonomyAllowedValues,
+  taxonomyDisplayRule: productVersionComparisonItems.taxonomyDisplayRule,
+  included: productVersionComparisonItems.included,
+  valueText: productVersionComparisonItems.valueText,
+  createdAt: productVersionComparisonItems.createdAt,
+};
+const taxonomyColumns = {
+  id: comparisonTaxonomyItems.id,
+  code: comparisonTaxonomyItems.code,
+  label: comparisonTaxonomyItems.label,
+  description: comparisonTaxonomyItems.description,
+  category: comparisonTaxonomyItems.category,
+  versionNumber: comparisonTaxonomyItems.versionNumber,
+  dataType: comparisonTaxonomyItems.dataType,
+  unit: comparisonTaxonomyItems.unit,
+  allowedValues: comparisonTaxonomyItems.allowedValues,
+  displayRule: comparisonTaxonomyItems.displayRule,
+  status: comparisonTaxonomyItems.status,
+  displayOrder: comparisonTaxonomyItems.displayOrder,
 };
 const insurerColumns = {
   id: insurers.id,
@@ -130,6 +164,61 @@ export class ProductsRepository {
     return Number(row?.largest ?? 0) + 1;
   }
 
+  async comparisonItemsForVersions(versionIds: string[], executor: Executor = this.db) {
+    if (versionIds.length === 0) return [];
+    return executor
+      .select({ mapping: comparisonColumns })
+      .from(productVersionComparisonItems)
+      .where(inArray(productVersionComparisonItems.productVersionId, versionIds))
+      .orderBy(asc(productVersionComparisonItems.taxonomyCategory), asc(productVersionComparisonItems.taxonomyLabel));
+  }
+
+  async activeTaxonomyForIds(tx: Transaction, ids: string[]) {
+    if (ids.length === 0) return [];
+    return tx.select(taxonomyColumns).from(comparisonTaxonomyItems)
+      .where(and(inArray(comparisonTaxonomyItems.id, ids), eq(comparisonTaxonomyItems.status, 'ACTIVE')));
+  }
+
+  async replaceComparisonItems(
+    tx: Transaction,
+    productVersionId: string,
+    items: Array<{
+      taxonomyItemId: string;
+      taxonomyVersion: number;
+      taxonomyCode: string;
+      taxonomyLabel: string;
+      taxonomyDescription: string | null;
+      taxonomyCategory: typeof productVersionComparisonItems.$inferInsert.taxonomyCategory;
+      taxonomyDataType: typeof productVersionComparisonItems.$inferInsert.taxonomyDataType;
+      taxonomyUnit: string | null;
+      taxonomyAllowedValues: string[];
+      taxonomyDisplayRule: typeof productVersionComparisonItems.$inferInsert.taxonomyDisplayRule;
+      included: boolean;
+      valueText: string | null;
+    }>,
+  ) {
+    await tx.delete(productVersionComparisonItems).where(eq(productVersionComparisonItems.productVersionId, productVersionId));
+    if (items.length) await tx.insert(productVersionComparisonItems).values(items.map((item) => ({ productVersionId, ...item })));
+  }
+
+  async copyComparisonItems(tx: Transaction, sourceVersionId: string, targetVersionId: string) {
+    const source = await this.comparisonItemsForVersions([sourceVersionId], tx);
+    await this.replaceComparisonItems(tx, targetVersionId, source.map(({ mapping }) => ({
+      taxonomyItemId: mapping.taxonomyItemId,
+      taxonomyVersion: mapping.taxonomyVersion,
+      taxonomyCode: mapping.taxonomyCode,
+      taxonomyLabel: mapping.taxonomyLabel,
+      taxonomyDescription: mapping.taxonomyDescription,
+      taxonomyCategory: mapping.taxonomyCategory,
+      taxonomyDataType: mapping.taxonomyDataType,
+      taxonomyUnit: mapping.taxonomyUnit,
+      taxonomyAllowedValues: mapping.taxonomyAllowedValues,
+      taxonomyDisplayRule: mapping.taxonomyDisplayRule,
+      included: mapping.included,
+      valueText: mapping.valueText,
+    })));
+  }
+
   async listForReview(status?: ProductVersionStatus) {
     const where = status ? eq(insurerProductVersions.status, status) : undefined;
     return this.db
@@ -142,7 +231,7 @@ export class ProductsRepository {
   }
 
   /** Customer-safe products in force today from insurers that can accept new business. */
-  async directory(now: Date, coverType?: InsuranceType, limit = 100) {
+  async directory(now: Date, coverType?: InsuranceType, limit = 100, productId?: string, versionId?: string) {
     const today = calendarDate(lusakaDay(now));
     // A product approval is not a permanent compliance decision. The insurer
     // must still hold a current approved licence, and no evidence currently on
@@ -177,6 +266,8 @@ export class ProductsRepository {
       not(hasInvalidEvidence),
     ];
     if (coverType) filters.push(eq(insurerProductVersions.coverType, coverType));
+    if (productId) filters.push(eq(insurerProducts.id, productId));
+    if (versionId) filters.push(eq(insurerProductVersions.id, versionId));
     return this.db
       .select({ product: productColumns, version: versionColumns, insurer: insurerColumns })
       .from(insurerProductVersions)

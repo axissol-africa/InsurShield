@@ -107,7 +107,15 @@ describe('mock api adapter', () => {
       claimsContact: '+260 211 255 100', settlementTime: '14 working days', territorialLimit: 'Zambia',
       ncdAccepted: true, quoteValidityDays: 7,
     };
-    const saved = await mock.products.insurer.updateDraft(created.product.id, created.id, { coverGuide: guide });
+    const comparisonItems = (await mock.products.insurer.comparisonTaxonomy()).map((term) => ({
+      taxonomyItemId: term.id,
+      included: true,
+      valueText: term.dataType === 'BOOLEAN' ? 'Yes'
+        : term.dataType === 'LIST' ? term.allowedValues[0]
+          : term.dataType === 'TEXT' ? 'Included'
+            : '500',
+    }));
+    const saved = await mock.products.insurer.updateDraft(created.product.id, created.id, { coverGuide: guide, comparisonItems });
     expect(saved.status).toBe('DRAFT');
     await expect(mock.products.insurer.submit(created.product.id, created.id)).resolves.toMatchObject({ status: 'SUBMITTED' });
     await expect(mock.products.insurer.updateDraft(created.product.id, created.id, { name: 'Changed after review' })).rejects.toThrow('Create a new draft');

@@ -44,6 +44,12 @@ import {
   PAYMENT_STATUSES,
   POLICY_STATUSES,
   PRODUCT_VERSION_STATUSES,
+  RULE_SETTING_KEYS,
+  RULE_SETTING_STATES,
+  COMPARISON_TAXONOMY_CATEGORIES,
+  COMPARISON_TAXONOMY_STATUSES,
+  COMPARISON_VALUE_TYPES,
+  COMPARISON_DISPLAY_RULES,
   QUOTE_UNAVAILABILITY_REASONS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
@@ -64,6 +70,12 @@ export const evidenceKind = pgEnum('EvidenceKind', EVIDENCE_KINDS);
 export const evidenceReviewState = pgEnum('EvidenceReviewState', EVIDENCE_REVIEW_STATES);
 export const policyStatus = pgEnum('PolicyStatus', POLICY_STATUSES);
 export const productVersionStatus = pgEnum('ProductVersionStatus', PRODUCT_VERSION_STATUSES);
+export const ruleSettingKey = pgEnum('RuleSettingKey', RULE_SETTING_KEYS);
+export const ruleSettingState = pgEnum('RuleSettingState', RULE_SETTING_STATES);
+export const comparisonTaxonomyCategory = pgEnum('ComparisonTaxonomyCategory', COMPARISON_TAXONOMY_CATEGORIES);
+export const comparisonTaxonomyStatus = pgEnum('ComparisonTaxonomyStatus', COMPARISON_TAXONOMY_STATUSES);
+export const comparisonValueType = pgEnum('ComparisonValueType', COMPARISON_VALUE_TYPES);
+export const comparisonDisplayRule = pgEnum('ComparisonDisplayRule', COMPARISON_DISPLAY_RULES);
 export const paymentStatus = pgEnum('PaymentStatus', PAYMENT_STATUSES);
 export const paymentMethod = pgEnum('PaymentMethod', PAYMENT_METHODS);
 export const claimStatus = pgEnum('ClaimStatus', CLAIM_STATUSES);
@@ -520,6 +532,11 @@ export const insurerProductVersions = pgTable(
     inspectionRule: inspectionRule('inspectionRule').notNull(),
     inspectionTiming: inspectionTiming('inspectionTiming'),
     inspectionMethod: inspectionMethod('inspectionMethod'),
+    /** Rate and visibility are reviewed with every immutable product version. */
+    rateBps: integer('rateBps').notNull(),
+    showEstimate: boolean('showEstimate').notNull().default(false),
+    /** A product can choose any approved subset of the four platform terms. */
+    allowedDurations: coverageDuration('allowedDurations').array().notNull().default(sql`ARRAY['Q1', 'Q2', 'Q3', 'Q4']::"CoverageDuration"[]`),
     effectiveFrom: date('effectiveFrom', { mode: 'date' }).notNull(),
     effectiveUntil: date('effectiveUntil', { mode: 'date' }),
     createdByStaffId: uuid('createdByStaffId').notNull(),
@@ -552,6 +569,100 @@ export const insurerProductVersions = pgTable(
       sql`(${t.inspectionRule} = 'NOT_REQUIRED' AND ${t.inspectionTiming} IS NULL AND ${t.inspectionMethod} IS NULL)
         OR (${t.inspectionRule} <> 'NOT_REQUIRED' AND ${t.inspectionTiming} IS NOT NULL AND ${t.inspectionMethod} IS NOT NULL)`,
     ),
+    rateCheck('insurer_product_versions', t.rateBps),
+  ],
+);
+
+/**
+ * Configuration values vary by key, but their identity, timeframe and review
+ * state are relational. The domain validates the JSON payload per typed key.
+ */
+export const platformRuleVersions = pgTable(
+  'platform_rule_versions',
+  {
+    id: id(),
+    key: ruleSettingKey('key').notNull(),
+    versionNumber: integer('versionNumber').notNull(),
+    state: ruleSettingState('state').notNull().default('PROVISIONAL'),
+    value: jsonb('value').$type<Record<string, unknown>>().notNull(),
+    effectiveFrom: date('effectiveFrom', { mode: 'date' }).notNull(),
+    effectiveUntil: date('effectiveUntil', { mode: 'date' }),
+    createdByStaffId: uuid('createdByStaffId').notNull(),
+    confirmedByStaffId: uuid('confirmedByStaffId'),
+    confirmedAt: timestamptz('confirmedAt'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('platform_rule_versions_key_versionNumber_key').on(t.key, t.versionNumber),
+    index('platform_rule_versions_key_effectiveFrom_idx').on(t.key, t.effectiveFrom),
+    index('platform_rule_versions_state_effectiveFrom_idx').on(t.state, t.effectiveFrom),
+    fk('platform_rule_versions_createdByStaffId_fkey', [t.createdByStaffId], [staffUsers.id], 'restrict'),
+    fk('platform_rule_versions_confirmedByStaffId_fkey', [t.confirmedByStaffId], [staffUsers.id], 'restrict'),
+    check(
+      'platform_rule_versions_effective_window_check',
+      sql`${t.effectiveUntil} IS NULL OR ${t.effectiveUntil} >= ${t.effectiveFrom}`,
+    ),
+  ],
+);
+
+/** Platform-owned comparison vocabulary. Disabling preserves historic mappings. */
+export const comparisonTaxonomyItems = pgTable(
+  'comparison_taxonomy_items',
+  {
+    id: id(),
+    code: varchar('code', { length: 80 }).notNull(),
+    label: text('label').notNull(),
+    description: text('description'),
+    category: comparisonTaxonomyCategory('category').notNull(),
+    versionNumber: integer('versionNumber').notNull().default(1),
+    dataType: comparisonValueType('dataType').notNull().default('TEXT'),
+    unit: varchar('unit', { length: 80 }),
+    allowedValues: jsonb('allowedValues').$type<string[]>().notNull().default([]),
+    displayRule: comparisonDisplayRule('displayRule').notNull().default('SHOW_WHEN_PROVIDED'),
+    status: comparisonTaxonomyStatus('status').notNull().default('ACTIVE'),
+    displayOrder: integer('displayOrder').notNull().default(0),
+    createdByStaffId: uuid('createdByStaffId').notNull(),
+    updatedByStaffId: uuid('updatedByStaffId'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('comparison_taxonomy_items_code_key').on(t.code),
+    index('comparison_taxonomy_items_status_order_idx').on(t.status, t.displayOrder),
+    fk('comparison_taxonomy_items_createdByStaffId_fkey', [t.createdByStaffId], [staffUsers.id], 'restrict'),
+    fk('comparison_taxonomy_items_updatedByStaffId_fkey', [t.updatedByStaffId], [staffUsers.id], 'restrict'),
+  ],
+);
+
+/**
+ * A product version records the exact mapped comparison values its insurer
+ * submitted.  Editing a draft replaces its mappings; approved mappings are
+ * immutable with the rest of the version.
+ */
+export const productVersionComparisonItems = pgTable(
+  'product_version_comparison_items',
+  {
+    id: id(),
+    productVersionId: uuid('productVersionId').notNull(),
+    taxonomyItemId: uuid('taxonomyItemId').notNull(),
+    taxonomyVersion: integer('taxonomyVersion').notNull(),
+    taxonomyCode: varchar('taxonomyCode', { length: 80 }).notNull(),
+    taxonomyLabel: text('taxonomyLabel').notNull(),
+    taxonomyDescription: text('taxonomyDescription'),
+    taxonomyCategory: comparisonTaxonomyCategory('taxonomyCategory').notNull(),
+    taxonomyDataType: comparisonValueType('taxonomyDataType').notNull(),
+    taxonomyUnit: varchar('taxonomyUnit', { length: 80 }),
+    taxonomyAllowedValues: jsonb('taxonomyAllowedValues').$type<string[]>().notNull().default([]),
+    taxonomyDisplayRule: comparisonDisplayRule('taxonomyDisplayRule').notNull(),
+    included: boolean('included').notNull().default(true),
+    valueText: text('valueText'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('product_version_comparison_items_version_taxonomy_key').on(t.productVersionId, t.taxonomyItemId),
+    index('product_version_comparison_items_productVersionId_idx').on(t.productVersionId),
+    fk('product_version_comparison_items_productVersionId_fkey', [t.productVersionId], [insurerProductVersions.id], 'cascade'),
+    fk('product_version_comparison_items_taxonomyItemId_fkey', [t.taxonomyItemId], [comparisonTaxonomyItems.id], 'restrict'),
   ],
 );
 

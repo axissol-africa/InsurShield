@@ -24,6 +24,8 @@ const insurerIdForSession = () => state().staffSession?.insurerId
 // clients always receive this fee from the API configuration, never this value.
 const MOCK_RTSA_ANNIVERSARY_FEE = 500;
 const PRODUCT_STORAGE = 'insurshield.mock.products.v1';
+const RULE_SETTINGS_STORAGE = 'insurshield.mock.rule-settings.v1';
+const TAXONOMY_STORAGE = 'insurshield.mock.comparison-taxonomy.v1';
 const PRODUCT_COVER_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'];
 const INSPECTION_RULES = ['NOT_REQUIRED', 'OPTIONAL', 'REQUIRED'];
 const INSPECTION_TIMINGS = ['BEFORE_QUOTATION', 'BEFORE_PAYMENT', 'AFTER_PAYMENT'];
@@ -43,6 +45,33 @@ const productRecords = () => {
   }
 };
 const saveProducts = (records) => localStorage.setItem(PRODUCT_STORAGE, JSON.stringify(records));
+const ruleRecords = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(RULE_SETTINGS_STORAGE) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+};
+const saveRules = (records) => localStorage.setItem(RULE_SETTINGS_STORAGE, JSON.stringify(records));
+const defaultTaxonomy = () => [
+  { id: 'mock-taxonomy-third-party', code: 'THIRD_PARTY_DAMAGE', label: 'Third-party property damage', description: 'Damage to someone else’s property.', category: 'COVERAGE', versionNumber: 1, dataType: 'BOOLEAN', unit: null, allowedValues: [], displayRule: 'ALWAYS_SHOW', status: 'ACTIVE', displayOrder: 10 },
+  { id: 'mock-taxonomy-medical-limit', code: 'MEDICAL_LIMIT', label: 'Medical expenses limit', description: 'Maximum medical benefit per claim.', category: 'LIMIT', versionNumber: 1, dataType: 'CURRENCY', unit: 'ZMW', allowedValues: [], displayRule: 'SHOW_WHEN_PROVIDED', status: 'ACTIVE', displayOrder: 20 },
+  { id: 'mock-taxonomy-excess', code: 'EXCESS', label: 'Policy excess', description: 'Amount the customer contributes when claiming.', category: 'EXCESS', versionNumber: 1, dataType: 'CURRENCY', unit: 'ZMW', allowedValues: [], displayRule: 'ALWAYS_SHOW', status: 'ACTIVE', displayOrder: 30 },
+  { id: 'mock-taxonomy-roadside', code: 'ROADSIDE_ASSISTANCE', label: 'Roadside assistance', description: 'Help available after a roadside breakdown.', category: 'ADD_ON', versionNumber: 1, dataType: 'BOOLEAN', unit: null, allowedValues: [], displayRule: 'SHOW_WHEN_PROVIDED', status: 'ACTIVE', displayOrder: 40 },
+];
+const taxonomyRecords = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(TAXONOMY_STORAGE) || 'null');
+    if (Array.isArray(stored)) return stored;
+  } catch {
+    // Start clean below.
+  }
+  const initial = defaultTaxonomy().map((item) => ({ ...item, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+  localStorage.setItem(TAXONOMY_STORAGE, JSON.stringify(initial));
+  return initial;
+};
+const saveTaxonomy = (records) => localStorage.setItem(TAXONOMY_STORAGE, JSON.stringify(records));
 const productGuide = (guide = {}) => {
   const terms = { ...(guide || {}) };
   delete terms.coverType;
@@ -91,6 +120,10 @@ function seededProducts(s) {
           timing: inspectionRule === 'NOT_REQUIRED' ? null : insurer.timing?.replaceAll(' ', '_') || null,
           method: inspectionRule === 'NOT_REQUIRED' ? null : insurer.method?.replaceAll('-', '_') || null,
         },
+        rateBps: Math.round(Number(insurer.ratePercentage || 4.5) * 100),
+        showEstimate: true,
+        allowedDurations: ['Q1', 'Q2', 'Q3', 'Q4'],
+        comparisonItems: [],
         effectiveFrom: today(), effectiveUntil: null, submittedAt: createdAt, reviewedAt: createdAt,
         reviewComment: 'Initial prototype catalogue version.', withdrawnAt: null, withdrawalReason: null,
         createdAt, updatedAt: createdAt,
@@ -136,6 +169,10 @@ const assertProductInput = (input, existing = {}) => {
       timing: input.inspectionRule === 'NOT_REQUIRED' ? null : input.inspectionTiming ?? existing.inspection?.timing ?? null,
       method: input.inspectionRule === 'NOT_REQUIRED' ? null : input.inspectionMethod ?? existing.inspection?.method ?? null,
     },
+    rateBps: input.rateBps ?? existing.rateBps ?? 450,
+    showEstimate: input.showEstimate ?? existing.showEstimate ?? false,
+    allowedDurations: input.allowedDurations ?? existing.allowedDurations ?? ['Q1', 'Q2', 'Q3', 'Q4'],
+    comparisonItems: input.comparisonItems === undefined ? existing.comparisonItems || [] : normaliseComparisonItems(input.comparisonItems),
     effectiveFrom: input.effectiveFrom ?? existing.effectiveFrom,
     effectiveUntil: input.effectiveUntil === undefined ? existing.effectiveUntil ?? null : input.effectiveUntil || null,
   };
@@ -149,11 +186,34 @@ const assertProductInput = (input, existing = {}) => {
   if (unknownGuideField) throw new Error(`“${unknownGuideField}” is not a supported cover-guide field.`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(next.effectiveFrom || '')) throw new Error('Choose an effective-from date.');
   if (next.effectiveUntil && (!/^\d{4}-\d{2}-\d{2}$/.test(next.effectiveUntil) || next.effectiveUntil < next.effectiveFrom)) throw new Error('The end date cannot be before the start date.');
+  if (!Number.isInteger(next.rateBps) || next.rateBps < 0 || next.rateBps > 10_000) throw new Error('Enter an annual rate from 0% to 100%.');
+  if (!Array.isArray(next.allowedDurations) || next.allowedDurations.length === 0 || next.allowedDurations.some((duration) => !['Q1', 'Q2', 'Q3', 'Q4'].includes(duration))) throw new Error('Choose at least one available cover period.');
   return { ...next, name: next.name.trim() };
+};
+const normaliseComparisonItems = (items) => {
+  if (!Array.isArray(items)) throw new Error('Comparison mappings must be a list.');
+  const active = taxonomyRecords().filter((item) => item.status === 'ACTIVE');
+  const byId = new Map(active.map((item) => [item.id, item]));
+  const seen = new Set();
+  return items.map((entry) => {
+    const term = byId.get(entry?.taxonomyItemId);
+    if (!term || seen.has(term.id)) throw new Error('Each comparison mapping must use an active platform term once.');
+    seen.add(term.id);
+    const valueText = String(entry.valueText || '').trim() || null;
+    if ((term.dataType === 'NUMBER' || term.dataType === 'CURRENCY') && valueText && !/^\d+(?:\.\d{1,2})?$/.test(valueText)) throw new Error(`${term.label} needs a numeric value.`);
+    if (term.dataType === 'BOOLEAN' && valueText && !/^(yes|no|true|false)$/i.test(valueText)) throw new Error(`${term.label} must be Yes or No.`);
+    if (term.dataType === 'LIST' && valueText && !term.allowedValues.includes(valueText)) throw new Error(`${term.label} must use one of the allowed values.`);
+    return { taxonomyItemId: term.id, taxonomyVersion: term.versionNumber, code: term.code, label: term.label, description: term.description, category: term.category, dataType: term.dataType, unit: term.unit, allowedValues: term.allowedValues, displayRule: term.displayRule, included: entry.included !== false, valueText };
+  });
 };
 const completeProductGuide = (guide) => [
   'planName', 'summary', 'coveredItems', 'exclusions', 'notifyWithinDays', 'howToNotify', 'documentsRequired', 'claimsContact', 'settlementTime', 'territorialLimit', 'ncdAccepted', 'quoteValidityDays',
 ].every((key) => Array.isArray(guide?.[key]) ? guide[key].some(Boolean) : guide?.[key] !== '' && guide?.[key] !== undefined && guide?.[key] !== null);
+const hasCompleteComparisonMappings = (version) => {
+  const activeIds = taxonomyRecords().filter((item) => item.status === 'ACTIVE').map((item) => item.id);
+  const mappedIds = new Set((version.comparisonItems || []).map((item) => item.taxonomyItemId));
+  return activeIds.every((id) => mappedIds.has(id));
+};
 
 // Versioned separately from the catalogue; only allowlisted proposal data is stored.
 const APPROVAL_STORAGE = 'insurshield.mock.approvals.v1';
@@ -429,6 +489,10 @@ export const products = {
       assertInsurerEditor(s);
       return ownProducts(s).map(toProduct);
     }),
+    comparisonTaxonomy: () => call((s) => {
+      assertInsurerEditor(s);
+      return taxonomyRecords().filter((item) => item.status === 'ACTIVE').sort((first, second) => first.displayOrder - second.displayOrder);
+    }),
     get: (productId) => call((s) => {
       assertInsurerEditor(s);
       const product = ownProducts(s).find((entry) => entry.id === productId);
@@ -497,6 +561,7 @@ export const products = {
       if (!product || product.insurerId !== insurerIdForSession() || !version) throw new Error('Product version was not found.');
       if (version.status !== 'DRAFT') throw new Error('Only a draft product version can be submitted for review.');
       if (!completeProductGuide(version.coverGuide)) throw new Error('Complete the cover guide before submitting this product for review.');
+      if (!hasCompleteComparisonMappings(version)) throw new Error('Map every active comparison term before submitting this product for review.');
       const now = new Date().toISOString();
       const submitted = { ...version, status: 'SUBMITTED', submittedAt: now, updatedAt: now };
       saveProducts(records.map((entry) => entry.id === productId ? { ...entry, updatedAt: now, versions: entry.versions.map((item) => item.id === versionId ? submitted : item) } : entry));
@@ -565,10 +630,99 @@ export const products = {
         version: {
           id: version.id, number: version.versionNumber, name: version.name, coverType: version.coverType,
           coverGuide: version.coverGuide, inspection: version.inspection,
+          showEstimate: Boolean(version.showEstimate), allowedDurations: version.allowedDurations || ['Q1', 'Q2', 'Q3', 'Q4'],
+          comparisonItems: version.comparisonItems || [],
           effectiveFrom: version.effectiveFrom, effectiveUntil: version.effectiveUntil,
         },
       };
     })),
+  estimate: (productId, versionId, input = {}) => call((s) => {
+    const { product, version } = versionFor(s, productId, versionId);
+    const insurer = product && s.insurersList.find((entry) => entry.id === product.insurerId);
+    if (!product || !version || version.status !== 'APPROVED' || insurer?.status !== 'Active') throw new Error('Product version was not found.');
+    if (!version.showEstimate) throw new Error('This insurer has not enabled an estimate for this product.');
+    if (!version.allowedDurations?.includes(input.coverageDuration)) throw new Error('This product is not offered for the selected cover period.');
+    const value = Number(input.vehicleValue);
+    if (!Number.isFinite(value) || value <= 0) throw new Error('Enter a valid vehicle value for an estimate.');
+    const loading = ({
+      Individual: 1, 'Individual (Motorcycles)': 1.05, 'Commercial (Motorcycles)': 1.18,
+      'Commercial (Cars for Hire)': 1.2, 'Commercial (Small Public Buses)': 1.25,
+      'Commercial (Trucks, Horses & Trailers)': 1.22, 'Commercial (Taxis & Yangos)': 1.28,
+    })[input.vehicleUsage] || 1;
+    const quarters = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 }[input.coverageDuration];
+    const indicative = value * ((version.rateBps || 0) / 10_000) * loading * (quarters / 4);
+    const floor = value * 0.04 * (quarters / 4);
+    const floorApplied = indicative < floor;
+    return {
+      insurer: { id: insurer.id, name: insurer.name, tradingName: insurer.tradingName || null, logoUrl: insurer.logoUrl || null },
+      product: { id: product.id, code: product.code, name: version.name, coverType: version.coverType },
+      versionId: version.id, coverageDuration: input.coverageDuration, vehicleValue: value, vehicleUsage: input.vehicleUsage,
+      estimatedPremium: Number(Math.max(indicative, floor).toFixed(2)), currency: 'ZMW', floorApplied, provisionalInputs: true,
+      notice: 'This is an estimate. The insurer confirms the final premium after reviewing your request.',
+    };
+  }),
+};
+
+export const settings = {
+  rules: {
+    list: () => call((s) => { approvalActor(s); return ruleRecords().sort((first, second) => `${first.key}:${second.versionNumber}`.localeCompare(`${second.key}:${first.versionNumber}`)); }),
+    history: (key) => call((s) => { approvalActor(s); return ruleRecords().filter((item) => item.key === key).sort((first, second) => second.versionNumber - first.versionNumber); }),
+    create: (key, input = {}) => call((s) => {
+      const actor = approvalActor(s);
+      if (key === 'PIA_FLOOR') throw new Error('Use the PIA rate approval process for a minimum-rate change.');
+      if (!input.value || typeof input.value !== 'object' || !/^\d{4}-\d{2}-\d{2}$/.test(input.effectiveFrom || '')) throw new Error('Enter a valid rule value and effective date.');
+      const records = ruleRecords();
+      const versionNumber = Math.max(0, ...records.filter((item) => item.key === key).map((item) => item.versionNumber)) + 1;
+      const createdAt = new Date().toISOString();
+      const record = { id: newReference('RULE'), key, versionNumber, state: 'PROVISIONAL', value: input.value, effectiveFrom: input.effectiveFrom, effectiveUntil: input.effectiveUntil || null, createdByStaffId: actor.id, confirmedByStaffId: null, confirmedAt: null, createdAt };
+      saveRules([...records, record]);
+      return record;
+    }),
+    confirm: (key, id) => call((s) => {
+      const actor = approvalActor(s);
+      if (key === 'PIA_FLOOR') throw new Error('Use the PIA rate approval process for a minimum-rate change.');
+      const records = ruleRecords();
+      const candidate = records.find((item) => item.id === id && item.key === key);
+      if (!candidate || candidate.state !== 'PROVISIONAL') throw new Error('Only a provisional rule version can be confirmed.');
+      const versionNumber = Math.max(0, ...records.filter((item) => item.key === key).map((item) => item.versionNumber)) + 1;
+      const record = { ...candidate, id: newReference('RULE'), versionNumber, state: 'CONFIRMED', confirmedByStaffId: actor.id, confirmedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
+      saveRules([...records, record]);
+      return record;
+    }),
+  },
+  taxonomy: {
+    list: () => call((s) => { approvalActor(s); return taxonomyRecords().sort((first, second) => first.displayOrder - second.displayOrder); }),
+    create: (input = {}) => call((s) => {
+      approvalActor(s);
+      const code = String(input.code || '').trim().toUpperCase();
+      const label = String(input.label || '').trim();
+      const dataType = String(input.dataType || 'TEXT');
+      const allowedValues = Array.isArray(input.allowedValues) ? input.allowedValues.map((value) => String(value).trim()).filter(Boolean) : [];
+      if (!/^[A-Z][A-Z0-9_]{1,79}$/.test(code) || !label) throw new Error('Enter a valid comparison code and label.');
+      if (!['TEXT', 'NUMBER', 'BOOLEAN', 'CURRENCY', 'LIST'].includes(dataType)) throw new Error('Choose a valid comparison value type.');
+      if (dataType === 'LIST' && !allowedValues.length) throw new Error('Add allowed values for a list comparison field.');
+      if (dataType !== 'LIST' && allowedValues.length) throw new Error('Allowed values are only used for a list comparison field.');
+      const records = taxonomyRecords();
+      if (records.some((item) => item.code === code)) throw new Error('That comparison code already exists.');
+      const timestamp = new Date().toISOString();
+      const item = { id: newReference('TERM'), code, label, description: String(input.description || '').trim() || null, category: input.category || 'COVERAGE', versionNumber: 1, dataType, unit: String(input.unit || '').trim() || null, allowedValues, displayRule: input.displayRule || 'SHOW_WHEN_PROVIDED', status: 'ACTIVE', displayOrder: Number.isInteger(input.displayOrder) ? input.displayOrder : 0, createdAt: timestamp, updatedAt: timestamp };
+      saveTaxonomy([...records, item]);
+      return item;
+    }),
+    update: (id, input = {}) => call((s) => {
+      approvalActor(s);
+      const records = taxonomyRecords();
+      const item = records.find((entry) => entry.id === id);
+      if (!item) throw new Error('Comparison taxonomy item was not found.');
+      const allowedValues = input.allowedValues === undefined ? item.allowedValues : input.allowedValues.map((value) => String(value).trim()).filter(Boolean);
+      const dataType = input.dataType || item.dataType;
+      if (dataType === 'LIST' && !allowedValues.length) throw new Error('Add allowed values for a list comparison field.');
+      if (dataType !== 'LIST' && allowedValues.length) throw new Error('Allowed values are only used for a list comparison field.');
+      const updated = { ...item, ...input, unit: input.unit === undefined ? item.unit : String(input.unit || '').trim() || null, allowedValues, versionNumber: item.versionNumber + 1, updatedAt: new Date().toISOString() };
+      saveTaxonomy(records.map((entry) => entry.id === id ? updated : entry));
+      return updated;
+    }),
+  },
 };
 
 export const staff = {

@@ -183,6 +183,13 @@
       "when": 1794579325301,
       "tag": "0025_dark_gunslinger",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794662263154,
+      "tag": "0026_peaceful_thundra",
+      "breakpoints": true
     }
   ]
 }
