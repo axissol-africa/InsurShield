@@ -119,6 +119,8 @@ Error messages name a variable but never print its value.
 | `TRUST_PROXY_HOPS` | yes | Exact number of trusted proxies in front of the API: `0` locally, otherwise set for the deployed path |
 | `AUTH_RATE_LIMIT` | no (`on`) | Identity-route rate limiting; `off` is accepted only in the test environment |
 | `RTSA_ANNIVERSARY_FEE_NGWEE` | yes | RTSA anniversary fee in ngwee, added only to an aligned quote; set `50000` for ZMW 500.00 locally |
+| `INTEGRATION_SECRETS_KEY` | when storing a direct insurer API secret | Base64-encoded 32-byte server-only AES key; keep it in the deployment secret manager and never expose it to the browser |
+| `INTEGRATION_TIMEOUT_MS` | no (`10000`) | Maximum wait in milliseconds for one outbound insurer API call before retry handling takes over |
 | `S3_ENDPOINT` | no | Object storage endpoint (MinIO locally); unset for AWS S3 |
 | `S3_FORCE_PATH_STYLE` | no (`false`) | `true` for MinIO |
 | `S3_REGION` | no (`us-east-1`) | Bucket region |

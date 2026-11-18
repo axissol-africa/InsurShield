@@ -1,0 +1,247 @@
+import { createSign, generateKeyPairSync, randomUUID } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
+import { canonicalJson } from '../src/common/json/canonical-json.js';
+import { IntegrationSecretsService } from '../src/integrations/integration-secrets.service.js';
+import { INTEGRATION_DELIVERY_JOB, IntegrationsService } from '../src/integrations/integrations.service.js';
+import type { JobRow } from '../src/jobs/jobs.repository.js';
+import { auditLogs, integrationDeliveries, insurerIntegrations, jobs } from '../src/db/schema.js';
+import { buildInsurer, buildStaffUser } from './builders.js';
+import { startApp, type TestApp } from './helpers.js';
+import { signIn } from './sessions.js';
+
+const SECRET_KEY = Buffer.alloc(32, 7).toString('base64');
+
+describe('the integration platform', () => {
+  let testApp: TestApp;
+  let integrations: IntegrationsService;
+  let secrets: IntegrationSecretsService;
+
+  beforeAll(async () => {
+    testApp = await startApp({ env: { INTEGRATION_SECRETS_KEY: SECRET_KEY } });
+    integrations = testApp.app.get(IntegrationsService);
+    secrets = testApp.app.get(IntegrationSecretsService);
+  });
+
+  afterAll(async () => {
+    await testApp.close();
+  });
+
+  async function queueRtsa(referenceId = randomUUID()) {
+    return testApp.db.transaction((tx) =>
+      integrations.queue(tx, {
+        targetKind: 'RTSA',
+        kind: 'VEHICLE_LOOKUP',
+        referenceId,
+        endpoint: 'https://registry.example/vehicles',
+        requestPayload: { plateNumber: 'ABC 1234' },
+      }),
+    );
+  }
+
+  /**
+   * Runs this test's exact delivery handler. The shared test database can hold
+   * unrelated jobs from other parallel spec files, so a global runner tick
+   * would make an integration assertion depend on another suite's queue.
+   */
+  async function processDelivery(deliveryId: string) {
+    const [job] = await testApp.db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.kind, INTEGRATION_DELIVERY_JOB), eq(jobs.key, deliveryId)));
+    if (!job) throw new Error('The queued integration delivery had no job.');
+    await (integrations as unknown as { processJob: (queued: JobRow) => Promise<void> }).processJob(job);
+  }
+
+  it('creates one durable delivery and one job when the same business fact is queued twice', async () => {
+    const referenceId = randomUUID();
+    const first = await queueRtsa(referenceId);
+    const second = await queueRtsa(referenceId);
+
+    expect(second.id).toBe(first.id);
+    const deliveries = await testApp.db
+      .select()
+      .from(integrationDeliveries)
+      .where(eq(integrationDeliveries.id, first.id));
+    const deliveryJobs = await testApp.db.select().from(jobs).where(eq(jobs.key, first.id));
+    expect(deliveries).toHaveLength(1);
+    expect(deliveryJobs).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({ targetKind: 'RTSA', attempt: 0, status: 'PENDING' });
+  });
+
+  it('turns an unavailable provider into a visible exception and records a one-time manual fallback', async () => {
+    const queued = await queueRtsa();
+
+    await processDelivery(queued.id);
+    const [failed] = await testApp.db.select().from(integrationDeliveries).where(eq(integrationDeliveries.id, queued.id));
+    expect(failed).toMatchObject({ status: 'FAILED', attempt: 1 });
+    expect(failed.error).toContain('No live adapter');
+
+    const operator = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+    const completed = await integrations.resolveManually(queued.id, 'Completed through the RTSA office process.', {
+      kind: 'staff',
+      id: operator.id,
+      email: operator.email,
+      role: operator.role,
+      insurerId: operator.insurerId,
+    });
+    expect(completed.status).toBe('MANUAL_FALLBACK');
+    await expect(
+      integrations.resolveManually(queued.id, 'Trying to resolve the same item again.', {
+        kind: 'staff',
+        id: operator.id,
+        email: operator.email,
+        role: operator.role,
+        insurerId: operator.insurerId,
+      }),
+    ).rejects.toMatchObject({ code: 'INTEGRATION_DELIVERY_NOT_ACTIONABLE' });
+
+    const audit = await testApp.db
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.entityId, queued.id));
+    expect(audit.some((entry) => entry.action === 'integration_delivery.manual_fallback')).toBe(true);
+  });
+
+  it('encrypts a write-only insurer credential and never returns it from onboarding', async () => {
+    const { insurer } = await buildInsurer(testApp.db);
+    const admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+    const clientSecret = 'insurer-shared-secret-for-sandbox';
+
+    const response = await testApp.http
+      .put(`/api/v1/insurers/${insurer.id}/integration`)
+      .set(await signIn(testApp.http, admin))
+      .send({
+        apiBaseUrl: 'https://api.example.invalid',
+        publicSigningKey: 'not-used-for-this-test',
+        clientId: `client-${randomUUID()}`,
+        clientSecret,
+        sandboxMode: true,
+      })
+      .expect(200);
+
+    expect(JSON.stringify(response.body)).not.toContain(clientSecret);
+    const [stored] = await testApp.db
+      .select()
+      .from(insurerIntegrations)
+      .where(eq(insurerIntegrations.insurerId, insurer.id));
+    expect(stored.clientSecretEncrypted).not.toBe(clientSecret);
+    expect(secrets.decrypt(stored.clientSecretEncrypted!)).toBe(clientSecret);
+    const parts = stored.clientSecretEncrypted!.split('.');
+    const ciphertext = Buffer.from(parts[2], 'base64url');
+    ciphertext[0] ^= 1;
+    parts[2] = ciphertext.toString('base64url');
+    expect(() => secrets.decrypt(parts.join('.'))).toThrow(/stored integration credential cannot be used/i);
+  });
+
+  it('fails a private provider endpoint before making any outbound request, including in sandbox mode', async () => {
+    const { insurer } = await buildInsurer(testApp.db);
+    await testApp.db.insert(insurerIntegrations).values({
+      insurerId: insurer.id,
+      apiBaseUrl: 'https://api.example.invalid',
+      publicSigningKey: 'not-used-for-this-test',
+      clientId: `sandbox-${randomUUID()}`,
+      clientSecretEncrypted: secrets.encrypt('sandbox-insurer-secret'),
+      sandboxMode: true,
+    });
+    const queued = await testApp.db.transaction((tx) =>
+      integrations.queue(tx, {
+        insurerId: insurer.id,
+        targetKind: 'INSURER_API',
+        kind: 'QUOTE_REQUEST',
+        referenceId: randomUUID(),
+        endpoint: 'http://127.0.0.1:65535/quote-request',
+        requestPayload: { quoteRequestId: 'QR-safe-endpoint-test' },
+      }),
+    );
+
+    await processDelivery(queued.id);
+    const [failed] = await testApp.db.select().from(integrationDeliveries).where(eq(integrationDeliveries.id, queued.id));
+    expect(failed).toMatchObject({ status: 'FAILED' });
+    expect(failed.error).toContain('publicly routable');
+  });
+
+  it('accepts one valid signed callback, replays it safely, and refuses tampering or expiry', async () => {
+    const { insurer } = await buildInsurer(testApp.db);
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    await testApp.db.insert(insurerIntegrations).values({
+      insurerId: insurer.id,
+      apiBaseUrl: 'https://api.example.invalid',
+      publicSigningKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+      clientId: `callback-${randomUUID()}`,
+    });
+    const body = { insurerReference: 'INS-42', requestId: 'QR-42' };
+    const eventId = randomUUID();
+    const timestamp = String(Math.floor(Date.now() / 1_000));
+    const signature = sign(keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), timestamp, body);
+    const request = () =>
+      testApp.http
+        .post(`/api/v1/integrations/callbacks/insurers/${insurer.id}`)
+        .set({
+          'X-InsurShield-Event-Id': eventId,
+          'X-InsurShield-Event-Type': 'QUOTE_READY',
+          'X-InsurShield-Timestamp': timestamp,
+          'X-InsurShield-Signature': signature,
+        })
+        .send(body);
+
+    await request().expect(202).expect(({ body: responseBody }) => expect(responseBody).toEqual({ accepted: true, replayed: false }));
+    await request().expect(202).expect(({ body: responseBody }) => expect(responseBody).toEqual({ accepted: true, replayed: true }));
+    await testApp.http
+      .post(`/api/v1/integrations/callbacks/insurers/${insurer.id}`)
+      .set({
+        'X-InsurShield-Event-Id': eventId,
+        'X-InsurShield-Event-Type': 'QUOTE_READY',
+        'X-InsurShield-Timestamp': timestamp,
+        'X-InsurShield-Signature': sign(keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), timestamp, { ...body, requestId: 'QR-43' }),
+      })
+      .send({ ...body, requestId: 'QR-43' })
+      .expect(409);
+    const stale = String(Math.floor(Date.now() / 1_000) - 600);
+    await testApp.http
+      .post(`/api/v1/integrations/callbacks/insurers/${insurer.id}`)
+      .set({
+        'X-InsurShield-Event-Id': randomUUID(),
+        'X-InsurShield-Event-Type': 'QUOTE_READY',
+        'X-InsurShield-Timestamp': stale,
+        'X-InsurShield-Signature': sign(keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), stale, body),
+      })
+      .send(body)
+      .expect(401)
+      .expect(({ body: responseBody }) => expect(responseBody.code).toBe('STALE_CALLBACK'));
+  });
+
+  it('shows an insurer only its own safe delivery summaries', async () => {
+    const first = await buildInsurer(testApp.db, { staff: { role: 'INSURER_ADMIN' } });
+    const second = await buildInsurer(testApp.db, { staff: { role: 'INSURER_ADMIN' } });
+    const delivery = await testApp.db.transaction((tx) =>
+      integrations.queue(tx, {
+        insurerId: first.insurer.id,
+        targetKind: 'INSURER_API',
+        kind: 'QUOTE_REQUEST',
+        referenceId: randomUUID(),
+        endpoint: 'https://api.example.invalid/quotes',
+        requestPayload: { customerPhone: '+260000000000' },
+      }),
+    );
+
+    const own = await testApp.http
+      .get('/api/v1/insurer/integrations/deliveries')
+      .set(await signIn(testApp.http, first.staff))
+      .expect(200);
+    expect(own.body.map((row: { id: string }) => row.id)).toContain(delivery.id);
+    expect(JSON.stringify(own.body)).not.toContain('+260000000000');
+
+    const other = await testApp.http
+      .get('/api/v1/insurer/integrations/deliveries')
+      .set(await signIn(testApp.http, second.staff))
+      .expect(200);
+    expect(other.body.map((row: { id: string }) => row.id)).not.toContain(delivery.id);
+  });
+});
+
+function sign(privateKey: string, timestamp: string, body: Record<string, unknown>): string {
+  const signer = createSign('sha256');
+  signer.update(`${timestamp}.${canonicalJson(body)}`);
+  signer.end();
+  return signer.sign(privateKey).toString('base64url');
+}

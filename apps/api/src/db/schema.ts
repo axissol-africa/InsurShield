@@ -37,6 +37,7 @@ import {
   INSPECTION_RULES,
   INSPECTION_STATUSES,
   INSPECTION_TIMINGS,
+  INTEGRATION_TARGET_KINDS,
   INSURANCE_TYPES,
   INSURER_STATUSES,
   NCD_STATUSES,
@@ -91,6 +92,7 @@ export const documentRetentionClass = pgEnum('DocumentRetentionClass', DOCUMENT_
 export const deliveryStatus = pgEnum('DeliveryStatus', DELIVERY_STATUSES);
 export const quoteUnavailabilityReason = pgEnum('QuoteUnavailabilityReason', QUOTE_UNAVAILABILITY_REASONS);
 export const deliveryKind = pgEnum('DeliveryKind', DELIVERY_KINDS);
+export const integrationTargetKind = pgEnum('IntegrationTargetKind', INTEGRATION_TARGET_KINDS);
 export const actorType = pgEnum('ActorType', ACTOR_TYPES);
 export const jobStatus = pgEnum('JobStatus', JOB_STATUSES);
 export const notificationChannel = pgEnum('NotificationChannel', NOTIFICATION_CHANNELS);
@@ -1253,16 +1255,32 @@ export const integrationDeliveries = pgTable(
   'integration_deliveries',
   {
     id: id(),
-    insurerId: uuid('insurerId').notNull(),
+    /** Insurer deliveries own an insurer; RTSA and payment deliveries do not. */
+    insurerId: uuid('insurerId'),
+    targetKind: integrationTargetKind('targetKind').notNull(),
     kind: deliveryKind('kind').notNull(),
     referenceId: text('referenceId').notNull(),
+    /** Stable per business fact, including its target identity; retries reuse it. */
+    idempotencyKey: varchar('idempotencyKey', { length: 200 }).notNull(),
+    /** Detects an accidental attempt to reuse a business fact with new data. */
+    requestHash: varchar('requestHash', { length: 64 }).notNull(),
+    correlationId: text('correlationId'),
     endpoint: text('endpoint').notNull(),
-    attempt: integer('attempt').notNull().default(1),
+    /** External attempts, not page refreshes or job claims. */
+    attempt: integer('attempt').notNull().default(0),
+    maxAttempts: integer('maxAttempts').notNull().default(5),
     status: deliveryStatus('status').notNull().default('PENDING'),
     requestPayload: jsonb('requestPayload').notNull(),
     responseStatus: integer('responseStatus'),
+    /** Allowlisted acknowledgement facts only; never a raw provider response. */
     responseBody: jsonb('responseBody'),
     error: text('error'),
+    lastAttemptAt: timestamptz('lastAttemptAt'),
+    deliveredAt: timestamptz('deliveredAt'),
+    acknowledgedAt: timestamptz('acknowledgedAt'),
+    resolvedAt: timestamptz('resolvedAt'),
+    resolvedByStaffId: uuid('resolvedByStaffId'),
+    resolutionNote: text('resolutionNote'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1271,8 +1289,33 @@ export const integrationDeliveries = pgTable(
       t.kind,
       t.referenceId,
     ),
+    uniqueIndex('integration_deliveries_idempotencyKey_key').on(t.idempotencyKey),
     index('integration_deliveries_status_createdAt_idx').on(t.status, t.createdAt),
+    index('integration_deliveries_targetKind_status_createdAt_idx').on(t.targetKind, t.status, t.createdAt),
     fk('integration_deliveries_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
+    fk('integration_deliveries_resolvedByStaffId_fkey', [t.resolvedByStaffId], [staffUsers.id], 'restrict'),
+  ],
+);
+
+/**
+ * A verified callback is recorded without retaining its potentially sensitive
+ * body. Future event-specific handlers use this receipt for replay protection.
+ */
+export const integrationCallbacks = pgTable(
+  'integration_callbacks',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    eventId: varchar('eventId', { length: 200 }).notNull(),
+    eventType: varchar('eventType', { length: 120 }).notNull(),
+    bodyHash: varchar('bodyHash', { length: 64 }).notNull(),
+    correlationId: text('correlationId'),
+    receivedAt: createdAt('receivedAt'),
+  },
+  (t) => [
+    uniqueIndex('integration_callbacks_insurerId_eventId_key').on(t.insurerId, t.eventId),
+    index('integration_callbacks_insurerId_receivedAt_idx').on(t.insurerId, t.receivedAt),
+    fk('integration_callbacks_insurerId_fkey', [t.insurerId], [insurers.id], 'cascade'),
   ],
 );
 

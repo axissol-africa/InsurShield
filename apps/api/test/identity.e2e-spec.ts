@@ -1052,7 +1052,7 @@ describe('the identity routes', () => {
         .get('/api/v1/vehicles/lookup?plate=ABC1234')
         .set(sessionB)
         .set('X-InsurShield-User', 'anonymous')
-        .expect(200);
+        .expect(503);
     });
 
     it('answers 409 for anonymous on a route that needs a session', async () => {

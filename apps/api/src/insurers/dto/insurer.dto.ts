@@ -258,6 +258,8 @@ export class InsurerIntegrationDto {
   @IsOptional() @IsUrl({ require_tld: false }) quoteCallbackUrl?: string;
   @IsOptional() @IsUrl({ require_tld: false }) claimsCallbackUrl?: string;
   @IsOptional() @IsUrl({ require_tld: false }) policyCallbackUrl?: string;
+  /** Write-only; encrypted server-side and never returned to the browser. */
+  @IsOptional() @IsString() @MinLength(16) @MaxLength(4096) clientSecret?: string;
   /** A model is captured in sandbox until somebody says otherwise. */
   @IsOptional() @IsBoolean() sandboxMode?: boolean;
 }

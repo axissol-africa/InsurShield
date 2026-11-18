@@ -12,6 +12,7 @@ import { Needs } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { ApiRateLimit, API_LIMITS } from '../common/rate-limit/api-rate-limit.guard.js';
+import { IntegrationsService } from '../integrations/integrations.service.js';
 
 /**
  * The insurer portal.
@@ -25,6 +26,7 @@ export class InsurerPortalController {
   constructor(
     private readonly portal: InsurerPortalService,
     private readonly insurers: InsurersService,
+    private readonly integrations: IntegrationsService,
   ) {}
 
   // ── This insurer ────────────────────────────────────────────────
@@ -38,6 +40,14 @@ export class InsurerPortalController {
   @Get('profile')
   profile(@CurrentUser() principal: Principal) {
     return this.insurers.profile(this.portal.staffOf(principal));
+  }
+
+  /** Technical status for this insurer only; payloads and secrets never leave the API. */
+  @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:integration:read')
+  @Get('integrations/deliveries')
+  integrationDeliveries(@CurrentUser() principal: Principal) {
+    return this.integrations.listForInsurer(this.portal.staffOf(principal).insurerId!);
   }
 
   // ── Quote requests ──────────────────────────────────────────────

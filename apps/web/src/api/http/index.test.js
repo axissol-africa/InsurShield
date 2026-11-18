@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers, products, settings } from './index';
+import { account, admin, auth, insurers, integrations, products, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -96,5 +96,17 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.get).toHaveBeenCalledWith('/admin/settings/comparison-taxonomy');
     expect(transport.post).toHaveBeenCalledWith('/admin/settings/comparison-taxonomy', { code: 'EXCESS', label: 'Excess', category: 'EXCESS', dataType: 'CURRENCY' });
     expect(transport.patch).toHaveBeenCalledWith('/admin/settings/comparison-taxonomy/term-1', { status: 'DISABLED' });
+  });
+
+  it('loads safe integration delivery summaries and records a manual fallback', () => {
+    integrations.list();
+    integrations.listForInsurer();
+    integrations.manualFallback('delivery-1', 'Confirmed through the insurer operations desk.');
+
+    expect(transport.get).toHaveBeenCalledWith('/integrations/deliveries');
+    expect(transport.get).toHaveBeenCalledWith('/insurer/integrations/deliveries');
+    expect(transport.post).toHaveBeenCalledWith('/integrations/deliveries/delivery-1/manual-fallback', {
+      note: 'Confirmed through the insurer operations desk.',
+    });
   });
 });

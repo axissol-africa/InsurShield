@@ -11,6 +11,7 @@ vi.mock('@/config/env', () => ({ env: { apiMode: 'mock', mockLatencyMs: 0 } }));
 vi.mock('@/api', () => ({
   api: {
     admin: { auditLogs: vi.fn() },
+    integrations: { list: vi.fn().mockResolvedValue([]), manualFallback: vi.fn() },
     insurers: {
       list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn(), remove: vi.fn(), restore: vi.fn(),
     },
@@ -107,5 +108,19 @@ describe('deleted insurer controls', () => {
     expect(screen.getByRole('button', { name: 'Edit rate for Active Assurance' })).toBeVisible();
     expect(useStore.getState().insurersList[0].status).toBe('Active');
     expect(screen.getByRole('status')).toHaveTextContent('sent for independent approval');
+  });
+});
+
+describe('integration operations navigation', () => {
+  it('opens the administrator delivery operations view without exposing a provider request', async () => {
+    render(<AdminDashboard />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+
+    // The dashboard view fades in through Framer Motion; in jsdom its initial
+    // opacity remains at zero, so assert the routed screen rather than CSS.
+    expect(await screen.findByRole('heading', { name: 'Integration operations' })).toBeInTheDocument();
+    expect(api.integrations.list).toHaveBeenCalledOnce();
+    expect(screen.getByText(/Provider endpoints, credentials and request or callback contents are never shown here/)).toBeInTheDocument();
   });
 });

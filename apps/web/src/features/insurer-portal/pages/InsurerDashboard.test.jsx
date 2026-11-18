@@ -15,6 +15,7 @@ vi.mock('@/api', () => ({
     quotes: { reply: vi.fn(), extend: vi.fn() },
     policies: { issueCertificate: vi.fn() },
     insurers: { update: vi.fn() },
+    integrations: { listForInsurer: vi.fn().mockResolvedValue([]) },
   },
 }));
 vi.mock('@/api/sync', () => ({ hydrateInsurerPortal: vi.fn().mockResolvedValue(undefined) }));
@@ -95,6 +96,14 @@ describe('quote screen', () => {
     open('/insurer');
 
     expect(screen.getByRole('link', { name: /Staff and teams/i })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Integration activity/i })).toBeVisible();
+  });
+
+  it('keeps integration activity out of the view for non-administrator insurer staff', () => {
+    useStore.setState({ staffSession: { role: 'insurer', staffRole: 'INSURER_USER', name: INSURER } });
+    open('/insurer');
+
+    expect(screen.queryByRole('link', { name: /Integration activity/i })).not.toBeInTheDocument();
   });
 
   it('opens from the queue at its own address and returns to the overview once the quote is sent', async () => {

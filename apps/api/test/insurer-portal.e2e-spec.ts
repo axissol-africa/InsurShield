@@ -158,6 +158,9 @@ describe('insurer portal', () => {
   const post = async (insurer: BuiltInsurer, path: string, body: Record<string, unknown> = {}) =>
     testApp.http.post(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff)).send(body);
 
+  const postAs = (headers: Awaited<ReturnType<typeof asStaff>>, path: string, body: Record<string, unknown> = {}) =>
+    testApp.http.post(`/api/v1/insurer/${path}`).set(headers).send(body);
+
   const upload = (insurer: BuiltInsurer, kind: 'QUOTATION' | 'CERTIFICATE') =>
     buildDocument(testApp.db, { staffId: insurer.staff.id }, { kind });
 
@@ -855,6 +858,9 @@ describe('insurer portal', () => {
       const insurer = await buildInsurer(testApp.db);
       const request = await openRequest(insurer);
       const documents = [await upload(insurer, 'QUOTATION'), await upload(insurer, 'QUOTATION')];
+      // Authenticate before both writes race. Two separate MFA challenges for
+      // the same staff user can otherwise read each other's newest OTP.
+      const headers = await asStaff(insurer.staff);
 
       const responses = await race(
         {
@@ -863,8 +869,8 @@ describe('insurer portal', () => {
         },
         LOCKING_THE_RECIPIENT,
         [
-          () => post(insurer, `quote-requests/${request.id}/quote`, { premium: 500, documentId: documents[0].id }),
-          () => post(insurer, `quote-requests/${request.id}/quote`, { premium: 450, documentId: documents[1].id }),
+          () => postAs(headers, `quote-requests/${request.id}/quote`, { premium: 500, documentId: documents[0].id }),
+          () => postAs(headers, `quote-requests/${request.id}/quote`, { premium: 450, documentId: documents[1].id }),
         ],
       );
 
@@ -1102,13 +1108,14 @@ describe('insurer portal', () => {
       const insurer = await buildInsurer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { insurer });
       const certificates = [await upload(insurer, 'CERTIFICATE'), await upload(insurer, 'CERTIFICATE')];
+      const headers = await asStaff(insurer.staff);
 
       const responses = await race(
         { sql: 'SELECT "policyNumber" FROM policies WHERE "policyNumber" = $1 FOR UPDATE', params: [policy.policyNumber] },
         LOCKING_THE_POLICY,
         [
-          () => post(insurer, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId: certificates[0].id }),
-          () => post(insurer, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId: certificates[1].id }),
+          () => postAs(headers, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId: certificates[0].id }),
+          () => postAs(headers, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId: certificates[1].id }),
         ],
       );
 
@@ -1156,13 +1163,14 @@ describe('insurer portal', () => {
         { quoteRequestId: request.id, insurerId: insurer.insurer.id, staffId: insurer.staff.id },
         { validityDays: 14, validUntil: new Date(Date.now() + 3 * DAY_MS) },
       );
+      const headers = await asStaff(insurer.staff);
 
       const responses = await race(
         { sql: 'SELECT id FROM insurer_quotes WHERE id = $1 FOR UPDATE', params: [quote.id] },
         EXTENDING_THE_QUOTE,
         [
-          () => post(insurer, `quote-requests/${request.id}/extend`, { extraDays: 3 }),
-          () => post(insurer, `quote-requests/${request.id}/extend`, { extraDays: 4 }),
+          () => postAs(headers, `quote-requests/${request.id}/extend`, { extraDays: 3 }),
+          () => postAs(headers, `quote-requests/${request.id}/extend`, { extraDays: 4 }),
         ],
       );
 
@@ -1210,13 +1218,14 @@ describe('insurer portal', () => {
     it('records one acknowledgement when two arrive concurrently', async () => {
       const insurer = await buildInsurer(testApp.db);
       const claim = await buildClaim(testApp.db, { insurerId: insurer.insurer.id });
+      const headers = await asStaff(insurer.staff);
 
       const responses = await race(
         { sql: 'SELECT "claimNumber" FROM claim_notifications WHERE "claimNumber" = $1 FOR UPDATE', params: [claim.claimNumber] },
         ACKNOWLEDGING_THE_CLAIM,
         [
-          () => post(insurer, `claims/${claim.claimNumber}/received`, { insurerClaimReference: 'IC-A' }),
-          () => post(insurer, `claims/${claim.claimNumber}/received`, { insurerClaimReference: 'IC-B' }),
+          () => postAs(headers, `claims/${claim.claimNumber}/received`, { insurerClaimReference: 'IC-A' }),
+          () => postAs(headers, `claims/${claim.claimNumber}/received`, { insurerClaimReference: 'IC-B' }),
         ],
       );
 
@@ -1268,7 +1277,8 @@ describe('insurer portal', () => {
     it('issues one code when two approvals arrive concurrently and refuses the other with 409 ALREADY_DECIDED', async () => {
       const insurer = await buildInsurer(testApp.db);
       const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
-      const decide = () => post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED' });
+      const headers = await asStaff(insurer.staff);
+      const decide = () => postAs(headers, `ncd/applications/${application.id}/decision`, { status: 'APPROVED' });
 
       const responses = await race(
         { sql: 'SELECT id FROM ncd_applications WHERE id = $1 FOR UPDATE', params: [application.id] },

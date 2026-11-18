@@ -38,6 +38,8 @@
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
  *  config      GET  /config/pia · PUT /config/pia
+ *  integrations GET /integrations/deliveries · POST /integrations/deliveries/:id/manual-fallback
+ *              GET /insurer/integrations/deliveries
  *  admin       GET  /admin/overview · GET /admin/premium-by-month?months= · GET /admin/policies?limit= · GET /admin/customers/find?query= · POST /admin/customers/password-reset · GET /admin/audit-logs
  *              GET /admin/approvals · POST /admin/approvals/:id/approve · POST /admin/approvals/:id/reject
  *  capture     see `api/capture.js` (photo hand-off relay)
@@ -212,6 +214,27 @@
  * @property {string} entityId               the record itself, for the link
  * @property {boolean} read
  * @property {string} createdAt
+ */
+
+/**
+ * @typedef {Object} IntegrationDeliverySummary
+ * @property {string} id
+ * @property {string|null} insurerId
+ * @property {'INSURER_API'|'RTSA'|'PAYMENT_GATEWAY'} targetKind
+ * @property {string} kind
+ * @property {string} referenceId
+ * @property {'PENDING'|'ACKNOWLEDGED'|'FAILED'|'MANUAL_FALLBACK'} status
+ * @property {number} attempt
+ * @property {number} maxAttempts
+ * @property {string|null} [correlationId]
+ * @property {string|null} [error]
+ * @property {string|null} [lastAttemptAt]
+ * @property {string|null} [acknowledgedAt]
+ * @property {string|null} [resolvedAt]
+ * @property {string} createdAt
+ *
+ * Provider URLs, credentials, request bodies and callback bodies are never
+ * part of this browser contract.
  */
 
 /**
