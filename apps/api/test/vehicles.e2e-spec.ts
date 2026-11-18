@@ -44,7 +44,7 @@ describe('GET /vehicles/lookup', () => {
     return session ? request.set(session) : request;
   };
 
-  it('returns the registry stand-in to a guest, even when the plate is on the platform', async () => {
+  it('requires manual entry from a guest, even when the plate is on the platform', async () => {
     const customer = await buildCustomer(testApp.db);
     const prefix = letters(4);
     const vehicle = await buildVehicle(testApp.db, {
@@ -62,15 +62,16 @@ describe('GET /vehicles/lookup', () => {
       vehicleId: vehicle.id,
     });
 
-    const response = await lookup(`${prefix} 4821`).expect(200);
+    const response = await lookup(`${prefix} 4821`).expect(503);
 
-    expect(Object.keys(response.body).sort()).toEqual(LOOKUP_KEYS);
-    expect(response.body).toMatchObject({
-      plateNumber: `${prefix} 4821`,
-      source: 'RTSA_STAND_IN',
+    expect(response.body).toEqual({
+      code: 'RTSA_LOOKUP_UNAVAILABLE',
+      message: 'Vehicle lookup is not connected yet. Enter the vehicle details manually to continue.',
+      details: { manualEntry: true },
     });
-    expect(response.body.chassisNumber).not.toBe(vehicle.chassisNumber);
-    expect(response.body.engineNumber).not.toBe(vehicle.engineNumber);
+    // A public lookup never exposes a vehicle stored by another customer.
+    expect(JSON.stringify(response.body)).not.toContain(vehicle.chassisNumber);
+    expect(JSON.stringify(response.body)).not.toContain(vehicle.engineNumber);
   });
 
   it('returns the signed-in customer’s latest submitted matching vehicle', async () => {
@@ -157,13 +158,13 @@ describe('GET /vehicles/lookup', () => {
       });
 
       const otherCustomer = await buildCustomer(testApp.db);
-      const otherResponse = await lookup(`${prefix}6042`, await signIn(testApp.http, otherCustomer)).expect(200);
-      expect(otherResponse.body.source).toBe('RTSA_STAND_IN');
-      expect(otherResponse.body.chassisNumber).not.toBe(policyVehicle.chassisNumber);
+      const otherResponse = await lookup(`${prefix}6042`, await signIn(testApp.http, otherCustomer)).expect(503);
+      expect(otherResponse.body.code).toBe('RTSA_LOOKUP_UNAVAILABLE');
+      expect(JSON.stringify(otherResponse.body)).not.toContain(policyVehicle.chassisNumber);
     },
   );
 
-  it('returns the registry stand-in to customers without the plate and to all staff', async () => {
+  it('requires manual entry for customers without the plate and for all staff', async () => {
     const owner = await buildCustomer(testApp.db);
     const otherCustomer = await buildCustomer(testApp.db);
     const staff = await buildStaffUser(testApp.db);
@@ -180,45 +181,27 @@ describe('GET /vehicles/lookup', () => {
     });
 
     for (const session of [await signIn(testApp.http, otherCustomer), await signIn(testApp.http, staff)]) {
-      const response = await lookup(`${prefix} 5520`, session).expect(200);
-      expect(response.body).toMatchObject({
-        plateNumber: `${prefix} 5520`,
-        source: 'RTSA_STAND_IN',
-      });
-      expect(response.body.chassisNumber).not.toBe('OWNER-CHASSIS');
-      expect(response.body.engineNumber).not.toBe('OWNER-ENGINE');
+      const response = await lookup(`${prefix} 5520`, session).expect(503);
+      expect(response.body).toMatchObject({ code: 'RTSA_LOOKUP_UNAVAILABLE', details: { manualEntry: true } });
+      expect(JSON.stringify(response.body)).not.toContain('OWNER-CHASSIS');
+      expect(JSON.stringify(response.body)).not.toContain('OWNER-ENGINE');
     }
   });
 
-  it('answers an unknown plate with the registry stand-in, the plate in display form and exact keys', async () => {
+  it('answers an unknown plate with the explicit manual-entry fallback', async () => {
     const prefix = letters(5);
 
-    const response = await lookup(` ${prefix.toLowerCase()}9876 `).expect(200);
+    const response = await lookup(` ${prefix.toLowerCase()}9876 `).expect(503);
 
-    expect(Object.keys(response.body).sort()).toEqual(LOOKUP_KEYS);
-    expect(response.body).toEqual({
-      plateNumber: `${prefix} 9876`,
-      make: 'Toyota',
-      model: 'Hilux',
-      year: '2020',
-      color: 'White',
-      chassisNumber: 'JTEH1234560012345',
-      engineNumber: '2GD-FTV-12345',
-      registrationDate: '2020-03-15',
-      rtsaAnniversaryDate: '2023-10-31',
-      source: 'RTSA_STAND_IN',
-    });
+    expect(response.body).toMatchObject({ code: 'RTSA_LOOKUP_UNAVAILABLE', details: { manualEntry: true } });
   });
 
   it('keeps an unknown plate that is not letters then digits in its compact form', async () => {
     const prefix = letters(3);
 
-    const response = await lookup(`${prefix.toLowerCase()} 12 x`).expect(200);
+    const response = await lookup(`${prefix.toLowerCase()} 12 x`).expect(503);
 
-    expect(response.body).toMatchObject({
-      plateNumber: `${prefix}12X`,
-      source: 'RTSA_STAND_IN',
-    });
+    expect(response.body).toMatchObject({ code: 'RTSA_LOOKUP_UNAVAILABLE', details: { manualEntry: true } });
   });
 
   it.each([['ab'], ['  a  '], ['']])('refuses the plate %j with 400 INVALID_PLATE', async (plate) => {

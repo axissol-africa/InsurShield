@@ -5,22 +5,6 @@ import { comparablePlate, displayPlate } from './domain/plate.js';
 import { VehiclesRepository } from './vehicles.repository.js';
 
 /**
- * The reference vehicle the RTSA stand-in returns for any plate it has never
- * seen. It exists so the journey can be walked end to end before the registry
- * integration lands; every field is overwritten the moment RTSA is connected.
- */
-const STAND_IN = {
-  make: 'Toyota',
-  model: 'Hilux',
-  year: '2020',
-  color: 'White',
-  chassisNumber: 'JTEH1234560012345',
-  engineNumber: '2GD-FTV-12345',
-  registrationDate: '2020-03-15',
-  rtsaAnniversaryDate: '2023-10-31',
-};
-
-/**
  * Vehicle identification.
  *
  * A customer can recover the most recent vehicle they have previously
@@ -80,15 +64,18 @@ export class VehiclesService {
   }
 
   /**
-   * Stand-in for the RTSA vehicle registry (DEC-007: authenticated lookup with
-   * manual entry as the fallback). `source: 'RTSA_STAND_IN'` is deliberately on
-   * the response so a caller can tell real registry data from placeholder data.
+   * RTSA credentials and the approved data contract are not available yet.
+   * Returning a plausible car would let false data become an insurance record,
+   * so the safe adapter requires the already-supported manual entry path.
    */
   private lookupFromRegistry(plate: string) {
-    return {
-      plateNumber: displayPlate(plate),
-      ...STAND_IN,
-      source: 'RTSA_STAND_IN' as const,
-    };
+    // Validate display formatting without logging or storing a failed lookup.
+    void displayPlate(plate);
+    throw new ApiException(
+      'RTSA_LOOKUP_UNAVAILABLE',
+      'Vehicle lookup is not connected yet. Enter the vehicle details manually to continue.',
+      503,
+      { manualEntry: true },
+    );
   }
 }

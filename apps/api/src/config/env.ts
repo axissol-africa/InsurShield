@@ -120,6 +120,21 @@ export const envSchema = z.object({
   /** Server-controlled RTSA fee added only to a quote that aligns to the RTSA anniversary. */
   RTSA_ANNIVERSARY_FEE_NGWEE: wholeNumber(0, Number(MAX_NGWEE)),
 
+  /**
+   * Base64 encoded 32-byte AES key for server-only insurer API credentials.
+   * It is optional while no direct insurer API is enabled; attempting to save a
+   * secret without it fails closed rather than writing plaintext.
+   */
+  INTEGRATION_SECRETS_KEY: z
+    .string()
+    .refine(
+      (value) => /^[A-Za-z0-9+/_-]+={0,2}$/.test(value) && Buffer.from(value, 'base64').length === 32,
+      'must be a base64-encoded 32-byte key',
+    )
+    .optional(),
+  /** A provider must not hold a job lease indefinitely. */
+  INTEGRATION_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(10_000),
+
   /** Unset in production so the AWS SDK talks to real S3. */
   S3_ENDPOINT: z.string().url().optional(),
   /** MinIO needs path-style addressing; S3 does not. */

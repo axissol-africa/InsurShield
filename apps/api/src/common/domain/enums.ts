@@ -189,8 +189,17 @@ export const DOCUMENT_RETENTION_CLASSES = [
 ] as const;
 export type DocumentRetentionClass = (typeof DOCUMENT_RETENTION_CLASSES)[number];
 
-export const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKNOWLEDGED', 'FAILED'] as const;
+/**
+ * `FAILED` is the exception queue: automation has exhausted its permitted
+ * attempts and needs an authorised person to complete the hand-off. The
+ * failure stays visible until `MANUAL_FALLBACK` records that outcome.
+ */
+export const DELIVERY_STATUSES = ['PENDING', 'DELIVERED', 'ACKNOWLEDGED', 'FAILED', 'MANUAL_FALLBACK'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/** The system an integration delivery is headed to, rather than its business event. */
+export const INTEGRATION_TARGET_KINDS = ['INSURER_API', 'RTSA', 'PAYMENT_GATEWAY'] as const;
+export type IntegrationTargetKind = (typeof INTEGRATION_TARGET_KINDS)[number];
 
 /**
  * A delivery and a final quote have different lifecycles, but an insurer
@@ -200,7 +209,14 @@ export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 export const QUOTE_UNAVAILABILITY_REASONS = ['INSURER_SUSPENDED'] as const;
 export type QuoteUnavailabilityReason = (typeof QUOTE_UNAVAILABILITY_REASONS)[number];
 
-export const DELIVERY_KINDS = ['QUOTE_REQUEST', 'PAID_POLICY', 'CLAIM_NOTIFICATION'] as const;
+export const DELIVERY_KINDS = [
+  'QUOTE_REQUEST',
+  'PAID_POLICY',
+  'CLAIM_NOTIFICATION',
+  'VEHICLE_LOOKUP',
+  'PAYMENT_CONFIRMATION',
+  'POLICY_ISSUED',
+] as const;
 export type DeliveryKind = (typeof DELIVERY_KINDS)[number];
 
 export const ACTOR_TYPES = ['CUSTOMER', 'STAFF', 'INSURER', 'SYSTEM'] as const;

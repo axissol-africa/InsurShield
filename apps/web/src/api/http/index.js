@@ -171,6 +171,16 @@ export const config = {
   setPia: (piaConfig) => apiClient.put('/config/pia', piaConfig),
 };
 
+/**
+ * Delivery metadata for the integration operations views. These endpoints
+ * intentionally never return provider URLs, request bodies, or credentials.
+ */
+export const integrations = {
+  list: () => apiClient.get('/integrations/deliveries'),
+  manualFallback: (id, note) => apiClient.post(`/integrations/deliveries/${encodeURIComponent(id)}/manual-fallback`, { note }),
+  listForInsurer: () => apiClient.get('/insurer/integrations/deliveries'),
+};
+
 /** Platform-wide records for the administrator console. */
 export const admin = {
   approvals: {

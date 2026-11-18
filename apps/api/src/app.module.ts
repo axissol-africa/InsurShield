@@ -26,6 +26,7 @@ import { ScanningModule } from './scanning/scanning.module.js';
 import { StaffModule } from './staff/staff.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { SettingsModule } from './settings/settings.module.js';
+import { IntegrationsModule } from './integrations/integrations.module.js';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { SettingsModule } from './settings/settings.module.js';
     AuditModule,
     JobsModule,
     IdempotencyModule,
+    IntegrationsModule,
     // Before any adapter module, so each can register itself as it initialises.
     ProvidersModule,
     StorageModule,

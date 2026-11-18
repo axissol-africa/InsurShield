@@ -21,10 +21,11 @@ describe('the provider gate with the application wired for production', () => {
       // S3_ENDPOINT unset, or points it at a hosted bucket, registers it live.
       expect(registry.list()).toEqual([
         { name: 'email', mode: 'stand-in', setting: 'MAIL_SENDER' },
+        { name: 'insurer-api-delivery', mode: 'manual' },
         { name: 'malware-scanner', mode: 'stand-in', setting: 'MALWARE_SCANNER' },
         { name: 'object-storage', mode: 'stand-in', setting: 'S3_ENDPOINT' },
         { name: 'payment-provider', mode: 'stand-in' },
-        { name: 'rtsa-vehicle-lookup', mode: 'stand-in' },
+        { name: 'rtsa-vehicle-lookup', mode: 'manual' },
       ]);
     } finally {
       await production.close();
@@ -39,7 +40,7 @@ describe('the provider gate with the application wired for production', () => {
       expect(() => registry.assertNoStandInsInProduction('production')).toThrow(
         'Refusing to start in production on simulated providers: email (MAIL_SENDER), ' +
           'malware-scanner (MALWARE_SCANNER), object-storage (S3_ENDPOINT), ' +
-          'payment-provider (no live adapter yet), rtsa-vehicle-lookup (no live adapter yet). ' +
+          'payment-provider (no live adapter yet). ' +
           'Configure a live adapter for each, or deploy a non-production environment.',
       );
     } finally {

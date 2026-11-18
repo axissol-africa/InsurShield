@@ -107,6 +107,8 @@ export const PERMISSIONS = {
   'admin:rule:confirm': INSURSHIELD_ADMIN,
   'admin:taxonomy:read': INSURSHIELD_ADMIN,
   'admin:taxonomy:manage': INSURSHIELD_ADMIN,
+  'integration:read': INSURSHIELD_ADMIN,
+  'integration:resolve': INSURSHIELD_ADMIN,
 
   // The service scopes insurer administrators to their own organisation and
   // rejects roles they may not grant. This only opens the named functions.
@@ -124,6 +126,7 @@ export const PERMISSIONS = {
   'portal:claim:acknowledge': CLAIMS_AND_NCD,
   'portal:ncd:read': READS_CLAIMS,
   'portal:ncd:decide': CLAIMS_AND_NCD,
+  'portal:integration:read': ['INSURER_ADMIN'],
   'product:read-own': PRODUCT_MANAGERS,
   'product:draft:manage': PRODUCT_MANAGERS,
   'product:submit': PRODUCT_MANAGERS,

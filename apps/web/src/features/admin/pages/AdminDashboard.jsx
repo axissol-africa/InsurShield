@@ -13,6 +13,7 @@ import AdminApprovalInbox from '@/features/admin/components/AdminApprovalInbox';
 import ProductReviewQueue from '@/features/admin/components/ProductReviewQueue';
 import RuleSettingsWorkspace from '@/features/admin/components/RuleSettingsWorkspace';
 import StaffManagement from '@/features/admin/components/StaffManagement';
+import IntegrationDeliveryPanel from '@/features/integrations/components/IntegrationDeliveryPanel';
 import { fieldClass as inputClass, labelClass } from '@/components/ui/field';
 import InsurerTable from '@/features/admin/components/InsurerTable';
 import { Badge as UiBadge } from '@/components/ui/primitives/badge';
@@ -352,6 +353,7 @@ export default function AdminDashboard() {
     { id: 'rule_settings', label: 'Rules and terms', icon: 'tune', hint: 'Rules and comparison fields', matches: ['rule_settings'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
     { id: 'audit_log', label: 'Audit trail', icon: 'history', hint: 'Immutable history', matches: ['audit_log'] },
+    { id: 'integrations', label: 'Integrations', icon: 'hub', hint: 'Delivery exceptions', matches: ['integrations'] },
   ];
 
   const selectSection = (id) => {
@@ -446,6 +448,8 @@ export default function AdminDashboard() {
     content = <RecentPolicies policies={dashboardPolicies} onBack={() => setView('dashboard')} />;
   } else if (view === 'audit_log') {
     content = <AuditTrail onBack={() => setView('dashboard')} />;
+  } else if (view === 'integrations') {
+    content = <IntegrationDeliveryPanel api={api} onBack={() => setView('dashboard')} />;
   } else if (view === 'find_account') {
     content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} requestCustomerPasswordReset={api.admin.requestCustomerPasswordReset} onBack={() => setView('dashboard')} />;
   } else if (view === 'pia_config') {

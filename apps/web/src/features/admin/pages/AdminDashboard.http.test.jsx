@@ -12,6 +12,7 @@ vi.mock('@/api', () => ({
     admin: {
       overview: vi.fn(), premiumByMonth: vi.fn(), recentPolicies: vi.fn(), findCustomer: vi.fn(), requestCustomerPasswordReset: vi.fn(), auditLogs: vi.fn(),
     },
+    integrations: { list: vi.fn().mockResolvedValue([]), manualFallback: vi.fn() },
     insurers: { list: vi.fn(), create: vi.fn(), update: vi.fn(), setStatus: vi.fn(), remove: vi.fn(), restore: vi.fn() },
     config: { getPia: vi.fn(), setPia: vi.fn() },
   },

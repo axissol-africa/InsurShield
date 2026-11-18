@@ -12,12 +12,8 @@ import { VehiclesService } from './vehicles.service.js';
 export class VehiclesModule implements OnModuleInit {
   constructor(private readonly registry: ProviderRegistry) {}
 
-  /**
-   * Plate lookup answers from a canned vehicle until the registry integration
-   * lands, so it registers as what it is. The integration batch replaces this
-   * with the live adapter and the mode with it.
-   */
+  /** RTSA is deliberately manual until its approved adapter and credentials arrive. */
   onModuleInit(): void {
-    this.registry.register({ name: 'rtsa-vehicle-lookup', mode: 'stand-in' });
+    this.registry.register({ name: 'rtsa-vehicle-lookup', mode: 'manual' });
   }
 }

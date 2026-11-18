@@ -22,7 +22,8 @@ export type InsurerChanges = Partial<NewInsurer>;
 export type NewContact = Omit<typeof insurerContacts.$inferInsert, 'insurerId'>;
 export type NewEvidence = typeof insurerEvidence.$inferInsert;
 export type EvidenceRow = Awaited<ReturnType<InsurersRepository['findEvidence']>>;
-export type NewIntegration = Omit<typeof insurerIntegrations.$inferInsert, 'insurerId' | 'clientSecretEncrypted'>;
+/** The secret may be written, but normal reads deliberately omit it. */
+export type NewIntegration = Omit<typeof insurerIntegrations.$inferInsert, 'insurerId'>;
 export type IntegrationRow = NonNullable<Awaited<ReturnType<InsurersRepository['findIntegration']>>>;
 export const DELETION_BLOCKER_KINDS = ['policy', 'claim', 'ncd application', 'inspection', 'payment'] as const;
 export type DeletionBlockerKind = (typeof DELETION_BLOCKER_KINDS)[number];

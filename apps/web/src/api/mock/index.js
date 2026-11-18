@@ -26,6 +26,7 @@ const MOCK_RTSA_ANNIVERSARY_FEE = 500;
 const PRODUCT_STORAGE = 'insurshield.mock.products.v1';
 const RULE_SETTINGS_STORAGE = 'insurshield.mock.rule-settings.v1';
 const TAXONOMY_STORAGE = 'insurshield.mock.comparison-taxonomy.v1';
+const INTEGRATION_DELIVERIES_STORAGE = 'insurshield.mock.integration-deliveries.v1';
 const PRODUCT_COVER_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'];
 const INSPECTION_RULES = ['NOT_REQUIRED', 'OPTIONAL', 'REQUIRED'];
 const INSPECTION_TIMINGS = ['BEFORE_QUOTATION', 'BEFORE_PAYMENT', 'AFTER_PAYMENT'];
@@ -54,6 +55,15 @@ const ruleRecords = () => {
   }
 };
 const saveRules = (records) => localStorage.setItem(RULE_SETTINGS_STORAGE, JSON.stringify(records));
+const integrationDeliveries = () => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(INTEGRATION_DELIVERIES_STORAGE) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+};
+const saveIntegrationDeliveries = (records) => localStorage.setItem(INTEGRATION_DELIVERIES_STORAGE, JSON.stringify(records));
 const defaultTaxonomy = () => [
   { id: 'mock-taxonomy-third-party', code: 'THIRD_PARTY_DAMAGE', label: 'Third-party property damage', description: 'Damage to someone else’s property.', category: 'COVERAGE', versionNumber: 1, dataType: 'BOOLEAN', unit: null, allowedValues: [], displayRule: 'ALWAYS_SHOW', status: 'ACTIVE', displayOrder: 10 },
   { id: 'mock-taxonomy-medical-limit', code: 'MEDICAL_LIMIT', label: 'Medical expenses limit', description: 'Maximum medical benefit per claim.', category: 'LIMIT', versionNumber: 1, dataType: 'CURRENCY', unit: 'ZMW', allowedValues: [], displayRule: 'SHOW_WHEN_PROVIDED', status: 'ACTIVE', displayOrder: 20 },
@@ -861,6 +871,38 @@ export const config = {
   setPia: ({ piaRatePercentage }) => call((s) => {
     if (!Number.isFinite(piaRatePercentage) || piaRatePercentage < 0 || piaRatePercentage > 100) throw new Error('Provide a valid PIA percentage between 0 and 100.');
     return proposeApproval(s, 'PIA_FLOOR_CHANGE', 'pia.minimum_rate_bps', { piaRatePercentage }, 'Update the PIA minimum rate.');
+  }),
+};
+
+/**
+ * Browser-storage equivalent of safe delivery metadata. It deliberately has
+ * no seeded rows: a prototype must not imply that an external provider was
+ * contacted. Test/demo tooling may persist only these non-sensitive fields.
+ */
+export const integrations = {
+  list: () => call(() => integrationDeliveries()),
+  listForInsurer: () => call(() => integrationDeliveries().filter((delivery) => delivery.insurerId === insurerIdForSession())),
+  manualFallback: (id, note) => call((s) => {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(s.staffSession?.role)) {
+      throw new Error('Only an authorised administrator can record a manual fallback.');
+    }
+    const cleanedNote = String(note || '').trim();
+    if (cleanedNote.length < 3) throw new Error('Explain how the integration exception was completed manually.');
+    const deliveries = integrationDeliveries();
+    const position = deliveries.findIndex((delivery) => delivery.id === id);
+    if (position < 0) throw new Error('Integration delivery was not found.');
+    if (deliveries[position].status !== 'FAILED') throw new Error('Only a failed integration delivery can be completed manually.');
+    const resolved = {
+      ...deliveries[position],
+      status: 'MANUAL_FALLBACK',
+      resolvedAt: new Date().toISOString(),
+      resolvedByStaffId: s.staffSession?.id || null,
+      resolutionNote: cleanedNote,
+    };
+    const next = [...deliveries];
+    next[position] = resolved;
+    saveIntegrationDeliveries(next);
+    return resolved;
   }),
 };
 

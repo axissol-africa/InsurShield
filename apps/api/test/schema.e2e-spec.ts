@@ -732,8 +732,10 @@ describe('the final schema', () => {
     // Staff MFA adds a lock instant; support-reset attempts add created,
     // delivered and failed instants. Versioned products add their workflow
     // timestamps, and Batch 10 adds rule confirmation plus taxonomy and
-    // product-term mapping history. Effective dates remain `date` values.
-    expect(timestampColumns).toHaveLength(116);
+    // product-term mapping history. Batch 11 adds delivery processing,
+    // acknowledgement and resolution instants plus the callback receipt time.
+    // Effective dates remain `date` values.
+    expect(timestampColumns).toHaveLength(121);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

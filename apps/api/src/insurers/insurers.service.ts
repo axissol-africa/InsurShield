@@ -33,6 +33,7 @@ import { auditActor } from '../common/audit/audit.types.js';
 import { QuoteAvailabilityService } from '../customer/quote-availability.service.js';
 import { ApprovalService } from '../approvals/approval.service.js';
 import type { ApprovalRequestRow } from '../approvals/approval.repository.js';
+import { IntegrationSecretsService } from '../integrations/integration-secrets.service.js';
 
 const NAME_CONSTRAINT = 'insurers_name_key';
 
@@ -51,6 +52,7 @@ export class InsurersService {
     private readonly audit: AuditService,
     private readonly quoteAvailability: QuoteAvailabilityService,
     private readonly approvals: ApprovalService,
+    private readonly integrationSecrets: IntegrationSecretsService,
   ) {}
 
   /** Every insurer the admin portal manages, deleted ones excluded by default. */
@@ -207,7 +209,7 @@ export class InsurersService {
     return model ? toIntegrationResponse(model) : null;
   }
 
-  /** Captured whole, without the client secret: holding one needs a key nobody has decided on. */
+  /** The client secret is write-only and encrypted before it reaches the database. */
   async setIntegration(id: string, dto: InsurerIntegrationDto, principal: StaffPrincipal) {
     const saved = await this.insurers.transaction(async (tx) => {
       await this.mustExist(id, tx);
@@ -219,6 +221,7 @@ export class InsurersService {
         claimsCallbackUrl: dto.claimsCallbackUrl ?? null,
         policyCallbackUrl: dto.policyCallbackUrl ?? null,
         sandboxMode: dto.sandboxMode ?? true,
+        ...(dto.clientSecret ? { clientSecretEncrypted: this.integrationSecrets.encrypt(dto.clientSecret) } : {}),
       });
       await this.audit.write(tx, {
         actor: auditActor(principal),
@@ -226,7 +229,7 @@ export class InsurersService {
         entityType: 'INSURER',
         entityId: id,
         after: { sandboxMode: row.sandboxMode },
-        note: 'Recorded the insurer technical model.',
+        note: dto.clientSecret ? 'Recorded the insurer technical model and rotated its credential.' : 'Recorded the insurer technical model.',
         correlationId: id,
       });
       return row;

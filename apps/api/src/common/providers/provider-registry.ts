@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-export type ProviderMode = 'live' | 'stand-in';
+/** `manual` is an intentional customer fallback, not a simulated provider. */
+export type ProviderMode = 'live' | 'stand-in' | 'manual';
 
 export interface ProviderRegistration {
   /** The outside system this adapter speaks to, as a deployment would name it. */
@@ -19,9 +20,9 @@ export interface ProviderRegistration {
  * declaring whether it is talking to the real provider or standing in for one.
  *
  * A stand-in is how a provider is developed and tested before its live adapter
- * exists. `assertNoStandInsInProduction` is the single gate that keeps one from
- * reaching production, so no adapter has to carry an environment check of its
- * own.
+ * exists. A manual mode is different: it is a deliberately supported fallback
+ * and may operate in production. `assertNoStandInsInProduction` keeps only
+ * simulations from reaching production.
  *
  * Registrations hold a name, a mode and a setting name. Credentials, endpoints
  * and keys stay inside the adapter that uses them.
