@@ -7,9 +7,10 @@ const API_BASE_URL = process.env.PLAYWRIGHT_REAL_API_BASE_URL ?? 'http://127.0.0
  * This deliberately stops at the first public journey step. The API suite
  * creates protected data flows; this test proves the shipped browser client
  * reaches the real Nest API (including CORS and its HTTP adapter) rather than
- * silently falling back to local prototype data.
+ * silently falling back to local prototype data. Until RTSA approves a live
+ * integration, an unavailable lookup must lead customers to manual entry.
  */
-test('vehicle lookup is served by the real API', async ({ page }) => {
+test('real API lookup falls back to manual vehicle entry until RTSA is connected', async ({ page }) => {
   await page.goto('/vehicle-identification');
   await page.getByLabel('Licence plate number').fill('BAA 1234');
 
@@ -19,8 +20,9 @@ test('vehicle lookup is served by the real API', async ({ page }) => {
   );
   await page.getByRole('button', { name: 'Find vehicle' }).click();
 
-  await expect((await response).status()).toBe(200);
-  await expect(page.getByText('Vehicle found — check the details')).toBeVisible();
-  await expect(page.getByText('Toyota Hilux')).toBeVisible();
-  await expect(page.getByText('BAA 1234')).toBeVisible();
+  await expect((await response).status()).toBe(503);
+  await expect(page.getByRole('alert')).toContainText('Vehicle lookup is not connected yet');
+  await page.getByRole('button', { name: 'Enter details manually' }).click();
+  await expect(page.getByRole('tab', { name: 'Manual entry' })).toHaveAttribute('data-state', 'active');
+  await expect(page.getByLabel(/Chassis number/)).toBeVisible();
 });

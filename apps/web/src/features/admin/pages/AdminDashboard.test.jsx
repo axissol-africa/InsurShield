@@ -121,6 +121,6 @@ describe('integration operations navigation', () => {
     // opacity remains at zero, so assert the routed screen rather than CSS.
     expect(await screen.findByRole('heading', { name: 'Integration operations' })).toBeInTheDocument();
     expect(api.integrations.list).toHaveBeenCalledOnce();
-    expect(screen.getByText(/Provider endpoints, credentials and request or callback contents are never shown here/)).toBeVisible();
+    expect(screen.getByText(/Provider endpoints, credentials and request or callback contents are never shown here/)).toBeInTheDocument();
   });
 });
