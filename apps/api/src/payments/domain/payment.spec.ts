@@ -10,7 +10,7 @@ describe('a payment key used again', () => {
   const stored: PaymentAttempt = {
     customerId: 'customer-1',
     quoteRequestId: 'QR-1',
-    insurerName: 'Prestige Assurance',
+    insurerQuoteId: 'd9a14c5d-1f35-4276-9c31-ec6aeb71151a',
     amountMinor: 123_456,
     method: 'MOBILE_MONEY',
   };
@@ -21,7 +21,7 @@ describe('a payment key used again', () => {
 
   it.each([
     ['request', { quoteRequestId: 'QR-2' }],
-    ['insurer', { insurerName: 'Other Insurance' }],
+    ['quote', { insurerQuoteId: 'fc1868f7-6f89-4672-acf1-c531c922463d' }],
     ['amount', { amountMinor: 123_457 }],
     ['method', { method: 'CARD' as const }],
   ])('is a different payment when the %s differs', (_field, change) => {

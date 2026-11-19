@@ -4,12 +4,21 @@ import { eq, inArray } from 'drizzle-orm';
 import { MAX_KWACHA, MAX_NGWEE } from '../src/common/domain/money-limits.js';
 import { ngweeToKwacha } from '../src/common/money.js';
 import type { Env } from '../src/config/env.js';
-import { ncdCodes, payments, policies } from '../src/db/schema.js';
+import {
+  insurerProductVersions,
+  insurerProducts,
+  ncdCodes,
+  payments,
+  policies,
+  quoteRequestProductVersions,
+} from '../src/db/schema.js';
 import {
   buildCustomer,
   buildInsurer,
+  buildInsurerQuote,
   buildNcdCode,
   buildPayment,
+  buildQuoteRequest,
   buildStaffUser,
   buildVehicle,
   type Row,
@@ -74,7 +83,7 @@ describe('payments', () => {
 
       const response = await pay(
         customer,
-        { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Mobile money', mobileNumber: '+260971234567' },
+        { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Mobile money', mobileNumber: '+260971234567' },
         randomUUID(),
       );
 
@@ -127,11 +136,11 @@ describe('payments', () => {
     });
 
     it('records no provider reference for a card payment', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
       });
@@ -144,14 +153,14 @@ describe('payments', () => {
 
     describe('the amount', () => {
       it('uses the configured RTSA anniversary fee only for an aligned request', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db, {
           request: { matchRtsaAnniversary: true },
           quote: { premiumMinor: 123_456 },
         });
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           amount: 1734.56,
           method: 'Card',
         });
@@ -168,13 +177,13 @@ describe('payments', () => {
         ['one ngwee under', 1734.55],
         ['one ngwee over', 1734.57],
       ])('refuses an aligned payment that is %s, and stores nothing', async (_case, amount) => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db, {
           request: { matchRtsaAnniversary: true },
         });
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           amount,
           method: 'Card',
         });
@@ -190,11 +199,11 @@ describe('payments', () => {
       });
 
       it('does not charge the fee for an unaligned request', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           amount: 1734.56,
           method: 'Card',
         });
@@ -205,11 +214,11 @@ describe('payments', () => {
       });
 
       it('refuses a client-supplied RTSA fee instead of trusting it', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           amount: 1234.56,
           method: 'Card',
           rtsaAnniversaryFee: 500,
@@ -221,11 +230,11 @@ describe('payments', () => {
       });
 
       it('refuses an amount above MAX_KWACHA with 400, and stores nothing', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           method: 'Card',
           amount: MAX_KWACHA + 0.01,
         });
@@ -236,11 +245,11 @@ describe('payments', () => {
       });
 
       it('at MAX_KWACHA reaches the premium check rather than failing', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           amount: MAX_KWACHA,
           method: 'Card',
         });
@@ -250,14 +259,14 @@ describe('payments', () => {
       });
 
       it('rejects an aligned quote whose premium and configured fee exceed MAX_KWACHA', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db, {
           request: { matchRtsaAnniversary: true },
           quote: { premiumMinor: Number(MAX_NGWEE) },
         });
 
         const response = await pay(customer, {
           quoteRequestId: quoteRequest.id,
-          insurer: insurer.insurer.name,
+          insurerQuoteId: quote.id,
           amount: MAX_KWACHA,
           method: 'Card',
         });
@@ -274,7 +283,7 @@ describe('payments', () => {
 
       it('accepts the largest aligned payment that fits within MAX_KWACHA', async () => {
         const feeMinor = testApp.app.get(ConfigService<Env, true>).get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true });
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db, {
           request: { matchRtsaAnniversary: true },
           quote: { premiumMinor: Number(MAX_NGWEE) - feeMinor },
         });
@@ -282,7 +291,7 @@ describe('payments', () => {
         try {
           const response = await pay(customer, {
             quoteRequestId: quoteRequest.id,
-            insurer: insurer.insurer.name,
+            insurerQuoteId: quote.id,
             amount: MAX_KWACHA,
             method: 'Card',
           });
@@ -307,7 +316,7 @@ describe('payments', () => {
         });
         const originalPayment = await pay(first.customer, {
           quoteRequestId: first.quoteRequest.id,
-          insurer: first.insurer.insurer.name,
+          insurerQuoteId: first.quote.id,
           amount: ngweeToKwacha(123_456 + originalFeeMinor),
           method: 'Card',
         });
@@ -345,7 +354,7 @@ describe('payments', () => {
             .set(nextSession)
             .send({
               quoteRequestId: next.quoteRequest.id,
-              insurer: next.insurer.insurer.name,
+              insurerQuoteId: next.quote.id,
               amount: ngweeToKwacha(123_456 + changedFeeMinor),
               method: 'Card',
             })
@@ -358,13 +367,13 @@ describe('payments', () => {
     });
 
     it('refuses an expired quote, and nothing is stored', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+      const { customer, insurer, quoteRequest, quote } = await buildPayableQuote(testApp.db, {
         quote: { validUntil: new Date('2026-01-15T09:00:00.000Z') },
       });
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
       });
@@ -379,8 +388,8 @@ describe('payments', () => {
     });
 
     it('refuses a second payment for a request that already has a policy', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const first = await pay(customer, body, randomUUID());
 
       const second = await pay(customer, body, randomUUID());
@@ -395,8 +404,8 @@ describe('payments', () => {
     });
 
     it('treats a request without a key like any other: the second attempt is already paid', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
 
       expect((await pay(customer, body)).status).toBe(201);
       const second = await pay(customer, body);
@@ -405,13 +414,13 @@ describe('payments', () => {
       expect(second.body.code).toBe('ALREADY_PAID');
     });
 
-    it('reports a quote from an insurer that did not quote this request as not found', async () => {
+    it('reports a quote that does not belong to this request as not found', async () => {
       const { customer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const { insurer: other } = await buildInsurer(testApp.db);
+      const quoteId = randomUUID();
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: other.name,
+        insurerQuoteId: quoteId,
         amount: 1234.56,
         method: 'Card',
       });
@@ -419,18 +428,18 @@ describe('payments', () => {
       expect(response.status).toBe(404);
       expect(response.body).toEqual({
         code: 'NOT_FOUND',
-        message: `Quote from ${other.name} was not found.`,
+        message: `Quote ${quoteId} was not found.`,
         details: null,
       });
     });
 
-    it('pays the quote of the insurer named, when the request has several', async () => {
+    it('pays the exact selected quote, when the request has several', async () => {
       const { customer, quoteRequest } = await buildPayableQuote(testApp.db);
       const { insurer: second, quote } = await addQuote(testApp.db, quoteRequest.id, { premiumMinor: 99_999 });
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: second.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 999.99,
         method: 'Card',
       });
@@ -440,20 +449,108 @@ describe('payments', () => {
       expect(policy).toMatchObject({ insurerId: second.insurer.id, insurerQuoteId: quote.id, premiumMinor: 99_999 });
     });
 
+    it('pays the intended sibling quote when one insurer offered more than one product', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const insurer = await buildInsurer(testApp.db);
+      const { quoteRequest } = await buildQuoteRequest(
+        testApp.db,
+        { customerId: customer.id, insurerIds: [insurer.insurer.id] },
+        {
+          model: 'PRODUCT_SELECTION',
+          status: 'QUOTED',
+          policyStartDate: new Date('2026-11-01T00:00:00.000Z'),
+          policyEndDate: new Date('2027-10-31T00:00:00.000Z'),
+        },
+      );
+      const [product] = await testApp.db
+        .insert(insurerProducts)
+        .values({ insurerId: insurer.insurer.id, code: `product-${randomUUID()}`, coverType: 'COMPREHENSIVE' })
+        .returning();
+      const [version] = await testApp.db
+        .insert(insurerProductVersions)
+        .values({
+          productId: product.id,
+          versionNumber: 1,
+          status: 'APPROVED',
+          name: 'Comprehensive Plus',
+          coverType: 'COMPREHENSIVE',
+          coverGuide: {},
+          inspectionRule: 'NOT_REQUIRED',
+          rateBps: 500,
+          allowedDurations: ['Q4'],
+          effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+          createdByStaffId: insurer.staff.id,
+        })
+        .returning();
+      const [secondVersion] = await testApp.db
+        .insert(insurerProductVersions)
+        .values({
+          productId: product.id,
+          versionNumber: 2,
+          status: 'APPROVED',
+          name: 'Comprehensive Standard',
+          coverType: 'COMPREHENSIVE',
+          coverGuide: {},
+          inspectionRule: 'NOT_REQUIRED',
+          rateBps: 450,
+          allowedDurations: ['Q4'],
+          effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+          createdByStaffId: insurer.staff.id,
+        })
+        .returning();
+      await testApp.db.insert(quoteRequestProductVersions).values(
+        [version, secondVersion].map((selected) => ({
+          quoteRequestId: quoteRequest.id,
+          productVersionId: selected.id,
+          insurerId: insurer.insurer.id,
+          productCode: product.code,
+          productVersionNumber: selected.versionNumber,
+          productName: selected.name,
+          coverType: selected.coverType,
+          coverGuide: selected.coverGuide,
+          inspectionRule: selected.inspectionRule,
+          inspectionTiming: selected.inspectionTiming,
+          inspectionMethod: selected.inspectionMethod,
+        })),
+      );
+      const { quote: firstQuote } = await buildInsurerQuote(
+        testApp.db,
+        { quoteRequestId: quoteRequest.id, insurerId: insurer.insurer.id, staffId: insurer.staff.id },
+        { productVersionId: version.id, premiumMinor: 99_999 },
+      );
+      const { quote: siblingQuote } = await buildInsurerQuote(
+        testApp.db,
+        { quoteRequestId: quoteRequest.id, insurerId: insurer.insurer.id, staffId: insurer.staff.id },
+        { productVersionId: secondVersion.id, premiumMinor: 88_888 },
+      );
+
+      const response = await pay(customer, {
+        quoteRequestId: quoteRequest.id,
+        insurerQuoteId: siblingQuote.id,
+        amount: 888.88,
+        method: 'Card',
+      });
+
+      expect(response.status).toBe(201);
+      const [policy] = await policiesFor([quoteRequest.id]);
+      expect(policy).toMatchObject({ insurerId: insurer.insurer.id, insurerQuoteId: siblingQuote.id, premiumMinor: 88_888 });
+      expect(policy.insurerQuoteId).not.toBe(firstQuote.id);
+    });
+
     it.each([
       ['a too-short request id', { quoteRequestId: 'QR' }],
-      ['an empty insurer', { insurer: '' }],
+      ['an invalid quote ID', { insurerQuoteId: 'not-a-quote-id' }],
       ['a zero amount', { amount: 0 }],
       ['a negative amount', { amount: -1234.56 }],
       ['a string amount', { amount: '1234.56' }],
       ['an amount with three decimals', { amount: 1234.561 }],
       ['an unknown method', { method: 'Cash' }],
     ])('refuses %s with 400, and nothing is stored', async (_case, change) => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
         ...change,
@@ -464,30 +561,48 @@ describe('payments', () => {
       expect(await paymentsFor([quoteRequest.id])).toEqual([]);
     });
 
-    it('answers 404 for an unknown insurer on a request already paid', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+    it('answers 404 for an unknown quote on a request already paid', async () => {
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       expect((await pay(customer, body)).status).toBe(201);
 
-      const response = await pay(customer, { ...body, insurer: 'Nobody Assurance' });
+      const unknownQuoteId = randomUUID();
+      const response = await pay(customer, { ...body, insurerQuoteId: unknownQuoteId });
 
       expect(response.status).toBe(404);
       expect(response.body).toEqual({
         code: 'NOT_FOUND',
-        message: 'Quote from Nobody Assurance was not found.',
+        message: `Quote ${unknownQuoteId} was not found.`,
         details: null,
       });
+    });
+
+    it('refuses the retired insurer-name-only payment payload and asks the customer to reload', async () => {
+      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+
+      const response = await testApp.http
+        .post('/api/v1/payments')
+        .set(await asCustomer(customer))
+        .send({ quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' });
+
+      expect(response.status).toBe(409);
+      expect(response.body).toEqual({
+        code: 'RELOAD_REQUIRED',
+        message: 'Reload your quotes and select the exact quote before paying.',
+        details: null,
+      });
+      expect(await paymentsFor([quoteRequest.id])).toEqual([]);
     });
   });
 
   describe('ownership', () => {
     it('answers 404 for another customer’s request, and stores nothing', async () => {
-      const { insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const stranger = await buildCustomer(testApp.db);
 
       const response = await pay(stranger, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
       });
@@ -501,11 +616,31 @@ describe('payments', () => {
       expect(await paymentsFor([quoteRequest.id])).toEqual([]);
     });
 
+    it('does not let a customer pay another customer’s quote through their own request', async () => {
+      const own = await buildPayableQuote(testApp.db);
+      const other = await buildPayableQuote(testApp.db);
+
+      const response = await pay(own.customer, {
+        quoteRequestId: own.quoteRequest.id,
+        insurerQuoteId: other.quote.id,
+        amount: 1234.56,
+        method: 'Card',
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({
+        code: 'NOT_FOUND',
+        message: `Quote ${other.quote.id} was not found.`,
+        details: null,
+      });
+      expect(await paymentsFor([own.quoteRequest.id, other.quoteRequest.id])).toEqual([]);
+    });
+
     it('answers 404 for another customer’s receipt', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const paid = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
       });
@@ -541,10 +676,10 @@ describe('payments', () => {
 
   describe('GET /payments/:transactionId', () => {
     it('returns the receipt with exactly the receipt keys', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const paid = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Mobile money',
       });
@@ -600,11 +735,11 @@ describe('payments', () => {
       ['201 characters long', 'k'.repeat(201)],
       ['3000 random characters long', randomBytes(1500).toString('hex')],
     ])('is refused with 400 when %s, and nothing is stored', async (_case, key) => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
 
       const response = await pay(
         customer,
-        { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' },
+        { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' },
         key,
       );
 
@@ -618,8 +753,8 @@ describe('payments', () => {
     });
 
     it('of 200 characters is accepted and replays', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const key = randomUUID().padEnd(200, 'k');
 
       const first = await pay(customer, body, key);
@@ -632,9 +767,9 @@ describe('payments', () => {
 
   describe('a reused Idempotency-Key', () => {
     it('replays the original receipt for the same request, and charges nothing more', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const key = randomUUID();
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const first = await pay(customer, body, key);
 
       const again = await pay(customer, body, key);
@@ -649,9 +784,9 @@ describe('payments', () => {
       ['amount', { amount: 1234.57 }],
       ['method', { method: 'Mobile money' }],
     ])('with a different %s answers 409 IDEMPOTENCY_KEY_REUSED', async (_field, change) => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const key = randomUUID();
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       await pay(customer, body, key);
 
       const response = await pay(customer, { ...body, ...change }, key);
@@ -666,14 +801,14 @@ describe('payments', () => {
     });
 
     it('with a different insurer on the same request answers 409 IDEMPOTENCY_KEY_REUSED', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const { insurer: second } = await addQuote(testApp.db, quoteRequest.id, { premiumMinor: 123_456 });
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const { quote: secondQuote } = await addQuote(testApp.db, quoteRequest.id, { premiumMinor: 123_456 });
       const key = randomUUID();
-      await pay(customer, { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }, key);
+      await pay(customer, { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' }, key);
 
       const response = await pay(
         customer,
-        { quoteRequestId: quoteRequest.id, insurer: second.insurer.name, amount: 1234.56, method: 'Card' },
+        { quoteRequestId: quoteRequest.id, insurerQuoteId: secondQuote.id, amount: 1234.56, method: 'Card' },
         key,
       );
 
@@ -682,14 +817,14 @@ describe('payments', () => {
     });
 
     it('on a different request answers 409 IDEMPOTENCY_KEY_REUSED and leaves that request unpaid', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const { quoteRequest: other } = await buildPayableQuote(testApp.db, { customer, insurer });
+      const { customer, insurer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const { quoteRequest: other, quote: otherQuote } = await buildPayableQuote(testApp.db, { customer, insurer });
       const key = randomUUID();
-      await pay(customer, { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }, key);
+      await pay(customer, { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' }, key);
 
       const response = await pay(
         customer,
-        { quoteRequestId: other.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' },
+        { quoteRequestId: other.id, insurerQuoteId: otherQuote.id, amount: 1234.56, method: 'Card' },
         key,
       );
 
@@ -700,9 +835,9 @@ describe('payments', () => {
     });
 
     it('of another customer answers 403', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const key = randomUUID();
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       await pay(customer, body, key);
       const stranger = await buildCustomer(testApp.db);
 
@@ -713,9 +848,9 @@ describe('payments', () => {
     });
 
     it('is not used up by a refused request', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const key = randomUUID();
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
 
       const refused = await pay(customer, { ...body, amount: 1 }, key);
       const accepted = await pay(customer, body, key);
@@ -736,19 +871,20 @@ describe('payments', () => {
         state === 'redeemed code'
           ? await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.insurer.id }, { redeemedAt: new Date() })
           : undefined;
-      const { quoteRequest: refusedRequest } = await buildPayableQuote(testApp.db, {
+      const { quoteRequest: refusedRequest, quote: refusedQuote } = await buildPayableQuote(testApp.db, {
         customer,
         insurer,
         request: ncd ? { ncdCode: ncd.code, ncdPercentage: ncd.percentage } : {},
         quote: state === 'expired' ? { validUntil: new Date('2026-01-15T09:00:00.000Z') } : {},
       });
-      const { quoteRequest: payable } = await buildPayableQuote(testApp.db, { customer, insurer });
-      const body = { insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
-      if (state === 'paid') expect((await pay(customer, { ...body, quoteRequestId: refusedRequest.id })).status).toBe(201);
+      const { quoteRequest: payable, quote: payableQuote } = await buildPayableQuote(testApp.db, { customer, insurer });
+      const refusedBody = { quoteRequestId: refusedRequest.id, insurerQuoteId: refusedQuote.id, amount: 1234.56, method: 'Card' };
+      const payableBody = { quoteRequestId: payable.id, insurerQuoteId: payableQuote.id, amount: 1234.56, method: 'Card' };
+      if (state === 'paid') expect((await pay(customer, refusedBody)).status).toBe(201);
       const key = randomUUID();
 
-      const refused = await pay(customer, { ...body, quoteRequestId: refusedRequest.id }, key);
-      const accepted = await pay(customer, { ...body, quoteRequestId: payable.id }, key);
+      const refused = await pay(customer, refusedBody, key);
+      const accepted = await pay(customer, payableBody, key);
 
       expect(refused.status).toBe(409);
       expect(refused.body.code).toBe(code);
@@ -765,7 +901,7 @@ describe('payments', () => {
       const customer = await buildCustomer(testApp.db);
       const insurer = await buildInsurer(testApp.db);
       const code = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.insurer.id });
-      const { quoteRequest } = await buildPayableQuote(testApp.db, {
+      const { quoteRequest, quote } = await buildPayableQuote(testApp.db, {
         customer,
         insurer,
         request: { ncdCode: code.code, ncdPercentage: code.percentage },
@@ -773,7 +909,7 @@ describe('payments', () => {
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
       });
@@ -786,14 +922,14 @@ describe('payments', () => {
       const customer = await buildCustomer(testApp.db);
       const issuer = await buildInsurer(testApp.db);
       const code = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: issuer.insurer.id });
-      const { insurer, quoteRequest } = await buildPayableQuote(testApp.db, {
+      const { quoteRequest, quote } = await buildPayableQuote(testApp.db, {
         customer,
         request: { ncdCode: code.code, ncdPercentage: code.percentage },
       });
 
       const response = await pay(customer, {
         quoteRequestId: quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: quote.id,
         amount: 1234.56,
         method: 'Card',
       });
@@ -820,7 +956,7 @@ describe('payments', () => {
                 { customerId: holder === 'self' ? customer.id : (await buildCustomer(testApp.db)).id, insurerId: insurer.insurer.id },
                 codeOverrides,
               );
-        const { quoteRequest } = await buildPayableQuote(testApp.db, {
+        const { quoteRequest, quote } = await buildPayableQuote(testApp.db, {
           customer,
           insurer,
           request: { ncdCode: code.code, ncdPercentage: code.percentage },
@@ -829,7 +965,7 @@ describe('payments', () => {
 
         const response = await pay(
           customer,
-          { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' },
+          { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' },
           key,
         );
 
@@ -849,8 +985,8 @@ describe('payments', () => {
 
   describe('concurrent payments', () => {
     it('for one request with different keys create one policy; the other is already paid', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
 
       const responses = await Promise.all([pay(customer, body, randomUUID()), pay(customer, body, randomUUID())]);
 
@@ -861,8 +997,8 @@ describe('payments', () => {
     });
 
     it('for one request, both held after reading it and before inserting, end in one policy and ALREADY_PAID', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
 
       const responses = await queueBehind(held, LOCKING_THE_REQUEST, 2, [
@@ -877,9 +1013,9 @@ describe('payments', () => {
     });
 
     it('uses the vehicle ID read after its request lock when that snapshot changes during payment', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const replacementVehicle = await buildVehicle(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
       const pending = pay(customer, body, randomUUID());
 
@@ -906,8 +1042,8 @@ describe('payments', () => {
       });
 
       it('for one request, both held after reading it and before inserting, end in one policy and ALREADY_PAID', async () => {
-        const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-        const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+        const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+        const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
         const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
         const payStrictly = async () =>
           strict.http.post('/api/v1/payments').set(await asCustomer(customer)).set('Idempotency-Key', randomUUID()).send(body);
@@ -922,8 +1058,8 @@ describe('payments', () => {
     });
 
     it('with one key on two requests make one payment; the other is IDEMPOTENCY_KEY_REUSED', async () => {
-      const { customer, insurer, quoteRequest: one } = await buildPayableQuote(testApp.db);
-      const { quoteRequest: two } = await buildPayableQuote(testApp.db, { customer, insurer });
+      const { customer, insurer, quoteRequest: one, quote: oneQuote } = await buildPayableQuote(testApp.db);
+      const { quoteRequest: two, quote: twoQuote } = await buildPayableQuote(testApp.db, { customer, insurer });
       const key = randomUUID();
       const held = await lockedBy('SELECT id FROM quote_requests WHERE id = ANY($1) FOR UPDATE', [[one.id, two.id]]);
 
@@ -931,8 +1067,11 @@ describe('payments', () => {
         held,
         LOCKING_THE_REQUEST,
         2,
-        [one, two].map((request) => () =>
-          pay(customer, { quoteRequestId: request.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }, key),
+        [
+          { quoteRequestId: one.id, insurerQuoteId: oneQuote.id },
+          { quoteRequestId: two.id, insurerQuoteId: twoQuote.id },
+        ].map((payment) => () =>
+          pay(customer, { ...payment, amount: 1234.56, method: 'Card' }, key),
         ),
       );
 
@@ -943,9 +1082,9 @@ describe('payments', () => {
     });
 
     it('with one key on one request make one payment, and both answers are its receipt', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       const key = randomUUID();
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const held = await lockedBy('SELECT id FROM quote_requests WHERE id = $1 FOR UPDATE', [quoteRequest.id]);
 
       const [first, second] = await queueBehind(held, LOCKING_THE_REQUEST, 2, [
@@ -964,16 +1103,19 @@ describe('payments', () => {
       const insurer = await buildInsurer(testApp.db);
       const code = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.insurer.id });
       const request = { ncdCode: code.code, ncdPercentage: code.percentage };
-      const { quoteRequest: one } = await buildPayableQuote(testApp.db, { customer, insurer, request });
-      const { quoteRequest: two } = await buildPayableQuote(testApp.db, { customer, insurer, request });
+      const { quoteRequest: one, quote: oneQuote } = await buildPayableQuote(testApp.db, { customer, insurer, request });
+      const { quoteRequest: two, quote: twoQuote } = await buildPayableQuote(testApp.db, { customer, insurer, request });
       const held = await lockedBy('SELECT code FROM ncd_codes WHERE code = $1 FOR UPDATE', [code.code]);
 
       const responses = await queueBehind(
         held,
         REDEEMING_THE_CODE,
         2,
-        [one, two].map((quoteRequest) => () =>
-          pay(customer, { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' }),
+        [
+          { quoteRequestId: one.id, insurerQuoteId: oneQuote.id },
+          { quoteRequestId: two.id, insurerQuoteId: twoQuote.id },
+        ].map((payment) => () =>
+          pay(customer, { ...payment, amount: 1234.56, method: 'Card' }),
         ),
       );
 
@@ -987,8 +1129,8 @@ describe('payments', () => {
     });
 
     it('on an account being closed wait for the closure, then answer 403 and store nothing', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
-      const body = { quoteRequestId: quoteRequest.id, insurer: insurer.insurer.name, amount: 1234.56, method: 'Card' };
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const body = { quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id, amount: 1234.56, method: 'Card' };
       const held = await lockedBy(CLOSING_THE_ACCOUNT, [customer.id]);
 
       const [response] = await queueBehind(held, ANY_STATEMENT, 1, [() => pay(customer, body, randomUUID())]);

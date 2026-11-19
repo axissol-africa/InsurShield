@@ -1,18 +1,26 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, notExists } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { takesNewBusinessWhere } from '../common/insurer-standing.js';
+import { customerAvailableProductConditions } from '../products/customer-availability.js';
 import {
   customers,
   inspectionShots,
+  insurerProductVersions,
+  insurerProducts,
   insurerQuotes,
   insurers,
   ncdCodes,
   payments,
+  productVersionRequirements,
   quoteRequestRecipients,
+  quoteRequestProductRequirementAnswers,
+  quoteRequestProductRequirementDeclarations,
+  quoteRequestProductRequirementDocuments,
+  quoteRequestProductVersions,
   quoteRequests,
   vehicles,
 } from '../db/schema.js';
+import type { CoverageDuration, InsuranceType, InspectionMethod, InspectionRule, InspectionTiming } from '../common/domain/enums.js';
 import { ncdCodeIssuedTo } from './ncd-code-ownership.js';
 
 export type QuoteRequestRow = typeof quoteRequests.$inferSelect;
@@ -35,7 +43,10 @@ export interface RecipientRow {
 }
 
 export interface QuoteRow {
+  id: string;
   quoteRequestId: string;
+  insurerId: string;
+  productVersionId: string | null;
   insurerName: string;
   premiumMinor: number;
   notes: string | null;
@@ -47,6 +58,28 @@ export interface QuoteRow {
   documentId: string;
   unpayableAt: Date | null;
 }
+
+/** Immutable customer-facing product terms captured at selection time. */
+export interface SelectedProductVersionRow {
+  quoteRequestId: string;
+  productVersionId: string;
+  insurerId: string;
+  insurerName: string;
+  productCode: string;
+  productVersionNumber: number;
+  productName: string;
+  coverType: InsuranceType;
+  coverGuide: Record<string, unknown>;
+  inspectionRule: InspectionRule;
+  inspectionTiming: InspectionTiming | null;
+  inspectionMethod: InspectionMethod | null;
+  cancelledAt: Date | null;
+}
+
+export type AvailableProductVersion = Omit<SelectedProductVersionRow, 'quoteRequestId' | 'cancelledAt'> & {
+  productId: string;
+  allowedDurations: CoverageDuration[];
+};
 
 export interface RequoteLink {
   requotedFromId: string;
@@ -62,6 +95,34 @@ export interface UsableNcdCode {
 
 export interface NewShot {
   shotKey: string;
+  documentId: string;
+}
+
+export interface ProductRequirementRow {
+  productVersionId: string;
+  key: string;
+  kind: string;
+  label: string;
+  helpText: string | null;
+  required: boolean;
+  config: Record<string, unknown>;
+  displayOrder: number;
+}
+
+export interface NewProductRequirementAnswer {
+  productVersionId: string;
+  requirementKey: string;
+  value: string | number | boolean;
+}
+
+export interface NewProductRequirementDeclaration {
+  productVersionId: string;
+  requirementKey: string;
+}
+
+export interface NewProductRequirementDocument {
+  productVersionId: string;
+  requirementKey: string;
   documentId: string;
 }
 
@@ -131,7 +192,10 @@ export class QuoteRequestsRepository {
     if (quoteRequestIds.length === 0) return Promise.resolve([]);
     return this.on(tx)
       .select({
+        id: insurerQuotes.id,
         quoteRequestId: insurerQuotes.quoteRequestId,
+        insurerId: insurerQuotes.insurerId,
+        productVersionId: insurerQuotes.productVersionId,
         insurerName: insurers.name,
         premiumMinor: insurerQuotes.premiumMinor,
         notes: insurerQuotes.notes,
@@ -147,6 +211,82 @@ export class QuoteRequestsRepository {
       .innerJoin(insurers, eq(insurers.id, insurerQuotes.insurerId))
       .where(inArray(insurerQuotes.quoteRequestId, quoteRequestIds))
       .orderBy(asc(insurers.name));
+  }
+
+  selectedProductVersionsOf(quoteRequestIds: string[], tx?: Transaction): Promise<SelectedProductVersionRow[]> {
+    if (quoteRequestIds.length === 0) return Promise.resolve([]);
+    return this.on(tx)
+      .select({
+        quoteRequestId: quoteRequestProductVersions.quoteRequestId,
+        productVersionId: quoteRequestProductVersions.productVersionId,
+        insurerId: quoteRequestProductVersions.insurerId,
+        insurerName: insurers.name,
+        productCode: quoteRequestProductVersions.productCode,
+        productVersionNumber: quoteRequestProductVersions.productVersionNumber,
+        productName: quoteRequestProductVersions.productName,
+        coverType: quoteRequestProductVersions.coverType,
+        coverGuide: quoteRequestProductVersions.coverGuide,
+        inspectionRule: quoteRequestProductVersions.inspectionRule,
+        inspectionTiming: quoteRequestProductVersions.inspectionTiming,
+        inspectionMethod: quoteRequestProductVersions.inspectionMethod,
+        cancelledAt: quoteRequestProductVersions.cancelledAt,
+      })
+      .from(quoteRequestProductVersions)
+      .innerJoin(insurers, eq(insurers.id, quoteRequestProductVersions.insurerId))
+      .where(inArray(quoteRequestProductVersions.quoteRequestId, quoteRequestIds))
+      .orderBy(asc(insurers.name), asc(quoteRequestProductVersions.productName));
+  }
+
+  /**
+   * Selected versions are read under a share lock, so a withdrawal or insurer
+   * deactivation that is already in flight cannot commit between eligibility
+   * validation and creating the request which records the selection.
+   */
+  selectedAvailableProductVersions(
+    tx: Transaction,
+    productVersionIds: string[],
+    insuranceType: InsuranceType,
+    now: Date,
+  ): Promise<AvailableProductVersion[]> {
+    if (productVersionIds.length === 0) return Promise.resolve([]);
+    return tx
+      .select({
+        productId: insurerProducts.id,
+        productVersionId: insurerProductVersions.id,
+        insurerId: insurers.id,
+        insurerName: insurers.name,
+        productCode: insurerProducts.code,
+        productVersionNumber: insurerProductVersions.versionNumber,
+        productName: insurerProductVersions.name,
+        coverType: insurerProductVersions.coverType,
+        coverGuide: insurerProductVersions.coverGuide,
+        inspectionRule: insurerProductVersions.inspectionRule,
+        inspectionTiming: insurerProductVersions.inspectionTiming,
+        inspectionMethod: insurerProductVersions.inspectionMethod,
+        allowedDurations: insurerProductVersions.allowedDurations,
+      })
+      .from(insurerProductVersions)
+      .innerJoin(insurerProducts, eq(insurerProducts.id, insurerProductVersions.productId))
+      .innerJoin(insurers, eq(insurers.id, insurerProducts.insurerId))
+      .where(and(...customerAvailableProductConditions(tx, now, { coverType: insuranceType, productVersionIds })))
+      .for('share');
+  }
+
+  /** All current versions for selected product identities, used to refuse ambiguity rather than picking one at random. */
+  currentVersionsForProducts(
+    tx: Transaction,
+    productIds: string[],
+    insuranceType: InsuranceType,
+    now: Date,
+  ) {
+    if (productIds.length === 0) return Promise.resolve([]);
+    return tx
+      .select({ productId: insurerProducts.id, productVersionId: insurerProductVersions.id })
+      .from(insurerProductVersions)
+      .innerJoin(insurerProducts, eq(insurerProducts.id, insurerProductVersions.productId))
+      .innerJoin(insurers, eq(insurers.id, insurerProducts.insurerId))
+      .where(and(...customerAvailableProductConditions(tx, now, { coverType: insuranceType, productIds })))
+      .for('share');
   }
 
   /** The requests that were sent again, and the new request each became. */
@@ -167,17 +307,6 @@ export class QuoteRequestsRepository {
       .where(and(eq(quoteRequests.id, id), eq(quoteRequests.customerId, customerId)))
       .for('update');
     return request;
-  }
-
-  /** Held shared until `tx` ends, so a deactivation in flight is waited for and none commits under the request. */
-  async activeInsurerIds(tx: Transaction, now: Date): Promise<string[]> {
-    const rows = await tx
-      .select({ id: insurers.id })
-      .from(insurers)
-      .where(and(...takesNewBusinessWhere(now)))
-      .orderBy(asc(insurers.name))
-      .for('share');
-    return rows.map((insurer) => insurer.id);
   }
 
   async insertVehicle(tx: Transaction, vehicle: NewVehicle): Promise<VehicleRow> {
@@ -211,6 +340,83 @@ export class QuoteRequestsRepository {
       .values(insurerIds.map((insurerId) => ({ quoteRequestId, insurerId, status: 'PENDING' as const })));
   }
 
+  async insertSelectedProductVersions(
+    tx: Transaction,
+    quoteRequestId: string,
+    selected: AvailableProductVersion[],
+  ): Promise<void> {
+    if (selected.length === 0) return;
+    await tx.insert(quoteRequestProductVersions).values(
+      selected.map((version) => ({
+        quoteRequestId,
+        productVersionId: version.productVersionId,
+        insurerId: version.insurerId,
+        productCode: version.productCode,
+        productVersionNumber: version.productVersionNumber,
+        productName: version.productName,
+        coverType: version.coverType,
+        coverGuide: version.coverGuide,
+        inspectionRule: version.inspectionRule,
+        inspectionTiming: version.inspectionTiming,
+        inspectionMethod: version.inspectionMethod,
+      })),
+    );
+  }
+
+  productRequirementsForVersions(
+    tx: Transaction,
+    productVersionIds: string[],
+  ): Promise<ProductRequirementRow[]> {
+    if (productVersionIds.length === 0) return Promise.resolve([]);
+    return tx
+      .select({
+        productVersionId: productVersionRequirements.productVersionId,
+        key: productVersionRequirements.key,
+        kind: productVersionRequirements.kind,
+        label: productVersionRequirements.label,
+        helpText: productVersionRequirements.helpText,
+        required: productVersionRequirements.required,
+        config: productVersionRequirements.config,
+        displayOrder: productVersionRequirements.displayOrder,
+      })
+      .from(productVersionRequirements)
+      .where(inArray(productVersionRequirements.productVersionId, productVersionIds))
+      .orderBy(asc(productVersionRequirements.displayOrder), asc(productVersionRequirements.key));
+  }
+
+  async insertProductRequirementAnswers(
+    tx: Transaction,
+    quoteRequestId: string,
+    answers: NewProductRequirementAnswer[],
+  ): Promise<void> {
+    if (answers.length === 0) return;
+    await tx.insert(quoteRequestProductRequirementAnswers).values(
+      answers.map((answer) => ({ quoteRequestId, ...answer })),
+    );
+  }
+
+  async insertProductRequirementDeclarations(
+    tx: Transaction,
+    quoteRequestId: string,
+    declarations: NewProductRequirementDeclaration[],
+  ): Promise<void> {
+    if (declarations.length === 0) return;
+    await tx.insert(quoteRequestProductRequirementDeclarations).values(
+      declarations.map((declaration) => ({ quoteRequestId, ...declaration })),
+    );
+  }
+
+  async insertProductRequirementDocuments(
+    tx: Transaction,
+    quoteRequestId: string,
+    documents: NewProductRequirementDocument[],
+  ): Promise<void> {
+    if (documents.length === 0) return;
+    await tx.insert(quoteRequestProductRequirementDocuments).values(
+      documents.map((document) => ({ quoteRequestId, ...document })),
+    );
+  }
+
   async insertShots(tx: Transaction, quoteRequestId: string, shots: NewShot[]): Promise<void> {
     if (shots.length === 0) return;
     await tx.insert(inspectionShots).values(shots.map((shot) => ({ quoteRequestId, ...shot })));
@@ -241,6 +447,15 @@ export class QuoteRequestsRepository {
         ),
       )
       .returning({ quoteRequestId: quoteRequestRecipients.quoteRequestId });
+  }
+
+  /** Marks each selected version as unavailable while preserving its historic terms and replies. */
+  async cancelSelectedVersionsForSuspension(tx: Transaction, insurerId: string, cancelledAt: Date) {
+    return tx
+      .update(quoteRequestProductVersions)
+      .set({ cancelledAt, cancelledReason: 'INSURER_SUSPENDED' })
+      .where(and(eq(quoteRequestProductVersions.insurerId, insurerId), isNull(quoteRequestProductVersions.cancelledAt)))
+      .returning({ quoteRequestId: quoteRequestProductVersions.quoteRequestId });
   }
 
   /** Final quotes without a confirmed payment stay visible as history but may no longer be paid. */

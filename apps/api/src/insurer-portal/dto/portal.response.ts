@@ -6,6 +6,7 @@ import type { InsurerPortalRepository } from '../insurer-portal.repository.js';
 type Rows<K extends keyof InsurerPortalRepository> = Awaited<ReturnType<InsurerPortalRepository[K]>>;
 type RequestRow = Rows<'listRequests'>[number];
 type ReplyRow = NonNullable<RequestRow['reply']>;
+type SelectedProductRow = Awaited<ReturnType<InsurerPortalRepository['selectedProductsForRequests']>>[number];
 type ExtensionRow = NonNullable<Rows<'extendOpenQuote'>>;
 type PolicyRow = Rows<'listPolicies'>[number];
 type IssuedRow = NonNullable<Rows<'activatePolicy'>>;
@@ -37,6 +38,7 @@ export function toPortalRequest(
   shotKeys: string[],
   replyDocument: DocumentRecord | null,
   whiteBook: DocumentRecord | null,
+  selectedProducts: Array<{ selection: SelectedProductRow; replyDocument: DocumentRecord | null }> = [],
 ) {
   return {
     id: request.id,
@@ -73,6 +75,25 @@ export function toPortalRequest(
     whiteBook,
     photosCapturedAt: iso(request.photosCapturedAt),
     reply: request.reply && replyDocument ? toReply(request.reply, replyDocument) : null,
+    ...(request.model === 'PRODUCT_SELECTION'
+      ? {
+          selectedProducts: selectedProducts.map(({ selection, replyDocument: productReplyDocument }) => ({
+            productVersionId: selection.productVersionId,
+            productCode: selection.productCode,
+            productVersionNumber: selection.productVersionNumber,
+            productName: selection.productName,
+            coverType: toContract.insuranceType(selection.coverType),
+            coverGuide: selection.coverGuide,
+            inspection: {
+              rule: selection.inspectionRule,
+              timing: selection.inspectionTiming,
+              method: selection.inspectionMethod,
+            },
+            unavailableAt: iso(selection.cancelledAt),
+            reply: selection.reply && productReplyDocument ? toReply(selection.reply, productReplyDocument) : null,
+          })),
+        }
+      : {}),
   };
 }
 

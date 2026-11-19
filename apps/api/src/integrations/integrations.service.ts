@@ -31,6 +31,13 @@ export interface QueueIntegrationDelivery {
   maxAttempts?: number;
 }
 
+export interface QueueInsurerQuoteRequest {
+  insurerId: string;
+  quoteRequestId: string;
+  /** Minimum necessary customer risk data; uploaded documents stay in the document service. */
+  requestPayload: Record<string, unknown>;
+}
+
 @Injectable()
 export class IntegrationsService implements OnModuleInit {
   constructor(
@@ -78,6 +85,24 @@ export class IntegrationsService implements OnModuleInit {
       maxAttempts: normalised.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
     });
     return saved.row;
+  }
+
+  /**
+   * Queues the durable insurer hand-off once per insurer, not once per selected
+   * product. Insurers without an enabled API still receive a visible manual
+   * delivery exception rather than silently losing the customer's request.
+   */
+  async queueInsurerQuoteRequest(tx: Transaction, input: QueueInsurerQuoteRequest) {
+    const configured = await this.repository.findInsurerDeliveryConfig(tx, input.insurerId);
+    return this.queue(tx, {
+      insurerId: input.insurerId,
+      targetKind: 'INSURER_API',
+      kind: 'QUOTE_REQUEST',
+      referenceId: input.quoteRequestId,
+      correlationId: input.quoteRequestId,
+      endpoint: insurerQuoteRequestEndpoint(configured?.apiBaseUrl, input.insurerId),
+      requestPayload: input.requestPayload,
+    });
   }
 
   listForOperations() {
@@ -286,6 +311,21 @@ function deliveryKey(input: Required<QueueIntegrationDelivery>): string {
 
 function hash(value: Record<string, unknown>): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function insurerQuoteRequestEndpoint(apiBaseUrl: string | undefined, insurerId: string): string {
+  if (!apiBaseUrl) {
+    // The processor stops before any network call when credentials are absent;
+    // this stable endpoint exists solely to make the manual exception durable.
+    return `https://manual.insurshield.invalid/insurers/${encodeURIComponent(insurerId)}/quote-requests`;
+  }
+  try {
+    return new URL('/quote-requests', apiBaseUrl).toString();
+  } catch {
+    // Onboarding validates this field, but avoid turning a historic malformed
+    // configuration into a missing outbox event.
+    return `https://manual.insurshield.invalid/insurers/${encodeURIComponent(insurerId)}/quote-requests`;
+  }
 }
 
 function headerValue(value: string | undefined, label: string, max: number): string {

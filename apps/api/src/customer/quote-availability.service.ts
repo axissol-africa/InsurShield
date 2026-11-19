@@ -20,9 +20,10 @@ export class QuoteAvailabilityService {
     input: { insurerId: string; insurerName: string; suspendedAt: Date },
   ): Promise<{ cancelledDeliveries: number; unpayableQuotes: number }> {
     const cancelled = await this.quotes.cancelUnansweredForSuspension(tx, input.insurerId, input.suspendedAt);
+    const cancelledSelections = await this.quotes.cancelSelectedVersionsForSuspension(tx, input.insurerId, input.suspendedAt);
     const customers = await this.quotes.customersForRequests(
       tx,
-      cancelled.map((row) => row.quoteRequestId),
+      [...new Set([...cancelled, ...cancelledSelections].map((row) => row.quoteRequestId))],
     );
     for (const customer of customers) {
       await this.notifications.notify(tx, {

@@ -1,11 +1,13 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
-import type { QuoteRow, RecipientRow, RequestWithParties } from '../quote-requests.repository.js';
+import type { QuoteRow, RecipientRow, RequestWithParties, SelectedProductVersionRow } from '../quote-requests.repository.js';
 
 export type QuoteWithDocument = QuoteRow & { document: DocumentRecord };
 
 export interface InsurerQuoteResponse {
+  id: string;
+  productVersionId: string | null;
   premium: number;
   notes: string | null;
   insurerReference: string | null;
@@ -16,6 +18,11 @@ export interface InsurerQuoteResponse {
   /** The quote remains viewable for the customer's records but cannot be paid. */
   unavailableAt: string | null;
   document: DocumentRecord;
+}
+
+/** A final reply is identified by its immutable quote id, never by insurer name. */
+export interface ProductQuoteResponse extends InsurerQuoteResponse {
+  insurer: { id: string; name: string };
 }
 
 /** An insurer that did not answer before it became unavailable. */
@@ -52,7 +59,20 @@ export interface QuoteRequestResponse {
   policyDates: { startDate: string; endDate: string; daysTotal: number | null } | null;
   insurers: string[];
   insurerIds: string[];
+  selectedProducts: Array<{
+    productVersionId: string;
+    insurerId: string;
+    insurerName: string;
+    productCode: string;
+    productVersionNumber: number;
+    productName: string;
+    coverType: string;
+    coverGuide: Record<string, unknown>;
+    inspection: { rule: string; timing: string | null; method: string | null };
+    unavailableAt: string | null;
+  }>;
   insurerQuotes: Record<string, InsurerQuoteResponse>;
+  productQuotes: ProductQuoteResponse[];
   unavailableInsurers: UnavailableInsurerResponse[];
   photosCapturedAt: string | null;
   requotedFromId: string | null;
@@ -67,12 +87,16 @@ export function toQuoteRequestResponse(
   { request, customer, vehicle, chargedRtsaAnniversaryFeeMinor }: RequestWithParties,
   recipients: RecipientRow[],
   quotes: QuoteWithDocument[],
+  selectedProducts: SelectedProductVersionRow[],
   requotedAs: string | null,
   currentRtsaAnniversaryFeeMinor: number,
 ): QuoteRequestResponse {
   const insurerQuotes: Record<string, InsurerQuoteResponse> = {};
+  const productQuotes: ProductQuoteResponse[] = [];
   for (const quote of quotes) {
-    insurerQuotes[quote.insurerName] = {
+    const response = {
+      id: quote.id,
+      productVersionId: quote.productVersionId,
       premium: ngweeToKwacha(quote.premiumMinor),
       notes: quote.notes,
       insurerReference: quote.insurerReference,
@@ -83,6 +107,11 @@ export function toQuoteRequestResponse(
       unavailableAt: quote.unpayableAt?.toISOString() ?? null,
       document: quote.document,
     };
+    // Existing browser clients still read their historical replies by insurer
+    // name. New selected-product replies are intentionally separate because a
+    // single insurer may return more than one quote for the same request.
+    if (quote.productVersionId === null) insurerQuotes[quote.insurerName] = response;
+    else productQuotes.push({ ...response, productVersionId: quote.productVersionId, insurer: { id: quote.insurerId, name: quote.insurerName } });
   }
 
   return {
@@ -124,7 +153,24 @@ export function toQuoteRequestResponse(
         : null,
     insurers: recipients.map((recipient) => recipient.insurerName),
     insurerIds: recipients.map((recipient) => recipient.insurerId),
+    selectedProducts: selectedProducts.map((selection) => ({
+      productVersionId: selection.productVersionId,
+      insurerId: selection.insurerId,
+      insurerName: selection.insurerName,
+      productCode: selection.productCode,
+      productVersionNumber: selection.productVersionNumber,
+      productName: selection.productName,
+      coverType: toContract.insuranceType(selection.coverType),
+      coverGuide: selection.coverGuide,
+      inspection: {
+        rule: selection.inspectionRule,
+        timing: selection.inspectionTiming,
+        method: selection.inspectionMethod,
+      },
+      unavailableAt: selection.cancelledAt?.toISOString() ?? null,
+    })),
     insurerQuotes,
+    productQuotes,
     unavailableInsurers: recipients.flatMap((recipient) =>
       recipient.cancelledAt ? [{ name: recipient.insurerName, unavailableAt: recipient.cancelledAt.toISOString() }] : [],
     ),

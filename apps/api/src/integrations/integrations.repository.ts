@@ -145,6 +145,19 @@ export class IntegrationsRepository {
       .then((rows) => rows[0]);
   }
 
+  /**
+   * Delivery configuration is read in the caller's transaction so a request
+   * cannot be committed against a half-updated insurer integration record.
+   * No credentials are selected here.
+   */
+  findInsurerDeliveryConfig(tx: Transaction, insurerId: string) {
+    return tx
+      .select({ apiBaseUrl: insurerIntegrations.apiBaseUrl })
+      .from(insurerIntegrations)
+      .where(eq(insurerIntegrations.insurerId, insurerId))
+      .then((rows) => rows[0]);
+  }
+
   async recordCallback(input: {
     insurerId: string;
     eventId: string;

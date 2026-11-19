@@ -62,7 +62,7 @@ export default function PaymentPage() {
     try {
       const receipt = await api.payments.pay({
         quoteRequestId: selectedQuote.requestId,
-        insurer: selectedQuote.name,
+        insurerQuoteId: selectedQuote.insurerQuoteId,
         amount: total,
         method: method === 'momo' ? 'Mobile money' : 'Card',
         mobileNumber: method === 'momo' ? mobileNumber : undefined,

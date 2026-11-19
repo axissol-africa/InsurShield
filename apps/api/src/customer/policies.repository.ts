@@ -25,16 +25,6 @@ export interface PolicyWithParties {
 
 export type PolicyRenewal = RenewalRequest & { renewalOfPolicyNumber: string };
 
-/** What a renewal carries forward from the request the policy was bought on. */
-export interface CarriedForward {
-  vehicleValueMinor: number;
-  vehicleUsage: string;
-  insuranceType: (typeof quoteRequests.$inferSelect)['insuranceType'];
-  coverageDuration: (typeof quoteRequests.$inferSelect)['coverageDuration'];
-  matchRtsaAnniversary: boolean;
-  rtsaRegistrationDate: Date | null;
-}
-
 const PARTIES = {
   policy: policies,
   customer: { fullName: customers.fullName, email: customers.email, phone: customers.phone },
@@ -106,18 +96,4 @@ export class PoliciesRepository {
     return policy;
   }
 
-  async findCarriedForward(tx: Transaction, quoteRequestId: string): Promise<CarriedForward | undefined> {
-    const [request] = await tx
-      .select({
-        vehicleValueMinor: quoteRequests.vehicleValueMinor,
-        vehicleUsage: quoteRequests.vehicleUsage,
-        insuranceType: quoteRequests.insuranceType,
-        coverageDuration: quoteRequests.coverageDuration,
-        matchRtsaAnniversary: quoteRequests.matchRtsaAnniversary,
-        rtsaRegistrationDate: quoteRequests.rtsaRegistrationDate,
-      })
-      .from(quoteRequests)
-      .where(eq(quoteRequests.id, quoteRequestId));
-    return request;
-  }
 }

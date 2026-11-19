@@ -1,4 +1,4 @@
-import { IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CONTRACT_VALUES } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
 
@@ -8,8 +8,18 @@ export class PayDto {
   /** The request being paid for; the quote must belong to it. */
   @IsString() @MinLength(3) @MaxLength(60) quoteRequestId!: string;
 
-  /** The insurer whose quote the customer accepted, by name as shown. */
-  @IsString() @MinLength(1) @MaxLength(160) insurer!: string;
+  /**
+   * The exact quote the customer accepted. Names are not a stable payment
+   * identity: one insurer may return several product quotes for one request.
+   */
+  @IsOptional() @IsUUID('4') insurerQuoteId?: string;
+
+  /**
+   * Accepted only so a stale client reaches the explicit reload response in
+   * the service. It is never used to choose a quote and can be removed after
+   * all supported clients send `insurerQuoteId`.
+   */
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(160) insurer?: string;
 
   /** What the customer authorised; the server derives every applicable fee. */
   @IsNumber({ maxDecimalPlaces: 2 })

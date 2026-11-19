@@ -20,6 +20,11 @@ import { ChevronDown } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Checkbox } from '@/components/ui/primitives/checkbox';
 
+const legacyMockQuoteId = (request, insurerName) =>
+  env.apiMode === 'mock' && request?.id && insurerName
+    ? `IQ-${request.id}-${insurerName.replaceAll(/[^A-Za-z0-9]/g, '-')}`
+    : null;
+
 export default function QuotesComparisonPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -40,7 +45,10 @@ export default function QuotesComparisonPage() {
   // before demo replies were introduced. Finish only that mock-mode hand-off;
   // production requests always wait for an insurer's uploaded quotation.
   useEffect(() => {
-    const hasNoReplies = Object.keys(request?.insurerQuotes || {}).length === 0;
+    const hasSelectedProducts = request?.selectedProducts?.length > 0;
+    const hasNoReplies = hasSelectedProducts
+      ? (request?.productQuotes || []).length === 0
+      : Object.keys(request?.insurerQuotes || {}).length === 0;
     if (
       env.apiMode === 'mock' &&
       request?.quotesRequestedAt &&
@@ -50,10 +58,56 @@ export default function QuotesComparisonPage() {
     ) {
       completeDemoQuoteReplies(request.id);
     }
-  }, [completeDemoQuoteReplies, request?.id, request?.quotesRequestedAt, request?.insurers?.length, request?.insurerQuotes, request]);
+  }, [completeDemoQuoteReplies, request?.id, request?.quotesRequestedAt, request?.insurers?.length, request?.insurerQuotes, request?.productQuotes, request?.selectedProducts, request]);
 
   const quotes = useMemo(() => {
     if (!request) return [];
+    const isProductSelection = request.selectedProducts?.length > 0;
+    if (isProductSelection) {
+      return request.selectedProducts
+        .map((selection) => {
+          const reply = request.productQuotes?.find((quote) => quote.productVersionId === selection.productVersionId) || null;
+          const insurer = insurersList.find((item) => item.id === selection.insurerId) || {
+            id: selection.insurerId,
+            name: selection.insurerName,
+          };
+          const unavailableAt = reply?.unavailableAt || selection.unavailableAt || null;
+          const validity = quoteValidity(reply);
+          const reviews = env.apiMode === 'mock'
+            ? insurerReviews.filter((review) => sameInsurerName(review.insurer, selection.insurerName))
+            : [];
+          const rating = reviews.length
+            ? reviews.reduce((total, review) => total + review.rating, 0) / reviews.length
+            : null;
+          return {
+            ...insurer,
+            id: reply?.id || `product-${selection.productVersionId}`,
+            productVersionId: selection.productVersionId,
+            productName: selection.productName,
+            productCode: selection.productCode,
+            coverType: selection.coverType,
+            breakdown: reply
+              ? { basePremium: reply.premium, ncdDiscount: 0, appliedNcdPercentage: 0, finalPremium: reply.premium, source: 'insurer' }
+              : null,
+            premium: reply?.premium ?? null,
+            estimate: null,
+            reply,
+            isFinal: Boolean(reply),
+            unavailable: Boolean(unavailableAt),
+            unavailableAt,
+            validity,
+            expired: validity.expired,
+            rating,
+            ratingCount: reviews.length,
+          };
+        })
+        .sort(
+          (a, b) =>
+            Number(a.unavailable) - Number(b.unavailable)
+            || Number(a.expired) - Number(b.expired)
+            || (a.premium ?? Number.POSITIVE_INFINITY) - (b.premium ?? Number.POSITIVE_INFINITY),
+        );
+    }
     const requested = request.insurerIds?.length
       ? request.insurerIds.map((id) => insurersList.find((insurer) => insurer.id === id))
       : request.insurers.map((name) => insurersList.find((insurer) => sameInsurerName(insurer.name, name)));
@@ -124,6 +178,7 @@ export default function QuotesComparisonPage() {
   const repliedCount = quotes.filter((quote) => quote.isFinal && !quote.unavailable).length;
   const unavailableCount = quotes.filter((quote) => quote.unavailable).length;
   const waitingCount = quotes.filter((quote) => !quote.isFinal && !quote.unavailable).length;
+  const productRequest = Boolean(request?.selectedProducts?.length);
   const coverageType =
     request?.insuranceType === 'Third Party Only' ? 'ThirdParty' : request?.insuranceType || 'Comprehensive';
   const guideInsurers = useMemo(
@@ -142,7 +197,13 @@ export default function QuotesComparisonPage() {
     // can buy. A documented insurer reply is required before payment.
     if (!quote.isFinal || quote.unavailable || quote.expired || requestExpired) return;
     selectQuote(
-      { ...quote, price: quote.premium, requestId: request.id, validUntil: quote.validity.validUntil },
+      {
+        ...quote,
+        price: quote.premium,
+        requestId: request.id,
+        insurerQuoteId: quote.reply?.id || legacyMockQuoteId(request, quote.name),
+        validUntil: quote.validity.validUntil,
+      },
       quote.breakdown,
     );
     navigate(continuation('/payment'));
@@ -197,7 +258,7 @@ export default function QuotesComparisonPage() {
               </p>
             )}
             <p role="status" aria-live="polite" className="text-sm">
-              {quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total: quotes.length })}
+              {quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total: quotes.length, productRequest })}
             </p>
           </CardContent>
         </Card>
@@ -244,19 +305,19 @@ export default function QuotesComparisonPage() {
             <li key={quote.id} aria-labelledby={`quote-${quote.id}`} className="min-w-0">
               <QuoteCard
                 quote={quote}
-                coverageType={coverageType}
+                coverageType={quote.coverType || coverageType}
                 disabled={requestExpired}
                 onChoose={() => choose(quote)}
                 onRequote={requote}
-                selectionLabel={quotes.length === 1 ? 'Continue to payment' : `Choose ${quote.name}`}
+                selectionLabel={quotes.length === 1 ? 'Continue to payment' : `Choose ${quote.productName || quote.name}`}
               />
             </li>
           ))}
         </ul>
 
         <p className="mt-7 text-center text-[14px] text-ink-muted">
-          Choosing an insurer takes you to payment. Each final quote is valid until the date shown; indicative estimates
-          are confirmed by the insurer before your policy is issued.
+          Choosing a final quote takes you to payment. Each final quote is valid until the date shown; only the insurer’s
+          documented final premium can be paid.
         </p>
       </JourneyLayout>
     </>
@@ -405,7 +466,11 @@ function PriceBlock({ quote }) {
 
   return (
     <div>
-      <p className="text-2xl font-semibold leading-none tracking-tight text-foreground">{formatZMW(quote.premium)}</p>
+      {quote.premium === null ? (
+        <p className="text-lg font-semibold leading-none tracking-tight text-foreground">Awaiting final quote</p>
+      ) : (
+        <p className="text-2xl font-semibold leading-none tracking-tight text-foreground">{formatZMW(quote.premium)}</p>
+      )}
       {quote.unavailable ? (
         <p className="mt-1.5 text-[12px] text-ink-muted">Previously issued quote · no longer available for payment</p>
       ) : quote.isFinal ? (
@@ -419,7 +484,9 @@ function PriceBlock({ quote }) {
           )}
         </p>
       ) : (
-        <p className="mt-1.5 text-[12px] text-ink-muted">Indicative estimate · awaiting insurer's final quote</p>
+        <p className="mt-1.5 text-[12px] text-ink-muted">
+          {quote.productVersionId ? 'Awaiting this product’s final quote from the insurer' : 'Indicative estimate · awaiting insurer’s final quote'}
+        </p>
       )}
     </div>
   );
@@ -538,7 +605,9 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
               <h2 id={`quote-${quote.id}`} className="text-base font-semibold tracking-tight">
                 {quote.name}
               </h2>
-              <p className="mt-1 text-sm text-muted-foreground">{COVER_TYPE_LABELS[coverageType]}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {quote.productName ? `${quote.productName} · ` : ''}{COVER_TYPE_LABELS[coverageType]}
+              </p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
               <QuoteStatusBadge quote={quote} />
@@ -587,16 +656,30 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
   );
 }
 
-function quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total }) {
-  if (!unavailableCount) {
-    return repliedCount === total
-      ? 'All insurers have sent their final quotes.'
-      : `${repliedCount} of ${total} insurers have replied. Only a final insurer quotation can be selected for payment.`;
+function quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total, productRequest = false }) {
+  if (!productRequest) {
+    if (!unavailableCount) {
+      return repliedCount === total
+        ? 'All insurers have sent their final quotes.'
+        : `${repliedCount} of ${total} insurers have replied. Only a final insurer quotation can be selected for payment.`;
+    }
+    const legacyParts = [`${repliedCount} of ${total} insurers have an available final quote.`];
+    if (unavailableCount) legacyParts.push(`${unavailableCount} insurer${unavailableCount === 1 ? ' is' : 's are'} unavailable.`);
+    if (waitingCount) legacyParts.push(`${waitingCount} insurer${waitingCount === 1 ? ' is' : 's are'} awaiting a reply.`);
+    return legacyParts.join(' ');
   }
 
-  const parts = [`${repliedCount} of ${total} insurers have an available final quote.`];
-  if (unavailableCount) parts.push(`${unavailableCount} insurer${unavailableCount === 1 ? ' is' : 's are'} unavailable.`);
-  if (waitingCount) parts.push(`${waitingCount} insurer${waitingCount === 1 ? ' is' : 's are'} awaiting a reply.`);
+  const subject = 'selected products';
+  if (!unavailableCount) {
+    return repliedCount === total
+      ? `All ${subject} have final quotes.`
+      : `${repliedCount} of ${total} ${subject} have final quotes. Only a final insurer quotation can be selected for payment.`;
+  }
+
+  const singular = 'product';
+  const parts = [`${repliedCount} of ${total} ${subject} have an available final quote.`];
+  if (unavailableCount) parts.push(`${unavailableCount} ${singular}${unavailableCount === 1 ? ' is' : 's are'} unavailable.`);
+  if (waitingCount) parts.push(`${waitingCount} ${singular}${waitingCount === 1 ? ' is' : 's are'} awaiting a reply.`);
   return parts.join(' ');
 }
 

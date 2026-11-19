@@ -11,11 +11,20 @@ import {
   claimNotifications,
   customers,
   inspectionShots,
+  integrationDeliveries,
+  insurerEvidence,
+  insurerProductVersions,
+  insurerProducts,
   insurers,
   ncdApplications,
   payments,
   policies,
   quoteRequestRecipients,
+  quoteRequestProductRequirementAnswers,
+  quoteRequestProductRequirementDeclarations,
+  quoteRequestProductRequirementDocuments,
+  quoteRequestProductVersions,
+  productVersionRequirements,
   quoteRequests,
   vehicles,
   documents as documentsTable,
@@ -43,7 +52,6 @@ import {
   queueBehind,
   startApp,
   startRepeatableReadApp,
-  until,
   type TestApp,
 } from './helpers.js';
 import { signIn } from './sessions.js';
@@ -57,7 +65,6 @@ const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 const LOCKING_THE_REQUEST = 'select % from "quote_requests" % for update';
 const LOCKING_THE_POLICY = 'select % from "policies" % for update';
 const LOCKING_THE_CUSTOMER = 'select % from "customers" % for update';
-const SHARING_THE_INSURERS = 'select % from "insurers" % for share';
 const LOCKING_THE_DOCUMENTS = 'select % from "documents" % for update';
 
 const QUOTE_REQUEST_KEYS = [
@@ -72,9 +79,11 @@ const QUOTE_REQUEST_KEYS = [
   'matchRtsaAnniversary',
   'photosCapturedAt',
   'policyDates',
+  'productQuotes',
   'requotedAs',
   'requotedFromId',
   'rtsaAnniversaryFee',
+  'selectedProducts',
   'status',
   'submittedAt',
   'unavailableInsurers',
@@ -86,9 +95,11 @@ const QUOTE_REQUEST_KEYS = [
 const INSURER_QUOTE_KEYS = [
   'document',
   'extendedAt',
+  'id',
   'insurerReference',
   'notes',
   'premium',
+  'productVersionId',
   'sentAt',
   'unavailableAt',
   'validUntil',
@@ -180,10 +191,14 @@ const DOCUMENT_KEYS = ['id', 'name', 'size', 'type', 'url'];
 describe('customer', () => {
   let testApp: TestApp;
   let side: ReturnType<typeof openTestDatabase>;
+  let defaultSelection: Awaited<ReturnType<typeof productVersionForSelection>>;
+  let defaultInsurer: Awaited<ReturnType<typeof buildInsurer>>;
 
   beforeAll(async () => {
     testApp = await startApp();
     side = openTestDatabase();
+    defaultInsurer = await buildInsurer(testApp.db);
+    defaultSelection = await productVersionForSelection(defaultInsurer, unique('DEFAULT_SELECTION'));
   });
 
   afterAll(async () => {
@@ -208,6 +223,8 @@ describe('customer', () => {
   const recipientsOf = (id: string) =>
     testApp.db.select().from(quoteRequestRecipients).where(eq(quoteRequestRecipients.quoteRequestId, id));
   const shotsOf = (id: string) => testApp.db.select().from(inspectionShots).where(eq(inspectionShots.quoteRequestId, id));
+  const selectedProductsOf = (id: string) =>
+    testApp.db.select().from(quoteRequestProductVersions).where(eq(quoteRequestProductVersions.quoteRequestId, id));
   const requestsOf = (customerId: string) =>
     testApp.db.select().from(quoteRequests).where(eq(quoteRequests.customerId, customerId));
   const claimsOf = (customerId: string) =>
@@ -220,8 +237,45 @@ describe('customer', () => {
     vehicleUsage: 'Individual',
     insuranceType: 'Comprehensive',
     coverageDurationId: '4q',
+    selectedProductVersionIds: [defaultSelection.version.id],
     ...overrides,
   });
+
+  async function productVersionForSelection(
+    insurer: Awaited<ReturnType<typeof buildInsurer>>,
+    code: string,
+    overrides: Partial<typeof insurerProductVersions.$inferInsert> = {},
+    coverType: 'COMPREHENSIVE' | 'THIRD_PARTY' = 'COMPREHENSIVE',
+  ) {
+    await testApp.db.insert(insurerEvidence).values({
+      insurerId: insurer.insurer.id,
+      kind: 'LICENCE',
+      state: 'APPROVED',
+      reference: `${code}-LICENCE`,
+    });
+    const [product] = await testApp.db
+      .insert(insurerProducts)
+      .values({ insurerId: insurer.insurer.id, code, coverType })
+      .returning();
+    const [version] = await testApp.db
+      .insert(insurerProductVersions)
+      .values({
+        productId: product.id,
+        versionNumber: 1,
+        status: 'APPROVED',
+        name: `${code} cover`,
+        coverType,
+        coverGuide: { planName: `${code} cover`, summary: 'Customer-facing terms.' },
+        inspectionRule: 'NOT_REQUIRED',
+        rateBps: 525,
+        allowedDurations: ['Q1', 'Q2', 'Q3', 'Q4'],
+        effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+        createdByStaffId: insurer.staff.id,
+        ...overrides,
+      })
+      .returning();
+    return { product, version };
+  }
 
   const claim = (insurerId: string, overrides: Record<string, unknown> = {}) => ({
     insurerId,
@@ -348,8 +402,11 @@ describe('customer', () => {
         policyDates: { startDate: '2026-11-01T00:00:00.000Z', endDate: '2027-05-01T00:00:00.000Z', daysTotal: 181 },
         insurers: [quoted.insurer.name, silent.insurer.name],
         insurerIds: [quoted.insurer.id, silent.insurer.id],
+        selectedProducts: [],
         insurerQuotes: {
           [quoted.insurer.name]: {
+            id: quote.id,
+            productVersionId: null,
             premium: 1234.56,
             notes: 'Includes windscreen cover',
             insurerReference: quote.insurerReference,
@@ -361,6 +418,7 @@ describe('customer', () => {
             document: await documentResponse(document),
           },
         },
+        productQuotes: [],
         unavailableInsurers: [],
         photosCapturedAt: '2026-10-01T07:59:00.789Z',
         requotedFromId: null,
@@ -405,7 +463,7 @@ describe('customer', () => {
   });
 
   describe('POST /quote-requests', () => {
-    it('sends one request to every active insurer with the photos attached, and stores the value in ngwee', async () => {
+    it('sends a request only to the selected current product’s insurer with the photos attached, and stores the value in ngwee', async () => {
       const customer = await buildCustomer(testApp.db);
       const active = await buildInsurer(testApp.db);
       const inactive = await buildInsurer(testApp.db, { insurer: { status: 'INACTIVE' } });
@@ -413,6 +471,7 @@ describe('customer', () => {
       const expired = await buildInsurer(testApp.db, { insurer: { licenceExpiry: inDays(-1) } });
       const front = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'INSPECTION_PHOTO', mimeType: 'image/jpeg' });
       const rear = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'INSPECTION_PHOTO', mimeType: 'image/jpeg' });
+      const selected = await productVersionForSelection(active, unique('THIRD_PARTY_SELECTION'), {}, 'THIRD_PARTY');
 
       const response = await testApp.http
         .post('/api/v1/quote-requests')
@@ -427,6 +486,7 @@ describe('customer', () => {
               { shotKey: 'insp_rear', documentId: rear.id },
             ],
             photosCapturedAt: '2026-10-24T10:00:00.250Z',
+            selectedProductVersionIds: [selected.version.id],
           }),
         )
         .expect(201);
@@ -448,13 +508,14 @@ describe('customer', () => {
       expect(response.body.submittedAt).toMatch(ISO_MS);
       expect(response.body.expiresAt).toBe(new Date(Date.parse(response.body.submittedAt) + 7 * DAY_MS).toISOString());
       expect(response.body.insurerIds).toContain(active.insurer.id);
+      expect(response.body.insurerIds).not.toContain(defaultInsurer.insurer.id);
       expect(response.body.insurerIds).not.toContain(inactive.insurer.id);
       expect(response.body.insurerIds).not.toContain(deleted.insurer.id);
       expect(response.body.insurerIds).not.toContain(expired.insurer.id);
       expect(response.body.insurers).toHaveLength(response.body.insurerIds.length);
 
       const stored = await storedRequest(response.body.id);
-      expect(stored).toMatchObject({ vehicleValueMinor: 123_456, customerId: customer.id, ncdCode: null, ncdPercentage: null });
+      expect(stored).toMatchObject({ model: 'PRODUCT_SELECTION', vehicleValueMinor: 123_456, customerId: customer.id, ncdCode: null, ncdPercentage: null });
       const byId = (left: string, right: string) => left.localeCompare(right);
       expect((await recipientsOf(stored.id)).map((recipient) => recipient.insurerId).sort(byId)).toEqual(
         [...response.body.insurerIds].sort(byId),
@@ -464,6 +525,190 @@ describe('customer', () => {
         ['insp_front', front.id],
         ['insp_rear', rear.id],
       ]);
+    });
+
+    it('selects one to five current product versions, snapshots their terms, and creates one recipient per insurer', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const firstInsurer = await buildInsurer(testApp.db);
+      const secondInsurer = await buildInsurer(testApp.db);
+      const unrelated = await buildInsurer(testApp.db);
+      const first = await productVersionForSelection(firstInsurer, unique('FIRST'));
+      const second = await productVersionForSelection(firstInsurer, unique('SECOND'));
+      const third = await productVersionForSelection(secondInsurer, unique('THIRD'));
+
+      const submitted = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(
+          submission(unique('S').toUpperCase(), {
+            selectedProductVersionIds: [first.version.id, second.version.id, third.version.id],
+          }),
+        )
+        .expect(201);
+
+      expect(submitted.body).toMatchObject({
+        insurers: expect.arrayContaining([firstInsurer.insurer.name, secondInsurer.insurer.name]),
+        selectedProducts: expect.arrayContaining([
+          expect.objectContaining({ productVersionId: first.version.id, productCode: first.product.code, insurerId: firstInsurer.insurer.id }),
+          expect.objectContaining({ productVersionId: second.version.id, productCode: second.product.code, insurerId: firstInsurer.insurer.id }),
+          expect.objectContaining({ productVersionId: third.version.id, productCode: third.product.code, insurerId: secondInsurer.insurer.id }),
+        ]),
+        productQuotes: [],
+        insurerQuotes: {},
+      });
+      expect(submitted.body.insurerIds).toHaveLength(2);
+      expect(submitted.body.insurerIds).not.toContain(unrelated.insurer.id);
+      expect((await recipientsOf(submitted.body.id)).map((recipient) => recipient.insurerId).sort()).toEqual(
+        [firstInsurer.insurer.id, secondInsurer.insurer.id].sort(),
+      );
+      expect(await selectedProductsOf(submitted.body.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ productVersionId: first.version.id, insurerId: firstInsurer.insurer.id, productCode: first.product.code }),
+          expect.objectContaining({ productVersionId: second.version.id, insurerId: firstInsurer.insurer.id, productCode: second.product.code }),
+          expect.objectContaining({ productVersionId: third.version.id, insurerId: secondInsurer.insurer.id, productCode: third.product.code }),
+        ]),
+      );
+      expect(await storedRequest(submitted.body.id)).toMatchObject({ model: 'PRODUCT_SELECTION' });
+      const deliveries = await testApp.db
+        .select()
+        .from(integrationDeliveries)
+        .where(eq(integrationDeliveries.referenceId, submitted.body.id));
+      expect(deliveries).toHaveLength(2);
+      expect(deliveries.map((delivery) => delivery.insurerId).sort((left, right) => left!.localeCompare(right!))).toEqual(
+        [firstInsurer.insurer.id, secondInsurer.insurer.id].sort((left, right) => left.localeCompare(right)),
+      );
+      const firstDelivery = deliveries.find((delivery) => delivery.insurerId === firstInsurer.insurer.id)!;
+      expect(firstDelivery).toMatchObject({ targetKind: 'INSURER_API', kind: 'QUOTE_REQUEST', status: 'PENDING' });
+      expect((firstDelivery.requestPayload as { selectedProducts: { productVersionId: string }[] }).selectedProducts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ productVersionId: first.version.id }),
+          expect.objectContaining({ productVersionId: second.version.id }),
+        ]),
+      );
+    });
+
+    it('validates insurer-configured requirements, shares identical answers safely, and stores them against each selected version', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const firstInsurer = await buildInsurer(testApp.db);
+      const secondInsurer = await buildInsurer(testApp.db);
+      const first = await productVersionForSelection(firstInsurer, unique('REQUIREMENT_A'));
+      const second = await productVersionForSelection(secondInsurer, unique('REQUIREMENT_B'));
+      const proof = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'WHITE_BOOK' });
+
+      for (const productVersionId of [first.version.id, second.version.id]) {
+        await testApp.db.insert(productVersionRequirements).values([
+          {
+            productVersionId,
+            key: 'driver_age',
+            kind: 'QUESTION',
+            label: 'Main driver age',
+            required: true,
+            config: { inputType: 'NUMBER' },
+            displayOrder: 1,
+          },
+          {
+            productVersionId,
+            key: 'ownership_proof',
+            kind: 'DOCUMENT',
+            label: 'Proof of ownership',
+            required: true,
+            config: { documentKind: 'WHITE_BOOK' },
+            displayOrder: 2,
+          },
+          {
+            productVersionId,
+            key: 'truth_declaration',
+            kind: 'DECLARATION',
+            label: 'I confirm the details are accurate',
+            required: true,
+            config: { text: 'I confirm the details are accurate.' },
+            displayOrder: 3,
+          },
+        ]);
+      }
+
+      const missing = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('REQ').toUpperCase(), { selectedProductVersionIds: [first.version.id, second.version.id] }))
+        .expect(400);
+      expect(missing.body.code).toBe('PRODUCT_REQUIREMENTS_INCOMPLETE');
+      expect(await requestsOf(customer.id)).toEqual([]);
+
+      const submitted = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('REQ').toUpperCase(), {
+          selectedProductVersionIds: [first.version.id, second.version.id],
+          // One unscoped answer is accepted only because the two product
+          // versions use precisely the same requirement definition.
+          productRequirementAnswers: [{ requirementKey: 'driver_age', value: 32 }],
+          productRequirementDocuments: [{ requirementKey: 'ownership_proof', documentId: proof.id }],
+          productRequirementDeclarations: [{ requirementKey: 'truth_declaration', accepted: true }],
+        }))
+        .expect(201);
+
+      const whereRequest = (table: typeof quoteRequestProductRequirementAnswers | typeof quoteRequestProductRequirementDeclarations | typeof quoteRequestProductRequirementDocuments) =>
+        testApp.db.select().from(table).where(eq(table.quoteRequestId, submitted.body.id));
+      expect(await whereRequest(quoteRequestProductRequirementAnswers)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ productVersionId: first.version.id, requirementKey: 'driver_age', value: 32 }),
+        expect.objectContaining({ productVersionId: second.version.id, requirementKey: 'driver_age', value: 32 }),
+      ]));
+      expect(await whereRequest(quoteRequestProductRequirementDeclarations)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ productVersionId: first.version.id, requirementKey: 'truth_declaration' }),
+        expect.objectContaining({ productVersionId: second.version.id, requirementKey: 'truth_declaration' }),
+      ]));
+      expect(await whereRequest(quoteRequestProductRequirementDocuments)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ productVersionId: first.version.id, requirementKey: 'ownership_proof', documentId: proof.id }),
+        expect.objectContaining({ productVersionId: second.version.id, requirementKey: 'ownership_proof', documentId: proof.id }),
+      ]));
+
+      const unselected = await productVersionForSelection(await buildInsurer(testApp.db), unique('REQUIREMENT_C'));
+      const rejected = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('REQ').toUpperCase(), {
+          selectedProductVersionIds: [first.version.id],
+          productRequirementAnswers: [{ productVersionId: unselected.version.id, requirementKey: 'driver_age', value: 32 }],
+        }))
+        .expect(400);
+      expect(rejected.body.code).toBe('PRODUCT_REQUIREMENTS_INCOMPLETE');
+    });
+
+    it('refuses a sixth, unavailable, duplicate or duration-ineligible product selection without creating a request', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const insurer = await buildInsurer(testApp.db);
+      const versions = await Promise.all(
+        Array.from({ length: 6 }, (_, index) => productVersionForSelection(insurer, unique(`CHOICE${index}`), { allowedDurations: ['Q4'] })),
+      );
+      const six = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('S').toUpperCase(), { selectedProductVersionIds: versions.map(({ version }) => version.id) }))
+        .expect(400);
+      expect(six.body.code).toBe('VALIDATION_FAILED');
+
+      const duplicate = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('D').toUpperCase(), { selectedProductVersionIds: [versions[0].version.id, versions[0].version.id] }))
+        .expect(400);
+      expect(duplicate.body.code).toBe('VALIDATION_FAILED');
+
+      const unavailable = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('M').toUpperCase(), { selectedProductVersionIds: [randomUUID()] }))
+        .expect(409);
+      expect(unavailable.body.code).toBe('PRODUCT_VERSION_UNAVAILABLE');
+
+      const duration = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('T').toUpperCase(), { coverageDurationId: '1q', selectedProductVersionIds: [versions[0].version.id] }))
+        .expect(409);
+      expect(duration.body.code).toBe('PRODUCT_DURATION_UNAVAILABLE');
+      expect(await requestsOf(customer.id)).toEqual([]);
     });
 
     it('derives the cover period from the duration when the client sends none', async () => {
@@ -526,19 +771,20 @@ describe('customer', () => {
 
     it('attaches the customer’s White Book to the request and exposes it only to recipient insurers', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer, staff } = await buildInsurer(testApp.db);
+      const recipient = await buildInsurer(testApp.db);
+      const selected = await productVersionForSelection(recipient, unique('WHITE_BOOK'));
       const whiteBook = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'WHITE_BOOK', mimeType: 'application/pdf' });
 
       const submitted = await testApp.http
         .post('/api/v1/quote-requests')
         .set(await asCustomer(customer))
-        .send(submission(unique('BCW').toUpperCase(), { whiteBookDocumentId: whiteBook.id }))
+        .send(submission(unique('BCW').toUpperCase(), { whiteBookDocumentId: whiteBook.id, selectedProductVersionIds: [selected.version.id] }))
         .expect(201);
 
       expect(await storedRequest(submitted.body.id)).toMatchObject({ whiteBookDocumentId: whiteBook.id });
       const received = await testApp.http
         .get('/api/v1/insurer/quote-requests')
-        .set(await signIn(testApp.http, staff))
+        .set(await signIn(testApp.http, recipient.staff))
         .expect(200);
       const request = received.body.find((candidate: { id: string }) => candidate.id === submitted.body.id);
       expect(request).toMatchObject({
@@ -546,7 +792,7 @@ describe('customer', () => {
         whiteBook: await documentResponse(whiteBook),
       });
       expect(request.insurerIds).toBeUndefined();
-      expect(insurer.id).toBeDefined();
+      expect(recipient.insurer.id).toBeDefined();
     });
 
     it('derives policy dates on the server and uses the RTSA anniversary when alignment is selected', async () => {
@@ -679,7 +925,7 @@ describe('customer', () => {
       expect(otherLookup.body).toMatchObject({ make: 'Ford', model: 'Ranger', source: 'PLATFORM' });
     });
 
-    it('does not update an existing vehicle when submitting, requoting or renewing', async () => {
+    it('does not update an existing vehicle when submitting or redirecting to fresh product selection', async () => {
       const customer = await buildCustomer(testApp.db);
       const purchase = await buildPurchasedPolicy(testApp.db, { customer });
       const before = await vehicleRows();
@@ -693,16 +939,18 @@ describe('customer', () => {
       expect(afterSubmit).toHaveLength(before.length + 1);
       expect(afterSubmit.filter((vehicle) => before.some((original) => original.id === vehicle.id))).toEqual(before);
 
-      await testApp.http
+      const requote = await testApp.http
         .post(`/api/v1/quote-requests/${submitted.body.id}/requote`)
         .set(await asCustomer(customer))
-        .expect(201);
+        .expect(409);
+      expect(requote.body.code).toBe('REQUOTE_REQUIRES_PRODUCT_SELECTION');
       expect(await vehicleRows()).toEqual(afterSubmit);
 
-      await testApp.http
+      const renewal = await testApp.http
         .post(`/api/v1/policies/${purchase.policy.policyNumber}/renew`)
         .set(await asCustomer(customer))
-        .expect(201);
+        .expect(409);
+      expect(renewal.body.code).toBe('RENEWAL_REQUIRES_PRODUCT_SELECTION');
       expect(await vehicleRows()).toEqual(afterSubmit);
     });
 
@@ -855,23 +1103,30 @@ describe('customer', () => {
       });
     });
 
-    it('waits for an insurer being deactivated, and leaves it out once the change commits', async () => {
+    it('refuses a selected product withdrawn after the customer saw it and before they submit', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer: leaving } = await buildInsurer(testApp.db);
-      const { insurer: staying } = await buildInsurer(testApp.db);
-      const held = await holdLocks(side.pool, (db) => db.update(insurers).set({ status: 'INACTIVE' }).where(eq(insurers.id, leaving.id)));
-      const submit = async () =>
-        testApp.http.post('/api/v1/quote-requests').set(await asCustomer(customer)).send(submission(unique('BAK').toUpperCase()));
+      const insurer = await buildInsurer(testApp.db);
+      const selected = await productVersionForSelection(insurer, unique('WITHDRAWING'));
+      // This is the directory-to-submit window: the customer selected an
+      // approved version, then the insurer withdrew it before submission.
+      // The submit transaction must re-evaluate the durable product state
+      // rather than trusting the browser's earlier directory response.
+      await testApp.db
+        .update(insurerProductVersions)
+        .set({ status: 'WITHDRAWN', withdrawnAt: new Date(), withdrawalReason: 'Withdrawn during customer selection test.' })
+        .where(eq(insurerProductVersions.id, selected.version.id));
 
-      const [response] = await queueBehind(held, SHARING_THE_INSURERS, 1, [submit]);
+      const response = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('BAK').toUpperCase(), { selectedProductVersionIds: [selected.version.id] }));
 
-      expect(response.status).toBe(201);
-      expect(response.body.insurerIds).toContain(staying.id);
-      expect(response.body.insurerIds).not.toContain(leaving.id);
-      expect((await recipientsOf(response.body.id)).map((recipient) => recipient.insurerId)).not.toContain(leaving.id);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('PRODUCT_VERSION_UNAVAILABLE');
+      expect(await requestsOf(customer.id)).toEqual([]);
     });
 
-    it('refuses when no insurer is accepting requests, and stores nothing', async () => {
+    it('refuses a selected product when its insurer is no longer accepting requests, and stores nothing', async () => {
       const customer = await buildCustomer(testApp.db);
       const plate = unique('BAJ').toUpperCase();
       await withNoActiveInsurers(async () => {
@@ -880,7 +1135,7 @@ describe('customer', () => {
           .set(await asCustomer(customer))
           .send(submission(plate))
           .expect(409);
-        expect(response.body.code).toBe('NO_ACTIVE_INSURERS');
+        expect(response.body.code).toBe('PRODUCT_VERSION_UNAVAILABLE');
       });
       expect(await requestsOf(customer.id)).toEqual([]);
       expect(await testApp.db.select().from(vehicles).where(eq(vehicles.plateNumber, plate))).toEqual([]);
@@ -888,7 +1143,7 @@ describe('customer', () => {
   });
 
   describe('POST /quote-requests/:id/requote', () => {
-    it('sends the same vehicle out again, linked both ways, and only once', async () => {
+    it('requires the customer to choose current product versions before sending fresh requests', async () => {
       const customer = await buildCustomer(testApp.db);
       const { insurer } = await buildInsurer(testApp.db);
       const { quoteRequest } = await buildQuoteRequest(
@@ -906,58 +1161,19 @@ describe('customer', () => {
           photosCapturedAt: new Date('2026-10-30T09:00:00.000Z'),
         },
       );
-      const { shot: originalShot, document: photo } = await buildInspectionShot(testApp.db, {
+      await buildInspectionShot(testApp.db, {
         quoteRequestId: quoteRequest.id,
         uploader: { customerId: customer.id },
       });
-      const whiteBook = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'WHITE_BOOK' });
-      await testApp.db
-        .update(quoteRequests)
-        .set({ whiteBookDocumentId: whiteBook.id })
-        .where(eq(quoteRequests.id, quoteRequest.id));
-
       const response = await testApp.http
         .post(`/api/v1/quote-requests/${quoteRequest.id}/requote`)
         .set(await asCustomer(customer))
-        .expect(201);
-
-      expect(Object.keys(response.body).sort()).toEqual(QUOTE_REQUEST_KEYS);
-      expect(response.body).toMatchObject({
-        status: 'Submitted',
-        vehicleValue: 250_000,
-        vehicleUsage: 'Commercial',
-        insuranceType: 'ThirdParty',
-        coverageDurationId: '3q',
-        requotedFromId: quoteRequest.id,
-        requotedAs: null,
-        policyDates: { startDate: '2026-11-01T00:00:00.000Z', endDate: '2027-08-01T00:00:00.000Z', daysTotal: 273 },
-      });
-      expect(response.body.id).not.toBe(quoteRequest.id);
-      expect(await storedRequest(response.body.id)).toMatchObject({
-        vehicleId: quoteRequest.vehicleId,
-        whiteBookDocumentId: whiteBook.id,
-        photosCapturedAt: new Date('2026-10-30T09:00:00.000Z'),
-        policyStartDate: new Date('2026-11-01T00:00:00.000Z'),
-        policyEndDate: new Date('2027-08-01T00:00:00.000Z'),
-        coverageDays: 273,
-      });
-      expect(await shotsOf(response.body.id)).toEqual(
-        expect.arrayContaining([expect.objectContaining({ shotKey: originalShot.shotKey, documentId: photo.id })]),
-      );
-      expect((await recipientsOf(response.body.id)).length).toBeGreaterThan(0);
-
-      const original = await testApp.http.get(`/api/v1/quote-requests/${quoteRequest.id}`).set(await asCustomer(customer)).expect(200);
-      expect(original.body.requotedAs).toBe(response.body.id);
-      expect(response.body.vehicleDetails).toEqual(original.body.vehicleDetails);
-
-      const again = await testApp.http
-        .post(`/api/v1/quote-requests/${quoteRequest.id}/requote`)
-        .set(await asCustomer(customer))
         .expect(409);
-      expect(again.body.code).toBe('ALREADY_REQUOTED');
+      expect(response.body.code).toBe('REQUOTE_REQUIRES_PRODUCT_SELECTION');
+      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.requotedFromId, quoteRequest.id))).toEqual([]);
     });
 
-    it('sends a request again once when two requotes arrive together, and answers the other ALREADY_REQUOTED', async () => {
+    it('does not create a duplicate request when two fresh-selection redirects arrive together', async () => {
       const customer = await buildCustomer(testApp.db);
       await buildInsurer(testApp.db);
       const { quoteRequest } = await buildQuoteRequest(testApp.db, { customerId: customer.id, insurerIds: [] }, { status: 'EXPIRED' });
@@ -969,9 +1185,12 @@ describe('customer', () => {
 
       const responses = await queueBehind(held, LOCKING_THE_REQUEST, 2, [requote, requote]);
 
-      expect(statuses(responses)).toEqual([201, 409]);
-      expect(responses.find((response) => response.status === 409)?.body.code).toBe('ALREADY_REQUOTED');
-      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.requotedFromId, quoteRequest.id))).toHaveLength(1);
+      expect(statuses(responses)).toEqual([409, 409]);
+      expect(responses.map((response) => response.body.code)).toEqual([
+        'REQUOTE_REQUIRES_PRODUCT_SELECTION',
+        'REQUOTE_REQUIRES_PRODUCT_SELECTION',
+      ]);
+      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.requotedFromId, quoteRequest.id))).toEqual([]);
     });
 
     it('answers 404 for another customer’s request', async () => {
@@ -1126,56 +1345,20 @@ describe('customer', () => {
   });
 
   describe('POST /policies/:policyNumber/renew', () => {
-    it('carries the vehicle and cover forward and starts cover when the old policy ends', async () => {
+    it('requires the customer to choose a current product before renewing', async () => {
       const customer = await buildCustomer(testApp.db);
-      const insurer = await buildInsurer(testApp.db);
-      const endDate = new Date('2027-02-01T00:00:00.000Z');
-      const { policy, quoteRequest } = await buildPurchasedPolicy(testApp.db, { customer, insurer });
-      await testApp.db
-        .update(quoteRequests)
-        .set({ vehicleValueMinor: 320_000_00, vehicleUsage: 'Commercial', insuranceType: 'THIRD_PARTY', coverageDuration: 'Q2', matchRtsaAnniversary: true })
-        .where(eq(quoteRequests.id, quoteRequest.id));
-      await testApp.db.update(policies).set({ policyEndDate: endDate }).where(eq(policies.policyNumber, policy.policyNumber));
-      const originalRequest = await testApp.http
-        .get(`/api/v1/quote-requests/${quoteRequest.id}`)
-        .set(await asCustomer(customer))
-        .expect(200);
+      const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
 
       const response = await testApp.http
         .post(`/api/v1/policies/${policy.policyNumber}/renew`)
         .set(await asCustomer(customer))
-        .expect(201);
-
-      expect(Object.keys(response.body).sort()).toEqual(QUOTE_REQUEST_KEYS);
-      expect(response.body).toMatchObject({
-        status: 'Submitted',
-        vehicleValue: 320_000,
-        vehicleUsage: 'Commercial',
-        insuranceType: 'ThirdParty',
-        coverageDurationId: '2q',
-        matchRtsaAnniversary: true,
-        policyDates: null,
-        requotedFromId: null,
-      });
-      expect(response.body.insurerIds).toContain(insurer.insurer.id);
-      const stored = await storedRequest(response.body.id);
-      expect(stored).toMatchObject({
-        vehicleId: quoteRequest.vehicleId,
-        renewalOfPolicyNumber: policy.policyNumber,
-        policyStartDate: endDate,
-        policyEndDate: null,
-      });
-      expect(response.body.vehicleDetails).toEqual(originalRequest.body.vehicleDetails);
-
-      const again = await testApp.http
-        .post(`/api/v1/policies/${policy.policyNumber}/renew`)
-        .set(await asCustomer(customer))
         .expect(409);
-      expect(again.body.code).toBe('RENEWAL_IN_PROGRESS');
-      expect(again.body.message).toContain(response.body.id);
+      expect(response.body.code).toBe('RENEWAL_REQUIRES_PRODUCT_SELECTION');
+      expect(response.body.message).toContain('Review current insurance products');
+      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toEqual([]);
     });
 
-    it('still renews a policy whose original request is gone, using safe defaults', async () => {
+    it('does not infer a renewal product when the original request is gone', async () => {
       const customer = await buildCustomer(testApp.db);
       await buildInsurer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
@@ -1187,18 +1370,11 @@ describe('customer', () => {
       const response = await testApp.http
         .post(`/api/v1/policies/${policy.policyNumber}/renew`)
         .set(await asCustomer(customer))
-        .expect(201);
-
-      expect(response.body).toMatchObject({
-        insuranceType: 'Comprehensive',
-        coverageDurationId: '4q',
-        vehicleUsage: 'Individual',
-        vehicleValue: 12_800,
-        matchRtsaAnniversary: false,
-      });
+        .expect(409);
+      expect(response.body.code).toBe('RENEWAL_REQUIRES_PRODUCT_SELECTION');
     });
 
-    it('offers renewal again once the previous renewal request has lapsed', async () => {
+    it('requires a current selection after a previous renewal request has lapsed', async () => {
       const customer = await buildCustomer(testApp.db);
       const insurer = await buildInsurer(testApp.db);
       const { policy, quoteRequest } = await buildPurchasedPolicy(testApp.db, { customer, insurer });
@@ -1208,10 +1384,11 @@ describe('customer', () => {
         { status: 'EXPIRED', expiresAt: inDays(-1) },
       );
 
-      await testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer)).expect(201);
+      const response = await testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer)).expect(409);
+      expect(response.body.code).toBe('RENEWAL_REQUIRES_PRODUCT_SELECTION');
     });
 
-    it('starts one renewal when two arrive together, and answers the other RENEWAL_IN_PROGRESS', async () => {
+    it('does not create a renewal when two fresh-selection redirects arrive together', async () => {
       const customer = await buildCustomer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
       const held = await holdLocks(side.pool, (db) =>
@@ -1221,9 +1398,12 @@ describe('customer', () => {
 
       const responses = await queueBehind(held, LOCKING_THE_POLICY, 2, [renew, renew]);
 
-      expect(statuses(responses)).toEqual([201, 409]);
-      expect(responses.find((response) => response.status === 409)?.body.code).toBe('RENEWAL_IN_PROGRESS');
-      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toHaveLength(1);
+      expect(statuses(responses)).toEqual([409, 409]);
+      expect(responses.map((response) => response.body.code)).toEqual([
+        'RENEWAL_REQUIRES_PRODUCT_SELECTION',
+        'RENEWAL_REQUIRES_PRODUCT_SELECTION',
+      ]);
+      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toEqual([]);
     });
 
     describe('on a database whose transactions default to repeatable read', () => {
@@ -1237,7 +1417,7 @@ describe('customer', () => {
         await strict.close();
       });
 
-      it('starts one renewal when two arrive together, and answers the other RENEWAL_IN_PROGRESS', async () => {
+      it('does not create a renewal under repeatable read while redirecting to product selection', async () => {
         const customer = await buildCustomer(testApp.db);
         const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
         const held = await holdLocks(side.pool, (db) =>
@@ -1247,25 +1427,26 @@ describe('customer', () => {
 
         const responses = await queueBehind(held, LOCKING_THE_POLICY, 2, [renew, renew]);
 
-        expect(statuses(responses)).toEqual([201, 409]);
-        expect(responses.find((response) => response.status === 409)?.body.code).toBe('RENEWAL_IN_PROGRESS');
-        expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toHaveLength(1);
+        expect(statuses(responses)).toEqual([409, 409]);
+        expect(responses.map((response) => response.body.code)).toEqual([
+          'RENEWAL_REQUIRES_PRODUCT_SELECTION',
+          'RENEWAL_REQUIRES_PRODUCT_SELECTION',
+        ]);
+        expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toEqual([]);
       });
     });
 
-    it('answers 404 for another customer’s policy, and 409 when no insurer accepts requests', async () => {
+    it('answers 404 for another customer’s policy and never broadens renewal to all insurers', async () => {
       const other = await buildCustomer(testApp.db);
       const customer = await buildCustomer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
 
       await testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(other)).expect(404);
-      await withNoActiveInsurers(async () => {
-        const response = await testApp.http
-          .post(`/api/v1/policies/${policy.policyNumber}/renew`)
-          .set(await asCustomer(customer))
-          .expect(409);
-        expect(response.body.code).toBe('NO_ACTIVE_INSURERS');
-      });
+      const response = await testApp.http
+        .post(`/api/v1/policies/${policy.policyNumber}/renew`)
+        .set(await asCustomer(customer))
+        .expect(409);
+      expect(response.body.code).toBe('RENEWAL_REQUIRES_PRODUCT_SELECTION');
       expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toEqual([]);
     });
   });
@@ -1670,38 +1851,16 @@ describe('customer', () => {
       expect(await isOpen(customer)).toBe(true);
     });
 
-    it('refuses while a renewal holding the policy is about to insert, and lets the renewal finish', async () => {
+    it('keeps the account protected while the customer is sent to product selection for renewal', async () => {
       const customer = await buildCustomer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
-      const { insurer } = await buildInsurer(testApp.db);
-      const held = await holdLocks(side.pool, (db) => db.select({ id: insurers.id }).from(insurers).where(eq(insurers.id, insurer.id)).for('update'));
-      const renew = async () => testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer));
+      const renewed = await testApp.http.post(`/api/v1/policies/${policy.policyNumber}/renew`).set(await asCustomer(customer)).expect(409);
+      const closed = await closeAccount(customer);
 
-      const calls = [renew()];
-      let closureAnswered = false;
-      try {
-        await until(async () => (await held.waiters(SHARING_THE_INSURERS)) === 1, 'the renewal to hold its policy');
-        calls.push(
-          closeAccount(customer).finally(() => {
-            closureAnswered = true;
-          }),
-        );
-        await until(
-          async () => closureAnswered || (await held.waiters(LOCKING_THE_POLICY)) === 1,
-          'the closure to answer or wait on the policy',
-        );
-      } finally {
-        try {
-          await held.release();
-        } finally {
-          await Promise.allSettled(calls);
-        }
-      }
-      const [renewed, closed] = await Promise.all(calls);
-
-      expect([renewed.status, closed.status]).toEqual([201, 409]);
+      expect(renewed.body.code).toBe('RENEWAL_REQUIRES_PRODUCT_SELECTION');
+      expect(closed.status).toBe(409);
       expect(closed.body.code).toBe('ACTIVE_POLICY_EXISTS');
-      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toHaveLength(1);
+      expect(await testApp.db.select().from(quoteRequests).where(eq(quoteRequests.renewalOfPolicyNumber, policy.policyNumber))).toEqual([]);
       expect(await isOpen(customer)).toBe(true);
     });
 

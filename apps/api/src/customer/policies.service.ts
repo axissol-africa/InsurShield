@@ -1,24 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { randomInt } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
-import { newReference } from '../common/domain/reference.js';
-import { addDays, REQUEST_VALIDITY_DAYS } from './domain/cover-period.js';
 import { openRenewal, renewalState } from './domain/renewal.js';
 import { toPolicyResponse, type PolicyResponse } from './dto/policy.response.js';
-import type { QuoteRequestResponse } from './dto/quote-request.response.js';
 import { PoliciesRepository, type PolicyWithParties } from './policies.repository.js';
-import { QuoteRequestsService } from './quote-requests.service.js';
 import type { CustomerPrincipal } from './customer-principal.js';
-import { auditActor } from '../common/audit/audit.types.js';
 
 @Injectable()
 export class PoliciesService {
-  private readonly logger = new Logger(PoliciesService.name);
-
   constructor(
     private readonly repository: PoliciesRepository,
-    private readonly quoteRequests: QuoteRequestsService,
     private readonly documents: DocumentsService,
   ) {}
 
@@ -34,13 +25,13 @@ export class PoliciesService {
   }
 
   /**
-   * Starts a renewal: a fresh quote request carrying this policy's vehicle and
-   * cover forward, sent to every active insurer. Renewal is deliberately a new
-   * request rather than an extension: the point is to compare the market
-   * again, and the customer may well leave the incumbent.
+   * A renewal is a new product selection, not a repeat broadcast to every
+   * insurer. The web already carries the customer's vehicle and risk answers
+   * into the selection journey; this endpoint protects old clients from
+   * reintroducing the retired broadcast workflow.
    */
-  async renew(customer: CustomerPrincipal, policyNumber: string): Promise<QuoteRequestResponse> {
-    const response = await this.repository.transaction(async (tx) => {
+  async renew(customer: CustomerPrincipal, policyNumber: string): Promise<never> {
+    return this.repository.transaction(async (tx) => {
       const policy = await this.repository.lockOwned(tx, customer.id, policyNumber);
       if (!policy) throw ApiException.notFound('Policy', policyNumber);
 
@@ -50,41 +41,11 @@ export class PoliciesService {
         throw ApiException.conflict('RENEWAL_IN_PROGRESS', `A renewal for this policy is already open as ${open.id}.`);
       }
 
-      const insurerIds = await this.quoteRequests.activeInsurerIds(tx);
-
-      // The original request holds the declared value and usage. A policy whose
-      // request has since been pruned still renews: the value falls back to the
-      // premium basis on the policy, and the customer confirms it in the journey.
-      const original = policy.quoteRequestId
-        ? await this.repository.findCarriedForward(tx, policy.quoteRequestId)
-        : undefined;
-      return this.quoteRequests.distribute(
-        tx,
-        {
-          id: newReference('QR', now, randomInt),
-          status: 'SUBMITTED',
-          submittedAt: now,
-          expiresAt: addDays(now, REQUEST_VALIDITY_DAYS),
-          customerId: customer.id,
-          vehicleId: policy.vehicleId,
-          vehicleValueMinor: original?.vehicleValueMinor ?? policy.premiumMinor,
-          vehicleUsage: original?.vehicleUsage ?? 'Individual',
-          insuranceType: original?.insuranceType ?? 'COMPREHENSIVE',
-          coverageDuration: original?.coverageDuration ?? 'Q4',
-          matchRtsaAnniversary: original?.matchRtsaAnniversary ?? false,
-          rtsaRegistrationDate: original?.rtsaRegistrationDate ?? null,
-          // New cover picks up where the expiring policy leaves off.
-          policyStartDate: policy.policyEndDate,
-          renewalOfPolicyNumber: policy.policyNumber,
-        },
-        insurerIds,
-        [],
-        auditActor(customer),
+      throw ApiException.conflict(
+        'RENEWAL_REQUIRES_PRODUCT_SELECTION',
+        'Review current insurance products before renewing. Your vehicle and policy details stay available in the renewal journey.',
       );
     });
-
-    this.logger.log(`Renewal ${policyNumber} -> ${response.id} for ${response.insurerIds.length} insurers`);
-    return response;
   }
 
   private async responses(rows: PolicyWithParties[]): Promise<PolicyResponse[]> {

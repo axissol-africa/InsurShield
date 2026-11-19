@@ -12,6 +12,7 @@ import {
   ApproveProductVersionDto,
   type ComparisonItemInputDto,
   CreateProductDto,
+  type ProductRequirementInputDto,
   type ProductDirectoryQueryDto,
   type ProductEstimateQueryDto,
   RejectProductVersionDto,
@@ -19,6 +20,11 @@ import {
   WithdrawProductVersionDto,
 } from './dto/product.dto.js';
 import { checkCoverGuide, type CoverGuide } from './domain/cover-guide.js';
+import {
+  checkProductRequirements,
+  requirementFromStored,
+  type ProductRequirementDefinition,
+} from './domain/product-requirements.js';
 import {
   asDay,
   calendarDate,
@@ -49,6 +55,7 @@ type InternalVersion = {
   showEstimate: boolean;
   allowedDurations: CoverageDuration[];
   comparisonItems: ProductComparisonItem[];
+  requirements: ProductRequirementDefinition[];
   effectiveFrom: string;
   effectiveUntil: string | null;
   submittedAt: string | null;
@@ -127,7 +134,7 @@ export class ProductsService {
     const insurerId = this.insurerId(principal);
     const records = await this.products.listForInsurer(insurerId);
     const grouped = new Map<string, { id: string; code: string; coverType: InsuranceType; createdAt: string; updatedAt: string; versions: InternalVersion[] }>();
-    const comparisons = await this.comparisonsFor(records);
+    const [comparisons, requirements] = await Promise.all([this.comparisonsFor(records), this.requirementsFor(records)]);
     for (const record of records) {
       const product = grouped.get(record.product.id) ?? {
         id: record.product.id,
@@ -137,7 +144,7 @@ export class ProductsService {
         updatedAt: record.product.updatedAt.toISOString(),
         versions: [],
       };
-      if (record.version) product.versions.push(this.toInternalVersion(record.version, comparisons.get(record.version.id)));
+      if (record.version) product.versions.push(this.toInternalVersion(record.version, comparisons.get(record.version.id), requirements.get(record.version.id)));
       grouped.set(record.product.id, product);
     }
     return [...grouped.values()];
@@ -152,14 +159,14 @@ export class ProductsService {
       throw ApiException.notFound('Product', productId);
     }
     const records = (await this.products.listForInsurer(insurerId)).filter((row) => row.product.id === productId);
-    const comparisons = await this.comparisonsFor(records);
+    const [comparisons, requirements] = await Promise.all([this.comparisonsFor(records), this.requirementsFor(records)]);
     return {
       id: product.id,
       code: product.code,
       coverType: product.coverType,
       createdAt: product.createdAt.toISOString(),
       updatedAt: product.updatedAt.toISOString(),
-      versions: records.flatMap((row) => (row.version ? [this.toInternalVersion(row.version, comparisons.get(row.version.id))] : [])),
+      versions: records.flatMap((row) => (row.version ? [this.toInternalVersion(row.version, comparisons.get(row.version.id), requirements.get(row.version.id))] : [])),
     };
   }
 
@@ -186,7 +193,10 @@ export class ProductsService {
           ...normalized,
           createdByStaffId: principal.id,
         });
-        const comparisonItems = await this.saveComparisonItems(tx, version.id, dto.comparisonItems ?? []);
+        const [comparisonItems, requirements] = await Promise.all([
+          this.saveComparisonItems(tx, version.id, dto.comparisonItems ?? []),
+          this.saveRequirements(tx, version.id, dto.requirements ?? []),
+        ]);
         await this.audit.write(tx, {
           actor: auditActor(principal),
           action: 'product.created',
@@ -196,7 +206,7 @@ export class ProductsService {
           note: 'Insurer administrator created a product draft.',
           correlationId: product.id,
         });
-        return this.toInternalProductVersion(product, version, comparisonItems);
+        return this.toInternalProductVersion(product, version, comparisonItems, requirements);
       });
     } catch (error) {
       if (this.isUniqueProductCode(error)) {
@@ -221,6 +231,9 @@ export class ProductsService {
       const comparisonItems = dto.comparisonItems === undefined
         ? await this.comparisonItems(version.id, tx)
         : await this.saveComparisonItems(tx, version.id, dto.comparisonItems);
+      const requirements = dto.requirements === undefined
+        ? await this.requirements(version.id, tx)
+        : await this.saveRequirements(tx, version.id, dto.requirements);
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'product_version.draft_updated',
@@ -231,7 +244,7 @@ export class ProductsService {
         note: 'Insurer administrator updated a product draft.',
         correlationId: productId,
       });
-      return this.toInternalProductVersion(record.product, version, comparisonItems);
+      return this.toInternalProductVersion(record.product, version, comparisonItems, requirements);
     });
   }
 
@@ -247,6 +260,10 @@ export class ProductsService {
       // Product lock serialises version-number allocation; no two revisions can take the same number.
       const product = await this.products.lockProduct(tx, productId);
       if (!product) throw ApiException.notFound('Product', productId);
+      // An approved version should already be valid, but read it through the
+      // strict parser before copying so manually corrupted configuration can
+      // never be cloned into a new draft.
+      await this.requirements(source.version.id, tx);
       const version = await this.products.createVersion(tx, {
         productId,
         versionNumber: await this.products.nextVersionNumber(tx, productId),
@@ -265,6 +282,7 @@ export class ProductsService {
         createdByStaffId: principal.id,
       });
       await this.products.copyComparisonItems(tx, source.version.id, version.id);
+      await this.products.copyRequirements(tx, source.version.id, version.id);
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'product_version.revised',
@@ -275,7 +293,11 @@ export class ProductsService {
         note: 'Insurer administrator started a new draft from a reviewed product version.',
         correlationId: productId,
       });
-      return this.toInternalProductVersion(product, version, await this.comparisonItems(version.id, tx));
+      const [comparisonItems, requirements] = await Promise.all([
+        this.comparisonItems(version.id, tx),
+        this.requirements(version.id, tx),
+      ]);
+      return this.toInternalProductVersion(product, version, comparisonItems, requirements);
     });
   }
 
@@ -305,15 +327,19 @@ export class ProductsService {
         note: 'Insurer administrator submitted product terms for platform review.',
         correlationId: productId,
       });
-      return this.toInternalProductVersion(record.product, version, await this.comparisonItems(version.id, tx));
+      const [comparisonItems, requirements] = await Promise.all([
+        this.comparisonItems(version.id, tx),
+        this.requirements(version.id, tx),
+      ]);
+      return this.toInternalProductVersion(record.product, version, comparisonItems, requirements);
     });
   }
 
   async reviewQueue(principal: Principal, status?: ProductVersionStatus) {
     this.require(principal, 'admin:product:read');
     const records = await this.products.listForReview(status);
-    const comparisons = await this.comparisonsFor(records);
-    return records.map((record) => this.toAdminVersion(record, comparisons.get(record.version.id)));
+    const [comparisons, requirements] = await Promise.all([this.comparisonsFor(records), this.requirementsFor(records)]);
+    return records.map((record) => this.toAdminVersion(record, comparisons.get(record.version.id), requirements.get(record.version.id)));
   }
 
   async approve(productId: string, versionId: string, dto: ApproveProductVersionDto, principal: StaffPrincipal) {
@@ -347,7 +373,11 @@ export class ProductsService {
         note: dto.comment ?? 'Platform administrator approved the product version.',
         correlationId: productId,
       });
-      return this.toAdminVersion({ ...record, version }, await this.comparisonItems(version.id, tx));
+      const [comparisonItems, requirements] = await Promise.all([
+        this.comparisonItems(version.id, tx),
+        this.requirements(version.id, tx),
+      ]);
+      return this.toAdminVersion({ ...record, version }, comparisonItems, requirements);
     });
   }
 
@@ -376,7 +406,11 @@ export class ProductsService {
         note: dto.comment,
         correlationId: productId,
       });
-      return this.toAdminVersion({ ...record, version }, await this.comparisonItems(version.id, tx));
+      const [comparisonItems, requirements] = await Promise.all([
+        this.comparisonItems(version.id, tx),
+        this.requirements(version.id, tx),
+      ]);
+      return this.toAdminVersion({ ...record, version }, comparisonItems, requirements);
     });
   }
 
@@ -405,14 +439,18 @@ export class ProductsService {
         note: dto.reason,
         correlationId: productId,
       });
-      return this.toAdminVersion({ ...record, version }, await this.comparisonItems(version.id, tx));
+      const [comparisonItems, requirements] = await Promise.all([
+        this.comparisonItems(version.id, tx),
+        this.requirements(version.id, tx),
+      ]);
+      return this.toAdminVersion({ ...record, version }, comparisonItems, requirements);
     });
   }
 
   async directory(query: ProductDirectoryQueryDto) {
     const records = await this.products.directory(new Date(), query.coverType, query.limit ?? 100);
-    const comparisons = await this.comparisonsFor(records);
-    return records.map((record) => this.toPublicVersion(record, comparisons.get(record.version.id)));
+    const [comparisons, requirements] = await Promise.all([this.comparisonsFor(records), this.requirementsFor(records)]);
+    return records.map((record) => this.toPublicVersion(record, comparisons.get(record.version.id), requirements.get(record.version.id)));
   }
 
   async estimate(productId: string, versionId: string, query: ProductEstimateQueryDto) {
@@ -555,19 +593,35 @@ export class ProductsService {
     if (version.effectiveUntil && version.effectiveUntil < version.effectiveFrom) errors.effectiveUntil = 'The end date cannot be before the start date.';
     if (!version.allowedDurations.length) errors.allowedDurations = 'Choose at least one available cover period.';
     if ('id' in version) {
-      const [activeTaxonomy, mappings] = await Promise.all([this.settings.activeTaxonomy(tx), this.comparisonItems(version.id, tx)]);
+      const [activeTaxonomy, mappings, requirements] = await Promise.all([
+        this.settings.activeTaxonomy(tx),
+        this.comparisonItems(version.id, tx),
+        this.requirements(version.id, tx),
+      ]);
       const mapped = new Set(mappings.map((item) => item.taxonomyItemId));
       const missing = activeTaxonomy.filter((item) => !mapped.has(item.id));
       if (missing.length) errors.comparisonItems = `Map every active comparison term before submission: ${missing.map((item) => item.label).join(', ')}.`;
+      // `requirements()` rejects malformed database configuration instead of
+      // allowing an approved version to create an undocumented rule later.
+      if (requirements.length > 30) errors.requirements = 'Use no more than 30 product requirements.';
     }
     if (Object.keys(errors).length) throw new ApiException('PRODUCT_VERSION_INCOMPLETE', 'Complete the product terms before submitting them for review.', 400, errors);
   }
 
-  private toInternalProductVersion(product: ProductRow, version: ProductVersionRow, comparisonItems: ProductComparisonItem[] = []) {
-    return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...this.toInternalVersion(version, comparisonItems) };
+  private toInternalProductVersion(
+    product: ProductRow,
+    version: ProductVersionRow,
+    comparisonItems: ProductComparisonItem[] = [],
+    requirements: ProductRequirementDefinition[] = [],
+  ) {
+    return { product: { id: product.id, code: product.code, coverType: product.coverType }, ...this.toInternalVersion(version, comparisonItems, requirements) };
   }
 
-  private toInternalVersion(version: ProductVersionRow, comparisonItems: ProductComparisonItem[] = []): InternalVersion {
+  private toInternalVersion(
+    version: ProductVersionRow,
+    comparisonItems: ProductComparisonItem[] = [],
+    requirements: ProductRequirementDefinition[] = [],
+  ): InternalVersion {
     return {
       id: version.id,
       versionNumber: version.versionNumber,
@@ -580,6 +634,7 @@ export class ProductsService {
       showEstimate: version.showEstimate,
       allowedDurations: version.allowedDurations,
       comparisonItems,
+      requirements,
       effectiveFrom: asDay(version.effectiveFrom)!,
       effectiveUntil: asDay(version.effectiveUntil),
       submittedAt: version.submittedAt?.toISOString() ?? null,
@@ -592,10 +647,14 @@ export class ProductsService {
     };
   }
 
-  private toAdminVersion(record: VersionRecord, comparisonItems: ProductComparisonItem[] = []) {
+  private toAdminVersion(
+    record: VersionRecord,
+    comparisonItems: ProductComparisonItem[] = [],
+    requirements: ProductRequirementDefinition[] = [],
+  ) {
     return {
       insurer: record.insurer,
-      ...this.toInternalProductVersion(record.product, record.version, comparisonItems),
+      ...this.toInternalProductVersion(record.product, record.version, comparisonItems, requirements),
       createdByStaffId: record.version.createdByStaffId,
       submittedByStaffId: record.version.submittedByStaffId,
       reviewedByStaffId: record.version.reviewedByStaffId,
@@ -603,7 +662,11 @@ export class ProductsService {
     };
   }
 
-  private toPublicVersion(record: VersionRecord, comparisonItems: ProductComparisonItem[] = []) {
+  private toPublicVersion(
+    record: VersionRecord,
+    comparisonItems: ProductComparisonItem[] = [],
+    requirements: ProductRequirementDefinition[] = [],
+  ) {
     return {
       insurer: record.insurer,
       product: { id: record.product.id, code: record.product.code, coverType: record.product.coverType },
@@ -617,6 +680,15 @@ export class ProductsService {
         showEstimate: record.version.showEstimate,
         allowedDurations: record.version.allowedDurations,
         comparisonItems,
+        requirements: requirements.map((requirement) => ({
+          key: requirement.key,
+          kind: requirement.kind,
+          label: requirement.label,
+          helpText: requirement.helpText,
+          required: requirement.required,
+          config: requirement.config,
+          displayOrder: requirement.displayOrder,
+        })),
         effectiveFrom: asDay(record.version.effectiveFrom),
         effectiveUntil: asDay(record.version.effectiveUntil),
       },
@@ -638,9 +710,48 @@ export class ProductsService {
     return result;
   }
 
+  private async requirementsFor(records: Array<{ version: ProductVersionRow | null }>): Promise<Map<string, ProductRequirementDefinition[]>> {
+    const rows = await this.products.requirementsForVersions(records.flatMap((record) => record.version ? [record.version.id] : []));
+    const result = new Map<string, ProductRequirementDefinition[]>();
+    for (const row of rows) {
+      const requirement = requirementFromStored(row);
+      if (!requirement) {
+        throw new ApiException('PRODUCT_REQUIREMENT_CONFIGURATION_INVALID', 'A product requirement has invalid configuration. Ask the insurer to correct the product.', 409);
+      }
+      const items = result.get(requirement.productVersionId) ?? [];
+      items.push(requirement);
+      result.set(requirement.productVersionId, items);
+    }
+    return result;
+  }
+
   private async comparisonItems(versionId: string, tx: Transaction): Promise<ProductComparisonItem[]> {
     const rows = await this.products.comparisonItemsForVersions([versionId], tx);
     return rows.map(({ mapping }) => this.toComparisonItem(mapping));
+  }
+
+  private async requirements(versionId: string, tx: Transaction): Promise<ProductRequirementDefinition[]> {
+    const rows = await this.products.requirementsForVersions([versionId], tx);
+    return rows.map((row) => {
+      const requirement = requirementFromStored(row);
+      if (!requirement) {
+        throw new ApiException('PRODUCT_REQUIREMENT_CONFIGURATION_INVALID', 'A product requirement has invalid configuration. Correct the draft before it can be used.', 409);
+      }
+      return requirement;
+    });
+  }
+
+  private async saveRequirements(
+    tx: Transaction,
+    versionId: string,
+    inputs: ProductRequirementInputDto[],
+  ): Promise<ProductRequirementDefinition[]> {
+    const checked = checkProductRequirements(inputs);
+    if (Object.keys(checked.errors).length) {
+      throw new ApiException('PRODUCT_REQUIREMENT_INVALID', 'Correct the product requirements.', 400, checked.errors);
+    }
+    await this.products.replaceRequirements(tx, versionId, checked.requirements);
+    return this.requirements(versionId, tx);
   }
 
   private async saveComparisonItems(tx: Transaction, versionId: string, inputs: ComparisonItemInputDto[]): Promise<ProductComparisonItem[]> {

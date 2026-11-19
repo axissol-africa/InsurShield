@@ -12,6 +12,7 @@ vi.mock('@/api/capture', () => ({ captureApi: { get: vi.fn() } }));
 vi.mock('../submitRequest', () => ({ submitQuoteRequest: vi.fn() }));
 vi.mock('../components/InspectionPhotos', () => ({ default: () => <p>Inspection photo controls</p> }));
 vi.mock('../components/PhoneHandoff', () => ({ default: () => <p>Phone capture</p> }));
+vi.mock('../components/ProductVersionSelection', () => ({ default: () => <p>Product selection</p> }));
 vi.mock('@/lib/device', () => ({ isMobileDevice: () => false }));
 
 beforeEach(() => {
@@ -34,6 +35,8 @@ beforeEach(() => {
     coverageDurationId: '4q',
     matchRtsaAnniversary: false,
     rtsaRegistrationDate: '',
+    selectedProductVersionIds: ['PV-TEST'],
+    selectedProductVersions: [],
     documents: {},
     customer: { fullName: 'Test Customer', phone: '0970000000', email: 'test@example.com' },
   });
@@ -62,7 +65,7 @@ describe('quote request requirements', () => {
     useStore.setState({ matchRtsaAnniversary: true, rtsaRegistrationDate: '' });
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
+    await user.click(screen.getByRole('button', { name: /Request quotes for/ }));
     expect(screen.getByText('Enter the RTSA registration date, or untick the anniversary option.')).toBeVisible();
     expect(screen.getByLabelText('RTSA registration date')).toBeVisible();
     expect(screen.getByLabelText('Full name')).toHaveValue('Test Customer');
@@ -79,6 +82,17 @@ describe('quote request requirements', () => {
         insuranceType: 'ThirdParty',
         coverageDurationId: '4q',
         policyStartDate: state.policyStartDate,
+        selectedProductVersionIds: ['PV-TEST'],
+        productRequirementAnswers: { 'PV-TEST:businessUse': 'Personal' },
+        productRequirementDeclarations: { 'PV-TEST:acceptTerms': true },
+        productRequirementDocuments: {
+          'PV-TEST:proof': {
+            name: 'proof.pdf',
+            type: 'application/pdf',
+            size: 4,
+            dataUrl: 'data:application/pdf;base64,AA==',
+          },
+        },
         documents: { whiteBook: 'data:application/pdf;base64,AA==' },
         contact: state.customer,
       },
@@ -88,8 +102,13 @@ describe('quote request requirements', () => {
     renderPage('/quote-request?capture=phone-123');
     expect(await screen.findByText('Third party only')).toBeVisible();
     expect(useStore.getState().vehicleValue).toBe(120000);
+    expect(useStore.getState().productRequirementAnswers).toEqual({ 'PV-TEST:businessUse': 'Personal' });
+    expect(useStore.getState().productRequirementDeclarations).toEqual({ 'PV-TEST:acceptTerms': true });
+    expect(useStore.getState().productRequirementDocuments).toMatchObject({
+      'PV-TEST:proof': { name: 'proof.pdf', dataUrl: 'data:application/pdf;base64,AA==' },
+    });
     await user.click(screen.getByRole('checkbox', { name: /I confirm/ }));
-    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
+    await user.click(screen.getByRole('button', { name: /Request quotes for/ }));
     await waitFor(() =>
       expect(screen.getByLabelText('Current route')).toHaveTextContent('/quotes-comparison?capture=phone-123'),
     );
@@ -113,7 +132,7 @@ describe('quote request requirements', () => {
   it('blocks sending without ownership documents, photos and consent', async () => {
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
+    await user.click(screen.getByRole('button', { name: /Request quotes for/ }));
     expect(screen.getByText('Add your White Book so insurers can verify ownership.')).toBeVisible();
     expect(screen.getByText('Capture 7 more inspection photos.')).toBeVisible();
     expect(screen.getByText('Accept the declaration to send your request.')).toBeVisible();
@@ -130,15 +149,16 @@ describe('quote request requirements', () => {
     });
     const user = userEvent.setup();
     renderPage();
-    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
+    await user.click(screen.getByRole('button', { name: /Request quotes for/ }));
     expect(screen.getByText('Accept the declaration to send your request.')).toBeVisible();
     expect(submitQuoteRequest).not.toHaveBeenCalled();
     expect(screen.getByRole('checkbox', { name: /I confirm/ })).toHaveFocus();
     await user.click(screen.getByRole('checkbox', { name: /I confirm/ }));
-    await user.click(screen.getByRole('button', { name: /See cover guides from/ }));
+    await user.click(screen.getByRole('button', { name: /Request quotes for/ }));
     expect(submitQuoteRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         customer: { fullName: 'Test Customer', phone: '0970000000', email: 'test@example.com' },
+        selectedProductVersionIds: ['PV-TEST'],
       }),
     );
   });

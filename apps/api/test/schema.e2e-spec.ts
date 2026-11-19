@@ -27,6 +27,8 @@ const TAGS = migrationTags();
 
 /** How many migrations precede 0009, which is the one the scanning test is about. */
 const SCANNING = TAGS.findIndex((tag) => tag.startsWith('0009_'));
+/** The additive selected-product model begins at Batch 12. */
+const PRODUCT_CHOICES = TAGS.findIndex((tag) => tag.startsWith('0028_'));
 
 const created: ScratchDatabase[] = [];
 
@@ -75,6 +77,7 @@ async function pushed(): Promise<ScratchDatabase> {
   // Drizzle models tables and indexes but not the append-only trigger. Keep
   // the push-built catalog comparable to the real migration-built catalog.
   await query(db, applyAuditLogAppendOnlyInvariant);
+  await query(db, applyProductSelectionIntegrityInvariants);
   return db;
 }
 
@@ -94,6 +97,72 @@ $$;`);
 BEFORE UPDATE OR DELETE ON "audit_logs"
 FOR EACH ROW
 EXECUTE FUNCTION "audit_logs_reject_mutation"()`);
+}
+
+async function applyProductSelectionIntegrityInvariants(client: ClientBase) {
+  // Drizzle deliberately does not infer cross-table guards. Keep these
+  // definitions aligned with 0031 so a schema push receives the same tenant
+  // and selected-version integrity guarantees as a migration-built database.
+  await client.query(`CREATE OR REPLACE FUNCTION public.enforce_quote_request_selection_insurer()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  owner_insurer_id uuid;
+BEGIN
+  SELECT product."insurerId"
+    INTO owner_insurer_id
+  FROM public.insurer_product_versions AS version
+  INNER JOIN public.insurer_products AS product ON product.id = version."productId"
+  WHERE version.id = NEW."productVersionId";
+
+  IF owner_insurer_id IS NULL OR owner_insurer_id <> NEW."insurerId" THEN
+    RAISE EXCEPTION 'quote_request_product_versions insurer must own product version'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;`);
+  await client.query(`CREATE TRIGGER quote_request_selection_insurer_guard
+BEFORE INSERT OR UPDATE OF "productVersionId", "insurerId"
+ON public.quote_request_product_versions
+FOR EACH ROW EXECUTE FUNCTION public.enforce_quote_request_selection_insurer();`);
+  await client.query(`CREATE OR REPLACE FUNCTION public.enforce_insurer_quote_selected_version()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  request_model public."QuoteRequestModel";
+BEGIN
+  SELECT "model"
+    INTO request_model
+  FROM public.quote_requests
+  WHERE id = NEW."quoteRequestId";
+
+  IF request_model = 'PRODUCT_SELECTION' THEN
+    IF NEW."productVersionId" IS NULL OR NOT EXISTS (
+      SELECT 1
+      FROM public.quote_request_product_versions AS selection
+      WHERE selection."quoteRequestId" = NEW."quoteRequestId"
+        AND selection."productVersionId" = NEW."productVersionId"
+        AND selection."insurerId" = NEW."insurerId"
+    ) THEN
+      RAISE EXCEPTION 'product-selection quote must reference its selected version and insurer'
+        USING ERRCODE = '23514';
+    END IF;
+  ELSIF request_model = 'LEGACY' AND NEW."productVersionId" IS NOT NULL THEN
+    RAISE EXCEPTION 'legacy quote cannot reference a product version'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;`);
+  await client.query(`CREATE TRIGGER insurer_quote_selected_version_guard
+BEFORE INSERT OR UPDATE OF "quoteRequestId", "insurerId", "productVersionId"
+ON public.insurer_quotes
+FOR EACH ROW EXECUTE FUNCTION public.enforce_insurer_quote_selected_version();`);
 }
 
 /** Every timestamp value in public, per column, as UTC wall-clock text. */
@@ -679,6 +748,151 @@ describe('0009_documents_scanning_and_retention', () => {
   });
 });
 
+describe('0028_batch_12_product_choice_request_model', () => {
+  it('keeps historical insurer-level quotes readable while allowing two selected versions from one insurer', async () => {
+    const db = await scratch(async (client) => {
+      await buildPrismaEraDatabase(client, { data: true });
+      // The Prisma-era fixture already represents the pre-Drizzle baseline,
+      // so replay only the later migrations before exercising Batch 12.
+      for (let index = 1; index < PRODUCT_CHOICES; index += 1) {
+        await applyMigration(client, index);
+      }
+    });
+
+    await query(db, async (client) => {
+      await applyMigration(client, PRODUCT_CHOICES);
+
+      expect(
+        (
+          await client.query(
+            `SELECT "productVersionId" FROM insurer_quotes WHERE id = '00000000-0000-4000-8000-000000000041'`,
+          )
+        ).rows,
+      ).toEqual([{ productVersionId: null }]);
+
+      const insurerId = '00000000-0000-4000-8000-000000000011';
+      const staffId = '00000000-0000-4000-8000-000000000002';
+      const productId = randomUUID();
+      const firstVersionId = randomUUID();
+      const secondVersionId = randomUUID();
+      await client.query(
+        `INSERT INTO insurer_products (id, "insurerId", code, "coverType", "updatedAt")
+         VALUES ($1, $2, 'B12-COMP', 'COMPREHENSIVE', CURRENT_TIMESTAMP)`,
+        [productId, insurerId],
+      );
+      for (const [id, versionNumber] of [[firstVersionId, 1], [secondVersionId, 2]] as const) {
+        await client.query(
+          `INSERT INTO insurer_product_versions
+             (id, "productId", "versionNumber", status, name, "coverType", "coverGuide", "inspectionRule", "rateBps", "effectiveFrom", "createdByStaffId", "updatedAt")
+           VALUES ($1, $2, $3, 'APPROVED', 'Batch 12 comprehensive', 'COMPREHENSIVE', '{}'::jsonb, 'NOT_REQUIRED', 500, '2026-01-01', $4, CURRENT_TIMESTAMP)`,
+          [id, productId, versionNumber, staffId],
+        );
+      }
+
+      const addDocument = async (name: string) => {
+        const id = randomUUID();
+        await client.query(
+          `INSERT INTO documents (id, kind, "fileName", "mimeType", "sizeBytes", "storageKey", "retentionClass")
+           VALUES ($1, 'QUOTATION', $2, 'application/pdf', 10, $3, 'UNDERWRITING_EVIDENCE')`,
+          [id, name, `batch-12/${name}`],
+        );
+        return id;
+      };
+
+      for (const versionId of [firstVersionId, secondVersionId]) {
+        await client.query(
+          `INSERT INTO quote_request_product_versions (id, "quoteRequestId", "productVersionId")
+           VALUES ($1, 'QR-1', $2)`,
+          [randomUUID(), versionId],
+        );
+      }
+      await expect(
+        client.query(
+          `INSERT INTO quote_request_product_versions (id, "quoteRequestId", "productVersionId")
+           VALUES ($1, 'QR-1', $2)`,
+          [randomUUID(), firstVersionId],
+        ),
+      ).rejects.toMatchObject({
+        code: '23505',
+        constraint: 'quote_request_product_versions_request_version_key',
+      });
+
+      for (const versionId of [firstVersionId, secondVersionId]) {
+        await client.query(
+          `INSERT INTO insurer_quotes
+             (id, "quoteRequestId", "insurerId", "productVersionId", "premiumMinor", "insurerReference", "validityDays", "validUntil", "documentId")
+           VALUES ($1, 'QR-1', $2, $3, 50000, 'shared-reference', 14, CURRENT_TIMESTAMP + interval '14 days', $4)`,
+          [randomUUID(), insurerId, versionId, await addDocument(`${versionId}.pdf`)],
+        );
+      }
+      await expect(
+        client.query(
+          `INSERT INTO insurer_quotes
+             (id, "quoteRequestId", "insurerId", "productVersionId", "premiumMinor", "validityDays", "validUntil", "documentId")
+           VALUES ($1, 'QR-1', $2, $3, 50000, 14, CURRENT_TIMESTAMP + interval '14 days', $4)`,
+          [randomUUID(), insurerId, firstVersionId, await addDocument('duplicate-version.pdf')],
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'insurer_quotes_request_product_version_key' });
+      await expect(
+        client.query(
+          `INSERT INTO insurer_quotes
+             (id, "quoteRequestId", "insurerId", "premiumMinor", "validityDays", "validUntil", "documentId")
+           VALUES ($1, 'QR-1', $2, 50000, 14, CURRENT_TIMESTAMP + interval '14 days', $3)`,
+          [randomUUID(), insurerId, await addDocument('duplicate-legacy.pdf')],
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'insurer_quotes_legacy_request_insurer_key' });
+    });
+  });
+});
+
+describe('0030_batch_12_quote_request_drafts', () => {
+  it('limits selections and removes draft-only document references with the expired draft', async () => {
+    const db = await scratch((client) => applyMigrationFiles(client));
+    await query(db, async (client) => {
+      const customerId = randomUUID();
+      const documentId = randomUUID();
+      const draftId = randomUUID();
+      await client.query(
+        `INSERT INTO customers (id, "fullName", email, phone, "updatedAt")
+         VALUES ($1, 'Draft Customer', $2, $3, CURRENT_TIMESTAMP)`,
+        [customerId, `draft-${customerId}@example.invalid`, `+260${Date.now()}`],
+      );
+      await client.query(
+        `INSERT INTO documents (id, kind, "fileName", "mimeType", "sizeBytes", "storageKey", "retentionClass")
+         VALUES ($1, 'WHITE_BOOK', 'white-book.pdf', 'application/pdf', 10, $2, 'UNDERWRITING_EVIDENCE')`,
+        [documentId, `draft-schema/${documentId}`],
+      );
+      await client.query(
+        `INSERT INTO quote_request_drafts (id, "customerId", "commonAnswers", "selectedProductVersionIds", "configurableAnswers", "expiresAt", "updatedAt")
+         VALUES ($1, $2, '{}'::jsonb, '{}'::uuid[], '{}'::jsonb, CURRENT_TIMESTAMP + interval '30 days', CURRENT_TIMESTAMP)`,
+        [draftId, customerId],
+      );
+      await client.query(
+        `INSERT INTO quote_request_draft_documents (id, "quoteRequestDraftId", slot, kind, "documentId")
+         VALUES ($1, $2, 'white-book', 'WHITE_BOOK', $3)`,
+        [randomUUID(), draftId, documentId],
+      );
+      await client.query(`DELETE FROM quote_request_drafts WHERE id = $1`, [draftId]);
+      const references = await client.query(
+        `SELECT 1 FROM quote_request_draft_documents WHERE "quoteRequestDraftId" = $1`,
+        [draftId],
+      );
+      expect(references.rows).toEqual([]);
+
+      await expect(
+        client.query(
+          `INSERT INTO quote_request_drafts (id, "customerId", "commonAnswers", "selectedProductVersionIds", "configurableAnswers", "expiresAt", "updatedAt")
+           VALUES ($1, $2, '{}'::jsonb, ARRAY[$3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::uuid, $8::uuid], '{}'::jsonb, CURRENT_TIMESTAMP + interval '30 days', CURRENT_TIMESTAMP)`,
+          [randomUUID(), customerId, randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()],
+        ),
+      ).rejects.toMatchObject({
+        code: '23514',
+        constraint: 'quote_request_drafts_selected_products_limit_check',
+      });
+    });
+  });
+});
+
 describe('drizzle-kit', () => {
   it('generate finds no difference between src/db/schema.ts and the migrations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'insurshield-generate-'));
@@ -734,8 +948,11 @@ describe('the final schema', () => {
     // timestamps, and Batch 10 adds rule confirmation plus taxonomy and
     // product-term mapping history. Batch 11 adds delivery processing,
     // acknowledgement and resolution instants plus the callback receipt time.
+    // Batch 12 adds the selected-product and cancellation timestamps, three
+    // draft timestamps plus its document timestamp, and four timestamps for
+    // insurer-defined product requirements and the customer's answers.
     // Effective dates remain `date` values.
-    expect(timestampColumns).toHaveLength(121);
+    expect(timestampColumns).toHaveLength(131);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

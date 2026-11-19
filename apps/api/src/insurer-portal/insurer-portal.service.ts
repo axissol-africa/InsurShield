@@ -123,17 +123,28 @@ export class InsurerPortalService {
   async listQuoteRequests(principal: Principal) {
     const insurerId = this.insurerOf(principal);
     const requests = await this.portal.listRequests(insurerId);
-    const shots = await this.portal.shotKeys(insurerId, requests.map((request) => request.id));
+    const requestIds = requests.map((request) => request.id);
+    const [shots, selectedProducts] = await Promise.all([
+      this.portal.shotKeys(insurerId, requestIds),
+      this.portal.selectedProductsForRequests(insurerId, requestIds),
+    ]);
 
     return Promise.all(
-      requests.map(async (request) =>
-        toPortalRequest(
+      requests.map(async (request) => {
+        const requestProducts = selectedProducts.filter((product) => product.quoteRequestId === request.id);
+        return toPortalRequest(
           request,
           shots.filter((shot) => shot.quoteRequestId === request.id).map((shot) => shot.shotKey),
           request.reply ? await this.documents.record(request.reply.documentId) : null,
           request.whiteBookDocumentId ? await this.documents.record(request.whiteBookDocumentId) : null,
-        ),
-      ),
+          await Promise.all(
+            requestProducts.map(async (selection) => ({
+              selection,
+              replyDocument: selection.reply ? await this.documents.record(selection.reply.documentId) : null,
+            })),
+          ),
+        );
+      }),
     );
   }
 
@@ -165,10 +176,18 @@ export class InsurerPortalService {
 
       if (delivery.cancelledAt) throw requestUnavailable();
 
-      if (await this.portal.hasQuote(requestId, insurerId, tx)) {
+      const productVersionId = await this.productVersionForDelivery(
+        tx,
+        requestId,
+        insurerId,
+        delivery,
+        dto.productVersionId,
+      );
+
+      if (await this.portal.hasQuote(requestId, insurerId, productVersionId, tx)) {
         throw ApiException.conflict(
           'ALREADY_QUOTED',
-          'You have already sent a final quote for this request. Extend it instead of replacing it.',
+          'You have already sent a final quote for this product. Extend it instead of replacing it.',
         );
       }
       const sentAt = new Date();
@@ -192,6 +211,7 @@ export class InsurerPortalService {
       const quote = await this.portal.insertQuote(tx, {
         quoteRequestId: requestId,
         insurerId,
+        productVersionId,
         premiumMinor,
         notes: dto.notes ?? null,
         insurerReference: dto.insurerReference ?? null,
@@ -210,6 +230,7 @@ export class InsurerPortalService {
         after: {
           quoteRequestId: quote.quoteRequestId,
           insurerId: quote.insurerId,
+          productVersionId: quote.productVersionId,
           premiumMinor: quote.premiumMinor,
           validityDays: quote.validityDays,
         },
@@ -247,14 +268,33 @@ export class InsurerPortalService {
   async extendQuote(principal: Principal, requestId: string, dto: ExtendQuoteDto) {
     const insurerId = this.insurerOf(principal);
 
-    const extended = await this.portal.transaction(async (tx) => {
+    const outcome = await this.portal.transaction(async (tx) => {
       const extendedAt = new Date();
       const standing = await this.portal.insurerStanding(tx, insurerId);
       if (!standing) throw ApiException.notFound('Insurer', insurerId);
       if (!takesNewBusiness(standing, extendedAt)) {
         throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
       }
-      const result = await this.portal.extendOpenQuote(tx, requestId, insurerId, dto.extraDays, extendedAt);
+      const delivery = await this.portal.lockDelivery(tx, requestId, insurerId);
+      if (!delivery) return { productVersionId: null, quote: null, missingDelivery: true };
+      if (delivery.cancelledAt) {
+        throw ApiException.conflict('REQUEST_UNAVAILABLE', 'This request is no longer available to quote.');
+      }
+      const productVersionId = await this.productVersionForDelivery(
+        tx,
+        requestId,
+        insurerId,
+        delivery,
+        dto.productVersionId,
+      );
+      const result = await this.portal.extendOpenQuote(
+        tx,
+        requestId,
+        insurerId,
+        productVersionId,
+        dto.extraDays,
+        extendedAt,
+      );
       if (result) {
         await this.audit.write(tx, {
           actor: auditActor(principal),
@@ -266,11 +306,19 @@ export class InsurerPortalService {
           correlationId: requestId,
         });
       }
-      return result;
+      return { productVersionId, quote: result, missingDelivery: false };
     });
-    if (extended) return toExtension(extended);
+    if (outcome.missingDelivery) {
+      throw await this.absent(
+        principal,
+        { type: 'QUOTE_REQUEST', label: 'Quote request' },
+        requestId,
+        await this.portal.quoteRequestExists(requestId),
+      );
+    }
+    if (outcome.quote) return toExtension(outcome.quote);
 
-    const quote = await this.portal.quoteAvailability(requestId, insurerId);
+    const quote = await this.portal.quoteAvailability(requestId, insurerId, outcome.productVersionId);
     if (quote?.unpayableAt) {
       throw ApiException.conflict(
         'QUOTE_UNAVAILABLE',
@@ -285,6 +333,48 @@ export class InsurerPortalService {
       'QUOTE_EXPIRED',
       'This quote has already expired. The customer needs to request new quotes.',
     );
+  }
+
+  /**
+   * New requests never infer a selected product from an insurer. A legacy
+   * request stays actionable without a version so historic customer journeys
+   * remain readable, while an outdated new-journey client is told to reload.
+   */
+  private async productVersionForDelivery(
+    tx: Transaction,
+    quoteRequestId: string,
+    insurerId: string,
+    delivery: { model: 'LEGACY' | 'PRODUCT_SELECTION' },
+    requestedProductVersionId: string | undefined,
+  ): Promise<string | null> {
+    if (delivery.model === 'LEGACY') {
+      if (requestedProductVersionId) {
+        throw ApiException.conflict(
+          'PRODUCT_VERSION_NOT_SELECTED',
+          'This historic request does not have a selected product version.',
+        );
+      }
+      return null;
+    }
+    if (!requestedProductVersionId) {
+      throw ApiException.conflict(
+        'RELOAD_REQUIRED',
+        'InsurShield has been updated; reload the page and choose the product you are quoting.',
+      );
+    }
+    const selection = await this.portal.lockSelectedProductVersion(
+      tx,
+      quoteRequestId,
+      insurerId,
+      requestedProductVersionId,
+    );
+    if (!selection || selection.cancelledAt) {
+      throw ApiException.conflict(
+        'PRODUCT_VERSION_UNAVAILABLE',
+        'This selected product is no longer available to quote.',
+      );
+    }
+    return selection.productVersionId;
   }
 
   // ── Paid policies ───────────────────────────────────────────────

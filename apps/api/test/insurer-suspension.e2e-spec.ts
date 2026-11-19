@@ -132,7 +132,7 @@ describe('insurer suspension', () => {
       .set('Idempotency-Key', randomUUID())
       .send({
         quoteRequestId: payable.quoteRequest.id,
-        insurer: insurer.insurer.name,
+        insurerQuoteId: payable.quote.id,
         amount: 1234.56,
         method: 'Card',
       })

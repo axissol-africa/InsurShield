@@ -197,6 +197,41 @@
       "when": 1794820951838,
       "tag": "0027_abandoned_lucky_pierre",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1795010752344,
+      "tag": "0028_batch_12_product_choice_request_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1795012237959,
+      "tag": "0029_batch_12_selection_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795067698879,
+      "tag": "0030_batch_12_quote_request_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795068995369,
+      "tag": "0031_batch_12_product_requirements",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795077252544,
+      "tag": "0032_far_infant_terrible",
+      "breakpoints": true
     }
   ]
 }

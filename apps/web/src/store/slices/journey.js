@@ -22,6 +22,13 @@ export const JOURNEY_DEFAULTS = {
   matchRtsaAnniversary: false,
   rtsaRegistrationDate: '',
   policyDates: null,
+  selectedProductVersionIds: [],
+  selectedProductVersions: [],
+  // Answers are kept per immutable product version. This avoids accidentally
+  // sharing a response between insurers whose fields merely have the same key.
+  productRequirementAnswers: {},
+  productRequirementDeclarations: {},
+  productRequirementDocuments: {},
   // The demo customer lands on their own answered request, so the comparison
   // page shows quotations and cover guides rather than an empty state. With a
   // backend there is nothing seeded to point at.
@@ -51,6 +58,38 @@ export const createJourneySlice = (set, get) => ({
   setVehicleUsage: (vehicleUsage) => set({ vehicleUsage }),
   setInsuranceType: (insuranceType) => set({ insuranceType }),
   setCoverageDuration: (coverageDurationId) => set({ coverageDurationId }),
+  setSelectedProductVersions: (selectedProductVersionIds, selectedProductVersions = []) =>
+    set((state) => {
+      const ids = [...new Set(selectedProductVersionIds || [])];
+      const keepSelected = (entries) =>
+        Object.fromEntries(Object.entries(entries).filter(([key]) => ids.some((id) => key.startsWith(`${id}:`))));
+      return {
+        selectedProductVersionIds: ids,
+        selectedProductVersions,
+        productRequirementAnswers: keepSelected(state.productRequirementAnswers),
+        productRequirementDeclarations: keepSelected(state.productRequirementDeclarations),
+        productRequirementDocuments: keepSelected(state.productRequirementDocuments),
+      };
+    }),
+  setProductRequirementAnswer: (key, value) =>
+    set((state) => ({ productRequirementAnswers: { ...state.productRequirementAnswers, [key]: value } })),
+  setProductRequirementDeclaration: (key, accepted) =>
+    set((state) => ({ productRequirementDeclarations: { ...state.productRequirementDeclarations, [key]: accepted } })),
+  setProductRequirementDocument: (key, document) =>
+    set((state) => ({ productRequirementDocuments: { ...state.productRequirementDocuments, [key]: document } })),
+  /** Restores the exact product-specific data carried by a secure phone hand-off. */
+  setProductRequirementResponses: ({ answers = {}, declarations = {}, documents = {} }) =>
+    set((state) => {
+      const keepSelected = (entries) =>
+        Object.fromEntries(
+          Object.entries(entries).filter(([key]) => state.selectedProductVersionIds.some((id) => key.startsWith(`${id}:`))),
+        );
+      return {
+        productRequirementAnswers: keepSelected(answers),
+        productRequirementDeclarations: keepSelected(declarations),
+        productRequirementDocuments: keepSelected(documents),
+      };
+    }),
   setPolicyStartDate: (policyStartDate) => set({ policyStartDate }),
   setRtsaAnniversary: (matchRtsaAnniversary, rtsaRegistrationDate) =>
     set((state) => ({ matchRtsaAnniversary, rtsaRegistrationDate: rtsaRegistrationDate ?? state.rtsaRegistrationDate })),
@@ -62,23 +101,25 @@ export const createJourneySlice = (set, get) => ({
    * Save the customer's verified details, then let them compare published
    * cover guides before choosing which insurers receive the quote request.
    */
-  submitQuoteRequest: ({ customer, policyDates, rtsaAnniversaryFee = 0 }) => {
+  submitQuoteRequest: ({ customer, policyDates, rtsaAnniversaryFee = 0, selectedProducts = [] }) => {
     const state = get();
     const id = newReference('QR');
     const submittedAt = NOW();
     const request = {
       id,
-      status: 'GuidesReady',
-      guideSelectionPending: true,
+      status: selectedProducts.length ? 'Submitted' : 'GuidesReady',
+      guideSelectionPending: selectedProducts.length === 0,
       submittedAt,
       // The declared value and live photos go stale; without valid quotes the request expires.
       expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
       requotedFromId: state.requotedFromId,
       renewalOfPolicyNumber: state.renewalOfPolicyNumber,
       customer,
-      insurers: [],
-      insurerIds: [],
+      insurers: [...new Map(selectedProducts.map((product) => [product.insurerId, product.insurerName])).values()],
+      insurerIds: [...new Set(selectedProducts.map((product) => product.insurerId))],
       insurerQuotes: {},
+      productQuotes: [],
+      selectedProducts,
       vehicle: vehicleLabel(state.vehicleDetails),
       vehicleDetails: state.vehicleDetails,
       vehicleValue: state.vehicleValue,
