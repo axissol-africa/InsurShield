@@ -12,6 +12,13 @@ import { JobsRepository, type JobRow } from '../jobs/jobs.repository.js';
 import { JobRunner } from '../jobs/job-runner.service.js';
 import type { Transaction } from '../db/database.module.js';
 import { CallbackSignatureService } from './callback-signature.service.js';
+import {
+  IntegrationEndpointRedirectError,
+  IntegrationEndpointResolutionError,
+  postJsonToEndpoint,
+  resolvePublicIntegrationEndpoint,
+  UnsafeIntegrationEndpointError,
+} from './endpoint-safety.js';
 import { IntegrationsRepository } from './integrations.repository.js';
 import { IntegrationSecretsService } from './integration-secrets.service.js';
 
@@ -169,13 +176,15 @@ export class IntegrationsService implements OnModuleInit {
     this.signatures.verifyInbound(configured.publicSigningKey, {
       timestamp: input.timestamp,
       signature: input.signature,
+      eventId,
+      eventType,
       body: input.body,
     });
     const receipt = await this.repository.recordCallback({
       insurerId: input.insurerId,
       eventId,
       eventType,
-      bodyHash: this.signatures.hash(input.body),
+      bodyHash: this.signatures.hashInboundEnvelope(eventId, eventType, input.body),
       correlationId: optionalHeader(input.correlationId, 200),
     });
     if (!receipt.accepted) {
@@ -212,6 +221,7 @@ export class IntegrationsService implements OnModuleInit {
     insurerId: string | null;
     targetKind: IntegrationTargetKind;
     endpoint: string;
+    kind: DeliveryKind;
     requestPayload: unknown;
     idempotencyKey: string;
     correlationId: string | null;
@@ -229,7 +239,22 @@ export class IntegrationsService implements OnModuleInit {
     if (!credential?.clientSecretEncrypted) {
       throw new IntegrationDeliveryError('The insurer API credential is not configured.', false);
     }
-    assertSafeEndpoint(delivery.endpoint, credential.sandboxMode);
+    const configuredEndpoint = insurerDeliveryEndpoint(credential.apiBaseUrl, delivery.insurerId, delivery.kind);
+    if (delivery.endpoint !== configuredEndpoint) {
+      throw new IntegrationDeliveryError('The insurer API endpoint no longer matches its approved integration record.', false);
+    }
+    let endpoint;
+    try {
+      endpoint = await resolvePublicIntegrationEndpoint(configuredEndpoint, credential.sandboxMode);
+    } catch (error) {
+      if (error instanceof UnsafeIntegrationEndpointError || error instanceof IntegrationEndpointRedirectError) {
+        throw new IntegrationDeliveryError(error.message, false);
+      }
+      if (error instanceof IntegrationEndpointResolutionError) {
+        throw new IntegrationDeliveryError(error.message, true);
+      }
+      throw error;
+    }
     let secret: string;
     try {
       secret = this.secrets.decrypt(credential.clientSecretEncrypted);
@@ -240,8 +265,7 @@ export class IntegrationsService implements OnModuleInit {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.get('INTEGRATION_TIMEOUT_MS', { infer: true }));
     try {
-      const response = await fetch(delivery.endpoint, {
-        method: 'POST',
+      const responseStatus = await postJsonToEndpoint(endpoint, {
         headers: {
           'content-type': 'application/json',
           'idempotency-key': delivery.idempotencyKey,
@@ -253,14 +277,17 @@ export class IntegrationsService implements OnModuleInit {
         body: canonicalJson(delivery.requestPayload),
         signal: controller.signal,
       });
-      if (!response.ok) {
+      if (responseStatus < 200 || responseStatus >= 300) {
         throw new IntegrationDeliveryError(
-          `The insurer API returned HTTP ${response.status}.`,
-          response.status === 408 || response.status === 429 || response.status >= 500,
+          `The insurer API returned HTTP ${responseStatus}.`,
+          responseStatus === 408 || responseStatus === 429 || responseStatus >= 500,
         );
       }
-      return response.status;
+      return responseStatus;
     } catch (error) {
+      if (error instanceof IntegrationEndpointRedirectError) {
+        throw new IntegrationDeliveryError(error.message, false);
+      }
       if (error instanceof IntegrationDeliveryError) throw error;
       throw new IntegrationDeliveryError('The insurer API could not be reached.', true);
     } finally {
@@ -313,18 +340,40 @@ function hash(value: Record<string, unknown>): string {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
-function insurerQuoteRequestEndpoint(apiBaseUrl: string | undefined, insurerId: string): string {
+function insurerDeliveryEndpoint(apiBaseUrl: string | undefined, insurerId: string, kind: DeliveryKind): string {
   if (!apiBaseUrl) {
     // The processor stops before any network call when credentials are absent;
     // this stable endpoint exists solely to make the manual exception durable.
     return `https://manual.insurshield.invalid/insurers/${encodeURIComponent(insurerId)}/quote-requests`;
   }
   try {
-    return new URL('/quote-requests', apiBaseUrl).toString();
+    const path = insurerDeliveryPath(kind);
+    return new URL(path, apiBaseUrl).toString();
   } catch {
     // Onboarding validates this field, but avoid turning a historic malformed
     // configuration into a missing outbox event.
     return `https://manual.insurshield.invalid/insurers/${encodeURIComponent(insurerId)}/quote-requests`;
+  }
+}
+
+function insurerQuoteRequestEndpoint(apiBaseUrl: string | undefined, insurerId: string): string {
+  return insurerDeliveryEndpoint(apiBaseUrl, insurerId, 'QUOTE_REQUEST');
+}
+
+function insurerDeliveryPath(kind: DeliveryKind): string {
+  switch (kind) {
+    case 'QUOTE_REQUEST':
+      return '/quote-requests';
+    case 'PAID_POLICY':
+      return '/paid-policies';
+    case 'CLAIM_NOTIFICATION':
+      return '/claim-notifications';
+    case 'VEHICLE_LOOKUP':
+      return '/vehicle-lookups';
+    case 'PAYMENT_CONFIRMATION':
+      return '/payment-confirmations';
+    case 'POLICY_ISSUED':
+      return '/policies';
   }
 }
 
@@ -348,44 +397,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : 'An integration delivery failed.';
   return message.slice(0, 500);
-}
-
-/** Prevent accidental server-side requests to the machine or private network. */
-function assertSafeEndpoint(endpoint: string, sandboxMode: boolean): void {
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    throw new IntegrationDeliveryError('The insurer API endpoint is invalid.', false);
-  }
-  if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)) {
-    throw new IntegrationDeliveryError('The insurer API endpoint is invalid.', false);
-  }
-  if (!sandboxMode && url.protocol !== 'https:') {
-    throw new IntegrationDeliveryError('A live insurer API endpoint must use HTTPS.', false);
-  }
-  if (privateHost(url.hostname)) {
-    throw new IntegrationDeliveryError('An insurer API endpoint must be publicly routable.', false);
-  }
-}
-
-function privateHost(host: string): boolean {
-  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
-  if (normalized === 'localhost' || normalized === '::' || normalized === '::1' || normalized === '0.0.0.0') {
-    return true;
-  }
-  if (normalized.startsWith('::ffff:')) return privateHost(normalized.slice('::ffff:'.length));
-  if (/^(?:fc|fd)[0-9a-f]{2}:/i.test(normalized) || /^fe[89ab][0-9a-f]:/i.test(normalized)) return true;
-  const ipv4 = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!ipv4) return normalized.endsWith('.local');
-  const parts = ipv4.slice(1).map(Number);
-  if (parts.some((part) => part > 255)) return true;
-  return (
-    parts[0] === 10 ||
-    parts[0] === 127 ||
-    parts[0] === 0 ||
-    (parts[0] === 169 && parts[1] === 254) ||
-    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-    (parts[0] === 192 && parts[1] === 168)
-  );
 }

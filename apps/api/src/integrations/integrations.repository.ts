@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { integrationCallbacks, integrationDeliveries, insurerIntegrations } from '../db/schema.js';
+import { integrationCallbacks, integrationDeliveries, insurerIntegrations, insurers } from '../db/schema.js';
 import type { DeliveryKind, IntegrationTargetKind } from '../common/domain/enums.js';
 
 type Executor = Database | Transaction;
@@ -27,6 +27,16 @@ const operationsColumns = {
   resolutionNote: integrationDeliveries.resolutionNote,
   createdAt: integrationDeliveries.createdAt,
 };
+
+/** Keep actionable failures at the top even when the history has many successes. */
+const operationsStatusOrder = sql<number>`case ${integrationDeliveries.status}
+  when 'FAILED' then 0
+  when 'PENDING' then 1
+  when 'DELIVERED' then 2
+  when 'ACKNOWLEDGED' then 3
+  when 'MANUAL_FALLBACK' then 4
+  else 5
+end`;
 
 export type NewIntegrationDelivery = {
   insurerId?: string | null;
@@ -77,7 +87,7 @@ export class IntegrationsRepository {
     return executor
       .select(operationsColumns)
       .from(integrationDeliveries)
-      .orderBy(asc(integrationDeliveries.status), sql`${integrationDeliveries.createdAt} DESC`)
+      .orderBy(asc(operationsStatusOrder), sql`${integrationDeliveries.createdAt} DESC`)
       .limit(limit);
   }
 
@@ -86,7 +96,7 @@ export class IntegrationsRepository {
       .select(operationsColumns)
       .from(integrationDeliveries)
       .where(eq(integrationDeliveries.insurerId, insurerId))
-      .orderBy(asc(integrationDeliveries.status), sql`${integrationDeliveries.createdAt} DESC`)
+      .orderBy(asc(operationsStatusOrder), sql`${integrationDeliveries.createdAt} DESC`)
       .limit(limit);
   }
 
@@ -139,6 +149,7 @@ export class IntegrationsRepository {
         clientId: insurerIntegrations.clientId,
         clientSecretEncrypted: insurerIntegrations.clientSecretEncrypted,
         sandboxMode: insurerIntegrations.sandboxMode,
+        apiBaseUrl: insurerIntegrations.apiBaseUrl,
       })
       .from(insurerIntegrations)
       .where(eq(insurerIntegrations.insurerId, insurerId))
@@ -188,7 +199,14 @@ export class IntegrationsRepository {
     return this.db
       .select({ publicSigningKey: insurerIntegrations.publicSigningKey })
       .from(insurerIntegrations)
-      .where(eq(insurerIntegrations.insurerId, insurerId))
+      .innerJoin(insurers, eq(insurers.id, insurerIntegrations.insurerId))
+      .where(
+        and(
+          eq(insurerIntegrations.insurerId, insurerId),
+          ne(insurers.status, 'DELETED'),
+          isNull(insurers.deletedAt),
+        ),
+      )
       .then((rows) => rows[0]);
   }
 }
