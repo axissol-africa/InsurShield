@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { auditLogs, insurerEvidence, insurerProductVersions } from '../src/db/schema.js';
+import { auditLogs, insurerEvidence, insurerProductVersions, productVersionRequirements } from '../src/db/schema.js';
 import { buildDocument, buildInsurer, buildStaffUser } from './builders.js';
+import { buildPiaConfig } from './builders/admin.js';
 import { startApp, type TestApp } from './helpers.js';
 import { signIn, type SessionHeaders } from './sessions.js';
 
@@ -144,6 +145,75 @@ describe('versioned insurer products', () => {
     expect(afterWithdrawal.body.some((item: { product: { id: string } }) => item.product.id === created.body.product.id)).toBe(false);
   });
 
+  it('publishes typed customer requirements and copies them into a controlled revision', async () => {
+    const insurer = await insurerAdmin();
+    await verifyForTrading(insurer);
+    const requirements = [
+      {
+        key: 'driver_age',
+        kind: 'QUESTION',
+        label: 'Main driver age',
+        helpText: 'Enter the age in years.',
+        required: true,
+        config: { inputType: 'NUMBER' },
+        displayOrder: 1,
+      },
+      {
+        key: 'ownership_proof',
+        kind: 'DOCUMENT',
+        label: 'Proof of ownership',
+        required: true,
+        config: { documentKind: 'WHITE_BOOK' },
+        displayOrder: 2,
+      },
+      {
+        key: 'truth_declaration',
+        kind: 'DECLARATION',
+        label: 'Confirm the information',
+        required: true,
+        config: { text: 'I confirm that the information I provided is accurate.' },
+        displayOrder: 3,
+      },
+    ];
+    const created = await create(insurer.headers, draftBody({
+      code: `REQ-${randomUUID().slice(0, 8)}`,
+      effectiveFrom: '2026-01-01',
+      requirements,
+    })).expect(201);
+
+    expect(created.body.requirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'driver_age', kind: 'QUESTION', config: { inputType: 'NUMBER' } }),
+      expect.objectContaining({ key: 'ownership_proof', kind: 'DOCUMENT', config: { documentKind: 'WHITE_BOOK' } }),
+      expect.objectContaining({ key: 'truth_declaration', kind: 'DECLARATION' }),
+    ]));
+    expect(await testApp.db.select().from(productVersionRequirements).where(eq(productVersionRequirements.productVersionId, created.body.id))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'driver_age', kind: 'QUESTION', config: { inputType: 'NUMBER' } }),
+        expect.objectContaining({ key: 'ownership_proof', kind: 'DOCUMENT', config: { documentKind: 'WHITE_BOOK' } }),
+      ]),
+    );
+
+    await submit(insurer.headers, created.body.product.id, created.body.id).expect(200);
+    await approve(created.body.product.id, created.body.id).expect(200);
+    const directory = await testApp.http.get(`/api/v1/products/directory?coverType=COMPREHENSIVE`).expect(200);
+    const publicProduct = directory.body.find((item: { product: { id: string } }) => item.product.id === created.body.product.id);
+    expect(publicProduct.version.requirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'driver_age', kind: 'QUESTION', config: { inputType: 'NUMBER' } }),
+      expect.objectContaining({ key: 'ownership_proof', kind: 'DOCUMENT', config: { documentKind: 'WHITE_BOOK' } }),
+      expect.objectContaining({ key: 'truth_declaration', kind: 'DECLARATION' }),
+    ]));
+
+    const revision = await testApp.http
+      .post(`/api/v1/insurer/products/${created.body.product.id}/versions/${created.body.id}/revise`)
+      .set(insurer.headers)
+      .expect(201);
+    expect(revision.body.requirements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'driver_age', kind: 'QUESTION', config: { inputType: 'NUMBER' } }),
+      expect.objectContaining({ key: 'ownership_proof', kind: 'DOCUMENT', config: { documentKind: 'WHITE_BOOK' } }),
+      expect.objectContaining({ key: 'truth_declaration', kind: 'DECLARATION' }),
+    ]));
+  });
+
   it('hides an approved product when its insurer is no longer compliant, and blocks new drafts with an expired licence', async () => {
     const insurer = await insurerAdmin();
     await verifyForTrading(insurer, new Date('2099-01-01T00:00:00.000Z'));
@@ -284,6 +354,10 @@ describe('versioned insurer products', () => {
   });
 
   it('calculates a rate-limited customer estimate from the approved product version and never below the PIA floor', async () => {
+    // This suite shares a disposable database with related E2E files. Set the
+    // regulatory floor explicitly so its product estimate never depends on a
+    // preceding test's PIA configuration.
+    await buildPiaConfig(testApp.db, { piaRateBps: 400 });
     const insurer = await insurerAdmin();
     await verifyForTrading(insurer);
     const created = await create(insurer.headers, draftBody({

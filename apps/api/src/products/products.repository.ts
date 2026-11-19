@@ -1,10 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, lte, ne, not, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { comparisonTaxonomyItems, insurerEvidence, insurerProductVersions, insurerProducts, insurers, productVersionComparisonItems } from '../db/schema.js';
-import { takesNewBusinessWhere } from '../common/insurer-standing.js';
-import { lusakaDay } from '../common/domain/lusaka.js';
-import { calendarDate } from './domain/product-version.js';
+import {
+  comparisonTaxonomyItems,
+  insurerProductVersions,
+  insurerProducts,
+  insurers,
+  productVersionComparisonItems,
+  productVersionRequirements,
+} from '../db/schema.js';
+import type { ProductRequirementDefinition } from './domain/product-requirements.js';
+import { customerAvailableProductConditions } from './customer-availability.js';
 import type { InsuranceType, ProductVersionStatus } from '../common/domain/enums.js';
 
 type Executor = Database | Transaction;
@@ -63,6 +69,16 @@ const comparisonColumns = {
   included: productVersionComparisonItems.included,
   valueText: productVersionComparisonItems.valueText,
   createdAt: productVersionComparisonItems.createdAt,
+};
+const requirementColumns = {
+  productVersionId: productVersionRequirements.productVersionId,
+  key: productVersionRequirements.key,
+  kind: productVersionRequirements.kind,
+  label: productVersionRequirements.label,
+  helpText: productVersionRequirements.helpText,
+  required: productVersionRequirements.required,
+  config: productVersionRequirements.config,
+  displayOrder: productVersionRequirements.displayOrder,
 };
 const taxonomyColumns = {
   id: comparisonTaxonomyItems.id,
@@ -219,6 +235,37 @@ export class ProductsRepository {
     })));
   }
 
+  async requirementsForVersions(versionIds: string[], executor: Executor = this.db) {
+    if (versionIds.length === 0) return [];
+    return executor
+      .select(requirementColumns)
+      .from(productVersionRequirements)
+      .where(inArray(productVersionRequirements.productVersionId, versionIds))
+      .orderBy(asc(productVersionRequirements.displayOrder), asc(productVersionRequirements.key));
+  }
+
+  async replaceRequirements(
+    tx: Transaction,
+    productVersionId: string,
+    requirements: Array<Omit<ProductRequirementDefinition, 'productVersionId'>>,
+  ): Promise<void> {
+    await tx.delete(productVersionRequirements).where(eq(productVersionRequirements.productVersionId, productVersionId));
+    if (requirements.length) await tx.insert(productVersionRequirements).values(requirements.map((requirement) => ({ productVersionId, ...requirement })));
+  }
+
+  async copyRequirements(tx: Transaction, sourceVersionId: string, targetVersionId: string): Promise<void> {
+    const source = await this.requirementsForVersions([sourceVersionId], tx);
+    await this.replaceRequirements(tx, targetVersionId, source.map((requirement) => ({
+      key: requirement.key,
+      kind: requirement.kind as ProductRequirementDefinition['kind'],
+      label: requirement.label,
+      helpText: requirement.helpText,
+      required: requirement.required,
+      config: requirement.config as ProductRequirementDefinition['config'],
+      displayOrder: requirement.displayOrder,
+    })));
+  }
+
   async listForReview(status?: ProductVersionStatus) {
     const where = status ? eq(insurerProductVersions.status, status) : undefined;
     return this.db
@@ -231,49 +278,20 @@ export class ProductsRepository {
   }
 
   /** Customer-safe products in force today from insurers that can accept new business. */
-  async directory(now: Date, coverType?: InsuranceType, limit = 100, productId?: string, versionId?: string) {
-    const today = calendarDate(lusakaDay(now));
-    // A product approval is not a permanent compliance decision. The insurer
-    // must still hold a current approved licence, and no evidence currently on
-    // file may have been rejected or lapsed since the version was approved.
-    const currentApprovedLicence = exists(
-      this.db.select({ one: sql`1` })
-        .from(insurerEvidence)
-        .where(and(
-          eq(insurerEvidence.insurerId, insurers.id),
-          eq(insurerEvidence.kind, 'LICENCE'),
-          eq(insurerEvidence.state, 'APPROVED'),
-          or(isNull(insurerEvidence.expiresAt), gte(insurerEvidence.expiresAt, today)),
-        )),
-    );
-    const hasInvalidEvidence = exists(
-      this.db.select({ one: sql`1` })
-        .from(insurerEvidence)
-        .where(and(
-          eq(insurerEvidence.insurerId, insurers.id),
-          or(
-            ne(insurerEvidence.state, 'APPROVED'),
-            and(isNotNull(insurerEvidence.expiresAt), lt(insurerEvidence.expiresAt, today)),
-          ),
-        )),
-    );
-    const filters = [
-      eq(insurerProductVersions.status, 'APPROVED'),
-      lte(insurerProductVersions.effectiveFrom, today),
-      or(isNull(insurerProductVersions.effectiveUntil), gte(insurerProductVersions.effectiveUntil, today)),
-      ...takesNewBusinessWhere(now),
-      currentApprovedLicence,
-      not(hasInvalidEvidence),
-    ];
-    if (coverType) filters.push(eq(insurerProductVersions.coverType, coverType));
-    if (productId) filters.push(eq(insurerProducts.id, productId));
-    if (versionId) filters.push(eq(insurerProductVersions.id, versionId));
-    return this.db
+  async directory(
+    now: Date,
+    coverType?: InsuranceType,
+    limit = 100,
+    productId?: string,
+    versionId?: string,
+    executor: Executor = this.db,
+  ) {
+    return executor
       .select({ product: productColumns, version: versionColumns, insurer: insurerColumns })
       .from(insurerProductVersions)
       .innerJoin(insurerProducts, eq(insurerProducts.id, insurerProductVersions.productId))
       .innerJoin(insurers, eq(insurers.id, insurerProducts.insurerId))
-      .where(and(...filters))
+      .where(and(...customerAvailableProductConditions(executor, now, { coverType, productId, productVersionId: versionId })))
       .orderBy(asc(insurers.name), asc(insurerProductVersions.name), desc(insurerProductVersions.versionNumber))
       .limit(limit);
   }

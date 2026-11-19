@@ -77,6 +77,8 @@
 
 /**
  * @typedef {Object} InsurerQuote  One insurer's final reply to a quote request.
+ * @property {string} id                immutable quote identity; required to pay
+ * @property {string|null} productVersionId null only for a legacy broad request
  * @property {number} premium            ZMW, must equal the premium on `document`
  * @property {string} [notes]
  * @property {string|null} insurerReference
@@ -89,6 +91,27 @@
  */
 
 /**
+ * @typedef {Object} SelectedProduct  Immutable snapshot of one product the
+ * customer selected before sending a current quote request.
+ * @property {string} productVersionId
+ * @property {string} insurerId
+ * @property {string} insurerName
+ * @property {string} productCode
+ * @property {number} productVersionNumber
+ * @property {string} productName
+ * @property {'Comprehensive'|'ThirdParty'} coverType
+ * @property {Object} coverGuide
+ * @property {{rule:string,timing:string|null,method:string|null}} inspection
+ * @property {string|null} unavailableAt
+ */
+
+/**
+ * @typedef {InsurerQuote & { insurer: { id:string, name:string } }} ProductQuote
+ * A final quote for one selected product. Several of these may belong to the
+ * same insurer, so it is never keyed by insurer name.
+ */
+
+/**
  * @typedef {Object} QuoteRequest
  * @property {string} id                       e.g. QR-…
  * @property {'Submitted'|'Quoted'|'Expired'} status
@@ -97,7 +120,9 @@
  * @property {Customer} customer
  * @property {string[]} insurers               names of every insurer the request went to
  * @property {string[]} insurerIds
- * @property {Record<string, InsurerQuote>} insurerQuotes   keyed by insurer name
+ * @property {SelectedProduct[]} selectedProducts selected-product request snapshot; empty for legacy requests
+ * @property {ProductQuote[]} productQuotes final replies for selected products; empty for legacy requests
+ * @property {Record<string, InsurerQuote>} insurerQuotes legacy replies keyed by insurer name
  * @property {{name:string, unavailableAt:string}[]} [unavailableInsurers] insurers that could not complete the request
  * @property {string} vehicle                  display label
  * @property {VehicleDetails} vehicleDetails

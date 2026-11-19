@@ -13,6 +13,7 @@ import {
   ncdCodes,
   payments,
   policies,
+  quoteRequestProductVersions,
   quoteRequestRecipients,
   quoteRequests,
   vehicles,
@@ -26,6 +27,7 @@ const replyColumns = {
   id: insurerQuotes.id,
   quoteRequestId: insurerQuotes.quoteRequestId,
   insurerId: insurerQuotes.insurerId,
+  productVersionId: insurerQuotes.productVersionId,
   premiumMinor: insurerQuotes.premiumMinor,
   notes: insurerQuotes.notes,
   insurerReference: insurerQuotes.insurerReference,
@@ -76,6 +78,7 @@ export class InsurerPortalRepository {
     return this.db
       .select({
         id: quoteRequests.id,
+        model: quoteRequests.model,
         status: quoteRequests.status,
         deliveryStatus: quoteRequestRecipients.status,
         submittedAt: quoteRequests.submittedAt,
@@ -106,10 +109,53 @@ export class InsurerPortalRepository {
       .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
       .leftJoin(
         insurerQuotes,
-        and(eq(insurerQuotes.quoteRequestId, quoteRequests.id), eq(insurerQuotes.insurerId, insurerId)),
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequests.id),
+          eq(insurerQuotes.insurerId, insurerId),
+          isNull(insurerQuotes.productVersionId),
+        ),
       )
       .where(eq(quoteRequestRecipients.insurerId, insurerId))
       .orderBy(desc(quoteRequests.submittedAt), asc(quoteRequests.id));
+  }
+
+  /**
+   * A recipient is a delivery address, not a quote. One insurer may therefore
+   * receive several selected products and issue one final quote per version.
+   */
+  selectedProductsForRequests(insurerId: string, quoteRequestIds: string[]) {
+    if (quoteRequestIds.length === 0) return Promise.resolve([]);
+    return this.db
+      .select({
+        quoteRequestId: quoteRequestProductVersions.quoteRequestId,
+        productVersionId: quoteRequestProductVersions.productVersionId,
+        productCode: quoteRequestProductVersions.productCode,
+        productVersionNumber: quoteRequestProductVersions.productVersionNumber,
+        productName: quoteRequestProductVersions.productName,
+        coverType: quoteRequestProductVersions.coverType,
+        coverGuide: quoteRequestProductVersions.coverGuide,
+        inspectionRule: quoteRequestProductVersions.inspectionRule,
+        inspectionTiming: quoteRequestProductVersions.inspectionTiming,
+        inspectionMethod: quoteRequestProductVersions.inspectionMethod,
+        cancelledAt: quoteRequestProductVersions.cancelledAt,
+        reply: replyColumns,
+      })
+      .from(quoteRequestProductVersions)
+      .leftJoin(
+        insurerQuotes,
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequestProductVersions.quoteRequestId),
+          eq(insurerQuotes.productVersionId, quoteRequestProductVersions.productVersionId),
+          eq(insurerQuotes.insurerId, insurerId),
+        ),
+      )
+      .where(
+        and(
+          eq(quoteRequestProductVersions.insurerId, insurerId),
+          inArray(quoteRequestProductVersions.quoteRequestId, quoteRequestIds),
+        ),
+      )
+      .orderBy(asc(quoteRequestProductVersions.productName), asc(quoteRequestProductVersions.productVersionNumber));
   }
 
   /** The shots of those requests that were sent to the insurer. */
@@ -137,6 +183,7 @@ export class InsurerPortalRepository {
     const [delivery] = await tx
       .select({
         status: quoteRequests.status,
+        model: quoteRequests.model,
         expiresAt: quoteRequests.expiresAt,
         quoteValidityDays: insurers.quoteValidityDays,
         vehicleValueMinor: quoteRequests.vehicleValueMinor,
@@ -154,6 +201,30 @@ export class InsurerPortalRepository {
       )
       .for('update', { of: quoteRequestRecipients });
     return delivery;
+  }
+
+  /** Locks and scopes a selected product version to this insurer's recipient row. */
+  async lockSelectedProductVersion(
+    tx: Transaction,
+    quoteRequestId: string,
+    insurerId: string,
+    productVersionId: string,
+  ) {
+    const [selection] = await tx
+      .select({
+        productVersionId: quoteRequestProductVersions.productVersionId,
+        cancelledAt: quoteRequestProductVersions.cancelledAt,
+      })
+      .from(quoteRequestProductVersions)
+      .where(
+        and(
+          eq(quoteRequestProductVersions.quoteRequestId, quoteRequestId),
+          eq(quoteRequestProductVersions.insurerId, insurerId),
+          eq(quoteRequestProductVersions.productVersionId, productVersionId),
+        ),
+      )
+      .for('update');
+    return selection;
   }
 
   /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */
@@ -201,11 +272,24 @@ export class InsurerPortalRepository {
     return found !== undefined;
   }
 
-  async hasQuote(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db): Promise<boolean> {
+  async hasQuote(
+    quoteRequestId: string,
+    insurerId: string,
+    productVersionId: string | null,
+    tx: Database | Transaction = this.db,
+  ): Promise<boolean> {
     const [quote] = await tx
       .select({ id: insurerQuotes.id })
       .from(insurerQuotes)
-      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.insurerId, insurerId)));
+      .where(
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequestId),
+          eq(insurerQuotes.insurerId, insurerId),
+          productVersionId === null
+            ? isNull(insurerQuotes.productVersionId)
+            : eq(insurerQuotes.productVersionId, productVersionId),
+        ),
+      );
     return quote !== undefined;
   }
 
@@ -238,7 +322,14 @@ export class InsurerPortalRepository {
   }
 
   /** Extends the insurer's quote unless it expired before `now`; undefined when nothing was extended. */
-  async extendOpenQuote(tx: Transaction, quoteRequestId: string, insurerId: string, extraDays: number, now: Date) {
+  async extendOpenQuote(
+    tx: Transaction,
+    quoteRequestId: string,
+    insurerId: string,
+    productVersionId: string | null,
+    extraDays: number,
+    now: Date,
+  ) {
     const [extended] = await tx
       .update(insurerQuotes)
       .set({
@@ -250,6 +341,9 @@ export class InsurerPortalRepository {
         and(
           eq(insurerQuotes.quoteRequestId, quoteRequestId),
           eq(insurerQuotes.insurerId, insurerId),
+          productVersionId === null
+            ? isNull(insurerQuotes.productVersionId)
+            : eq(insurerQuotes.productVersionId, productVersionId),
           isNull(insurerQuotes.unpayableAt),
           gte(insurerQuotes.validUntil, now),
         ),
@@ -258,11 +352,24 @@ export class InsurerPortalRepository {
     return extended;
   }
 
-  async quoteAvailability(quoteRequestId: string, insurerId: string, tx: Database | Transaction = this.db) {
+  async quoteAvailability(
+    quoteRequestId: string,
+    insurerId: string,
+    productVersionId: string | null,
+    tx: Database | Transaction = this.db,
+  ) {
     const [quote] = await tx
       .select({ unpayableAt: insurerQuotes.unpayableAt })
       .from(insurerQuotes)
-      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.insurerId, insurerId)));
+      .where(
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequestId),
+          eq(insurerQuotes.insurerId, insurerId),
+          productVersionId === null
+            ? isNull(insurerQuotes.productVersionId)
+            : eq(insurerQuotes.productVersionId, productVersionId),
+        ),
+      );
     return quote;
   }
 

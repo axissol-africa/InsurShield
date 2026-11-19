@@ -11,7 +11,7 @@ import { createJSONStorage } from 'zustand/middleware';
  */
 
 export const STORAGE_KEY = 'insurshield-storage';
-export const STORAGE_VERSION = 9;
+export const STORAGE_VERSION = 10;
 
 let httpPersistenceSuspended = false;
 
@@ -55,7 +55,7 @@ const LEGACY_KEYS = ['selectedInsurers', 'quoteStatus', 'quoteRulesAgreed', 'quo
 const PERSISTED_KEYS = [
   'customer', 'isAuthenticated', 'authToken', 'registeredAccounts', 'staffSession',
   'consentAccepted', 'consentTimestamp', 'consentRecord',
-  'vehicleDetails', 'vehicleValue', 'vehicleUsage', 'insuranceType', 'coverageDurationId', 'policyStartDate', 'matchRtsaAnniversary', 'rtsaRegistrationDate', 'policyDates',
+  'vehicleDetails', 'vehicleValue', 'vehicleUsage', 'insuranceType', 'coverageDurationId', 'policyStartDate', 'matchRtsaAnniversary', 'rtsaRegistrationDate', 'policyDates', 'selectedProductVersionIds', 'selectedProductVersions',
   'activeQuoteRequestId', 'requotedFromId', 'renewalOfPolicyNumber', 'photosCapturedAt', 'selectedQuote', 'premiumBreakdown', 'paymentReceipt',
   'ncdCode', 'ncdCodeValidated', 'ncdCodeUsed', 'ncdApplications',
   'piaConfig', 'insurersList', 'quoteRequests', 'policies', 'claims', 'inspections', 'insurerReviews', 'staffUsers', 'staffTeams',
@@ -78,9 +78,10 @@ export const backfillValidity = (requests, insurers) =>
   (Array.isArray(requests) ? requests : []).map((request) => {
     const insurerQuotes = Object.fromEntries(
       Object.entries(request.insurerQuotes || {}).map(([name, reply]) => {
-        if (reply?.validUntil || !reply?.sentAt) return [name, reply];
+        const id = reply?.id || (env.apiMode === 'mock' && request.id ? `IQ-${request.id}-${name.replaceAll(/[^A-Za-z0-9]/g, '-')}` : undefined);
+        if (reply?.validUntil || !reply?.sentAt) return [name, { ...reply, ...(id ? { id, productVersionId: reply?.productVersionId ?? null } : {}) }];
         const days = reply.validityDays || insurers.find((insurer) => insurer.name === name)?.quoteValidityDays || DEFAULT_QUOTE_VALIDITY_DAYS;
-        return [name, { ...reply, validityDays: days, validUntil: addDays(reply.sentAt, days) }];
+        return [name, { ...reply, ...(id ? { id, productVersionId: reply?.productVersionId ?? null } : {}), validityDays: days, validUntil: addDays(reply.sentAt, days) }];
       }),
     );
     return { ...request, insurerQuotes, expiresAt: request.expiresAt || (request.submittedAt ? addDays(request.submittedAt, REQUEST_VALIDITY_DAYS) : undefined) };
@@ -148,5 +149,7 @@ export const migrate = (persisted, version) => {
   }
   // v9: staff and insurer-team data became explicit browser records in mock
   // mode. Leaving them absent deliberately preserves the defaults on merge.
+  // v10: the current quote journey selects published product versions before
+  // submitting. Older saves get the safe empty default during merge.
   return state;
 };

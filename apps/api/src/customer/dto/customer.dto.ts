@@ -1,11 +1,15 @@
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayNotEmpty,
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
+  IsDefined,
   IsIn,
   IsInt,
+  Matches,
   IsNumber,
   IsOptional,
   IsString,
@@ -52,6 +56,30 @@ export class PolicyDatesDto {
   @IsDateString() endDate!: string;
 }
 
+/** A response to an insurer-configured pre-quote question. */
+export class ProductRequirementAnswerDto {
+  /** Omit only when an identical requirement is shared by every selected product. */
+  @IsOptional() @IsUUID('4') productVersionId?: string;
+  @IsString() @Matches(/^[a-z][a-z0-9_]{1,79}$/) requirementKey!: string;
+  @IsDefined() value!: unknown;
+}
+
+/** An affirmative acceptance of an insurer-configured declaration. */
+export class ProductRequirementDeclarationDto {
+  /** Omit only when an identical requirement is shared by every selected product. */
+  @IsOptional() @IsUUID('4') productVersionId?: string;
+  @IsString() @Matches(/^[a-z][a-z0-9_]{1,79}$/) requirementKey!: string;
+  @IsBoolean() accepted!: boolean;
+}
+
+/** A customer upload required by one selected product version. */
+export class ProductRequirementDocumentDto {
+  /** Omit only when an identical requirement is shared by every selected product. */
+  @IsOptional() @IsUUID('4') productVersionId?: string;
+  @IsString() @Matches(/^[a-z][a-z0-9_]{1,79}$/) requirementKey!: string;
+  @IsUUID('4') documentId!: string;
+}
+
 export class SubmitQuoteRequestDto {
   @ValidateNested() @Type(() => VehicleDetailsDto) vehicleDetails!: VehicleDetailsDto;
 
@@ -68,6 +96,31 @@ export class SubmitQuoteRequestDto {
 
   @IsIn(CONTRACT_VALUES.coverageDuration, { message: CHOOSE_A_COVER_PERIOD })
   coverageDurationId!: string;
+
+  /**
+   * Product-version selection is required for every new write. It remains
+   * optional to class-validator only so the service can return the explicit
+   * `RELOAD_REQUIRED` response for an old browser body rather than a generic
+   * validation error. Historic records remain readable under their legacy
+   * model, but cannot be newly created by this endpoint.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Choose at least one insurance product.' })
+  @ArrayMaxSize(5, { message: 'Choose no more than five insurance products.' })
+  @ArrayUnique({ message: 'Choose each insurance product only once.' })
+  @IsUUID('4', { each: true, message: 'One selected insurance product is invalid. Reload the product list and try again.' })
+  selectedProductVersionIds?: string[];
+
+  /** Answers and evidence configured by the exact products the customer selected. */
+  @IsOptional() @IsArray() @ArrayMaxSize(150) @ValidateNested({ each: true }) @Type(() => ProductRequirementAnswerDto)
+  productRequirementAnswers?: ProductRequirementAnswerDto[];
+
+  @IsOptional() @IsArray() @ArrayMaxSize(150) @ValidateNested({ each: true }) @Type(() => ProductRequirementDeclarationDto)
+  productRequirementDeclarations?: ProductRequirementDeclarationDto[];
+
+  @IsOptional() @IsArray() @ArrayMaxSize(150) @ValidateNested({ each: true }) @Type(() => ProductRequirementDocumentDto)
+  productRequirementDocuments?: ProductRequirementDocumentDto[];
 
   @IsOptional() @IsBoolean() matchRtsaAnniversary?: boolean;
   @ValidateIf((dto: SubmitQuoteRequestDto) => dto.matchRtsaAnniversary === true)

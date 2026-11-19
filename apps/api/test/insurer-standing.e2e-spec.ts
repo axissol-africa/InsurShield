@@ -51,7 +51,7 @@ describe('an insurer that may no longer trade', () => {
   const payFor = async (
     customer: Row<typeof customers>,
     quoteRequestId: string,
-    insurer: string,
+    insurerQuoteId: string,
     amount: number,
   ) =>
     testApp.http
@@ -60,7 +60,7 @@ describe('an insurer that may no longer trade', () => {
       .set('Idempotency-Key', randomUUID())
       .send({
         quoteRequestId,
-        insurer,
+        insurerQuoteId,
         amount,
         method: 'Mobile money',
         mobileNumber: '+260971234567',
@@ -68,7 +68,7 @@ describe('an insurer that may no longer trade', () => {
 
   describe('payment', () => {
     it('refuses a quote from an insurer whose licence has expired, and writes nothing', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(
+      const { customer, insurer, quoteRequest, quote } = await buildPayableQuote(
         testApp.db,
         {
           insurer: await buildInsurer(testApp.db, {
@@ -80,7 +80,7 @@ describe('an insurer that may no longer trade', () => {
       const response = await payFor(
         customer,
         quoteRequest.id,
-        insurer.insurer.name,
+        quote.id,
         1234.56,
       );
 
@@ -94,7 +94,7 @@ describe('an insurer that may no longer trade', () => {
     });
 
     it('refuses a quote from a deactivated insurer', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(
+      const { customer, quoteRequest, quote } = await buildPayableQuote(
         testApp.db,
         {
           insurer: await buildInsurer(testApp.db, {
@@ -106,7 +106,7 @@ describe('an insurer that may no longer trade', () => {
       const response = await payFor(
         customer,
         quoteRequest.id,
-        insurer.insurer.name,
+        quote.id,
         1234.56,
       );
 
@@ -115,14 +115,14 @@ describe('an insurer that may no longer trade', () => {
     });
 
     it('refuses a payment that reached the check while the insurer was being deactivated', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(testApp.db);
+      const { customer, insurer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
       // The admin's update holds the insurer row exclusively and has not committed.
       const deactivating = await holdLocks(side.pool, (_db, client) =>
         client.query('UPDATE insurers SET status = $2 WHERE id = $1', [insurer.insurer.id, 'INACTIVE']),
       );
 
       const [response] = await queueBehind(deactivating, READING_THE_STANDING, 1, [
-        () => payFor(customer, quoteRequest.id, insurer.insurer.name, 1234.56),
+        () => payFor(customer, quoteRequest.id, quote.id, 1234.56),
       ]);
 
       // The payment waited on the share lock rather than reading the old status.
@@ -131,7 +131,7 @@ describe('an insurer that may no longer trade', () => {
     });
 
     it('still takes payment for an insurer in good standing', async () => {
-      const { customer, insurer, quoteRequest } = await buildPayableQuote(
+      const { customer, quoteRequest, quote } = await buildPayableQuote(
         testApp.db,
         {
           insurer: await buildInsurer(testApp.db, {
@@ -143,7 +143,7 @@ describe('an insurer that may no longer trade', () => {
       const response = await payFor(
         customer,
         quoteRequest.id,
-        insurer.insurer.name,
+        quote.id,
         1234.56,
       );
 

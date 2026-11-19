@@ -18,6 +18,7 @@ import {
   MinLength,
   ValidateBy,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import {
   INSPECTION_METHODS,
@@ -32,6 +33,7 @@ import {
   type CoverageDuration,
 } from '../../common/domain/enums.js';
 import { MAX_KWACHA, MAX_RATE_BPS, MIN_RATE_BPS } from '../../common/domain/money-limits.js';
+import { PRODUCT_REQUIREMENT_KINDS } from '../domain/product-requirements.js';
 
 const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const CalendarDay = (what: string) =>
@@ -58,8 +60,20 @@ export class ProductVersionInputDto {
   @IsOptional() @IsBoolean() showEstimate?: boolean;
   @IsArray() @ArrayNotEmpty() @ArrayUnique() @IsIn(COVERAGE_DURATIONS, { each: true }) allowedDurations!: CoverageDuration[];
   @IsOptional() @IsArray() @ArrayUnique((item: ComparisonItemInputDto) => item.taxonomyItemId) comparisonItems?: ComparisonItemInputDto[];
+  @IsOptional() @IsArray() @ArrayUnique((item: ProductRequirementInputDto) => item.key) @ValidateNested({ each: true }) @Type(() => ProductRequirementInputDto) requirements?: ProductRequirementInputDto[];
   @CalendarDay('An effective-from date') effectiveFrom!: string;
   @IsOptional() @CalendarDay('An effective-until date') effectiveUntil?: string;
+}
+
+/** A versioned, insurer-controlled question, document, or declaration. */
+export class ProductRequirementInputDto {
+  @IsString() @Transform(trim) @Matches(/^[a-z][a-z0-9_]{1,79}$/) key!: string;
+  @IsIn(PRODUCT_REQUIREMENT_KINDS) kind!: string;
+  @IsString() @Transform(trim) @MinLength(1) @MaxLength(160) label!: string;
+  @IsOptional() @IsString() @Transform(trim) @MaxLength(500) helpText?: string | null;
+  @IsOptional() @IsBoolean() required?: boolean;
+  @IsObject() config!: Record<string, unknown>;
+  @IsOptional() @IsInt() @Min(0) @Max(999) displayOrder?: number;
 }
 
 export class ComparisonItemInputDto {
@@ -87,6 +101,7 @@ export class UpdateDraftProductVersionDto {
   @IsOptional() @IsBoolean() showEstimate?: boolean;
   @IsOptional() @IsArray() @ArrayNotEmpty() @ArrayUnique() @IsIn(COVERAGE_DURATIONS, { each: true }) allowedDurations?: CoverageDuration[];
   @IsOptional() @IsArray() @ArrayUnique((item: ComparisonItemInputDto) => item.taxonomyItemId) comparisonItems?: ComparisonItemInputDto[];
+  @IsOptional() @IsArray() @ArrayUnique((item: ProductRequirementInputDto) => item.key) @ValidateNested({ each: true }) @Type(() => ProductRequirementInputDto) requirements?: ProductRequirementInputDto[];
   // `IsOptional` treats null as absent; an omitted start is fine for a patch,
   // but an explicit null must never become an accidental 1970 publication.
   @ValidateIf((_, value) => value !== undefined) @CalendarDay('An effective-from date') effectiveFrom?: string;

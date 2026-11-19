@@ -150,6 +150,41 @@ const versionFor = (s, productId, versionId) => {
   const version = product?.versions?.find((entry) => entry.id === versionId);
   return { product, version };
 };
+const publicProductDirectory = (s, { coverType, limit = 100 } = {}) => seededProducts(s)
+  .flatMap((product) => product.versions.map((version) => ({ product, version })))
+  .filter(({ product, version }) => {
+    const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
+    return version.status === 'APPROVED' && (!coverType || version.coverType === coverType)
+      && (!insurer?.status || insurer.status === 'Active')
+      && version.effectiveFrom <= today() && (!version.effectiveUntil || version.effectiveUntil >= today());
+  })
+  .slice(0, Math.max(1, Math.min(Number(limit) || 100, 100)))
+  .map(({ product, version }) => {
+    const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
+    return {
+      insurer: { id: insurer?.id || product.insurerId, name: insurer?.name || 'Unknown insurer', tradingName: insurer?.tradingName || null, logoUrl: insurer?.logoUrl || null },
+      product: { id: product.id, code: product.code, coverType: product.coverType },
+      version: {
+        id: version.id, number: version.versionNumber, name: version.name, coverType: version.coverType,
+        coverGuide: version.coverGuide, inspection: version.inspection,
+        showEstimate: Boolean(version.showEstimate), allowedDurations: version.allowedDurations || ['Q1', 'Q2', 'Q3', 'Q4'],
+        comparisonItems: version.comparisonItems || [],
+        effectiveFrom: version.effectiveFrom, effectiveUntil: version.effectiveUntil,
+      },
+    };
+  });
+const selectedProductSnapshot = (product) => ({
+  productVersionId: product.version.id,
+  insurerId: product.insurer.id,
+  insurerName: product.insurer.name,
+  productCode: product.product.code,
+  productVersionNumber: product.version.number,
+  productName: product.version.name,
+  coverType: product.version.coverType === 'THIRD_PARTY' ? 'ThirdParty' : 'Comprehensive',
+  coverGuide: product.version.coverGuide,
+  inspection: product.version.inspection,
+  unavailableAt: null,
+});
 const toProduct = (product) => ({ ...product, versions: [...(product.versions || [])].sort((a, b) => b.versionNumber - a.versionNumber) });
 const toAdminProduct = (s, product, version) => {
   const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
@@ -421,9 +456,23 @@ export const quotes = {
   // The journey state already holds the vehicle, value and photos, so the
   // payload's extra fields are redundant here — the store builds the same
   // record the backend would return.
-  submitRequest: ({ customer, policyDates }) => call((s) => {
+  submitRequest: ({ customer, policyDates, selectedProductVersionIds }) => call((s) => {
+    const selectedIds = [...new Set(selectedProductVersionIds || [])];
+    if (selectedIds.length < 1 || selectedIds.length > 5) {
+      throw new Error('Choose one to five published insurance products.');
+    }
+    const available = publicProductDirectory(s);
+    const selectedProducts = selectedIds.map((id) => available.find((product) => product.version.id === id)).filter(Boolean);
+    if (selectedProducts.length !== selectedIds.length) {
+      throw new Error('One or more selected products are no longer available. Reload the product list and try again.');
+    }
     const rtsaAnniversaryFee = s.matchRtsaAnniversary ? MOCK_RTSA_ANNIVERSARY_FEE : 0;
-    const id = s.submitQuoteRequest({ customer, policyDates, rtsaAnniversaryFee });
+    const id = s.submitQuoteRequest({
+      customer,
+      policyDates,
+      rtsaAnniversaryFee,
+      selectedProducts: selectedProducts.map(selectedProductSnapshot),
+    });
     return state().quoteRequests.find((r) => r.id === id);
   }),
   listMine: () => call((s) => mine(s.quoteRequests)),
@@ -623,29 +672,7 @@ export const products = {
       return toAdminProduct(s, product, withdrawn);
     }),
   },
-  directory: ({ coverType, limit = 100 } = {}) => call((s) => seededProducts(s)
-    .flatMap((product) => product.versions.map((version) => ({ product, version })))
-    .filter(({ product, version }) => {
-      const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
-      return version.status === 'APPROVED' && (!coverType || version.coverType === coverType)
-        && (!insurer?.status || insurer.status === 'Active')
-        && version.effectiveFrom <= today() && (!version.effectiveUntil || version.effectiveUntil >= today());
-    })
-    .slice(0, Math.max(1, Math.min(Number(limit) || 100, 100)))
-    .map(({ product, version }) => {
-      const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
-      return {
-        insurer: { id: insurer?.id || product.insurerId, name: insurer?.name || 'Unknown insurer', tradingName: insurer?.tradingName || null, logoUrl: insurer?.logoUrl || null },
-        product: { id: product.id, code: product.code, coverType: product.coverType },
-        version: {
-          id: version.id, number: version.versionNumber, name: version.name, coverType: version.coverType,
-          coverGuide: version.coverGuide, inspection: version.inspection,
-          showEstimate: Boolean(version.showEstimate), allowedDurations: version.allowedDurations || ['Q1', 'Q2', 'Q3', 'Q4'],
-          comparisonItems: version.comparisonItems || [],
-          effectiveFrom: version.effectiveFrom, effectiveUntil: version.effectiveUntil,
-        },
-      };
-    })),
+  directory: (query = {}) => call((s) => publicProductDirectory(s, query)),
   estimate: (productId, versionId, input = {}) => call((s) => {
     const { product, version } = versionFor(s, productId, versionId);
     const insurer = product && s.insurersList.find((entry) => entry.id === product.insurerId);
@@ -802,11 +829,19 @@ export const staff = {
 
 export const payments = {
   /** Simulated gateway round-trip: always confirms. */
-  pay: ({ amount, method, quoteRequestId }) => call((s) => {
+  pay: ({ amount, method, quoteRequestId, insurerQuoteId }) => call((s) => {
     const request = s.quoteRequests.find((item) => item.id === quoteRequestId);
-    const selectedName = s.selectedQuote?.name;
-    const reply = selectedName && request?.insurerQuotes?.[selectedName];
-    if (reply?.unavailableAt || request?.unavailableInsurers?.some((entry) => entry.name === selectedName)) {
+    if (!request || !insurerQuoteId) {
+      throw new Error('This quote needs to be refreshed before payment.');
+    }
+    const productQuote = request.productQuotes?.find((quote) => quote.id === insurerQuoteId);
+    const legacyEntry = Object.entries(request.insurerQuotes || {}).find(([name, quote]) =>
+      quote?.id === insurerQuoteId || `IQ-${request.id}-${name.replaceAll(/[^A-Za-z0-9]/g, '-')}` === insurerQuoteId,
+    );
+    const legacyQuote = legacyEntry?.[1];
+    const reply = productQuote || legacyQuote;
+    if (!reply) throw new Error('This quote is no longer available. Return to your quotes and choose a current final quotation.');
+    if (reply.unavailableAt || request.unavailableInsurers?.some((entry) => entry.name === (productQuote?.insurer?.name || legacyEntry?.[0]))) {
       throw new Error('This quotation is no longer available for payment. Request a fresh quote from an available insurer.');
     }
     const receipt = {

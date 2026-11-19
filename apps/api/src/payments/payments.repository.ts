@@ -53,7 +53,7 @@ export class PaymentsRepository {
       .select({
         ...receiptColumns,
         customerId: payments.customerId,
-        insurerName: insurers.name,
+        insurerQuoteId: payments.insurerQuoteId,
       })
       .from(payments)
       .innerJoin(insurerQuotes, eq(insurerQuotes.id, payments.insurerQuoteId))
@@ -88,7 +88,8 @@ export class PaymentsRepository {
     return request;
   }
 
-  async findQuote(quoteRequestId: string, insurerName: string) {
+  /** The requested quote is always identified by its immutable ID, never by a display name. */
+  async findQuote(quoteRequestId: string, insurerQuoteId: string) {
     const [quote] = await this.db
       .select({
         id: insurerQuotes.id,
@@ -101,7 +102,7 @@ export class PaymentsRepository {
       })
       .from(insurerQuotes)
       .innerJoin(insurers, eq(insurers.id, insurerQuotes.insurerId))
-      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurers.name, insurerName)));
+      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.id, insurerQuoteId)));
     return quote;
   }
 
@@ -116,11 +117,11 @@ export class PaymentsRepository {
   }
 
   /** Locked inside the payment transaction, so a suspension mark is never checked only on a stale outer read. */
-  async lockQuote(tx: Transaction, quoteId: string) {
+  async lockQuote(tx: Transaction, quoteRequestId: string, quoteId: string) {
     const [quote] = await tx
       .select({ id: insurerQuotes.id, unpayableAt: insurerQuotes.unpayableAt })
       .from(insurerQuotes)
-      .where(eq(insurerQuotes.id, quoteId))
+      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.id, quoteId)))
       .for('share');
     return quote;
   }

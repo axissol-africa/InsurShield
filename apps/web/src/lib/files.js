@@ -65,10 +65,13 @@ export const formatBytes = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 /
  */
 export async function toUploadableFile(source, name) {
   if (source instanceof File) return source;
-  if (typeof source !== 'string') throw new Error('That document could not be read for upload.');
+  // Product requirement documents preserve their display metadata in the
+  // journey store, while photo and White Book values remain simple data URLs.
+  const dataUrl = source?.dataUrl ?? source;
+  if (typeof dataUrl !== 'string') throw new Error('That document could not be read for upload.');
   let blob;
   try {
-    blob = await (await fetch(source)).blob();
+    blob = await (await fetch(dataUrl)).blob();
   } catch {
     // Blob URLs are scoped to the browser which made them. This gives a
     // useful recovery message if an older phone hand-off predates portable

@@ -6,25 +6,43 @@ import Meta from '@/components/ui/Meta';
 
 const RECONCILE_POLL_MS = 1500;
 
-const asDataUrl = async (source) => {
-  if (!source || typeof source !== 'string') return null;
-  if (source.startsWith('data:')) return source;
-  const blob = await (await fetch(source)).blob();
+const asDataUrl = async (source, errorMessage) => {
+  const value = source?.dataUrl ?? source;
+  if (!value || typeof value !== 'string') return null;
+  if (value.startsWith('data:')) return value;
+  const blob = await (await fetch(value)).blob();
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('The White Book could not be prepared for phone continuation.'));
+    reader.onerror = () => reject(new Error(errorMessage));
     reader.readAsDataURL(blob);
   });
 };
 
 const portableJourney = async (journey) => {
   if (!journey) return null;
-  // Blob URLs only exist in the browser that created them. Convert the White
-  // Book before placing it in the short-lived hand-off session so the phone
-  // can submit the same request without a "Failed to fetch" error.
-  const whiteBook = await asDataUrl(journey.documents?.whiteBook);
-  return { ...journey, documents: { ...journey.documents, whiteBook } };
+  // Blob URLs only exist in the browser that created them. Convert every
+  // customer-uploaded document before placing it in the short-lived hand-off
+  // session so the phone can submit the same request without a fetch failure.
+  const whiteBook = await asDataUrl(
+    journey.documents?.whiteBook,
+    'The White Book could not be prepared for phone continuation.',
+  );
+  const productRequirementDocuments = Object.fromEntries(
+    await Promise.all(
+      Object.entries(journey.productRequirementDocuments || {}).map(async ([key, document]) => [
+        key,
+        document
+          ? { ...document, dataUrl: await asDataUrl(document, 'A product document could not be prepared for phone continuation.') }
+          : null,
+      ]),
+    ),
+  );
+  return {
+    ...journey,
+    documents: { ...journey.documents, whiteBook },
+    productRequirementDocuments,
+  };
 };
 
 /**

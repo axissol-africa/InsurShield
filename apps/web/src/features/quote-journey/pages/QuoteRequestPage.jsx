@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CalendarDays, FolderOpen } from 'lucide-react';
-import { useStore, useActiveInsurers } from '@/store';
+import { useStore } from '@/store';
 import { submitQuoteRequest } from '@/features/quote-journey/submitRequest';
-import { calculatePolicyDates, calculatePremium, formatDate, formatZMW } from '@/domain/premiumEngine';
+import { calculatePolicyDates, formatDate, formatZMW } from '@/domain/premiumEngine';
 import { COVERAGE_DURATION_OPTIONS } from '@/domain/insurers';
 import JourneyLayout from '@/features/quote-journey/components/JourneyLayout';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '@/components/ui/primitives/card';
@@ -12,10 +12,10 @@ import { Input } from '@/components/ui/primitives/input';
 import { Checkbox } from '@/components/ui/primitives/checkbox';
 import { NativeSelect } from '@/components/ui/primitives/native-select';
 import { Alert, AlertDescription } from '@/components/ui/primitives/alert';
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/primitives/accordion';
 import InspectionPhotos from '@/features/quote-journey/components/InspectionPhotos';
 import GuidedCapture from '@/features/quote-journey/components/GuidedCapture';
 import PhoneHandoff from '@/features/quote-journey/components/PhoneHandoff';
+import ProductVersionSelection from '@/features/quote-journey/components/ProductVersionSelection';
 import { INSPECTION_SHOTS, missingInspectionShots } from '@/domain/inspection';
 import { isMobileDevice } from '@/lib/device';
 import { captureApi } from '@/api/capture';
@@ -45,6 +45,22 @@ const legacyRoadTaxDate = (value) => {
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().split('T')[0];
 };
 
+const productRequirementKey = (productVersionId, key) => `${productVersionId}:${key}`;
+const selectedProductRequirements = (products = []) =>
+  products.flatMap((product) =>
+    (product.version?.requirements || []).map((requirement) => ({ ...requirement, productVersionId: product.version.id })),
+  );
+
+const missingProductRequirements = (products, answers, declarations, documents) =>
+  selectedProductRequirements(products)
+    .filter((requirement) => requirement.required)
+    .filter((requirement) => {
+      const key = productRequirementKey(requirement.productVersionId, requirement.key);
+      if (requirement.kind === 'QUESTION') return answers[key] === undefined || answers[key] === '';
+      if (requirement.kind === 'DECLARATION') return declarations[key] !== true;
+      return !documents[key];
+    });
+
 export default function QuoteRequestPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -65,7 +81,16 @@ export default function QuoteRequestPage() {
     matchRtsaAnniversary,
     rtsaRegistrationDate,
     setRtsaAnniversary,
-    piaConfig,
+    selectedProductVersionIds,
+    selectedProductVersions,
+    setSelectedProductVersions,
+    productRequirementAnswers,
+    productRequirementDeclarations,
+    productRequirementDocuments,
+    setProductRequirementAnswer,
+    setProductRequirementDeclaration,
+    setProductRequirementDocument,
+    setProductRequirementResponses,
     requotedFromId,
     setVehicleDetails,
     setVehicleValue,
@@ -87,8 +112,7 @@ export default function QuoteRequestPage() {
   const [showErrors, setShowErrors] = useState(false);
   const [resuming, setResuming] = useState(Boolean(captureCode));
   const [resumeError, setResumeError] = useState('');
-
-  const activeInsurers = useActiveInsurers();
+  const [productDirectoryState, setProductDirectoryState] = useState('loading');
   const mobileDevice = isMobileDevice();
   const rtsaAnniversaryDate =
     vehicleDetails?.rtsaAnniversaryDate ||
@@ -101,8 +125,17 @@ export default function QuoteRequestPage() {
     () => calculatePolicyDates(policyStartDate, coverageDurationId, { anniversaryDate }),
     [policyStartDate, coverageDurationId, anniversaryDate],
   );
-  const coverageDays = policyDates?.anchoredToAnniversary ? policyDates.daysTotal : null;
   const missingPhotos = missingInspectionShots(documents);
+  const missingRequirements = useMemo(
+    () =>
+      missingProductRequirements(
+        selectedProductVersions,
+        productRequirementAnswers,
+        productRequirementDeclarations,
+        productRequirementDocuments,
+      ),
+    [selectedProductVersions, productRequirementAnswers, productRequirementDeclarations, productRequirementDocuments],
+  );
   const inspectionPhotos = useMemo(
     () => Object.fromEntries(INSPECTION_SHOTS.map((shot) => [shot.key, documents[shot.key]])),
     [documents],
@@ -142,6 +175,12 @@ export default function QuoteRequestPage() {
         setCoverageDuration(draft.coverageDurationId);
         setPolicyStartDate(draft.policyStartDate);
         setRtsaAnniversary(Boolean(draft.matchRtsaAnniversary), draft.rtsaRegistrationDate || '');
+        setSelectedProductVersions(draft.selectedProductVersionIds || [], draft.selectedProductVersions || []);
+        setProductRequirementResponses({
+          answers: draft.productRequirementAnswers,
+          declarations: draft.productRequirementDeclarations,
+          documents: draft.productRequirementDocuments,
+        });
         setDocuments({ ...(draft.documents || {}), ...(session.photos || {}) });
         setContact(draft.contact || { fullName: '', phone: '', email: '' });
         resumedCaptureCode.current = captureCode;
@@ -163,6 +202,8 @@ export default function QuoteRequestPage() {
     setInsuranceType,
     setPolicyStartDate,
     setRtsaAnniversary,
+    setProductRequirementResponses,
+    setSelectedProductVersions,
     setVehicleDetails,
     setVehicleUsage,
     setVehicleValue,
@@ -196,6 +237,17 @@ export default function QuoteRequestPage() {
         : policyDates?.hasEnded
           ? `Cover from ${policyDates.formattedStart} for this period would already have ended on ${policyDates.formattedEnd}. Choose a longer cover period or untick RTSA matching.`
           : null,
+    products:
+      productDirectoryState === 'error'
+        ? 'The available insurance products could not be loaded. Please try again.'
+        : selectedProductVersionIds.length === 0
+          ? 'Choose at least one insurance product to request a final quote.'
+          : selectedProductVersionIds.length > 5
+            ? 'Choose no more than five insurance products.'
+            : null,
+    requirements: missingRequirements.length
+      ? `Complete the required product information: ${[...new Set(missingRequirements.map((requirement) => requirement.label))].join(', ')}.`
+      : null,
     whiteBook: documents.whiteBook ? null : 'Add your White Book so insurers can verify ownership.',
     photos: missingPhotos.length
       ? `Capture ${missingPhotos.length} more inspection photo${missingPhotos.length === 1 ? '' : 's'}.`
@@ -218,7 +270,7 @@ export default function QuoteRequestPage() {
     setSending(true);
     setSendError('');
     try {
-      await submitQuoteRequest({ customer: contact, policyDates });
+      await submitQuoteRequest({ customer: contact, policyDates, selectedProductVersionIds });
       navigate(`/quotes-comparison${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`);
     } catch (error) {
       setSendError(error.message || 'Your request could not be sent. Please try again.');
@@ -253,7 +305,7 @@ export default function QuoteRequestPage() {
       <JourneyLayout
         step={4}
         title="Request your quotes"
-        description={`Review your details and documents first. Then compare the published cover guides from ${activeInsurers.length} insurers before choosing who should prepare a final quote.`}
+        description="Review your details and documents, then select the published insurance products you want to receive final quotes for."
         className="max-w-6xl"
       >
         {requotedFromId && (
@@ -415,6 +467,38 @@ export default function QuoteRequestPage() {
               <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
                 <CardTitle>
                   <h2 className="flex items-center gap-2 text-primary">
+                    <span className="material-symbols-outlined text-[20px]" aria-hidden="true">policy</span>
+                    Insurance products
+                  </h2>
+                </CardTitle>
+                <CardDescription>Compare the cover options available for your selected cover type before sending your request.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ProductVersionSelection
+                  insuranceType={insuranceType}
+                  vehicleValue={vehicleValue}
+                  vehicleUsage={vehicleUsage}
+                  coverageDurationId={coverageDurationId}
+                  selectedProductVersionIds={selectedProductVersionIds}
+                  onSelectionChange={setSelectedProductVersions}
+                  onLoadStateChange={setProductDirectoryState}
+                  productRequirementAnswers={productRequirementAnswers}
+                  productRequirementDeclarations={productRequirementDeclarations}
+                  productRequirementDocuments={productRequirementDocuments}
+                  onRequirementAnswerChange={setProductRequirementAnswer}
+                  onRequirementDeclarationChange={setProductRequirementDeclaration}
+                  onRequirementDocumentChange={setProductRequirementDocument}
+                />
+                <FieldError show={showErrors} message={errors.products} />
+                <div id="section-requirements" tabIndex={-1}>
+                  <FieldError show={showErrors} message={errors.requirements} />
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border border-primary/20 shadow-sm">
+              <CardHeader className="border-b border-primary/10 bg-primary/[0.025]">
+                <CardTitle>
+                  <h2 className="flex items-center gap-2 text-primary">
                     <FolderOpen aria-hidden="true" className="size-5" />
                     Documents and vehicle photos
                   </h2>
@@ -509,6 +593,7 @@ export default function QuoteRequestPage() {
                   <Detail label="Declared value" value={formatZMW(vehicleValue)} />
                   <Detail label="Cover" value={insuranceType === 'ThirdParty' ? 'Third party only' : 'Comprehensive'} />
                   <Detail label="Use" value={vehicleUsage || 'Individual'} />
+                  <Detail label="Selected products" value={selectedProductVersionIds.length ? `${selectedProductVersionIds.length} selected` : 'Choose 1–5'} />
                 </dl>
                 <Button
                   type="button"
@@ -518,42 +603,16 @@ export default function QuoteRequestPage() {
                 >
                   Change vehicle details
                 </Button>
-                <Accordion type="single" collapsible defaultValue="estimates" className="mt-4 border-t">
-                  <AccordionItem value="estimates">
-                    <AccordionTrigger>Indicative premiums for your vehicle</AccordionTrigger>
-                    <AccordionContent className="h-auto">
-                      <p className="mb-4 text-sm text-muted-foreground">
-                        Estimates based on your declared value and each insurer's published rate. Final quotes may
-                        differ.
-                      </p>
-                      <dl className="space-y-3">
-                        {activeInsurers.map((insurer) => {
-                          const estimate = calculatePremium({
-                            vehicleValueZMW: vehicleValue,
-                            insurer,
-                            vehicleUsage,
-                            coverageDurationId,
-                            coverageDays,
-                            piaRatePercentage: piaConfig?.piaRatePercentage,
-                          });
-                          return (
-                            <div key={insurer.id} className="flex flex-wrap justify-between gap-2 text-sm">
-                              <dt>{insurer.name}</dt>
-                              <dd className="font-medium">{formatZMW(estimate.finalPremium)}</dd>
-                            </div>
-                          );
-                        })}
-                      </dl>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
+                <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
+                  Any indicative premium shown beside a product is calculated by that insurer. Its final quotation is the amount you can pay.
+                </p>
               </CardContent>
             </Card>
           </aside>
           <Card className="lg:col-start-1">
             <CardHeader>
               <CardTitle>
-                <h2>Review and see cover guides</h2>
+                <h2>Review and request quotes</h2>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
@@ -567,8 +626,8 @@ export default function QuoteRequestPage() {
                   />
                   <span className="text-sm leading-relaxed">
                     <strong>I confirm</strong> the vehicle and contact information is accurate, I am authorised to
-                    insure this vehicle, and I consent to InsurShield using these details to prepare the cover-guide
-                    comparison and to share them only with insurers I choose for a final quotation.
+                    insure this vehicle, and I consent to InsurShield using these details to prepare quotes and to share
+                    them only with the insurers behind the products I selected.
                   </span>
                 </label>
                 <FieldError show={showErrors} message={errors.declaration} />
@@ -579,7 +638,7 @@ export default function QuoteRequestPage() {
                 </Alert>
               )}
               <Button type="submit" disabled={sending} className="h-12 w-full">
-                {sending ? 'Preparing cover guides…' : `See cover guides from ${activeInsurers.length} insurers`}
+                {sending ? 'Sending your request…' : `Request quotes for ${selectedProductVersionIds.length || 'your selected'} product${selectedProductVersionIds.length === 1 ? '' : 's'}`}
               </Button>
             </CardContent>
           </Card>
@@ -598,6 +657,11 @@ export default function QuoteRequestPage() {
             policyStartDate,
             matchRtsaAnniversary,
             rtsaRegistrationDate,
+            selectedProductVersionIds,
+            selectedProductVersions,
+            productRequirementAnswers,
+            productRequirementDeclarations,
+            productRequirementDocuments,
             documents: { whiteBook: documents.whiteBook || null },
             contact,
           }}

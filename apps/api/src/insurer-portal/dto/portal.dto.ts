@@ -15,6 +15,11 @@ import { CONTRACT_VALUES, fromContract, type NcdDecisionStatus } from '../../com
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
 
 export class SubmitQuoteDto {
+  /** Required when this request contains customer-selected product versions. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Choose the product version this quote answers.' })
+  productVersionId?: string;
+
   /** Must equal the premium printed on the uploaded quotation. */
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0.01, { message: 'Enter the premium exactly as it appears on your quotation.' })
@@ -34,6 +39,11 @@ export class SubmitQuoteDto {
 }
 
 export class ExtendQuoteDto {
+  /** Required when extending a quote for a customer-selected product version. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Choose the product version whose quote you are extending.' })
+  productVersionId?: string;
+
   @IsInt()
   @Min(1, { message: 'Extend by at least one day.' })
   @Max(30, { message: 'A quote cannot be extended by more than 30 days at a time.' })

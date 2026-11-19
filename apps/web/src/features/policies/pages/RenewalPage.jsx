@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { api, ApiError } from '@/api';
 import { hydrateCustomer } from '@/api/sync';
 import { useStore } from '@/store';
 import { formatZMW } from '@/domain/premiumEngine';
@@ -18,7 +17,7 @@ const WINDOW = {
 
 export default function RenewalPage() {
   const navigate = useNavigate();
-  const { customer, policies } = useStore();
+  const { customer, policies, renewFromPolicy } = useStore();
 
   useEffect(() => { void hydrateCustomer(); }, []);
   const [busy, setBusy] = useState(null);
@@ -38,17 +37,16 @@ export default function RenewalPage() {
   const renew = async (policy) => {
     setBusy(policy.policyNumber);
     setError('');
-    try {
-      await api.policies.renew(policy.policyNumber);
-      navigate('/quote-request');
-    } catch (caught) {
-      setError(
-        caught instanceof ApiError && caught.code === 'RENEWAL_IN_PROGRESS'
-          ? 'A renewal for this policy is already open. Finish it from My account.'
-          : caught.message || 'The renewal could not be started. Please try again.',
-      );
+    // A renewal now starts with the same customer product-choice journey as a
+    // new quote.  We deliberately do not call the legacy renewal endpoint:
+    // it used to broadcast the request to every insurer before the customer
+    // had chosen current product terms.
+    if (!renewFromPolicy(policy.policyNumber)) {
+      setError('We could not prepare this renewal. Refresh your policies and try again.');
       setBusy(null);
+      return;
     }
+    navigate('/quote-request');
   };
 
   return (
@@ -69,8 +67,8 @@ export default function RenewalPage() {
           </span>
           <h1 className="mt-6 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Renew a policy</h1>
           <p className="mt-4 max-w-[58ch] text-[16px] leading-[1.6] text-ink-muted">
-            Renewing sends a fresh request to every insurer on InsurShield, so you compare the market again
-            rather than rolling over last year's price. Your vehicle details carry forward.
+            Renewing starts a fresh product comparison. Your vehicle and cover details carry forward, then you
+            choose the current products you want insurers to quote for rather than rolling over last year’s price.
           </p>
         </header>
 

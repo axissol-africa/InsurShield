@@ -4,7 +4,7 @@ import type { PaymentMethod } from '../../common/domain/enums.js';
 export interface PaymentAttempt {
   customerId: string;
   quoteRequestId: string;
-  insurerName: string;
+  insurerQuoteId: string;
   amountMinor: number;
   method: PaymentMethod;
 }
@@ -16,7 +16,7 @@ export function replayOutcome(stored: PaymentAttempt, attempt: PaymentAttempt): 
   if (stored.customerId !== attempt.customerId) return 'another-customer';
   const same =
     stored.quoteRequestId === attempt.quoteRequestId &&
-    stored.insurerName === attempt.insurerName &&
+    stored.insurerQuoteId === attempt.insurerQuoteId &&
     stored.amountMinor === attempt.amountMinor &&
     stored.method === attempt.method;
   return same ? 'replay' : 'different-payment';

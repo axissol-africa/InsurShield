@@ -24,7 +24,8 @@ export const insurerReceivesRequests = (insurer) => !insurer.status || insurer.s
  * old, all-insurers comparison flow.
  */
 export const needsCoverGuideSelection = (request) =>
-  Boolean(request?.guideSelectionPending) ||
+  !request?.selectedProducts?.length &&
+  (Boolean(request?.guideSelectionPending) ||
   (request?.guideSelectionPending === undefined &&
     request?.status === 'Submitted' &&
-    Object.keys(request?.insurerQuotes || {}).length === 0);
+    Object.keys(request?.insurerQuotes || {}).length === 0));

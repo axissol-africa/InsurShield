@@ -6,7 +6,7 @@ import { env } from '@/config/env';
 import { submitWithRetry } from '@/api/idempotency';
 
 /**
- * Sending the journey to every insurer.
+ * Sending a customer-selected product request to the relevant insurers.
  *
  * The captures live on the device as data URLs while the customer works
  * through the journey; they are uploaded here, immediately before the request
@@ -26,9 +26,41 @@ const uploadInspectionShots = async (documents) => {
 
 const documentFingerprint = (value) => {
   if (typeof value === 'string') return `${value.slice(0, 64)}:${value.length}`;
-  if (value && typeof value === 'object') return `${value.name ?? 'file'}:${value.size ?? 0}:${value.lastModified ?? 0}`;
+  if (value && typeof value === 'object') return `${value.name ?? 'file'}:${value.size ?? 0}:${value.dataUrl?.length ?? value.lastModified ?? 0}`;
   return null;
 };
+
+const requirementKey = (productVersionId, key) => `${productVersionId}:${key}`;
+
+const selectedRequirements = (products = []) =>
+  products.flatMap((product) =>
+    (product.version?.requirements || []).map((requirement) => ({
+      ...requirement,
+      productVersionId: product.version.id,
+    })),
+  );
+
+const uploadProductRequirementDocuments = async (products, records) =>
+  Promise.all(
+    selectedRequirements(products)
+      .filter((requirement) => requirement.kind === 'DOCUMENT')
+      .flatMap((requirement) => {
+        const document = records[requirementKey(requirement.productVersionId, requirement.key)];
+        if (!document) return [];
+        return [
+          (async () => ({
+            productVersionId: requirement.productVersionId,
+            requirementKey: requirement.key,
+            documentId: (
+              await api.documents.upload(
+                await toUploadableFile(document, document.name || `${requirement.key}-evidence`),
+                requirement.config.documentKind,
+              )
+            ).id,
+          }))(),
+        ];
+      }),
+  );
 
 /**
  * Submits the current journey and returns the new request.
@@ -37,9 +69,16 @@ const documentFingerprint = (value) => {
  * call works against the backend or browser storage. The store is updated from
  * the response, which is the server's version of the record rather than ours.
  */
-export async function submitQuoteRequest({ customer, policyDates }) {
+export async function submitQuoteRequest({ customer, policyDates, selectedProductVersionIds }) {
   const state = useStore.getState();
-  const { vehicleDetails, documents } = state;
+  const {
+    vehicleDetails,
+    documents,
+    productRequirementAnswers,
+    productRequirementDeclarations,
+    productRequirementDocuments,
+    selectedProductVersions,
+  } = state;
   const fingerprint = JSON.stringify({
     customer: customer?.email,
     vehicleDetails,
@@ -50,6 +89,12 @@ export async function submitQuoteRequest({ customer, policyDates }) {
     coverageDurationId: state.coverageDurationId,
     matchRtsaAnniversary: state.matchRtsaAnniversary,
     rtsaRegistrationDate: state.rtsaRegistrationDate,
+    selectedProductVersionIds,
+    productRequirementAnswers,
+    productRequirementDeclarations,
+    productRequirementDocuments: Object.fromEntries(
+      Object.entries(productRequirementDocuments).map(([key, value]) => [key, documentFingerprint(value)]),
+    ),
     policyDates,
     ncdCode: state.ncdCodeValidated ? state.ncdCode : undefined,
   });
@@ -63,6 +108,8 @@ export async function submitQuoteRequest({ customer, policyDates }) {
         const whiteBook = documents.whiteBook
           ? await api.documents.upload(await toUploadableFile(documents.whiteBook, 'white-book'), 'WHITE_BOOK')
           : null;
+        const requirements = selectedRequirements(selectedProductVersions);
+        const productRequirementDocumentPayload = await uploadProductRequirementDocuments(selectedProductVersions, productRequirementDocuments);
         return {
           customer,
           vehicleDetails: {
@@ -81,6 +128,20 @@ export async function submitQuoteRequest({ customer, policyDates }) {
           vehicleUsage: state.vehicleUsage,
           insuranceType: state.insuranceType,
           coverageDurationId: state.coverageDurationId,
+          selectedProductVersionIds,
+          productRequirementAnswers: requirements
+            .filter((requirement) => requirement.kind === 'QUESTION')
+            .flatMap((requirement) => {
+              const value = productRequirementAnswers[requirementKey(requirement.productVersionId, requirement.key)];
+              return value === undefined || value === '' ? [] : [{ productVersionId: requirement.productVersionId, requirementKey: requirement.key, value }];
+            }),
+          productRequirementDeclarations: requirements
+            .filter((requirement) => requirement.kind === 'DECLARATION')
+            .flatMap((requirement) => {
+              const accepted = productRequirementDeclarations[requirementKey(requirement.productVersionId, requirement.key)];
+              return accepted ? [{ productVersionId: requirement.productVersionId, requirementKey: requirement.key, accepted: true }] : [];
+            }),
+          productRequirementDocuments: productRequirementDocumentPayload,
           matchRtsaAnniversary: state.matchRtsaAnniversary,
           rtsaRegistrationDate: state.rtsaRegistrationDate || undefined,
           policyDates: policyDates?.startDate && policyDates?.endDate
@@ -102,7 +163,11 @@ export async function submitQuoteRequest({ customer, policyDates }) {
     // is not running. Production never creates a browser-only request: only
     // a development network outage falls back to the persisted demo record.
     if (!env.isProduction && env.apiMode === 'http' && error.code === 'NETWORK') {
-      const id = useStore.getState().submitQuoteRequest({ customer, policyDates });
+      const id = useStore.getState().submitQuoteRequest({
+        customer,
+        policyDates,
+        selectedProducts: state.selectedProductVersions || [],
+      });
       return useStore.getState().quoteRequests.find((request) => request.id === id);
     }
     throw error;

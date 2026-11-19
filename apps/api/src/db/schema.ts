@@ -13,6 +13,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   varchar,
@@ -52,6 +53,7 @@ import {
   COMPARISON_VALUE_TYPES,
   COMPARISON_DISPLAY_RULES,
   QUOTE_UNAVAILABILITY_REASONS,
+  QUOTE_REQUEST_MODELS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
   JOB_STATUSES,
@@ -64,6 +66,7 @@ import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/doma
 // Physical names are the ones Prisma created; only the money and rate columns were renamed.
 
 export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STATUSES);
+export const quoteRequestModel = pgEnum('QuoteRequestModel', QUOTE_REQUEST_MODELS);
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
@@ -668,6 +671,36 @@ export const productVersionComparisonItems = pgTable(
   ],
 );
 
+/**
+ * Typed customer inputs an insurer has attached to one immutable product
+ * version.  A version can be edited only while it is a draft; after review the
+ * requirement metadata remains the terms a customer actually selected.
+ */
+export const productVersionRequirements = pgTable(
+  'product_version_requirements',
+  {
+    id: id(),
+    productVersionId: uuid('productVersionId').notNull(),
+    key: varchar('key', { length: 80 }).notNull(),
+    kind: varchar('kind', { length: 20 }).notNull(),
+    label: text('label').notNull(),
+    helpText: text('helpText'),
+    required: boolean('required').notNull().default(true),
+    /** Typed by kind in the product domain; never interpreted from coverGuide. */
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    displayOrder: integer('displayOrder').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('product_version_requirements_version_key').on(t.productVersionId, t.key),
+    index('product_version_requirements_version_order_idx').on(t.productVersionId, t.displayOrder),
+    fk('product_version_requirements_productVersionId_fkey', [t.productVersionId], [insurerProductVersions.id], 'cascade'),
+    check('product_version_requirements_display_order_check', sql`${t.displayOrder} >= 0`),
+    check('product_version_requirements_kind_check', sql`${t.kind} IN ('QUESTION', 'DOCUMENT', 'DECLARATION')`),
+    check('product_version_requirements_config_object_check', sql`jsonb_typeof(${t.config}) = 'object'`),
+  ],
+);
+
 export const documents = pgTable(
   'documents',
   {
@@ -696,6 +729,60 @@ export const documents = pgTable(
   ],
 );
 
+/**
+ * An authenticated customer's unfinished product-selection journey. Drafts
+ * keep only pre-submission answers and references: no insurer receives them
+ * and no vehicle, request, recipient or payment record exists until submit.
+ */
+export const quoteRequestDrafts = pgTable(
+  'quote_request_drafts',
+  {
+    id: id(),
+    customerId: uuid('customerId').notNull(),
+    commonAnswers: jsonb('commonAnswers').$type<Record<string, unknown>>().notNull().default({}),
+    selectedProductVersionIds: uuid('selectedProductVersionIds').array().notNull().default(sql`'{}'::uuid[]`),
+    configurableAnswers: jsonb('configurableAnswers').$type<Record<string, unknown>>().notNull().default({}),
+    expiresAt: timestamptz('expiresAt').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('quote_request_drafts_customerId_updatedAt_idx').on(t.customerId, t.updatedAt),
+    index('quote_request_drafts_expiresAt_idx').on(t.expiresAt),
+    fk('quote_request_drafts_customerId_fkey', [t.customerId], [customers.id], 'cascade'),
+    check('quote_request_drafts_selected_products_limit_check', sql`cardinality(${t.selectedProductVersionIds}) <= 5`),
+  ],
+);
+
+/**
+ * Document references are relational rather than opaque JSON. They disappear
+ * with a draft, while the uploaded object remains customer-owned and can be
+ * attached to a submitted request only after that workflow's own checks.
+ */
+export const quoteRequestDraftDocuments = pgTable(
+  'quote_request_draft_documents',
+  {
+    id: id(),
+    quoteRequestDraftId: uuid('quoteRequestDraftId').notNull(),
+    slot: varchar('slot', { length: 80 }).notNull(),
+    kind: documentKind('kind').notNull(),
+    documentId: uuid('documentId').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('quote_request_draft_documents_draft_slot_key').on(t.quoteRequestDraftId, t.slot),
+    uniqueIndex('quote_request_draft_documents_draft_document_key').on(t.quoteRequestDraftId, t.documentId),
+    index('quote_request_draft_documents_documentId_idx').on(t.documentId),
+    fk(
+      'quote_request_draft_documents_quoteRequestDraftId_fkey',
+      [t.quoteRequestDraftId],
+      [quoteRequestDrafts.id],
+      'cascade',
+    ),
+    fk('quote_request_draft_documents_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+  ],
+);
+
 export const vehicles = pgTable(
   'vehicles',
   {
@@ -720,6 +807,8 @@ export const quoteRequests = pgTable(
   'quote_requests',
   {
     id: text('id').primaryKey(),
+    /** Legacy records have no selected product-version rows by design. */
+    model: quoteRequestModel('model').notNull().default('LEGACY'),
     status: quoteRequestStatus('status').notNull().default('SUBMITTED'),
     submittedAt: createdAt('submittedAt'),
     expiresAt: timestamptz('expiresAt').notNull(),
@@ -800,12 +889,149 @@ export const quoteRequestRecipients = pgTable(
   ],
 );
 
+/**
+ * The immutable product-version choices a customer made for a request.  The
+ * insurer is deliberately derived through the version's product, which keeps
+ * the selection tied to the exact approved terms the customer compared.
+ *
+ * Legacy requests predate product selection and therefore have no rows here;
+ * they remain readable through the nullable productVersionId on insurerQuotes.
+ */
+export const quoteRequestProductVersions = pgTable(
+  'quote_request_product_versions',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    // These form the customer-readable immutable selection record. The linked
+    // product version remains the source of truth for insurer operations, but
+    // it must not rewrite what a customer actually compared and selected.
+    productCode: varchar('productCode', { length: 80 }).notNull(),
+    productVersionNumber: integer('productVersionNumber').notNull(),
+    productName: text('productName').notNull(),
+    coverType: insuranceType('coverType').notNull(),
+    coverGuide: jsonb('coverGuide').$type<Record<string, unknown>>().notNull(),
+    inspectionRule: inspectionRule('inspectionRule').notNull(),
+    inspectionTiming: inspectionTiming('inspectionTiming'),
+    inspectionMethod: inspectionMethod('inspectionMethod'),
+    selectedAt: createdAt('selectedAt'),
+    // Decision 24 is a business cancellation, not a change to the historical
+    // selection or to the delivery record's operational state.
+    cancelledAt: timestamptz('cancelledAt'),
+    cancelledReason: quoteUnavailabilityReason('cancelledReason'),
+  },
+  (t) => [
+    // This is a referenced key, so it is a constraint rather than only a
+    // unique index. PostgreSQL can then create the dependent requirement
+    // foreign keys when drizzle-kit pushes a fresh schema.
+    unique('quote_request_product_versions_request_version_key').on(t.quoteRequestId, t.productVersionId),
+    index('quote_request_product_versions_productVersionId_idx').on(t.productVersionId),
+    index('quote_request_product_versions_insurerId_cancelledAt_idx').on(t.insurerId, t.cancelledAt),
+    fk('quote_request_product_versions_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
+    fk(
+      'quote_request_product_versions_productVersionId_fkey',
+      [t.productVersionId],
+      [insurerProductVersions.id],
+      'restrict',
+    ),
+    fk('quote_request_product_versions_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    check(
+      'quote_request_product_versions_inspection_rule_check',
+      sql`(${t.inspectionRule} = 'NOT_REQUIRED' AND ${t.inspectionTiming} IS NULL AND ${t.inspectionMethod} IS NULL)
+        OR (${t.inspectionRule} <> 'NOT_REQUIRED' AND ${t.inspectionTiming} IS NOT NULL AND ${t.inspectionMethod} IS NOT NULL)`,
+    ),
+    check(
+      'quote_request_product_versions_cancellation_mark_check',
+      sql`(${t.cancelledAt} IS NULL) = (${t.cancelledReason} IS NULL)`,
+    ),
+  ],
+);
+
+/**
+ * A customer answer is stored against the selected product version rather
+ * than in a request-wide JSON blob.  The composite foreign key prevents an
+ * answer being attached to an unselected product.
+ */
+export const quoteRequestProductRequirementAnswers = pgTable(
+  'quote_request_product_requirement_answers',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    requirementKey: varchar('requirementKey', { length: 80 }).notNull(),
+    value: jsonb('value').$type<string | number | boolean>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('quote_request_requirement_answers_request_version_key').on(t.quoteRequestId, t.productVersionId, t.requirementKey),
+    index('quote_request_requirement_answers_request_idx').on(t.quoteRequestId),
+    fk('quote_request_requirement_answers_request_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
+    foreignKey({
+      name: 'quote_request_requirement_answers_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+  ],
+);
+
+/** A declaration is an affirmative record, retained with the selected terms. */
+export const quoteRequestProductRequirementDeclarations = pgTable(
+  'quote_request_product_requirement_declarations',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    requirementKey: varchar('requirementKey', { length: 80 }).notNull(),
+    acceptedAt: createdAt('acceptedAt'),
+  },
+  (t) => [
+    uniqueIndex('quote_request_requirement_declarations_request_version_key').on(t.quoteRequestId, t.productVersionId, t.requirementKey),
+    index('quote_request_requirement_declarations_request_idx').on(t.quoteRequestId),
+    fk('quote_request_requirement_declarations_request_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
+    foreignKey({
+      name: 'quote_request_requirement_declarations_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+  ],
+);
+
+/** Evidence is similarly scoped to the selected product that required it. */
+export const quoteRequestProductRequirementDocuments = pgTable(
+  'quote_request_product_requirement_documents',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    requirementKey: varchar('requirementKey', { length: 80 }).notNull(),
+    documentId: uuid('documentId').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('quote_request_requirement_documents_request_version_key').on(t.quoteRequestId, t.productVersionId, t.requirementKey),
+    index('quote_request_requirement_documents_request_idx').on(t.quoteRequestId),
+    index('quote_request_requirement_documents_document_idx').on(t.documentId),
+    fk('quote_request_requirement_documents_request_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
+    fk('quote_request_requirement_documents_document_fkey', [t.documentId], [documents.id], 'restrict'),
+    foreignKey({
+      name: 'quote_request_requirement_documents_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+  ],
+);
+
 export const insurerQuotes = pgTable(
   'insurer_quotes',
   {
     id: id(),
     quoteRequestId: text('quoteRequestId').notNull(),
     insurerId: uuid('insurerId').notNull(),
+    // Legacy quotes have no selected product version.  New quote responses
+    // bind to exactly one immutable version so multiple products from one
+    // insurer can be compared and paid independently.
+    productVersionId: uuid('productVersionId'),
     premiumMinor: ngwee('premiumMinor').notNull(),
     notes: text('notes'),
     insurerReference: text('insurerReference'),
@@ -823,13 +1049,24 @@ export const insurerQuotes = pgTable(
     uniqueIndex('insurer_quotes_documentId_key').on(t.documentId),
     index('insurer_quotes_validUntil_idx').on(t.validUntil),
     index('insurer_quotes_insurerId_unpayableAt_idx').on(t.insurerId, t.unpayableAt),
-    uniqueIndex('insurer_quotes_quoteRequestId_insurerId_key').on(t.quoteRequestId, t.insurerId),
-    uniqueIndex('insurer_quotes_quoteRequestId_insurerReference_key').on(
-      t.quoteRequestId,
-      t.insurerReference,
-    ),
+    index('insurer_quotes_productVersionId_idx').on(t.productVersionId),
+    // Keep the pre-Batch-12 one-quote-per-insurer rule for historical rows.
+    // New rows are unique per selected version instead, including two
+    // versions belonging to the same insurer.
+    uniqueIndex('insurer_quotes_legacy_request_insurer_key')
+      .on(t.quoteRequestId, t.insurerId)
+      .where(sql`${t.productVersionId} IS NULL`),
+    uniqueIndex('insurer_quotes_request_product_version_key')
+      .on(t.quoteRequestId, t.productVersionId)
+      .where(sql`${t.productVersionId} IS NOT NULL`),
+    // An insurer may deliberately use one reference while quoting several
+    // selected products.  Retain the former rule only for legacy rows.
+    uniqueIndex('insurer_quotes_quoteRequestId_insurerReference_key')
+      .on(t.quoteRequestId, t.insurerReference)
+      .where(sql`${t.productVersionId} IS NULL`),
     fk('insurer_quotes_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
     fk('insurer_quotes_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('insurer_quotes_productVersionId_fkey', [t.productVersionId], [insurerProductVersions.id], 'restrict'),
     fk('insurer_quotes_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
     moneyCheck('insurer_quotes', t.premiumMinor),
     check(

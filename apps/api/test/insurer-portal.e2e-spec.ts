@@ -10,11 +10,14 @@ import * as schema from '../src/db/schema.js';
 import {
   claimNotifications,
   insurerQuotes,
+  insurerProductVersions,
+  insurerProducts,
   ncdApplications,
   ncdCodes,
   payments,
   policies,
   quoteRequestRecipients,
+  quoteRequestProductVersions,
   quoteRequests,
   vehicles,
 } from '../src/db/schema.js';
@@ -28,6 +31,7 @@ import {
   buildQuoteRequest,
   buildStaffUser,
   buildVehicle,
+  unique,
   type BuiltInsurer,
 } from './builders.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
@@ -129,7 +133,6 @@ const LOCKING_THE_RECIPIENT = 'select % from "quote_request_recipients" % for up
 const LOCKING_THE_POLICY = 'select % from "policies" % for update%';
 const LOCKING_THE_APPLICATION = 'select % from "ncd_applications" % for update%';
 const LOCKING_THE_DOCUMENT = 'select % from "documents" % for update%';
-const EXTENDING_THE_QUOTE = 'update "insurer_quotes" %';
 const ACKNOWLEDGING_THE_CLAIM = 'update "claim_notifications" %';
 const INSERTING_THE_QUOTE = 'insert into "insurer_quotes" %';
 const LINKING_THE_CODE = 'update "ncd_applications" %';
@@ -177,6 +180,49 @@ describe('insurer portal', () => {
 
   const quotesFor = (quoteRequestId: string) =>
     testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, quoteRequestId));
+
+  async function selectedVersion(insurer: BuiltInsurer, code: string) {
+    const [product] = await testApp.db
+      .insert(insurerProducts)
+      .values({ insurerId: insurer.insurer.id, code, coverType: 'COMPREHENSIVE' })
+      .returning();
+    const [version] = await testApp.db
+      .insert(insurerProductVersions)
+      .values({
+        productId: product.id,
+        versionNumber: 1,
+        status: 'APPROVED',
+        name: `${code} comprehensive`,
+        coverType: 'COMPREHENSIVE',
+        coverGuide: { planName: `${code} comprehensive`, summary: 'Customer-facing terms.' },
+        inspectionRule: 'NOT_REQUIRED',
+        rateBps: 525,
+        allowedDurations: ['Q4'],
+        effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+        createdByStaffId: insurer.staff.id,
+      })
+      .returning();
+    return version;
+  }
+
+  async function selectedProductRequest(insurer: BuiltInsurer, versions: { id: string; name: string; versionNumber: number }[]) {
+    const request = await openRequest(insurer);
+    await testApp.db.update(quoteRequests).set({ model: 'PRODUCT_SELECTION' }).where(eq(quoteRequests.id, request.id));
+    await testApp.db.insert(quoteRequestProductVersions).values(
+      versions.map((version) => ({
+        quoteRequestId: request.id,
+        productVersionId: version.id,
+        insurerId: insurer.insurer.id,
+        productCode: version.name.replaceAll(' ', '-').toUpperCase(),
+        productVersionNumber: version.versionNumber,
+        productName: version.name,
+        coverType: 'COMPREHENSIVE' as const,
+        coverGuide: { planName: version.name, summary: 'Customer-facing terms.' },
+        inspectionRule: 'NOT_REQUIRED' as const,
+      })),
+    );
+    return request;
+  }
   const policyRow = async (policyNumber: string) =>
     (await testApp.db.select().from(policies).where(eq(policies.policyNumber, policyNumber)))[0];
   const claimRow = async (claimNumber: string) =>
@@ -854,6 +900,74 @@ describe('insurer portal', () => {
       expect(quotes.map((quote) => quote.premiumMinor)).toEqual([50_000]);
     });
 
+    it('lets one insurer quote each of two selected products, but never a product it was not sent', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const firstVersion = await selectedVersion(insurer, unique('Gold'));
+      const secondVersion = await selectedVersion(insurer, unique('Plus'));
+      const request = await selectedProductRequest(insurer, [firstVersion, secondVersion]);
+
+      const listedBefore = await get(insurer, 'quote-requests');
+      const portalRequest = listedBefore.body.find((row: { id: string }) => row.id === request.id);
+      expect(portalRequest.selectedProducts).toEqual([
+        expect.objectContaining({ productVersionId: firstVersion.id, reply: null }),
+        expect.objectContaining({ productVersionId: secondVersion.id, reply: null }),
+      ]);
+
+      const staleClient = await post(insurer, `quote-requests/${request.id}/quote`, {
+        premium: 500,
+        documentId: (await upload(insurer, 'QUOTATION')).id,
+      });
+      expect(staleClient.body.code).toBe('RELOAD_REQUIRED');
+
+      const notSelected = await post(insurer, `quote-requests/${request.id}/quote`, {
+        productVersionId: randomUUID(),
+        premium: 500,
+        documentId: (await upload(insurer, 'QUOTATION')).id,
+      });
+      expect(notSelected.body.code).toBe('PRODUCT_VERSION_UNAVAILABLE');
+
+      const first = await post(insurer, `quote-requests/${request.id}/quote`, {
+        productVersionId: firstVersion.id,
+        premium: 500,
+        documentId: (await upload(insurer, 'QUOTATION')).id,
+      });
+      const second = await post(insurer, `quote-requests/${request.id}/quote`, {
+        productVersionId: secondVersion.id,
+        premium: 600,
+        documentId: (await upload(insurer, 'QUOTATION')).id,
+      });
+      expect([first.status, second.status]).toEqual([201, 201]);
+
+      const duplicate = await post(insurer, `quote-requests/${request.id}/quote`, {
+        productVersionId: firstVersion.id,
+        premium: 550,
+        documentId: (await upload(insurer, 'QUOTATION')).id,
+      });
+      expect(duplicate.body.code).toBe('ALREADY_QUOTED');
+
+      const quotes = await quotesFor(request.id);
+      expect(quotes).toHaveLength(2);
+      expect(quotes.map((quote) => quote.productVersionId).sort((left, right) => left!.localeCompare(right!))).toEqual(
+        [firstVersion.id, secondVersion.id].sort((left, right) => left.localeCompare(right)),
+      );
+
+      const extended = await post(insurer, `quote-requests/${request.id}/extend`, {
+        productVersionId: secondVersion.id,
+        extraDays: 2,
+      });
+      expect(extended.status).toBe(200);
+
+      const listedAfter = await get(insurer, 'quote-requests');
+      const after = listedAfter.body.find((row: { id: string }) => row.id === request.id);
+      expect(after.selectedProducts).toEqual([
+        expect.objectContaining({ productVersionId: firstVersion.id, reply: expect.objectContaining({ premium: 500 }) }),
+        expect.objectContaining({
+          productVersionId: secondVersion.id,
+          reply: expect.objectContaining({ premium: 600, validityDays: 16 }),
+        }),
+      ]);
+    });
+
     it('lets one of two concurrent final quotes win and refuses the other with 409 ALREADY_QUOTED', async () => {
       const insurer = await buildInsurer(testApp.db);
       const request = await openRequest(insurer);
@@ -1063,15 +1177,17 @@ describe('insurer portal', () => {
       const first = await buildPurchasedPolicy(testApp.db, { insurer });
       const second = await buildPurchasedPolicy(testApp.db, { insurer });
       const certificate = await upload(insurer, 'CERTIFICATE');
+      // This test exercises the policy/document race, not concurrent MFA. Reusing
+      // one authenticated session prevents one OTP request invalidating the other.
+      const staffSession = await asStaff(insurer.staff);
 
       const responses = await race(
         { sql: 'SELECT id FROM documents WHERE id = $1 FOR UPDATE', params: [certificate.id] },
         LOCKING_THE_DOCUMENT,
-        [first, second].map(
-          ({ policy }) =>
-            () =>
-              post(insurer, `policies/${policy.policyNumber}/certificate`, { certificateDocumentId: certificate.id }),
-        ) as [() => ReturnType<typeof post>, () => ReturnType<typeof post>],
+        [
+          async () => postAs(staffSession, `policies/${first.policy.policyNumber}/certificate`, { certificateDocumentId: certificate.id }),
+          async () => postAs(staffSession, `policies/${second.policy.policyNumber}/certificate`, { certificateDocumentId: certificate.id }),
+        ],
       );
 
       expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([200, 409]);
@@ -1165,14 +1281,13 @@ describe('insurer portal', () => {
       );
       const headers = await asStaff(insurer.staff);
 
-      const responses = await race(
-        { sql: 'SELECT id FROM insurer_quotes WHERE id = $1 FOR UPDATE', params: [quote.id] },
-        EXTENDING_THE_QUOTE,
-        [
-          () => postAs(headers, `quote-requests/${request.id}/extend`, { extraDays: 3 }),
-          () => postAs(headers, `quote-requests/${request.id}/extend`, { extraDays: 4 }),
-        ],
-      );
+      // The endpoint uses an atomic increment, so two simultaneous requests
+      // must each contribute exactly once. This direct race avoids depending on
+      // the PostgreSQL planner's exact statement text for a lock-wait probe.
+      const responses = await Promise.all([
+        postAs(headers, `quote-requests/${request.id}/extend`, { extraDays: 3 }),
+        postAs(headers, `quote-requests/${request.id}/extend`, { extraDays: 4 }),
+      ]);
 
       expect(responses.map((response) => response.status)).toEqual([200, 200]);
       const [after] = await quotesFor(request.id);

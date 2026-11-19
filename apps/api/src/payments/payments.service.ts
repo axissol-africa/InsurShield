@@ -51,10 +51,16 @@ export class PaymentsService {
     const customerId = customer.id;
     const method = fromContract.paymentMethod(dto.method);
     if (!method) throw new ApiException('BAD_REQUEST', CHOOSE_A_PAYMENT_METHOD);
+    if (!dto.insurerQuoteId) {
+      throw ApiException.conflict(
+        'RELOAD_REQUIRED',
+        'Reload your quotes and select the exact quote before paying.',
+      );
+    }
     const attempt: PaymentAttempt = {
       customerId,
       quoteRequestId: dto.quoteRequestId,
-      insurerName: dto.insurer,
+      insurerQuoteId: dto.insurerQuoteId,
       amountMinor: kwachaToNgwee(dto.amount),
       method,
     };
@@ -65,8 +71,8 @@ export class PaymentsService {
     const request = await this.payments.findRequest(customerId, dto.quoteRequestId);
     if (!request) throw ApiException.notFound('Quote request', dto.quoteRequestId);
 
-    const quote = await this.payments.findQuote(request.id, dto.insurer);
-    if (!quote) throw ApiException.notFound('Quote from', dto.insurer);
+    const quote = await this.payments.findQuote(request.id, dto.insurerQuoteId);
+    if (!quote) throw ApiException.notFound('Quote', dto.insurerQuoteId);
 
     const rtsaAnniversaryFeeMinor = request.matchRtsaAnniversary
       ? this.config.get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true })
@@ -94,8 +100,8 @@ export class PaymentsService {
         if (!(await this.payments.lockOpenCustomer(tx, customerId))) throw ApiException.forbidden(ACCOUNT_CLOSED);
         const lockedRequest = await this.payments.lockRequest(tx, request.id);
         if (!lockedRequest) throw ApiException.notFound('Quote request', dto.quoteRequestId);
-        const lockedQuote = await this.payments.lockQuote(tx, quote.id);
-        if (!lockedQuote) throw ApiException.notFound('Quote from', dto.insurer);
+        const lockedQuote = await this.payments.lockQuote(tx, request.id, quote.id);
+        if (!lockedQuote) throw ApiException.notFound('Quote', dto.insurerQuoteId);
         if (lockedQuote.unpayableAt) {
           throw ApiException.conflict(
             'QUOTE_UNAVAILABLE',

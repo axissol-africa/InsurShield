@@ -97,9 +97,11 @@ const samplePdf = (insurer) => {
  */
 export const SEED_ACTIVE_REQUEST_ID = 'QR-7741';
 
-const quotedReply = ({ insurer, premium, reference, minutesOld }) => {
+const quotedReply = ({ insurer, premium, reference, minutesOld, id = `IQ-${reference}` }) => {
   const entry = INSURER_RATES.find((rate) => rate.name === insurer);
   return {
+    id,
+    productVersionId: null,
     premium,
     validityDays: entry?.quoteValidityDays || 7,
     sentAt: minutesAgo(minutesOld),
@@ -119,7 +121,8 @@ const quotedReply = ({ insurer, premium, reference, minutesOld }) => {
  * cannot answer on the insurers' behalf.
  */
 export function answeredByInsurers(request, { replies = 2, immediate = false } = {}) {
-  if (!request || Object.keys(request.insurerQuotes || {}).length > 0) return request;
+  const selectedProducts = request?.selectedProducts || [];
+  if (!request || (selectedProducts.length ? request.productQuotes?.length : Object.keys(request.insurerQuotes || {}).length > 0)) return request;
   // Only the demo customer's own requests. The others fill the insurer's
   // queue, and answering them would leave the portal with nothing to do.
   if (!immediate && request.customer?.email !== DEMO_CUSTOMER_ACCOUNT.email) return request;
@@ -129,6 +132,34 @@ export function answeredByInsurers(request, { replies = 2, immediate = false } =
   // trick rather than a demo.
   const age = Date.now() - new Date(request.submittedAt || 0).getTime();
   if (!immediate && !(age > SETTLED_REQUEST_MS)) return request;
+  if (selectedProducts.length) {
+    const productQuotes = selectedProducts.slice(0, immediate ? selectedProducts.length : replies).flatMap((selection, index) => {
+      const entry = INSURER_RATES.find((rate) => rate.name === selection.insurerName);
+      if (!entry || selection.unavailableAt) return [];
+      const premium = Math.round(
+        calculatePremium({
+          vehicleValueZMW: request.vehicleValue,
+          insurer: entry,
+          vehicleUsage: request.vehicleUsage,
+          coverageDurationId: request.coverageDurationId,
+          coverageDays: request.policyDates?.anchoredToAnniversary ? request.policyDates.daysTotal : null,
+        }).finalPremium,
+      );
+      return [{
+        ...quotedReply({
+          insurer: selection.insurerName,
+          premium,
+          reference: `${selection.productCode}-Q-${String(request.id || '').replace(/\D/g, '').slice(-4) || '0001'}-${index + 1}`,
+          minutesOld: 30 + index * 14,
+          id: `IQ-${request.id}-${selection.productVersionId}`,
+        }),
+        productVersionId: selection.productVersionId,
+        insurer: { id: selection.insurerId, name: selection.insurerName },
+      }];
+    });
+    return productQuotes.length ? { ...request, status: 'Quoted', productQuotes } : request;
+  }
+
   const answering = (request.insurers || []).slice(0, replies);
 
   const insurerQuotes = {};

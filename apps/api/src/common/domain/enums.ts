@@ -3,6 +3,14 @@
 export const QUOTE_REQUEST_STATUSES = ['SUBMITTED', 'QUOTED', 'EXPIRED'] as const;
 export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
 
+/**
+ * Requests created before product selection remain readable as legacy records.
+ * New requests are explicit about carrying a set of selected product versions;
+ * the API must never infer that distinction from the presence of a quote.
+ */
+export const QUOTE_REQUEST_MODELS = ['LEGACY', 'PRODUCT_SELECTION'] as const;
+export type QuoteRequestModel = (typeof QUOTE_REQUEST_MODELS)[number];
+
 export const INSURANCE_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'] as const;
 export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 

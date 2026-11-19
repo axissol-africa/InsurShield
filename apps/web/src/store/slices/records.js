@@ -8,7 +8,7 @@ import { SEED_CLAIMS, SEED_INSURER_REVIEWS, SEED_NCD_APPLICATIONS, SEED_POLICIES
  * here would show invented policies and claims alongside real ones.
  */
 const seed = (records) => (env.apiMode === 'mock' ? records : []);
-import { NOW, updateById, withTimestamp } from '../shared';
+import { NOW, newReference, updateById, withTimestamp } from '../shared';
 
 /**
  * Records shared between the customer site, the insurer portal and the admin
@@ -51,13 +51,36 @@ export const createRecordsSlice = (set) => ({
       const sentAt = NOW();
       return {
         quoteRequests: updateById(state.quoteRequests, requestId, (request) => {
+          if (request.selectedProducts?.length) {
+            const selection = request.selectedProducts.find(
+              (product) => product.productVersionId === quote.productVersionId && product.insurerName === insurerName,
+            );
+            if (!selection) return request;
+            const reply = {
+              ...quote,
+              id: quote.id || newReference('IQ'),
+              productVersionId: selection.productVersionId,
+              insurer: { id: selection.insurerId, name: selection.insurerName },
+              sentAt,
+              validityDays,
+              validUntil: addDays(sentAt, validityDays),
+            };
+            return {
+              ...request,
+              status: 'Quoted',
+              productQuotes: [
+                ...(request.productQuotes || []).filter((item) => item.productVersionId !== selection.productVersionId),
+                reply,
+              ],
+            };
+          }
           // A guide is not a quote request. Only insurers the customer chose
           // may see the details and return a final quotation.
           if (!request.insurers?.includes(insurerName)) return request;
           return {
             ...request,
             status: 'Quoted',
-            insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...quote, sentAt, validityDays, validUntil: addDays(sentAt, validityDays) } },
+            insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...quote, id: quote.id || newReference('IQ'), productVersionId: null, sentAt, validityDays, validUntil: addDays(sentAt, validityDays) } },
           };
         }),
       };
