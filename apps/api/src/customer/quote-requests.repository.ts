@@ -344,6 +344,7 @@ export class QuoteRequestsRepository {
     tx: Transaction,
     quoteRequestId: string,
     selected: AvailableProductVersion[],
+    replyDueAt: Date,
   ): Promise<void> {
     if (selected.length === 0) return;
     await tx.insert(quoteRequestProductVersions).values(
@@ -359,6 +360,7 @@ export class QuoteRequestsRepository {
         inspectionRule: version.inspectionRule,
         inspectionTiming: version.inspectionTiming,
         inspectionMethod: version.inspectionMethod,
+        replyDueAt,
       })),
     );
   }

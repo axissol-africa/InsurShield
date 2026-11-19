@@ -32,6 +32,11 @@ const QUOTE_REQUEST_STATUS: Record<QuoteRequestStatus, string> = {
   SUBMITTED: 'Submitted',
   QUOTED: 'Quoted',
   EXPIRED: 'Expired',
+  INSURER_PROCESSING: 'Insurer processing',
+  PARTIALLY_READY: 'Partially ready',
+  QUOTES_READY: 'Quotes ready',
+  QUOTE_SELECTED: 'Quote selected',
+  CANCELLED: 'Cancelled',
 };
 
 const INSURANCE_TYPE: Record<InsuranceType, string> = {
@@ -129,6 +134,9 @@ const INSPECTION_STATUS: Record<InspectionStatus, string> = {
   REPORT_READY: 'Report ready',
   APPROVED: 'Approved',
   FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+  NO_SHOW: 'No show',
+  REINSPECTION_REQUIRED: 'Reinspection required',
 };
 
 /** Database enum → the value the client expects. */

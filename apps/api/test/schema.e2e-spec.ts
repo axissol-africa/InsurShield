@@ -29,6 +29,11 @@ const TAGS = migrationTags();
 const SCANNING = TAGS.findIndex((tag) => tag.startsWith('0009_'));
 /** The additive selected-product model begins at Batch 12. */
 const PRODUCT_CHOICES = TAGS.findIndex((tag) => tag.startsWith('0028_'));
+const WORKFLOW_ENUMS = TAGS.findIndex((tag) => tag === '0033_batch_13_workflow_enums');
+const WORKFLOW_SCHEMA = TAGS.findIndex((tag) => tag === '0034_batch_13_workflow_schema');
+if (WORKFLOW_ENUMS < 0 || WORKFLOW_SCHEMA !== WORKFLOW_ENUMS + 1) {
+  throw new Error('Batch 13 workflow migrations are missing or out of order.');
+}
 
 const created: ScratchDatabase[] = [];
 
@@ -163,6 +168,42 @@ $$;`);
 BEFORE INSERT OR UPDATE OF "quoteRequestId", "insurerId", "productVersionId"
 ON public.insurer_quotes
 FOR EACH ROW EXECUTE FUNCTION public.enforce_insurer_quote_selected_version();`);
+  await client.query(`CREATE OR REPLACE FUNCTION public.quote_internal_notes_reject_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'quote_internal_notes is append-only';
+END;
+$$;`);
+  await client.query(`CREATE TRIGGER quote_internal_notes_append_only
+BEFORE UPDATE OR DELETE ON public.quote_internal_notes
+FOR EACH ROW
+EXECUTE FUNCTION public.quote_internal_notes_reject_mutation();`);
+  await client.query(`CREATE OR REPLACE FUNCTION public.enforce_quote_internal_note_insurer()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  owner_insurer_id uuid;
+BEGIN
+  SELECT "insurerId" INTO owner_insurer_id
+  FROM public.quote_request_product_versions
+  WHERE id = NEW."requestProductId";
+
+  IF owner_insurer_id IS NULL OR owner_insurer_id <> NEW."insurerId" THEN
+    RAISE EXCEPTION 'quote internal note insurer must own selected product'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;`);
+  await client.query(`CREATE TRIGGER quote_internal_note_insurer_guard
+BEFORE INSERT OR UPDATE OF "requestProductId", "insurerId"
+ON public.quote_internal_notes
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_quote_internal_note_insurer();`);
 }
 
 /** Every timestamp value in public, per column, as UTC wall-clock text. */
@@ -893,6 +934,117 @@ describe('0030_batch_12_quote_request_drafts', () => {
   });
 });
 
+describe('Batch 13 workflow schema', () => {
+  it('backfills the legacy workflow, protects internal notes, and allows one open inspection per version and stage', async () => {
+    const insurerId = '00000000-0000-4000-8000-000000000013';
+    const otherInsurerId = '00000000-0000-4000-8000-000000000011';
+    const staffId = '00000000-0000-4000-8000-000000000002';
+    const customerId = '00000000-0000-4000-8000-000000000001';
+    const productId = randomUUID();
+    const productVersionId = randomUUID();
+    const requestProductId = randomUUID();
+    const firstInspectionId = `INS-B13-${randomUUID()}`;
+    const secondInspectionId = `INS-B13-${randomUUID()}`;
+
+    const db = await scratch(async (client) => {
+      await buildPrismaEraDatabase(client, { data: true });
+      // The Prisma fixture is already equivalent to migration 0000, so replay
+      // only the later migrations before introducing the Batch 13 enum split.
+      for (let index = 1; index < WORKFLOW_ENUMS; index += 1) {
+        await applyMigration(client, index);
+      }
+      await client.query(`UPDATE quote_requests SET status = 'QUOTED' WHERE id IN ('QR-1', 'QR-3')`);
+      await client.query(
+        `INSERT INTO insurer_products (id, "insurerId", code, "coverType", "updatedAt")
+         VALUES ($1, $2, 'B13-WORKFLOW', 'COMPREHENSIVE', CURRENT_TIMESTAMP)`,
+        [productId, insurerId],
+      );
+      await client.query(
+        `INSERT INTO insurer_product_versions
+           (id, "productId", "versionNumber", status, name, "coverType", "coverGuide", "inspectionRule", "rateBps", "effectiveFrom", "createdByStaffId", "updatedAt")
+         VALUES ($1, $2, 1, 'APPROVED', 'Batch 13 workflow cover', 'COMPREHENSIVE', '{}'::jsonb, 'NOT_REQUIRED', 500, '2026-01-01', $3, CURRENT_TIMESTAMP)`,
+        [productVersionId, productId, staffId],
+      );
+      await client.query(`UPDATE quote_requests SET model = 'PRODUCT_SELECTION' WHERE id = 'QR-2'`);
+      await client.query(
+        `INSERT INTO quote_request_product_versions
+           (id, "quoteRequestId", "productVersionId", "insurerId", "productCode", "productVersionNumber", "productName", "coverType", "coverGuide", "inspectionRule")
+         VALUES ($1, 'QR-2', $2, $3, 'B13-WORKFLOW', 1, 'Batch 13 workflow cover', 'COMPREHENSIVE', '{}'::jsonb, 'NOT_REQUIRED')`,
+        [requestProductId, productVersionId, insurerId],
+      );
+      await applyMigration(client, WORKFLOW_ENUMS);
+      await applyMigration(client, WORKFLOW_SCHEMA);
+    });
+
+    await query(db, async (client) => {
+      expect(
+        (
+          await client.query(
+            `SELECT status FROM quote_requests WHERE id = 'QR-1'`,
+          )
+        ).rows,
+      ).toEqual([{ status: 'QUOTES_READY' }]);
+      expect(
+        (
+          await client.query(
+            `SELECT status FROM quote_requests WHERE id = 'QR-3'`,
+          )
+        ).rows,
+      ).toEqual([{ status: 'QUOTED' }]);
+      expect(
+        (
+          await client.query(
+            `SELECT selection.status, selection."replyDueAt" = request."submittedAt" + interval '7 days' AS uses_legacy_deadline
+             FROM quote_request_product_versions AS selection
+             INNER JOIN quote_requests AS request ON request.id = selection."quoteRequestId"
+             WHERE selection.id = $1`,
+            [requestProductId],
+          )
+        ).rows,
+      ).toEqual([{ status: 'SUBMITTED', uses_legacy_deadline: true }]);
+
+      for (const inspectionId of [firstInspectionId, secondInspectionId]) {
+        await client.query(
+          `INSERT INTO inspections
+             (id, status, purpose, "customerId", "insurerId", "quoteRequestId", method, stage, "vehiclePlate", "vehicleLabel", "updatedAt")
+           VALUES ($1, 'REQUESTED', 'UNDERWRITING', $2, $3, 'QR-2', 'PHYSICAL', 'BEFORE_QUOTATION', 'B13 001', 'Batch 13 test vehicle', CURRENT_TIMESTAMP)`,
+          [inspectionId, customerId, insurerId],
+        );
+      }
+      await client.query(
+        `INSERT INTO inspection_request_products (id, "inspectionId", "requestProductId", stage)
+         VALUES ($1, $2, $3, 'BEFORE_QUOTATION')`,
+        [randomUUID(), firstInspectionId, requestProductId],
+      );
+      await expect(
+        client.query(
+          `INSERT INTO inspection_request_products (id, "inspectionId", "requestProductId", stage)
+           VALUES ($1, $2, $3, 'BEFORE_QUOTATION')`,
+          [randomUUID(), secondInspectionId, requestProductId],
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'inspection_request_products_one_open_product_stage_key' });
+
+      const noteId = randomUUID();
+      await client.query(
+        `INSERT INTO quote_internal_notes (id, "requestProductId", "insurerId", "authorStaffId", body)
+         VALUES ($1, $2, $3, $4, 'Underwriting evidence received.')`,
+        [noteId, requestProductId, insurerId, staffId],
+      );
+      await expect(client.query(`UPDATE quote_internal_notes SET body = 'changed' WHERE id = $1`, [noteId]))
+        .rejects.toMatchObject({ message: expect.stringContaining('append-only') });
+      await expect(client.query(`DELETE FROM quote_internal_notes WHERE id = $1`, [noteId]))
+        .rejects.toMatchObject({ message: expect.stringContaining('append-only') });
+      await expect(
+        client.query(
+          `INSERT INTO quote_internal_notes (id, "requestProductId", "insurerId", "authorStaffId", body)
+           VALUES ($1, $2, $3, $4, 'Foreign insurer note.')`,
+          [randomUUID(), requestProductId, otherInsurerId, staffId],
+        ),
+      ).rejects.toMatchObject({ code: '23514' });
+    });
+  });
+});
+
 describe('drizzle-kit', () => {
   it('generate finds no difference between src/db/schema.ts and the migrations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'insurshield-generate-'));
@@ -951,8 +1103,12 @@ describe('the final schema', () => {
     // Batch 12 adds the selected-product and cancellation timestamps, three
     // draft timestamps plus its document timestamp, and four timestamps for
     // insurer-defined product requirements and the customer's answers.
+    // Batch 13 adds five selected-product workflow timestamps, three
+    // information-request timestamps, one internal-note timestamp, quote
+    // withdrawal, one quote-selection timestamp, one inspection decision and
+    // one inspection-to-product-link timestamp.
     // Effective dates remain `date` values.
-    expect(timestampColumns).toHaveLength(131);
+    expect(timestampColumns).toHaveLength(144);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

@@ -22,6 +22,35 @@ const addOn = z.object({
   description: z.string().trim().max(1_000).optional(),
 });
 
+const declineReason = z.object({
+  code: z.string().regex(QUESTION_CODE),
+  customerText: z.string().trim().min(2).max(500),
+  internalText: z.string().trim().min(2).max(1_000),
+});
+
+const quoteDeclineReasons = z.object({
+  reasons: z.array(declineReason).min(1).max(100),
+}).superRefine((value, context) => {
+  const codes = value.reasons.map((reason) => reason.code);
+  if (new Set(codes).size !== codes.length) {
+    context.addIssue({ code: 'custom', path: ['reasons'], message: 'Each decline reason must use a different code.' });
+  }
+});
+
+const inspectionEvidenceSlot = z.object({
+  code: z.string().regex(QUESTION_CODE),
+  label: z.string().trim().min(2).max(120),
+});
+
+const inspectionEvidenceSlots = z.object({
+  slots: z.array(inspectionEvidenceSlot).min(1).max(20),
+}).superRefine((value, context) => {
+  const codes = value.slots.map((slot) => slot.code);
+  if (new Set(codes).size !== codes.length) {
+    context.addIssue({ code: 'custom', path: ['slots'], message: 'Each inspection slot must use a different code.' });
+  }
+});
+
 const ncdPolicy = z.object({
   validityDays: z.number().int().min(1).max(3_660),
   tiers: z.array(z.object({
@@ -57,6 +86,9 @@ const schemas = {
     loadings: z.record(z.string().regex(QUESTION_CODE), z.number().int().min(1).max(100_000)),
   }),
   DOCUMENT_RETENTION: documentRetention,
+  QUOTE_DECLINE_REASONS: quoteDeclineReasons,
+  QUOTE_SLA_WARNING: z.object({ hoursBeforeDue: z.number().int().min(1).max(720) }),
+  INSPECTION_EVIDENCE_SLOTS: inspectionEvidenceSlots,
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
 export type RuleValue = {
@@ -100,6 +132,36 @@ const defaults = {
       BRAND_ASSET: 365,
       COMPLIANCE_EVIDENCE: 2_555,
     } satisfies Record<DocumentRetentionClass, number>,
+  },
+  QUOTE_DECLINE_REASONS: {
+    reasons: [
+      {
+        code: 'UNDERWRITING_DECLINED',
+        customerText: 'This cover cannot be offered for the vehicle and details supplied.',
+        internalText: 'The underwriting assessment did not meet the insurer’s acceptance criteria.',
+      },
+      {
+        code: 'INFORMATION_NOT_PROVIDED',
+        customerText: 'The information needed to complete this quote was not provided in time.',
+        internalText: 'The customer did not provide the requested underwriting information by the due date.',
+      },
+      {
+        code: 'INSPECTION_FAILED',
+        customerText: 'The vehicle inspection did not meet the requirements for this cover.',
+        internalText: 'The inspection was failed by the insurer or its appointed inspector.',
+      },
+    ],
+  },
+  QUOTE_SLA_WARNING: { hoursBeforeDue: 24 },
+  INSPECTION_EVIDENCE_SLOTS: {
+    slots: [
+      { code: 'FRONT', label: 'Front view' },
+      { code: 'REAR', label: 'Rear view' },
+      { code: 'LEFT', label: 'Left side' },
+      { code: 'RIGHT', label: 'Right side' },
+      { code: 'DASHBOARD_OR_MILEAGE', label: 'Dashboard or mileage' },
+      { code: 'ENGINE_BAY', label: 'Engine bay' },
+    ],
   },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 

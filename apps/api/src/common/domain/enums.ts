@@ -1,7 +1,36 @@
 // Stored enum values, in the order of their PostgreSQL enum types.
 
-export const QUOTE_REQUEST_STATUSES = ['SUBMITTED', 'QUOTED', 'EXPIRED'] as const;
+export const QUOTE_REQUEST_STATUSES = [
+  'SUBMITTED',
+  // Kept for legacy requests which predate one state per selected product.
+  'QUOTED',
+  'EXPIRED',
+  'INSURER_PROCESSING',
+  'PARTIALLY_READY',
+  'QUOTES_READY',
+  'QUOTE_SELECTED',
+  'CANCELLED',
+] as const;
 export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
+
+/** The insurer workflow for one immutable selected product version. */
+export const QUOTE_PRODUCT_STATUSES = [
+  'SUBMITTED',
+  'INSURER_PROCESSING',
+  'VERIFICATION_REQUIRED',
+  'INSPECTION_REQUIRED',
+  'QUOTED',
+  'DECLINED',
+  'TIMED_OUT',
+  'EXPIRED',
+  'CANCELLED',
+  'MANUAL_REVIEW',
+] as const;
+export type QuoteProductStatus = (typeof QUOTE_PRODUCT_STATUSES)[number];
+
+/** Queue priority is deliberately small until a governed rule adds more levels. */
+export const QUOTE_PRIORITIES = ['NORMAL', 'HIGH'] as const;
+export type QuotePriority = (typeof QUOTE_PRIORITIES)[number];
 
 /**
  * Requests created before product selection remain readable as legacy records.
@@ -37,6 +66,9 @@ export const RULE_SETTING_KEYS = [
   'ADD_ON_CATALOGUE',
   'USAGE_LOADINGS',
   'DOCUMENT_RETENTION',
+  'QUOTE_DECLINE_REASONS',
+  'QUOTE_SLA_WARNING',
+  'INSPECTION_EVIDENCE_SLOTS',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
@@ -107,8 +139,15 @@ export const INSPECTION_STATUSES = [
   'REPORT_READY',
   'APPROVED',
   'FAILED',
+  'CANCELLED',
+  'NO_SHOW',
+  'REINSPECTION_REQUIRED',
 ] as const;
 export type InspectionStatus = (typeof INSPECTION_STATUSES)[number];
+
+/** Whether the inspection supports underwriting work or a standalone appointment. */
+export const INSPECTION_PURPOSES = ['UNDERWRITING', 'GENERAL'] as const;
+export type InspectionPurpose = (typeof INSPECTION_PURPOSES)[number];
 
 export const INSPECTION_RULES = ['NOT_REQUIRED', 'OPTIONAL', 'REQUIRED'] as const;
 export type InspectionRule = (typeof INSPECTION_RULES)[number];
@@ -216,6 +255,10 @@ export type IntegrationTargetKind = (typeof INTEGRATION_TARGET_KINDS)[number];
  */
 export const QUOTE_UNAVAILABILITY_REASONS = ['INSURER_SUSPENDED'] as const;
 export type QuoteUnavailabilityReason = (typeof QUOTE_UNAVAILABILITY_REASONS)[number];
+
+/** A quote remains in history even when it is withdrawn or replaced. */
+export const QUOTE_STATUSES = ['ACTIVE', 'WITHDRAWN', 'SUPERSEDED'] as const;
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 
 export const DELIVERY_KINDS = [
   'QUOTE_REQUEST',

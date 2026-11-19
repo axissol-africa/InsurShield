@@ -18,8 +18,9 @@ import { describeDatabaseError, DRIVER_CODE, serverError } from './errors.js';
 /**
  * The only way migrations are applied: `src/db/migrate.ts` runs it for `npm run db:migrate`,
  * the migrator image and the e2e setup. It recognises the database from three independent
- * facts, applies what is missing in one transaction on one connection, and refuses any
- * state it does not know.
+ * facts, applies what is missing in transactional batches on one connection, and refuses any
+ * state it does not know. A migration may explicitly end a batch when PostgreSQL requires a
+ * committed enum value before a later migration can use it.
  * It does not use Drizzle's migrate(), which creates its table outside the transaction
  * and skips by timestamp alone.
  */
@@ -73,6 +74,7 @@ export type MigrationStep =
   | { name: 'moved-prisma-history' }
   | { name: 'applied-statement'; tag: string; index: number }
   | { name: 'recorded-migration'; tag: string }
+  | { name: 'committed-migration'; tag: string }
   | { name: 'final-check' };
 
 export interface MigrateOptions {
@@ -92,6 +94,12 @@ interface Migration {
   statements: string[];
   hash: string;
   folderMillis: number;
+  /**
+   * PostgreSQL does not let a transaction use an enum value added by
+   * `ALTER TYPE ... ADD VALUE` until it commits. The journal marks the rare
+   * migration that must be committed before the next one starts.
+   */
+  commitAfter: boolean;
 }
 
 interface Plan {
@@ -116,15 +124,20 @@ interface Facts {
 
 function loadPlan(folder: string): Plan {
   const journal = JSON.parse(readFileSync(join(folder, 'meta', '_journal.json'), 'utf8')) as {
-    entries: { tag: string }[];
+    entries: { tag: string; commitAfter?: boolean }[];
   };
   const files = readMigrationFiles({ migrationsFolder: folder });
-  const migrations = files.map((file, index) => ({
-    tag: journal.entries[index].tag,
-    statements: file.sql.filter((statement) => statement.trim() !== ''),
-    hash: file.hash,
-    folderMillis: file.folderMillis,
-  }));
+  const migrations = files.map((file, index) => {
+    const entry = journal.entries[index];
+    if (!entry) throw new Error(`Migration journal entry ${index} is missing.`);
+    return {
+      tag: entry.tag,
+      statements: file.sql.filter((statement) => statement.trim() !== ''),
+      hash: file.hash,
+      folderMillis: file.folderMillis,
+      commitAfter: entry.commitAfter === true,
+    };
+  });
 
   const prismaChecksums = new Map<string, Set<string>>();
   for (const name of PRISMA_MIGRATIONS) {
@@ -347,6 +360,25 @@ async function record(client: ClientBase, migration: Migration) {
   ]);
 }
 
+/** The current transaction must exactly match the durable prefix before it is committed. */
+async function assertCommittedPrefix(client: ClientBase, plan: Plan, applied: number) {
+  const facts = await readFacts(client, plan);
+  const expected = plan.catalogsAfter[applied - 1];
+  if (
+    facts.prisma.state !== 'absent' ||
+    facts.drizzle.state !== 'prefix' ||
+    facts.drizzle.applied !== applied ||
+    !sameCatalog(facts.catalog, expected)
+  ) {
+    throw new MigrationRefusedError(
+      'Refusing to commit migration boundary: the database is not the expected migration prefix, so the current transaction was rolled back.\n' +
+        `  Prisma history: ${describePrisma(facts.prisma)}\n` +
+        `  Drizzle history: ${describeDrizzle(facts.drizzle, plan)}\n` +
+        `  Catalog of public: ${describeCatalog(facts.catalog, plan)}`,
+    );
+  }
+}
+
 async function apply(client: ClientBase, plan: Plan, options: MigrateOptions): Promise<MigrationResult> {
   const step = async (current: MigrationStep) => options.onStep?.(current, client);
   const decision = decide(await readFacts(client, plan), plan);
@@ -378,6 +410,18 @@ async function apply(client: ClientBase, plan: Plan, options: MigrateOptions): P
     }
     await record(client, migration);
     await step({ name: 'recorded-migration', tag: migration.tag });
+
+    // The boundary is intentionally data-driven and is only used for enum
+    // changes. The prefix is verified before committing, and a later failure
+    // leaves that verified prefix recorded so the next run can safely resume.
+    if (migration.commitAfter && migration !== pending.at(-1)) {
+      const applied = plan.migrations.indexOf(migration) + 1;
+      await assertCommittedPrefix(client, plan, applied);
+      await client.query('COMMIT');
+      await step({ name: 'committed-migration', tag: migration.tag });
+      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+      await client.query('SET LOCAL search_path TO public');
+    }
   }
 
   await step({ name: 'final-check' });

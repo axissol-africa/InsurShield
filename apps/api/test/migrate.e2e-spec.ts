@@ -47,6 +47,12 @@ import {
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const ALL = migrationTags();
+const WORKFLOW_ENUMS = '0033_batch_13_workflow_enums';
+const WORKFLOW_SCHEMA = '0034_batch_13_workflow_schema';
+const WORKFLOW_ENUMS_INDEX = ALL.indexOf(WORKFLOW_ENUMS);
+if (WORKFLOW_ENUMS_INDEX < 0 || ALL[WORKFLOW_ENUMS_INDEX + 1] !== WORKFLOW_SCHEMA) {
+  throw new Error('Batch 13 workflow migrations are missing or out of order.');
+}
 const catalogFile = (tag: string) =>
   JSON.parse(readFileSync(catalogPath(tag), 'utf8')) as string[];
 const FINAL_CATALOG = catalogFile(ALL[ALL.length - 1]);
@@ -594,7 +600,7 @@ describe('plain drizzle-kit migrate on a Prisma-era database', () => {
   });
 });
 
-describe('a failure at any step rolls everything back', () => {
+describe('a failure before a configured commit boundary rolls its current batch back', () => {
   const failAt = (match: (step: MigrationStep) => boolean) => ({
     onStep(step: MigrationStep) {
       if (match(step)) {
@@ -615,7 +621,6 @@ describe('a failure at any step rolls everything back', () => {
       (step: MigrationStep) =>
         step.name === 'applied-statement' && step.tag === '0001_minor_units_timestamptz' && step.index === 10,
     ],
-    ['at the final check', (step: MigrationStep) => step.name === 'final-check'],
   ])('%s', async (_case, match) => {
     const db = await scratch(prismaEra);
     const before = await stateOf(db);
@@ -625,9 +630,19 @@ describe('a failure at any step rolls everything back', () => {
     expect(await stateOf(db)).toEqual(before);
   });
 
+  it('at the final check preserves the committed enum boundary and resumes from it', async () => {
+    const db = await scratch(prismaEra);
+
+    await expect(migrateDatabase(db.config, failAt((step) => step.name === 'final-check'))).rejects.toThrow(
+      'injected at final-check',
+    );
+
+    expect(await query(db, readCatalog)).toEqual(catalogFile(WORKFLOW_ENUMS));
+    await expect(migrateDatabase(db.config)).resolves.toEqual({ state: 'managed', applied: [WORKFLOW_SCHEMA] });
+  });
+
   it('when the final check finds a schema other than the final one', async () => {
     const db = await scratch(prismaEra);
-    const before = await stateOf(db);
 
     const run = migrateDatabase(db.config, {
       async onStep(step, client) {
@@ -639,7 +654,31 @@ describe('a failure at any step rolls everything back', () => {
 
     await expect(run).rejects.toThrow(MigrationRefusedError);
     await expect(run).rejects.toThrow(/Refusing to commit[\s\S]*\n {4}extra object table public\.intruder$/m);
-    expect(await stateOf(db)).toEqual(before);
+    expect(await query(db, readCatalog)).toEqual(catalogFile(WORKFLOW_ENUMS));
+    await expect(migrateDatabase(db.config)).resolves.toEqual({ state: 'managed', applied: [WORKFLOW_SCHEMA] });
+  });
+});
+
+describe('an intentional migration commit boundary', () => {
+  it('commits enum values and its history before resuming the dependent schema migration', async () => {
+    const db = await scratch(async (client) => {
+      await applyMigrationFiles(client, WORKFLOW_ENUMS_INDEX);
+      await recordDrizzleHistory(client, WORKFLOW_ENUMS_INDEX);
+    });
+
+    await expect(
+      migrateDatabase(db.config, {
+        onStep(step) {
+          if (step.name === 'committed-migration' && step.tag === WORKFLOW_ENUMS) {
+            throw new Error('injected after committed enum migration');
+          }
+        },
+      }),
+    ).rejects.toThrow('injected after committed enum migration');
+
+    expect(await query(db, readCatalog)).toEqual(catalogFile(WORKFLOW_ENUMS));
+    await expect(migrateDatabase(db.config)).resolves.toEqual({ state: 'managed', applied: [WORKFLOW_SCHEMA] });
+    expect(await query(db, readCatalog)).toEqual(catalogFile(WORKFLOW_SCHEMA));
   });
 });
 

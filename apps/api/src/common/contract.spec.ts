@@ -43,7 +43,20 @@ describe('contract vocabulary', () => {
   });
 
   it.each([
-    ['quote request status', toContract.quoteRequestStatus, { SUBMITTED: 'Submitted', QUOTED: 'Quoted', EXPIRED: 'Expired' }],
+    [
+      'quote request status',
+      toContract.quoteRequestStatus,
+      {
+        SUBMITTED: 'Submitted',
+        QUOTED: 'Quoted',
+        EXPIRED: 'Expired',
+        INSURER_PROCESSING: 'Insurer processing',
+        PARTIALLY_READY: 'Partially ready',
+        QUOTES_READY: 'Quotes ready',
+        QUOTE_SELECTED: 'Quote selected',
+        CANCELLED: 'Cancelled',
+      },
+    ],
     ['insurance type', toContract.insuranceType, { COMPREHENSIVE: 'Comprehensive', THIRD_PARTY: 'ThirdParty' }],
     ['coverage duration', toContract.coverageDuration, { Q1: '1q', Q2: '2q', Q3: '3q', Q4: '4q' }],
     [
@@ -77,6 +90,9 @@ describe('contract vocabulary', () => {
         REPORT_READY: 'Report ready',
         APPROVED: 'Approved',
         FAILED: 'Failed',
+        CANCELLED: 'Cancelled',
+        NO_SHOW: 'No show',
+        REINSPECTION_REQUIRED: 'Reinspection required',
       },
     ],
     ['insurer status', toContract.insurerStatus, { ACTIVE: 'Active', INACTIVE: 'Inactive', DELETED: 'Deleted' }],

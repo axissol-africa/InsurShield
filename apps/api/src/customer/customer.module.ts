@@ -17,8 +17,10 @@ import { QuoteRequestDraftsController } from './quote-request-drafts.controller.
 import { QuoteRequestDraftPurge, QUOTE_REQUEST_DRAFT_PURGE } from './quote-request-draft-purge.js';
 import { QuoteRequestDraftsRepository } from './quote-request-drafts.repository.js';
 import { QuoteRequestDraftsService } from './quote-request-drafts.service.js';
+import { SettingsModule } from '../settings/settings.module.js';
 
 @Module({
+  imports: [SettingsModule],
   controllers: [CustomerController, QuoteRequestDraftsController],
   providers: [
     QuoteRequestsService,

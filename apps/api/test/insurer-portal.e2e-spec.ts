@@ -219,6 +219,7 @@ describe('insurer portal', () => {
         coverType: 'COMPREHENSIVE' as const,
         coverGuide: { planName: version.name, summary: 'Customer-facing terms.' },
         inspectionRule: 'NOT_REQUIRED' as const,
+        replyDueAt: new Date('2026-12-31T00:00:00.000Z'),
       })),
     );
     return request;

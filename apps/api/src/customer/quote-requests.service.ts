@@ -8,6 +8,7 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { fromContract } from '../common/contract.js';
 import { kwachaToNgwee } from '../common/money.js';
 import { IntegrationsService } from '../integrations/integrations.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import type { Env } from '../config/env.js';
 import type { Transaction } from '../db/database.module.js';
 import { newReference } from '../common/domain/reference.js';
@@ -64,6 +65,7 @@ export class QuoteRequestsService {
     private readonly config: ConfigService<Env, true>,
     private readonly audit: AuditService,
     private readonly integrations: IntegrationsService,
+    private readonly settings: SettingsService,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -117,6 +119,10 @@ export class QuoteRequestsService {
         coverageDuration,
         submittedAt,
       );
+      // Freeze the effective reply deadline with each chosen version. A later
+      // settings change must not alter an insurer's existing SLA.
+      const replyDeadline = await this.settings.effective('QUOTE_REPLY_DEADLINE', submittedAt, tx);
+      const replyDueAt = addDays(submittedAt, replyDeadline.value.days);
       const productRequirements = await this.validateProductRequirements(
         tx,
         customer,
@@ -162,6 +168,7 @@ export class QuoteRequestsService {
         auditActor(customer),
         selectedVersions,
         productRequirements,
+        replyDueAt,
       );
     };
     const response = transaction ? await create(transaction) : await this.repository.transaction(create);
@@ -207,10 +214,14 @@ export class QuoteRequestsService {
     actor: AuditActor,
     selectedVersions: AvailableProductVersion[] = [],
     productRequirements: ValidatedProductRequirements = { answers: [], declarations: [], documents: [] },
+    replyDueAt?: Date,
   ): Promise<QuoteRequestResponse> {
     const created = await this.repository.insertRequest(tx, request);
     await this.repository.insertRecipients(tx, created.id, insurerIds);
-    await this.repository.insertSelectedProductVersions(tx, created.id, selectedVersions);
+    if (selectedVersions.length > 0 && !replyDueAt) {
+      throw new Error('A selected product version requires a frozen reply deadline.');
+    }
+    if (replyDueAt) await this.repository.insertSelectedProductVersions(tx, created.id, selectedVersions, replyDueAt);
     await this.repository.insertProductRequirementAnswers(tx, created.id, productRequirements.answers);
     await this.repository.insertProductRequirementDeclarations(tx, created.id, productRequirements.declarations);
     await this.repository.insertProductRequirementDocuments(tx, created.id, productRequirements.documents);

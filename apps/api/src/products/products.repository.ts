@@ -36,6 +36,7 @@ const versionColumns = {
   inspectionRule: insurerProductVersions.inspectionRule,
   inspectionTiming: insurerProductVersions.inspectionTiming,
   inspectionMethod: insurerProductVersions.inspectionMethod,
+  reinspectionAllowed: insurerProductVersions.reinspectionAllowed,
   rateBps: insurerProductVersions.rateBps,
   showEstimate: insurerProductVersions.showEstimate,
   allowedDurations: insurerProductVersions.allowedDurations,

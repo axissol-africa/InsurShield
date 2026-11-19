@@ -511,6 +511,7 @@ describe('payments', () => {
           inspectionRule: selected.inspectionRule,
           inspectionTiming: selected.inspectionTiming,
           inspectionMethod: selected.inspectionMethod,
+          replyDueAt: new Date('2026-12-31T00:00:00.000Z'),
         })),
       );
       const { quote: firstQuote } = await buildInsurerQuote(
