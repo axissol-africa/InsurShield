@@ -8,6 +8,8 @@ const CALLBACK_MAX_AGE_MS = 5 * 60_000;
 export interface SignedCallback {
   timestamp: string | undefined;
   signature: string | undefined;
+  eventId: string;
+  eventType: string;
   body: Record<string, unknown>;
 }
 
@@ -15,7 +17,7 @@ export interface SignedCallback {
 @Injectable()
 export class CallbackSignatureService {
   signOutbound(secret: string, timestamp: string, body: Record<string, unknown>): string {
-    return createHmac('sha256', secret).update(message(timestamp, body)).digest('base64url');
+    return createHmac('sha256', secret).update(outboundMessage(timestamp, body)).digest('base64url');
   }
 
   verifyInbound(publicSigningKey: string, callback: SignedCallback, now = new Date()): void {
@@ -30,7 +32,7 @@ export class CallbackSignatureService {
     }
     try {
       const verifier = createVerify('sha256');
-      verifier.update(message(timestamp, callback.body));
+      verifier.update(callbackMessage(timestamp, callback.eventId, callback.eventType, callback.body));
       verifier.end();
       if (!verifier.verify(createPublicKey(publicSigningKey), Buffer.from(signature, 'base64url'))) throw invalidSignature();
     } catch (error) {
@@ -39,13 +41,22 @@ export class CallbackSignatureService {
     }
   }
 
-  hash(body: Record<string, unknown>): string {
-    return createHash('sha256').update(canonicalJson(body)).digest('hex');
+  hashInboundEnvelope(eventId: string, eventType: string, body: Record<string, unknown>): string {
+    return createHash('sha256').update(canonicalJson({ eventId, eventType, body })).digest('hex');
   }
 
 }
 
-function message(timestamp: string, body: Record<string, unknown>): string {
+function callbackMessage(
+  timestamp: string,
+  eventId: string,
+  eventType: string,
+  body: Record<string, unknown>,
+): string {
+  return canonicalJson({ timestamp, eventId, eventType, body });
+}
+
+function outboundMessage(timestamp: string, body: Record<string, unknown>): string {
   return `${timestamp}.${canonicalJson(body)}`;
 }
 

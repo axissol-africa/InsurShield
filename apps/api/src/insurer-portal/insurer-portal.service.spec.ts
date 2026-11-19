@@ -70,7 +70,7 @@ describe('final quotes', () => {
     const repository = {
       transaction: (work: (tx: unknown) => Promise<unknown>) => work({}),
       insurerStanding: async () => ({ name: 'Prestige Assurance', status: 'ACTIVE', licenceExpiry: null }),
-      lockDelivery: async () => ({ status: 'SUBMITTED', expiresAt: new Date(now), quoteValidityDays: 14 }),
+      lockDelivery: async () => ({ model: 'LEGACY', status: 'SUBMITTED', expiresAt: new Date(now), quoteValidityDays: 14 }),
       hasQuote: async () => false,
     };
     const documents = untouchable('documents');
