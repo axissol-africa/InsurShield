@@ -34,6 +34,7 @@ import { QuoteAvailabilityService } from '../customer/quote-availability.service
 import { ApprovalService } from '../approvals/approval.service.js';
 import type { ApprovalRequestRow } from '../approvals/approval.repository.js';
 import { IntegrationSecretsService } from '../integrations/integration-secrets.service.js';
+import { assertConfiguredEndpointIsPublic, UnsafeIntegrationEndpointError } from '../integrations/endpoint-safety.js';
 
 const NAME_CONSTRAINT = 'insurers_name_key';
 
@@ -213,6 +214,11 @@ export class InsurersService {
   async setIntegration(id: string, dto: InsurerIntegrationDto, principal: StaffPrincipal) {
     const saved = await this.insurers.transaction(async (tx) => {
       await this.mustExist(id, tx);
+      // A save that leaves the mode out keeps the stored one. Defaulting to
+      // sandbox here silently turned a live integration back to plain HTTP.
+      const existing = await this.insurers.findIntegration(id, tx);
+      const sandboxMode = dto.sandboxMode ?? existing?.sandboxMode ?? true;
+      assertPublicIntegrationUrls(dto, sandboxMode);
       const row = await this.insurers.saveIntegration(tx, id, {
         apiBaseUrl: dto.apiBaseUrl,
         publicSigningKey: dto.publicSigningKey,
@@ -220,7 +226,7 @@ export class InsurersService {
         quoteCallbackUrl: dto.quoteCallbackUrl ?? null,
         claimsCallbackUrl: dto.claimsCallbackUrl ?? null,
         policyCallbackUrl: dto.policyCallbackUrl ?? null,
-        sandboxMode: dto.sandboxMode ?? true,
+        sandboxMode,
         ...(dto.clientSecret ? { clientSecretEncrypted: this.integrationSecrets.encrypt(dto.clientSecret) } : {}),
       });
       await this.audit.write(tx, {
@@ -650,4 +656,19 @@ function suspensionPayload(payload: Record<string, unknown>): string {
     throw ApiException.conflict('APPROVAL_PAYLOAD_INVALID', 'This suspension approval has an invalid frozen payload.');
   }
   return payload.reason;
+}
+
+/** Each insurer URL is checked with the rules delivery uses, and the failing field is named. */
+function assertPublicIntegrationUrls(dto: InsurerIntegrationDto, sandboxMode: boolean): void {
+  const fields = ['apiBaseUrl', 'quoteCallbackUrl', 'claimsCallbackUrl', 'policyCallbackUrl'] as const;
+  for (const field of fields) {
+    const value = dto[field];
+    if (!value) continue;
+    try {
+      assertConfiguredEndpointIsPublic(value, sandboxMode);
+    } catch (error) {
+      if (!(error instanceof UnsafeIntegrationEndpointError)) throw error;
+      throw new ApiException('VALIDATION_FAILED', error.message, 400, { [field]: error.message });
+    }
+  }
 }

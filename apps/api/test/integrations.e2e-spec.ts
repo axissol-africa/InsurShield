@@ -334,12 +334,63 @@ describe('the integration platform', () => {
       .expect(200);
     expect(own.body.map((row: { id: string }) => row.id)).toContain(delivery.id);
     expect(JSON.stringify(own.body)).not.toContain('+260000000000');
+    // InsurShield's own operations detail stays on the InsurShield side.
+    for (const row of own.body as Array<Record<string, unknown>>) {
+      expect(row).not.toHaveProperty('resolvedByStaffId');
+      expect(row).not.toHaveProperty('resolutionNote');
+      expect(row).not.toHaveProperty('requestHash');
+    }
 
     const other = await testApp.http
       .get('/api/v1/insurer/integrations/deliveries')
       .set(await signIn(testApp.http, second.staff))
       .expect(200);
     expect(other.body.map((row: { id: string }) => row.id)).not.toContain(delivery.id);
+  });
+
+  it('refuses a private or loopback insurer URL when the integration is saved', async () => {
+    const { insurer } = await buildInsurer(testApp.db);
+    const admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+    const base = { publicSigningKey: 'not-used-for-this-test', clientId: `client-${randomUUID()}`, sandboxMode: true };
+
+    for (const [field, value] of [
+      ['apiBaseUrl', 'https://169.254.169.254/latest'],
+      ['apiBaseUrl', 'https://10.0.0.5/v1'],
+      ['quoteCallbackUrl', 'https://localhost/quotes'],
+    ] as const) {
+      const response = await testApp.http
+        .put(`/api/v1/insurers/${insurer.id}/integration`)
+        .set(await signIn(testApp.http, admin))
+        .send({ ...base, apiBaseUrl: 'https://api.example.invalid', [field]: value })
+        .expect(400);
+      expect(response.body.details).toHaveProperty(field);
+    }
+    const [stored] = await testApp.db.select().from(insurerIntegrations).where(eq(insurerIntegrations.insurerId, insurer.id));
+    expect(stored).toBeUndefined();
+  });
+
+  it('keeps a live integration live when a later save leaves the mode out', async () => {
+    const { insurer } = await buildInsurer(testApp.db);
+    const admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+    const clientId = `client-${randomUUID()}`;
+    const save = async (body: Record<string, unknown>) =>
+      testApp.http
+        .put(`/api/v1/insurers/${insurer.id}/integration`)
+        .set(await signIn(testApp.http, admin))
+        .send({ apiBaseUrl: 'https://api.example.invalid', publicSigningKey: 'not-used-for-this-test', clientId, ...body })
+        .expect(200);
+
+    await save({ sandboxMode: false });
+    await save({});
+    const [stored] = await testApp.db.select().from(insurerIntegrations).where(eq(insurerIntegrations.insurerId, insurer.id));
+    expect(stored.sandboxMode).toBe(false);
+
+    // Still live, so plain HTTP is refused.
+    await testApp.http
+      .put(`/api/v1/insurers/${insurer.id}/integration`)
+      .set(await signIn(testApp.http, admin))
+      .send({ apiBaseUrl: 'http://api.example.invalid', publicSigningKey: 'not-used-for-this-test', clientId })
+      .expect(400);
   });
 });
 

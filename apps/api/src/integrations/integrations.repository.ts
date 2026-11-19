@@ -28,6 +28,30 @@ const operationsColumns = {
   createdAt: integrationDeliveries.createdAt,
 };
 
+/**
+ * What an insurer may see about its own deliveries: status and timing only.
+ * Who at InsurShield resolved a failure, their note, and the payload hash are
+ * InsurShield operations detail.
+ */
+const insurerColumns = {
+  id: integrationDeliveries.id,
+  insurerId: integrationDeliveries.insurerId,
+  targetKind: integrationDeliveries.targetKind,
+  kind: integrationDeliveries.kind,
+  referenceId: integrationDeliveries.referenceId,
+  correlationId: integrationDeliveries.correlationId,
+  attempt: integrationDeliveries.attempt,
+  maxAttempts: integrationDeliveries.maxAttempts,
+  status: integrationDeliveries.status,
+  responseStatus: integrationDeliveries.responseStatus,
+  error: integrationDeliveries.error,
+  lastAttemptAt: integrationDeliveries.lastAttemptAt,
+  deliveredAt: integrationDeliveries.deliveredAt,
+  acknowledgedAt: integrationDeliveries.acknowledgedAt,
+  resolvedAt: integrationDeliveries.resolvedAt,
+  createdAt: integrationDeliveries.createdAt,
+};
+
 /** Keep actionable failures at the top even when the history has many successes. */
 const operationsStatusOrder = sql<number>`case ${integrationDeliveries.status}
   when 'FAILED' then 0
@@ -93,7 +117,7 @@ export class IntegrationsRepository {
 
   listForInsurer(insurerId: string, limit = 50, executor: Executor = this.db) {
     return executor
-      .select(operationsColumns)
+      .select(insurerColumns)
       .from(integrationDeliveries)
       .where(eq(integrationDeliveries.insurerId, insurerId))
       .orderBy(asc(operationsStatusOrder), sql`${integrationDeliveries.createdAt} DESC`)

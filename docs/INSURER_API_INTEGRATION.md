@@ -59,6 +59,43 @@ The inspection method and timing belong to the product version, rather than the 
 not require an inspection has neither an inspection method nor timing. A later quote request will store the exact
 product-version identifier it was made from, so changing terms cannot rewrite what a customer previously saw.
 
+## Signing and delivery rules
+
+These are the exact byte formats an insurer has to reproduce. "Canonical JSON" means JSON with object keys sorted by
+Unicode code unit (plain `<` comparison, not a locale sort), no whitespace, and `undefined` members left out. The
+reference implementation is `apps/api/src/common/json/canonical-json.ts`.
+
+### Requests InsurShield sends to the insurer
+
+- Sent as `POST` to the insurer's API base URL plus a fixed path per delivery kind: `/quote-requests`,
+  `/paid-policies`, `/claim-notifications`, `/vehicle-lookups`, `/payment-confirmations` or `/policies`. Any other
+  target is refused before sending.
+- Headers: `content-type: application/json`, `idempotency-key`, `x-insurshield-client-id`,
+  `x-insurshield-timestamp` (Unix seconds), `x-insurshield-signature`, and `x-correlation-id` when there is one.
+- Signature: HMAC-SHA256 with the insurer's client secret over `<timestamp>.<canonical JSON body>`, encoded as
+  base64url without padding.
+- The body sent is the canonical JSON itself, so the insurer can verify the raw bytes it received.
+- A retry of the same delivery carries the same `idempotency-key`. Treat a repeated key as the same request.
+- InsurShield does not follow redirects. A `3xx` answer is a failed delivery that needs an operator. Only `2xx`
+  counts as delivered; `408`, `429` and `5xx` are retried with backoff, other `4xx` answers are not.
+- A live (non-sandbox) integration must use HTTPS. A base or callback URL that names a loopback, private,
+  link-local or other non-public address, or `localhost` or a `.local` name, is refused when the integration is
+  saved. On every send the host name is resolved again, and the request is refused if any answer is not public.
+
+### Callbacks the insurer sends to InsurShield
+
+- `POST /api/v1/integrations/callbacks/insurers/:insurerId` with a JSON object body.
+- Headers: `x-insurshield-event-id` (unique per event, at most 200 characters), `x-insurshield-event-type` (at most
+  120 characters), `x-insurshield-timestamp` (Unix seconds, within 5 minutes of InsurShield's clock),
+  `x-insurshield-signature`, and optionally `x-correlation-id`.
+- Signature: made with the insurer's private key matching the public signing key on record, SHA-256 with RSA or
+  ECDSA (Ed25519 keys are not supported yet), base64url encoded, over the canonical JSON of
+  `{ "body": <body>, "eventId": "<event id>", "eventType": "<event type>", "timestamp": "<timestamp>" }`.
+  The event id and type are inside the signed message, so they cannot be changed or reused under another id.
+- Sending the same event id again with the same content is accepted as a replay and changes nothing. The same event
+  id with different content is refused with `409`.
+- Callbacks for an insurer that has been deleted are refused.
+
 ## Required safeguards
 
 - Authenticate server-to-server with OAuth client credentials or mTLS; never from the browser.
