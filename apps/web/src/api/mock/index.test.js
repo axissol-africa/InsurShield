@@ -35,7 +35,8 @@ describe('mock api adapter', () => {
     expect(vehicle).toMatchObject({ plateNumber: 'BAA 1234', make: 'Toyota' });
   });
 
-  it('runs the quote flow: submit, insurer reply, extend, customer sees it', async () => {
+  /** A signed-in customer's request for one of Prestige Assurance's published products. */
+  const requestPrestigeProduct = async () => {
     await signIn();
     const state = useStore.getState();
     state.setVehicleDetails({ plateNumber: 'BAA 1234', make: 'Toyota', model: 'Hilux', year: '2020' });
@@ -44,27 +45,53 @@ describe('mock api adapter', () => {
     state.setInsuranceType('Comprehensive');
     state.setRtsaAnniversary(true, '2023-10-31');
     state.setDocuments(Object.fromEntries(INSPECTION_KEYS.map((key) => [key, 'data:image/jpeg;base64,x'])));
+    const product = (await mock.products.directory({ coverType: 'COMPREHENSIVE' }))
+      .find((entry) => entry.insurer.name === 'Prestige Assurance');
+    const request = await mock.quotes.submitRequest({
+      customer: state.customer, policyDates: null, selectedProductVersionIds: [product.version.id],
+    });
+    return { request, versionId: product.version.id };
+  };
 
-    const request = await mock.quotes.submitRequest({ customer: state.customer, policyDates: null });
-    expect(request.insurers).toEqual([]);
+  it('runs the quote flow for a chosen product: submit, insurer reply, extend, customer sees it', async () => {
+    const { request, versionId } = await requestPrestigeProduct();
+    expect(request.insurers).toEqual(['Prestige Assurance']);
     expect(request.rtsaAnniversaryFee).toBe(500);
     expect(await mock.quotes.listMine()).toHaveLength(1);
 
-    state.requestQuotesFromGuides(request.id, ['1']);
-
     asInsurer();
     expect(await mock.quotes.listForInsurer()).toHaveLength(1);
-    const replied = await mock.quotes.reply(request.id, { premium: 10900, document: { name: 'q.pdf' } });
-    expect(replied.insurerQuotes['Prestige Assurance'].premium).toBe(10900);
-    const extended = await mock.quotes.extend(request.id, 7);
-    expect(new Date(extended.insurerQuotes['Prestige Assurance'].validUntil) > new Date(replied.insurerQuotes['Prestige Assurance'].validUntil)).toBe(true);
+    const replied = await mock.quotes.reply(request.id, { premium: 10900, document: { name: 'q.pdf' }, productVersionId: versionId });
+    const quote = replied.productQuotes.find((entry) => entry.productVersionId === versionId);
+    expect(quote.premium).toBe(10900);
+
+    const extended = await mock.quotes.extend(request.id, 7, versionId);
+    const after = extended.productQuotes.find((entry) => entry.productVersionId === versionId);
+    expect(new Date(after.validUntil) > new Date(quote.validUntil)).toBe(true);
+    expect(after.extendedAt).toBeTruthy();
   });
 
-  it('confirms a payment and records the receipt for the confirmation page', async () => {
-    const receipt = await mock.payments.pay({ amount: 10900, method: 'Mobile money' });
-    expect(receipt).toMatchObject({ status: 'Confirmed', amount: 10900, rtsaAnniversaryFee: 0, currency: 'ZMW' });
+  it('refuses a request without chosen products, as the API does', async () => {
+    await signIn();
+    await expect(mock.quotes.submitRequest({ customer: useStore.getState().customer, policyDates: null }))
+      .rejects.toThrow('Choose one to five published insurance products.');
+  });
+
+  it('confirms a payment for the chosen quote and records the receipt for the confirmation page', async () => {
+    const { request, versionId } = await requestPrestigeProduct();
+    asInsurer();
+    const replied = await mock.quotes.reply(request.id, { premium: 10900, document: { name: 'q.pdf' }, productVersionId: versionId });
+    const quote = replied.productQuotes.find((entry) => entry.productVersionId === versionId);
+
+    const receipt = await mock.payments.pay({ amount: 11400, method: 'Mobile money', quoteRequestId: request.id, insurerQuoteId: quote.id });
+    expect(receipt).toMatchObject({ status: 'Confirmed', amount: 11400, rtsaAnniversaryFee: 500, currency: 'ZMW' });
     expect(useStore.getState().paymentReceipt).toEqual(receipt);
     expect(await mock.payments.status(receipt.transactionId)).toEqual(receipt);
+  });
+
+  it('refuses a payment that does not name the quote, as the API does', async () => {
+    await expect(mock.payments.pay({ amount: 10900, method: 'Mobile money' }))
+      .rejects.toThrow('This quote needs to be refreshed before payment.');
   });
 
   it('issues a certificate for a paid policy and scopes lists to the insurer', async () => {

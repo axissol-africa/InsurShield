@@ -480,7 +480,7 @@ export const quotes = {
   requote: (id) => call((s) => ({ ok: s.requoteFromRequest(id) })),
   listForInsurer: () => call((s) => s.quoteRequests.filter((r) => r.insurers?.includes(insurerName()))),
   reply: (id, quote) => call((s) => { s.addInsurerQuote(id, insurerName(), quote); return state().quoteRequests.find((r) => r.id === id); }),
-  extend: (id, extraDays) => call((s) => { s.extendInsurerQuote(id, insurerName(), extraDays); return state().quoteRequests.find((r) => r.id === id); }),
+  extend: (id, extraDays, productVersionId) => call((s) => { s.extendInsurerQuote(id, insurerName(), extraDays, productVersionId); return state().quoteRequests.find((r) => r.id === id); }),
 };
 
 export const insurers = {

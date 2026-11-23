@@ -86,7 +86,7 @@ export const waitingLongestFirst = (since) => (first, second) => waitStart(since
 const PORTAL_ROOT = '/insurer';
 export const portalPath = {
   section: (id) => (id === 'overview' ? PORTAL_ROOT : `${PORTAL_ROOT}?view=${id}`),
-  quote: (requestId) => `${PORTAL_ROOT}?quote=${encodeURIComponent(requestId)}`,
+  quote: (caseKey) => `${PORTAL_ROOT}?quote=${encodeURIComponent(caseKey)}`,
   issue: (policyNumber) => `${PORTAL_ROOT}?view=policies&issue=${encodeURIComponent(policyNumber)}`,
 };
 
@@ -120,4 +120,38 @@ export const toPortalRequest = (request, insurerName) => ({
   photos: request.inspectionShots?.length || 0,
   time: timeAgo(request.submittedAt),
   reply: request.insurerQuotes?.[insurerName] || null,
+  caseKey: request.id,
+  productVersionId: null,
 });
+
+/**
+ * The pieces of work one request gives this insurer. A request made before
+ * product selection is one case. A request with chosen products is one case
+ * per product the customer chose from this insurer, because the insurer quotes,
+ * and is paid for, each product separately. A product InsurShield has cancelled
+ * for this insurer is no longer work to do, but a quote already sent for it
+ * stays listed.
+ */
+export const toPortalCases = (request, insurerName) => {
+  const base = toPortalRequest(request, insurerName);
+  const products = (request.selectedProducts || []).filter((product) => product.insurerName === insurerName);
+  if (products.length === 0) return request.selectedProducts?.length ? [] : [base];
+  return products
+    .map((product) => ({
+      ...base,
+      caseKey: portalCaseKey(request.id, product.productVersionId),
+      productVersionId: product.productVersionId,
+      productName: product.productName,
+      productVersionNumber: product.productVersionNumber,
+      coverGuide: product.coverGuide,
+      reply: product.reply
+        ?? request.productQuotes?.find((quote) => quote.productVersionId === product.productVersionId)
+        ?? null,
+      unavailable: Boolean(product.unavailableAt),
+    }))
+    .filter((portalCase) => portalCase.reply || !portalCase.unavailable);
+};
+
+/** One address per piece of work: the request, and the chosen product when there is one. */
+export const portalCaseKey = (requestId, productVersionId) =>
+  (productVersionId ? `${requestId}~${productVersionId}` : requestId);

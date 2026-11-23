@@ -3,6 +3,7 @@
  * Responses are returned as the backend sends them (the client unwraps `data`).
  */
 import { apiClient } from '@/lib/apiClient';
+import { toUploadableFile } from '@/lib/files';
 import { newIdempotencyKey } from '../shared';
 
 export const auth = {
@@ -48,6 +49,14 @@ export const documents = {
   get: (id) => apiClient.get(`/documents/${id}`),
 };
 
+/**
+ * The portal screens hold a picked file as a record, the same in both modes.
+ * The API takes the file as its own upload and is then given the document id,
+ * so it can scan and store the file before any quote or policy points at it.
+ */
+const uploadedDocumentId = async (record, fallbackName, kind) =>
+  (await documents.upload(await toUploadableFile(record, record.name || fallbackName), kind)).id;
+
 export const vehicles = {
   lookupPlate: (plate) => apiClient.get('/vehicles/lookup', { params: { plate } }),
 };
@@ -58,8 +67,15 @@ export const quotes = {
   get: (id) => apiClient.get(`/quote-requests/${id}`),
   requote: (id) => apiClient.post(`/quote-requests/${id}/requote`),
   listForInsurer: () => apiClient.get('/insurer/quote-requests'),
-  reply: (id, quote) => apiClient.post(`/insurer/quote-requests/${id}/quote`, quote),
-  extend: (id, extraDays) => apiClient.post(`/insurer/quote-requests/${id}/extend`, { extraDays }),
+  reply: async (id, { document, ...quote }) => apiClient.post(
+    `/insurer/quote-requests/${id}/quote`,
+    document ? { ...quote, documentId: await uploadedDocumentId(document, 'quotation', 'QUOTATION') } : quote,
+  ),
+  // A quote for a chosen product is extended by naming that product.
+  extend: (id, extraDays, productVersionId) => apiClient.post(
+    `/insurer/quote-requests/${id}/extend`,
+    productVersionId ? { extraDays, productVersionId } : { extraDays },
+  ),
 };
 
 export const insurers = {
@@ -142,7 +158,12 @@ export const policies = {
   get: (policyNumber) => apiClient.get(`/policies/${policyNumber}`),
   renew: (policyNumber) => apiClient.post(`/policies/${policyNumber}/renew`),
   listForInsurer: () => apiClient.get('/insurer/policies'),
-  issueCertificate: (policyNumber, issuance) => apiClient.post(`/insurer/policies/${policyNumber}/certificate`, issuance),
+  issueCertificate: async (policyNumber, { certificateDocument, ...issuance }) => apiClient.post(
+    `/insurer/policies/${policyNumber}/certificate`,
+    certificateDocument
+      ? { ...issuance, certificateDocumentId: await uploadedDocumentId(certificateDocument, 'certificate', 'CERTIFICATE') }
+      : issuance,
+  ),
 };
 
 export const claims = {

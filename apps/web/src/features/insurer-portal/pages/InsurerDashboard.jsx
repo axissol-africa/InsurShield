@@ -9,7 +9,7 @@ import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import {
   AWAITING_CERTIFICATE, CLAIM_NOTIFIED, CLAIM_RECEIVED, EXTENSION_DAYS, PORTAL_CONTENT_ID,
-  isOpenNcdApplication, policyPaidAt, portalPath, toPortalRequest, waitingLongestFirst,
+  coverTypeOf, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
 } from '@/features/insurer-portal/portal';
 import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
@@ -64,7 +64,7 @@ export default function InsurerDashboard() {
   const myClaims = claims.filter((claim) => claim.insurer === insurerName);
   const myNcd = ncdApplications.filter((application) => application.insurer === insurerName);
   const myPolicies = policies.filter((policy) => policy.insurer === insurerName && ['Active', AWAITING_CERTIFICATE].includes(policy.status)).sort(byNewest('receivedAt'));
-  const myRequests = quoteRequests.filter((request) => request.insurers?.includes(insurerName)).sort(byNewest('submittedAt')).map((request) => toPortalRequest(request, insurerName));
+  const myRequests = quoteRequests.filter((request) => request.insurers?.includes(insurerName)).sort(byNewest('submittedAt')).flatMap((request) => toPortalCases(request, insurerName));
 
   const awaitingQuote = myRequests.filter((request) => !request.reply);
   const quoted = myRequests.filter((request) => request.reply);
@@ -76,14 +76,14 @@ export default function InsurerDashboard() {
   // The quote and certificate screens are addressed by the record they act
   // on, so the browser's Back button and a refresh both keep the person's
   // place. An address for a record that is no longer waiting shows its section.
-  const quotingRequest = activeTab === 'overview' ? awaitingQuote.find((request) => request.id === searchParams.get('quote')) : undefined;
+  const quotingRequest = activeTab === 'overview' ? awaitingQuote.find((request) => request.caseKey === searchParams.get('quote')) : undefined;
   const issuingPolicy = activeTab === 'policies' ? awaitingCertificate.find((policy) => policy.policyNumber === searchParams.get('issue')) : undefined;
 
   // Each screen replaces the one before it; start it at the top on phones.
   // The control that opened it went with the last screen, so the keyboard and
   // screen-reader position is put at the new screen's content rather than
   // left to fall to the top of the document.
-  const screen = quotingRequest?.id || issuingPolicy?.policyNumber || activeTab;
+  const screen = quotingRequest?.caseKey || issuingPolicy?.policyNumber || activeTab;
   const shownScreen = useRef(screen);
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -117,7 +117,7 @@ export default function InsurerDashboard() {
 
   // Finishing one item offers the next, so clearing a queue is not a round
   // trip through the list each time.
-  const nextRequest = quotingRequest && awaitingQuote.find((request) => request.id !== quotingRequest.id);
+  const nextRequest = quotingRequest && awaitingQuote.find((request) => request.caseKey !== quotingRequest.caseKey);
   const nextPolicy = issuingPolicy && awaitingCertificate
     .filter((policy) => policy.policyNumber !== issuingPolicy.policyNumber)
     .sort(waitingLongestFirst(policyPaidAt))[0];
@@ -157,21 +157,23 @@ export default function InsurerDashboard() {
   } else if (quotingRequest) {
     content = (
       <QuoteRequestForm
-        key={quotingRequest.id}
+        key={quotingRequest.caseKey}
         request={quotingRequest}
         insurer={insurer}
-        coverGuides={insurer?.coverGuides}
+        coverGuides={quotingRequest.productVersionId ? { [coverTypeOf(quotingRequest)]: quotingRequest.coverGuide } : insurer?.coverGuides}
         piaRatePercentage={piaConfig?.piaRatePercentage}
         defaultValidityDays={defaultValidityDays}
         onBack={backToSection}
         onSubmit={async (quote) => {
-          await thenReloadPortal(() => api.quotes.reply(quotingRequest.id, quote));
+          // A chosen product is quoted on its own; a request from before product selection is quoted whole.
+          const reply = quotingRequest.productVersionId ? { ...quote, productVersionId: quotingRequest.productVersionId } : quote;
+          await thenReloadPortal(() => api.quotes.reply(quotingRequest.id, reply));
           toast.success('Quote sent', {
             description: `The customer can now see your quotation for ${quotingRequest.vehicle}.`,
             ...(nextRequest && nextOffer(
               'Next request',
-              portalPath.quote(nextRequest.id),
-              (queues) => queues.awaitingQuote.some((request) => request.id === nextRequest.id),
+              portalPath.quote(nextRequest.caseKey),
+              (queues) => queues.awaitingQuote.some((request) => request.caseKey === nextRequest.caseKey),
               'That request has already been answered.',
             )),
           });
@@ -219,7 +221,7 @@ export default function InsurerDashboard() {
             countLabel={`${awaitingQuote.length} awaiting a quote`}
             requests={awaitingQuote}
             emptyMessage="Every request has been quoted. Sent quotes are listed below."
-            onQuote={(request) => navigate(portalPath.quote(request.id))}
+            onQuote={(request) => navigate(portalPath.quote(request.caseKey))}
           />
         </div>
         <RequestQueue
@@ -228,7 +230,7 @@ export default function InsurerDashboard() {
           countLabel={`${quoted.length} sent`}
           requests={quoted}
           emptyMessage="No quotes have been sent yet."
-          onExtend={(request) => thenReloadPortal(() => api.quotes.extend(request.id, EXTENSION_DAYS))}
+          onExtend={(request) => thenReloadPortal(() => api.quotes.extend(request.id, EXTENSION_DAYS, request.productVersionId))}
         />
       </>
     );

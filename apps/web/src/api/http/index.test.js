@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers, integrations, products, settings } from './index';
+import { account, admin, auth, insurers, integrations, policies, products, quotes, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -108,5 +108,40 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.post).toHaveBeenCalledWith('/integrations/deliveries/delivery-1/manual-fallback', {
       note: 'Confirmed through the insurer operations desk.',
     });
+  });
+
+  it('uploads the quotation before sending a quote, and sends its id rather than the file', async () => {
+    transport.post.mockResolvedValueOnce({ id: 'doc-quotation' }).mockResolvedValueOnce({ premium: 23400 });
+    const document = { name: 'quotation.pdf', type: 'application/pdf', size: 8, dataUrl: 'data:application/pdf;base64,JVBERi0x' };
+
+    await quotes.reply('QR-1', { premium: 23400, validityDays: 7, document, productVersionId: 'version-2' });
+
+    const [uploadPath, form] = transport.post.mock.calls[0];
+    expect(uploadPath).toBe('/documents');
+    expect(form.get('kind')).toBe('QUOTATION');
+    expect(form.get('file').name).toBe('quotation.pdf');
+    expect(transport.post).toHaveBeenLastCalledWith('/insurer/quote-requests/QR-1/quote', {
+      premium: 23400, validityDays: 7, productVersionId: 'version-2', documentId: 'doc-quotation',
+    });
+  });
+
+  it('uploads the certificate before issuing a policy, and sends its id rather than the file', async () => {
+    transport.post.mockResolvedValueOnce({ id: 'doc-certificate' }).mockResolvedValueOnce({ status: 'Active' });
+    const certificateDocument = { name: 'certificate.pdf', type: 'application/pdf', size: 8, dataUrl: 'data:application/pdf;base64,JVBERi0x' };
+
+    await policies.issueCertificate('POL-1', { certificateDocument, insurerPolicyNumber: 'PA-1' });
+
+    expect(transport.post.mock.calls[0][1].get('kind')).toBe('CERTIFICATE');
+    expect(transport.post).toHaveBeenLastCalledWith('/insurer/policies/POL-1/certificate', {
+      insurerPolicyNumber: 'PA-1', certificateDocumentId: 'doc-certificate',
+    });
+  });
+
+  it('names the product when extending a quote for a chosen product, and only then', () => {
+    quotes.extend('QR-1', 7, 'version-2');
+    quotes.extend('QR-LEGACY', 7);
+
+    expect(transport.post).toHaveBeenCalledWith('/insurer/quote-requests/QR-1/extend', { extraDays: 7, productVersionId: 'version-2' });
+    expect(transport.post).toHaveBeenCalledWith('/insurer/quote-requests/QR-LEGACY/extend', { extraDays: 7 });
   });
 });
