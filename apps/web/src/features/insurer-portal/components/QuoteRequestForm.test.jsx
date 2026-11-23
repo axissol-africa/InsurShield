@@ -258,6 +258,19 @@ describe('QuoteRequestForm', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('can send when the portal holds no insurer-level guides, as on the real API where guides live on products', () => {
+    show({ coverGuides: undefined });
+
+    expect(screen.queryByText('Publish your comprehensive cover guide before sending this quote.')).not.toBeInTheDocument();
+    expect(send()).toBeEnabled();
+  });
+
+  it('names the product being quoted when the customer chose one', () => {
+    show({ request: { ...request, productName: 'Comprehensive Plus' } });
+
+    expect(screen.getByText(/Comprehensive Plus · Request/)).toBeVisible();
+  });
+
   it('names the country of a vehicle registered abroad', () => {
     show({ request: { ...request, registrationCountry: 'Malawi' } });
     expect(screen.getByText('Malawi — not on the RTSA register')).toBeVisible();

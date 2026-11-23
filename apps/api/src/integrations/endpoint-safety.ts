@@ -88,13 +88,7 @@ export function postJsonToEndpoint(
       {
         method: 'POST',
         headers: input.headers,
-        lookup: (hostname, _options, callback) => {
-          if (normaliseHostname(hostname) !== endpoint.hostname) {
-            callback(new Error('The insurer API endpoint changed during delivery.'), '', 0);
-            return;
-          }
-          callback(null, endpoint.address, endpoint.family);
-        },
+        lookup: pinnedLookup(endpoint),
       },
       (response) => {
         response.resume();
@@ -117,6 +111,49 @@ export function postJsonToEndpoint(
     }
     clientRequest.end(input.body);
   });
+}
+
+type LookupCallback = (
+  error: NodeJS.ErrnoException | null,
+  address: string | Array<{ address: string; family: number }>,
+  family?: number,
+) => void;
+
+/**
+ * Answers the socket's DNS lookup with the address that was already checked.
+ * Node 20+ connects with `autoSelectFamily`, which asks with `{ all: true }`
+ * and expects a list; answering that call with a single address fails every
+ * request with ERR_INVALID_IP_ADDRESS.
+ */
+export function pinnedLookup(endpoint: Pick<ResolvedIntegrationEndpoint, 'hostname' | 'address' | 'family'>) {
+  return (hostname: string, options: { all?: boolean }, callback: LookupCallback): void => {
+    if (normaliseHostname(hostname) !== endpoint.hostname) {
+      callback(new Error('The insurer API endpoint changed during delivery.'), options.all ? [] : '', 0);
+      return;
+    }
+    if (options.all) {
+      callback(null, [{ address: endpoint.address, family: endpoint.family }]);
+      return;
+    }
+    callback(null, endpoint.address, endpoint.family);
+  };
+}
+
+/**
+ * The same address rules as delivery, applied when an integration is saved, so
+ * a private or malformed endpoint is refused at the form rather than discovered
+ * later in the exception queue. Host names are resolved again at send time.
+ */
+export function assertConfiguredEndpointIsPublic(endpoint: string, sandboxMode: boolean): void {
+  const url = parseEndpoint(endpoint, sandboxMode);
+  const hostname = normaliseHostname(url.hostname);
+  if (reservedHostname(hostname)) {
+    throw new UnsafeIntegrationEndpointError('An insurer API endpoint must be publicly routable.');
+  }
+  const family = isIP(hostname);
+  if (family && !isPublicAddress(hostname, family)) {
+    throw new UnsafeIntegrationEndpointError('An insurer API endpoint must be publicly routable.');
+  }
 }
 
 export function refuseRedirect(status: number): number {

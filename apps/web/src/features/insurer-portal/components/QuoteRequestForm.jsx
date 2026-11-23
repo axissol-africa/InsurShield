@@ -50,7 +50,7 @@ const validityFrom = (typed, usual) => {
  * What the customer will see builds up beside the Send button, so the figure
  * that will be charged is read back before it goes.
  */
-export default function QuoteRequestForm({ request, insurer, coverGuides = {}, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
+export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
   const quotation = useDocumentUpload();
   const quotationInput = useRef(null);
   const validityInput = useRef(null);
@@ -64,8 +64,11 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
   const estimate = indicativePremium(request, insurer, piaRatePercentage);
   const coverageType = coverTypeOf(request);
   const coverLabel = COVER_TYPE_LABELS[coverageType];
-  const coverGuide = coverGuides[coverageType];
-  const guidePublished = isCoverGuideComplete(coverGuide);
+  // The guide the customer read: a chosen product's own terms, or, for a
+  // request from before product selection, the insurer's guide where the
+  // portal holds one. The real API keeps guides on product versions, so it
+  // sends no insurer-level guides and there is nothing here to wait for.
+  const guidePublished = coverGuides === undefined || isCoverGuideComplete(coverGuides[coverageType]);
   const deadline = replyDeadline(request);
   const { days: openDays, problem: validityProblem } = validityFrom(validityDays, defaultValidityDays);
   const premiumQuestion = PREMIUM_QUESTIONS[premiumCheck(Number(premium), estimate)];
@@ -99,7 +102,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides = {}, p
   return (
     <TaskScreen
       title="Prepare quotation"
-      description={<>Request <span className="font-mono text-foreground">{request.id}</span>{request.time ? ` · received ${request.time}` : ''}</>}
+      description={<>{request.productName ? <>{request.productName} · </> : null}Request <span className="font-mono text-foreground">{request.id}</span>{request.time ? ` · received ${request.time}` : ''}</>}
       onBack={onBack}
       backLabel="Back to overview"
       status={deadline && (deadline.urgent

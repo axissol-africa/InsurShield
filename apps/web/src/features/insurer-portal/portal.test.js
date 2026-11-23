@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AWAITING_CERTIFICATE, benefitsForCoverage, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalRequest, waitingLongestFirst } from './portal';
+import { AWAITING_CERTIFICATE, benefitsForCoverage, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -111,5 +111,62 @@ describe('waitingLongestFirst', () => {
 describe('quoteOpenUntil', () => {
   it('gives the date a quote sent now stays open until', () => {
     expect(quoteOpenUntil(7, new Date('2026-10-12T10:00:00Z'))).toBe('19 Oct 2026');
+  });
+});
+
+describe('toPortalCases', () => {
+  const INSURER = 'Prestige Assurance';
+  const base = {
+    id: 'QR-2', submittedAt: new Date().toISOString(), vehicle: '2021 Toyota Corolla', vehicleValue: 300000,
+    insuranceType: 'Comprehensive', coverageDurationId: '4q', insurers: [INSURER], insurerQuotes: {},
+  };
+  const product = (productVersionId, productName, extra = {}) => ({
+    productVersionId, productName, productVersionNumber: 1, insurerName: INSURER, coverGuide: { planName: productName }, unavailableAt: null, ...extra,
+  });
+
+  it('keeps a request from before product selection as one case addressed by its id', () => {
+    const [only, ...rest] = toPortalCases({ ...base, insurerQuotes: { [INSURER]: { premium: 9000 } } }, INSURER);
+    expect(rest).toEqual([]);
+    expect(only).toMatchObject({ id: 'QR-2', caseKey: 'QR-2', productVersionId: null, reply: { premium: 9000 } });
+  });
+
+  it('gives each product the customer chose from this insurer its own case, quote and address', () => {
+    const cases = toPortalCases({
+      ...base,
+      selectedProducts: [product('v-essential', 'Essential', { reply: { premium: 13500 } }), product('v-plus', 'Plus'), product('v-other', 'Other', { insurerName: 'Global Guard' })],
+    }, INSURER);
+
+    expect(cases.map(({ caseKey, productName, reply }) => ({ caseKey, productName, premium: reply?.premium ?? null }))).toEqual([
+      { caseKey: 'QR-2~v-essential', productName: 'Essential', premium: 13500 },
+      { caseKey: 'QR-2~v-plus', productName: 'Plus', premium: null },
+    ]);
+    expect(cases.every((portalCase) => portalCase.id === 'QR-2')).toBe(true);
+    expect(cases[1].coverGuide).toEqual({ planName: 'Plus' });
+    expect(portalPath.quote(cases[1].caseKey)).toBe('/insurer?quote=QR-2~v-plus');
+  });
+
+  it('reads a product quote held the mock way, beside the request', () => {
+    const [portalCase] = toPortalCases({
+      ...base,
+      selectedProducts: [product('v-plus', 'Plus')],
+      productQuotes: [{ productVersionId: 'v-plus', premium: 15600 }],
+    }, INSURER);
+    expect(portalCase.reply).toEqual({ productVersionId: 'v-plus', premium: 15600 });
+  });
+
+  it('drops a cancelled product that was never quoted, but keeps one already quoted', () => {
+    const cases = toPortalCases({
+      ...base,
+      selectedProducts: [
+        product('v-unanswered', 'Unanswered', { unavailableAt: '2026-11-20T00:00:00Z' }),
+        product('v-quoted', 'Quoted', { unavailableAt: '2026-11-20T00:00:00Z', reply: { premium: 14000 } }),
+      ],
+    }, INSURER);
+    expect(cases.map((portalCase) => portalCase.productName)).toEqual(['Quoted']);
+    expect(cases[0].unavailable).toBe(true);
+  });
+
+  it('gives an insurer no work on a request whose products all belong to others', () => {
+    expect(toPortalCases({ ...base, selectedProducts: [product('v-other', 'Other', { insurerName: 'Global Guard' })] }, INSURER)).toEqual([]);
   });
 });

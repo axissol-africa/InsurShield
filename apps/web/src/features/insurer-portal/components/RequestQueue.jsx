@@ -8,6 +8,8 @@ import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalA
 import { EXTENSION_DAYS, days, replyDeadline } from '@/features/insurer-portal/portal';
 
 const PAGE_SIZE = 4;
+/** A chosen product is its own row; a request from before product selection is keyed by its id. */
+const rowKey = (request) => request.caseKey ?? request.id;
 
 export default function RequestQueue({ title, hint, countLabel, requests, emptyMessage, onQuote, onExtend }) {
   // Held by the queue, not the row: paging away and back makes a new row, and
@@ -16,9 +18,9 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
   const quoteCell = (request, className) => request.reply ? (
     <QuotedStatus
       reply={request.reply}
-      onExtend={onExtend && (() => extending.run(request.id, request))}
-      extending={extending.pending(request.id)}
-      error={extending.error(request.id)}
+      onExtend={onExtend && (() => extending.run(rowKey(request), request))}
+      extending={extending.pending(rowKey(request))}
+      error={extending.error(rowKey(request))}
     />
   ) : (
     <Button type="button" onClick={onQuote && (() => onQuote(request))} className={className}>Send quote</Button>
@@ -31,6 +33,7 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
       cell: ({ row }) => (
         <div className="min-w-40 max-w-60 whitespace-normal">
           <p className="font-medium text-foreground">{row.original.vehicle}</p>
+          <ProductLine request={row.original} />
           <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{row.original.id}</p>
         </div>
       ),
@@ -75,6 +78,8 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
         <DataTable
           columns={columns}
           data={requests}
+          // Two products chosen from one insurer share a request id; each is its own row.
+          getRowId={rowKey}
           label={title}
           emptyMessage={emptyMessage}
           pageSize={PAGE_SIZE}
@@ -83,6 +88,7 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-medium text-foreground">{request.vehicle}</p>
+                  <ProductLine request={request} />
                   <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{request.id}</p>
                 </div>
                 <span className="shrink-0 text-sm text-muted-foreground">{request.time}</span>
@@ -99,6 +105,13 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
       </CardContent>
     </Card>
   );
+}
+
+/** The product the customer chose, when the request names one. */
+export function ProductLine({ request }) {
+  if (!request.productName) return null;
+  const version = request.productVersionNumber ? ` · version ${request.productVersionNumber}` : '';
+  return <p className="mt-1 text-sm text-foreground">{request.productName}<span className="text-muted-foreground">{version}</span></p>;
 }
 
 /** While a request still needs a reply, how long is left to send one. */

@@ -87,9 +87,19 @@ export const createRecordsSlice = (set) => ({
     }),
 
   /** Insurer portal: extend an unexpired quote's validity. */
-  extendInsurerQuote: (requestId, insurerName, extraDays) =>
+  extendInsurerQuote: (requestId, insurerName, extraDays, productVersionId) =>
     set((state) => ({
       quoteRequests: updateById(state.quoteRequests, requestId, (request) => {
+        if (productVersionId) {
+          const productReply = request.productQuotes?.find((quote) => quote.productVersionId === productVersionId && quote.insurer?.name === insurerName);
+          if (!productReply?.validUntil) return request;
+          return {
+            ...request,
+            productQuotes: request.productQuotes.map((quote) => (quote === productReply
+              ? { ...quote, validUntil: addDays(quote.validUntil, extraDays), extendedAt: NOW() }
+              : quote)),
+          };
+        }
         const reply = request.insurerQuotes?.[insurerName];
         if (!reply?.validUntil) return request;
         return { ...request, insurerQuotes: { ...request.insurerQuotes, [insurerName]: { ...reply, validUntil: addDays(reply.validUntil, extraDays), extendedAt: NOW() } } };

@@ -24,9 +24,10 @@ vi.mock('sonner', async (original) => ({ ...(await original()), toast: { success
 // The screens opened from a section are tested on their own; here they only
 // need to show which record they were given and hand back their outcome.
 vi.mock('@/features/insurer-portal/components/QuoteRequestForm', () => ({
-  default: ({ request, onSubmit, onBack }) => (
+  default: ({ request, coverGuides, onSubmit, onBack }) => (
     <div>
-      <p>Quote form for {request.id}</p>
+      <p>Quote form for {request.id}{request.productName ? ` (${request.productName})` : ''}</p>
+      <p data-testid="guides">{JSON.stringify(coverGuides ?? null)}</p>
       <input aria-label="Draft premium" />
       <button type="button" onClick={() => onSubmit({ premium: 10650 }).catch(() => {})}>Submit quote</button>
       <button type="button" onClick={onBack}>Leave quote</button>
@@ -318,5 +319,52 @@ describe('moving between records', () => {
     await user.click(screen.getByRole('button', { name: /Jump to/ }));
     expect(screen.getByText('Issue panel for PA-OLDEST')).toBeVisible();
     expect(screen.getByLabelText('Draft policy number')).toHaveValue('');
+  });
+});
+
+describe('requests with chosen products', () => {
+  const chosen = (productVersionId, productName) => ({
+    productVersionId, productName, productVersionNumber: 1, insurerName: INSURER,
+    coverGuide: { planName: productName }, unavailableAt: null,
+  });
+  const twoProducts = (productQuotes = []) => ({
+    ...request('QR-PRODUCTS'),
+    selectedProducts: [chosen('v-essential', 'Essential'), chosen('v-plus', 'Plus')],
+    productQuotes,
+  });
+
+  it('lists each chosen product as its own piece of work and quotes the one picked', async () => {
+    const user = userEvent.setup();
+    useStore.setState({ quoteRequests: [twoProducts()] });
+    api.quotes.reply.mockResolvedValue(undefined);
+    open('/insurer');
+
+    const queue = screen.getByRole('table', { name: 'Quote requests' });
+    const rows = within(queue).getAllByRole('row').slice(1);
+    expect(rows.map((row) => within(row).getByText(/Essential|Plus/).textContent)).toEqual(['Essential · version 1', 'Plus · version 1']);
+
+    await user.click(within(rows[1]).getByRole('button', { name: 'Send quote' }));
+    expect(address()).toBe('/insurer?quote=QR-PRODUCTS~v-plus');
+    expect(screen.getByText('Quote form for QR-PRODUCTS (Plus)')).toBeVisible();
+    // The customer read this product's own terms, so its guide is the one the form checks.
+    expect(JSON.parse(screen.getByTestId('guides').textContent)).toEqual({ Comprehensive: { planName: 'Plus' } });
+
+    await user.click(screen.getByRole('button', { name: 'Submit quote' }));
+    await waitFor(() => expect(api.quotes.reply).toHaveBeenCalledExactlyOnceWith('QR-PRODUCTS', { premium: 10650, productVersionId: 'v-plus' }));
+  });
+
+  it('extends the quote of the product it was sent for', async () => {
+    const user = userEvent.setup();
+    const validUntil = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    useStore.setState({ quoteRequests: [twoProducts([{ productVersionId: 'v-plus', premium: 15600, validUntil }])] });
+    api.quotes.extend.mockResolvedValue(undefined);
+    open('/insurer');
+
+    const sent = screen.getByRole('table', { name: 'Quotes sent' });
+    expect(within(sent).getByText(/^Plus/)).toBeVisible();
+    await user.click(within(sent).getByRole('button', { name: /Extend/ }));
+    await waitFor(() => expect(api.quotes.extend).toHaveBeenCalledExactlyOnceWith('QR-PRODUCTS', 7, 'v-plus'));
+    // The other product still waits for its own quote.
+    expect(within(screen.getByRole('table', { name: 'Quote requests' })).getByText(/^Essential/)).toBeVisible();
   });
 });
