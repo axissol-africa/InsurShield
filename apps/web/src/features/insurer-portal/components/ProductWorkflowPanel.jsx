@@ -21,7 +21,7 @@ const messageOf = (fallback) => (caught) => (caught?.code && caught?.message ? c
  * customer something (the reply clock stops until they answer), decline it
  * with an approved reason, and keep internal notes the customer never sees.
  */
-export default function ProductWorkflowPanel({ request, api, onChanged }) {
+export default function ProductWorkflowPanel({ request, api, onChanged, session }) {
   const workflow = request.workflow;
   const [open, setOpen] = useState(null);
   const status = workflow?.status;
@@ -34,7 +34,10 @@ export default function ProductWorkflowPanel({ request, api, onChanged }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-muted-foreground">Status</span>
           <Badge variant="outline">{PORTAL_STATUS_LABELS[status] ?? 'New'}</Badge>
+          {workflow?.priority === 'HIGH' && <Badge variant="destructive">Urgent</Badge>}
         </div>
+
+        <Ownership request={request} api={api} session={session} onChanged={onChanged} />
 
         {status === 'INSPECTION_REQUIRED' && (
           <Alert>
@@ -100,6 +103,84 @@ export default function ProductWorkflowPanel({ request, api, onChanged }) {
         <InternalNotes request={request} api={api} />
       </div>
     </TaskPanel>
+  );
+}
+
+/** The roles that quote, as the staff list words them. Only they can own a product. */
+const QUOTING_ROLE_LABELS = ['Insurer administrator', 'Quote officer', 'Insurer portal user'];
+
+/**
+ * Who owns this product. Anyone on the quoting team can take an unowned one;
+ * the insurer's administrator can also give it to a colleague and mark it urgent.
+ */
+function Ownership({ request, api, session, onChanged }) {
+  const id = useId();
+  const workflow = request.workflow;
+  const owner = workflow?.owner;
+  const isAdmin = session?.staffRole === 'INSURER_ADMIN';
+  const open = canDecline(workflow?.status);
+  const [team, setTeam] = useState(null);
+  const act = usePortalAction(async (change) => {
+    await change();
+    await onChanged?.('assigned');
+  }, messageOf('That change could not be saved. Please try again.'));
+
+  useEffect(() => {
+    if (!isAdmin || !open) return undefined;
+    let current = true;
+    api.staff.listUsers()
+      .then((users) => { if (current) setTeam(users.filter((user) => user.isActive !== false && QUOTING_ROLE_LABELS.includes(user.role))); })
+      .catch(() => { if (current) setTeam([]); });
+    return () => { current = false; };
+  }, [api, isAdmin, open]);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm">
+        <span className="text-muted-foreground">Owner </span>
+        <span className="font-medium">{owner ? (owner.id === session?.id ? 'You' : owner.name) : 'Nobody yet'}</span>
+      </p>
+      {/* Nothing to offer an officer once the product is owned; no empty row for them. */}
+      {open && (!owner || isAdmin) && (
+        <div className="flex flex-wrap items-end gap-2">
+          {!owner && (
+            <Button type="button" variant="outline" size="sm" disabled={act.pending} onClick={() => act.run(() => api.quotes.claim(request.id, request.productVersionId))}>
+              Take this product
+            </Button>
+          )}
+          {isAdmin && team && (
+            <div className="space-y-1">
+              <FieldLabel htmlFor={`${id}-owner`}>Assign to</FieldLabel>
+              <NativeSelect
+                id={`${id}-owner`}
+                size="sm"
+                value={owner?.id ?? ''}
+                disabled={act.pending}
+                onChange={(event) => {
+                  const staffId = event.target.value || null;
+                  void act.run(() => api.quotes.assign(request.id, request.productVersionId, staffId));
+                }}
+              >
+                <NativeSelectOption value="">Nobody</NativeSelectOption>
+                {team.map((member) => <NativeSelectOption key={member.id} value={member.id}>{member.fullName}</NativeSelectOption>)}
+              </NativeSelect>
+            </div>
+          )}
+          {isAdmin && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={act.pending}
+              onClick={() => act.run(() => api.quotes.setPriority(request.id, request.productVersionId, workflow?.priority === 'HIGH' ? 'NORMAL' : 'HIGH'))}
+            >
+              {workflow?.priority === 'HIGH' ? 'Mark as normal' : 'Mark as urgent'}
+            </Button>
+          )}
+        </div>
+      )}
+      {act.error && <p role="alert" className="text-sm text-destructive">{act.error}</p>}
+    </div>
   );
 }
 

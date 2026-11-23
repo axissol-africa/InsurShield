@@ -528,6 +528,28 @@ export const quotes = {
     if (!body?.trim()) throw new Error('Write the note before saving it.');
     return addPrototypeNote(s, id, productVersionId, body.trim());
   }),
+  claim: (id, productVersionId) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    const me = { id: s.staffSession?.id || 'prototype-staff', name: s.staffSession?.name || 'You' };
+    if (product.owner && product.owner.id !== me.id) throw new Error('A colleague already owns this product. Ask your administrator to reassign it.');
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      owner: me,
+      ...(current.status === 'SUBMITTED' ? { status: 'INSURER_PROCESSING', statusLabel: CUSTOMER_STATUS_LABELS.INSURER_PROCESSING } : {}),
+    }));
+    return { productVersionId, ownerStaffId: me.id };
+  }),
+  assign: (id, productVersionId, staffId) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    const member = staffId ? s.staffUsers.find((user) => user.id === staffId) : null;
+    if (staffId && !member) throw new Error('Choose an active member of your quoting team.');
+    s.updateSelectedProduct(id, productVersionId, () => ({ owner: member ? { id: member.id, name: member.fullName } : null }));
+    return { productVersionId, ownerStaffId: staffId };
+  }),
+  setPriority: (id, productVersionId, priority) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    s.updateSelectedProduct(id, productVersionId, () => ({ priority }));
+    return { productVersionId, priority };
+  }),
   answerInformation: (id, productVersionId, answer) => call((s) => {
     const request = mine(s.quoteRequests).find((entry) => entry.id === id);
     const product = request?.selectedProducts?.find((entry) => entry.productVersionId === productVersionId);

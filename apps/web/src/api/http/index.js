@@ -86,6 +86,10 @@ export const quotes = {
   requestInformation: (id, productVersionId, question) => apiClient.post(`${productPath(id, productVersionId)}/information-requests`, question),
   notes: (id, productVersionId) => apiClient.get(`${productPath(id, productVersionId)}/notes`),
   addNote: (id, productVersionId, body) => apiClient.post(`${productPath(id, productVersionId)}/notes`, { body }),
+  claim: (id, productVersionId) => apiClient.post(`${productPath(id, productVersionId)}/claim`),
+  assign: (id, productVersionId, staffId) => apiClient.post(`${productPath(id, productVersionId)}/assign`, { staffId }),
+  setPriority: (id, productVersionId, priority) => apiClient.post(`${productPath(id, productVersionId)}/priority`, { priority }),
+  queue: (query = {}) => apiClient.get('/insurer/queue', { params: query }),
   answerInformation: (id, productVersionId, answer) => apiClient.post(
     `/quote-requests/${encodeURIComponent(id)}/products/${encodeURIComponent(productVersionId)}/information`,
     { answer },

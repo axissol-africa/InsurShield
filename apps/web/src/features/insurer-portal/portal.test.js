@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AWAITING_CERTIFICATE, awaitsInsurer, benefitsForCoverage, quotableNow, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
+import { AWAITING_CERTIFICATE, awaitsInsurer, inQueueView, benefitsForCoverage, quotableNow, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -208,5 +208,19 @@ describe('a chosen product\'s workflow in the portal', () => {
     const due = new Date(Date.now() + 2 * 86_400_000 - 3_600_000).toISOString();
     const [portalCase] = toPortalCases(request({ workflow: { status: 'SUBMITTED', replyDueAt: due, informationRequests: [] } }), INSURER);
     expect(replyDeadline(portalCase).label).toMatch(/2 days left$/);
+  });
+});
+
+describe('queue views', () => {
+  const mine = { workflow: { owner: { id: 'me' } } };
+  const theirs = { workflow: { owner: { id: 'them' } } };
+  const unowned = { workflow: { owner: null } };
+  const legacy = {};
+
+  it('shows everything, my own work, or work nobody owns', () => {
+    const cases = [mine, theirs, unowned, legacy];
+    expect(cases.filter(inQueueView('all', 'me'))).toEqual(cases);
+    expect(cases.filter(inQueueView('mine', 'me'))).toEqual([mine]);
+    expect(cases.filter(inQueueView('unassigned', 'me'))).toEqual([unowned, legacy]);
   });
 });

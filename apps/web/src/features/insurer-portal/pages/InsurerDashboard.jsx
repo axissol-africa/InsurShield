@@ -9,10 +9,11 @@ import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import {
   AWAITING_CERTIFICATE, CLAIM_NOTIFIED, CLAIM_RECEIVED, EXTENSION_DAYS, PORTAL_CONTENT_ID,
-  awaitsInsurer, coverTypeOf, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
+  QUEUE_VIEWS, awaitsInsurer, coverTypeOf, inQueueView, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
 } from '@/features/insurer-portal/portal';
 import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
+import { Button } from '@/components/ui/primitives/button';
 import { PageHeader, StatusBadge } from '@/features/insurer-portal/components/ui';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
@@ -67,6 +68,9 @@ export default function InsurerDashboard() {
   const myRequests = quoteRequests.filter((request) => request.insurers?.includes(insurerName)).sort(byNewest('submittedAt')).flatMap((request) => toPortalCases(request, insurerName));
 
   const awaitingQuote = myRequests.filter(awaitsInsurer);
+  // The view is in the address, so Back and a refresh keep it.
+  const queueView = QUEUE_VIEWS.some((view) => view.id === searchParams.get('queue')) ? searchParams.get('queue') : 'all';
+  const shownQueue = awaitingQuote.filter(inQueueView(queueView, staffSession?.id));
   const quoted = myRequests.filter((request) => request.reply);
   const newClaims = myClaims.filter((claim) => claim.status === CLAIM_NOTIFIED);
   const receivedClaims = myClaims.filter((claim) => claim.status === CLAIM_RECEIVED);
@@ -165,8 +169,10 @@ export default function InsurerDashboard() {
         defaultValidityDays={defaultValidityDays}
         onBack={backToSection}
         workflowApi={api}
+        session={staffSession}
         onWorkflowChanged={async (change) => {
           await hydrateInsurerPortal();
+          if (change === 'assigned') return;
           if (change === 'declined') {
             toast.success('Product declined', { description: `The customer has been told ${quotingRequest.productName || 'this product'} will not be quoted.` });
             navigate(sectionPath, { replace: true });
@@ -226,10 +232,29 @@ export default function InsurerDashboard() {
         </section>
 
         <div id={QUOTE_QUEUE_ID} className="scroll-mt-20">
+          <div role="group" aria-label="Show quote requests" className="mb-3 flex flex-wrap gap-2">
+            {QUEUE_VIEWS.map((view) => (
+              <Button
+                key={view.id}
+                type="button"
+                size="sm"
+                variant={queueView === view.id ? 'default' : 'outline'}
+                aria-pressed={queueView === view.id}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  if (view.id === 'all') next.delete('queue');
+                  else next.set('queue', view.id);
+                  navigate({ search: next.toString() ? `?${next}` : '' }, { replace: true });
+                }}
+              >
+                {view.label}
+              </Button>
+            ))}
+          </div>
           <RequestQueue
             title="Quote requests"
-            countLabel={`${awaitingQuote.length} awaiting a quote`}
-            requests={awaitingQuote}
+            countLabel={`${shownQueue.length} awaiting a quote`}
+            requests={shownQueue}
             emptyMessage="Every request has been quoted. Sent quotes are listed below."
             onQuote={(request) => navigate(portalPath.quote(request.caseKey))}
           />

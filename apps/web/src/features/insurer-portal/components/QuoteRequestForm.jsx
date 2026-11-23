@@ -51,7 +51,7 @@ const validityFrom = (typed, usual) => {
  * What the customer will see builds up beside the Send button, so the figure
  * that will be charged is read back before it goes.
  */
-export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack, workflowApi, onWorkflowChanged }) {
+export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack, workflowApi, onWorkflowChanged, session }) {
   const quotation = useDocumentUpload();
   const quotationInput = useRef(null);
   const validityInput = useRef(null);
@@ -148,7 +148,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
       <div className="space-y-6">
         {/* A chosen product has its own workflow; a request from before product selection is only quoted. */}
         {request.productVersionId && workflowApi && (
-          <ProductWorkflowPanel request={request} api={workflowApi} onChanged={onWorkflowChanged} />
+          <ProductWorkflowPanel request={request} api={workflowApi} onChanged={onWorkflowChanged} session={session} />
         )}
         {quotableNow(request) && (
           <TaskPanel title="Your quotation" description="Record the quotation you prepared in your own system. The customer compares it with other insurers and pays the premium you enter.">

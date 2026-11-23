@@ -119,9 +119,15 @@ export function ProductLine({ request }) {
   return (
     <>
       <p className="mt-1 text-sm text-foreground">{request.productName}<span className="text-muted-foreground">{version}</span></p>
-      {/* New work needs no badge; anything further along says where it is. */}
-      {status && status !== 'SUBMITTED' && status !== 'QUOTED' && (
-        <Badge variant="outline" className="mt-1">{PORTAL_STATUS_LABELS[status] ?? status}</Badge>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {/* New work needs no badge; anything further along says where it is. */}
+        {status && status !== 'SUBMITTED' && status !== 'QUOTED' && (
+          <Badge variant="outline">{PORTAL_STATUS_LABELS[status] ?? status}</Badge>
+        )}
+        {request.workflow?.priority === 'HIGH' && <Badge variant="destructive">Urgent</Badge>}
+      </div>
+      {request.workflow && !request.reply && (
+        <p className="mt-1 text-xs text-muted-foreground">Owner: {request.workflow.owner?.name ?? 'nobody yet'}</p>
       )}
     </>
   );
@@ -131,7 +137,10 @@ export function ProductLine({ request }) {
 function ReplyBy({ request }) {
   const deadline = request.reply ? null : replyDeadline(request);
   if (!deadline) return null;
-  return <span className={`block text-xs ${deadline.urgent ? 'font-medium text-primary' : 'text-muted-foreground'}`}>{deadline.label}</span>;
+  // The API's view of the deadline wins: it knows the warning window the rule sets.
+  const sla = request.workflow?.sla;
+  const urgent = sla ? sla === 'DUE_SOON' || sla === 'BREACHED' : deadline.urgent;
+  return <span className={`block text-xs ${urgent ? 'font-medium text-primary' : 'text-muted-foreground'}`}>{deadline.label}</span>;
 }
 
 function QuotedStatus({ reply, onExtend, extending, error }) {

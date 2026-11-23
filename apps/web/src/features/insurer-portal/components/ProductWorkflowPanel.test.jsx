@@ -15,15 +15,25 @@ const fakeApi = () => ({
     requestInformation: vi.fn().mockResolvedValue({ status: 'VERIFICATION_REQUIRED' }),
     notes: vi.fn().mockResolvedValue([{ id: 'n1', body: 'Earlier note.', author: 'Mutale Banda', createdAt: '2026-11-20T09:00:00.000Z' }]),
     addNote: vi.fn().mockResolvedValue({ id: 'n2', body: 'New note.', author: 'Mutale Banda', createdAt: '2026-11-21T09:00:00.000Z' }),
+    claim: vi.fn().mockResolvedValue({}),
+    assign: vi.fn().mockResolvedValue({}),
+    setPriority: vi.fn().mockResolvedValue({}),
+  },
+  staff: {
+    listUsers: vi.fn().mockResolvedValue([
+      { id: 's1', fullName: 'Mutale Banda', role: 'Quote officer', isActive: true },
+      { id: 's2', fullName: 'Chanda Phiri', role: 'Claims and NCD officer', isActive: true },
+      { id: 's3', fullName: 'Inactive Officer', role: 'Quote officer', isActive: false },
+    ]),
   },
 });
 
 const request = (workflow) => ({ id: 'QR-9', productVersionId: 'pv-9', productName: 'Essential', workflow: { informationRequests: [], ...workflow } });
 
-function show(workflow = { status: 'SUBMITTED' }) {
+function show(workflow = { status: 'SUBMITTED' }, session = { id: 'me', staffRole: 'QUOTE_OFFICER' }) {
   const api = fakeApi();
   const onChanged = vi.fn().mockResolvedValue(undefined);
-  render(<ProductWorkflowPanel request={request(workflow)} api={api} onChanged={onChanged} />);
+  render(<ProductWorkflowPanel request={request(workflow)} api={api} onChanged={onChanged} session={session} />);
   return { api, onChanged };
 }
 
@@ -98,5 +108,27 @@ describe('ProductWorkflowPanel', () => {
       expect.stringContaining('New note.'),
       expect.stringContaining('Earlier note.'),
     ]);
+  });
+
+  it('lets an officer take an unowned product, and shows who owns one', async () => {
+    const user = userEvent.setup();
+    const { api, onChanged } = show();
+    expect(screen.getByText('Nobody yet')).toBeVisible();
+    expect(screen.queryByLabelText('Assign to')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Take this product' }));
+    expect(api.quotes.claim).toHaveBeenCalledWith('QR-9', 'pv-9');
+    expect(onChanged).toHaveBeenCalledWith('assigned');
+  });
+
+  it("offers the administrator only the active quoting team, and the product's priority", async () => {
+    const user = userEvent.setup();
+    const { api } = show({ status: 'INSURER_PROCESSING', owner: { id: 'me', name: 'Admin' }, priority: 'NORMAL' }, { id: 'me', staffRole: 'INSURER_ADMIN' });
+    expect(screen.getByText('You')).toBeVisible();
+    const select = await screen.findByLabelText('Assign to');
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['Nobody', 'Mutale Banda']);
+    await user.selectOptions(select, 's1');
+    expect(api.quotes.assign).toHaveBeenCalledWith('QR-9', 'pv-9', 's1');
+    await user.click(screen.getByRole('button', { name: 'Mark as urgent' }));
+    expect(api.quotes.setPriority).toHaveBeenCalledWith('QR-9', 'pv-9', 'HIGH');
   });
 });

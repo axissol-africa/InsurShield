@@ -163,3 +163,16 @@ describe('the quote workflow routes', () => {
     expect(transport.post).toHaveBeenNthCalledWith(4, '/quote-requests/QR-1/products/pv-1/information', { answer: '84,200 km' });
   });
 });
+
+describe('the quote queue routes', () => {
+  it('claims, assigns, sets priority and reads the queue', () => {
+    quotes.claim('QR-1', 'pv-1');
+    quotes.assign('QR-1', 'pv-1', null);
+    quotes.setPriority('QR-1', 'pv-1', 'HIGH');
+    quotes.queue({ owner: 'me' });
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/claim');
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/insurer/quote-requests/QR-1/products/pv-1/assign', { staffId: null });
+    expect(transport.post).toHaveBeenNthCalledWith(3, '/insurer/quote-requests/QR-1/products/pv-1/priority', { priority: 'HIGH' });
+    expect(transport.get).toHaveBeenCalledWith('/insurer/queue', { params: { owner: 'me' } });
+  });
+});

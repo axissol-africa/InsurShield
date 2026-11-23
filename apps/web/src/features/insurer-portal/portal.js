@@ -172,7 +172,23 @@ export const productWorkflow = (product) => {
       : null,
     decline: product.decline ? { customerText: product.decline.reason, customerNote: product.decline.note } : null,
     informationRequests: product.informationRequests || [],
+    owner: product.owner || null,
+    priority: product.priority || 'NORMAL',
+    sla: null,
   };
+};
+
+/** Which part of the queue a person is looking at: everything, their own work, or work nobody owns. */
+export const QUEUE_VIEWS = [
+  { id: 'all', label: 'All' },
+  { id: 'mine', label: 'Mine' },
+  { id: 'unassigned', label: 'Unassigned' },
+];
+export const inQueueView = (view, staffId) => (portalCase) => {
+  if (view === 'mine') return portalCase.workflow?.owner?.id === staffId;
+  // A request from before product selection has no owner, so it stays visible to everyone.
+  if (view === 'unassigned') return !portalCase.workflow?.owner;
+  return true;
 };
 
 /** Work still waiting on the insurer: no quote yet, and not closed. */
