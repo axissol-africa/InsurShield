@@ -20,7 +20,14 @@ import {
   quoteRequests,
   vehicles,
 } from '../db/schema.js';
-import type { CoverageDuration, InsuranceType, InspectionMethod, InspectionRule, InspectionTiming } from '../common/domain/enums.js';
+import type {
+  CoverageDuration,
+  InsuranceType,
+  InspectionMethod,
+  InspectionRule,
+  InspectionTiming,
+  QuoteProductStatus,
+} from '../common/domain/enums.js';
 import { ncdCodeIssuedTo } from './ncd-code-ownership.js';
 
 export type QuoteRequestRow = typeof quoteRequests.$inferSelect;
@@ -74,9 +81,16 @@ export interface SelectedProductVersionRow {
   inspectionTiming: InspectionTiming | null;
   inspectionMethod: InspectionMethod | null;
   cancelledAt: Date | null;
+  status: QuoteProductStatus;
+  replyDueAt: Date | null;
+  declineReasonCode: string | null;
+  declineCustomerNote: string | null;
 }
 
-export type AvailableProductVersion = Omit<SelectedProductVersionRow, 'quoteRequestId' | 'cancelledAt'> & {
+export type AvailableProductVersion = Omit<
+  SelectedProductVersionRow,
+  'quoteRequestId' | 'cancelledAt' | 'status' | 'replyDueAt' | 'declineReasonCode' | 'declineCustomerNote'
+> & {
   productId: string;
   allowedDurations: CoverageDuration[];
 };
@@ -230,6 +244,10 @@ export class QuoteRequestsRepository {
         inspectionTiming: quoteRequestProductVersions.inspectionTiming,
         inspectionMethod: quoteRequestProductVersions.inspectionMethod,
         cancelledAt: quoteRequestProductVersions.cancelledAt,
+        status: quoteRequestProductVersions.status,
+        replyDueAt: quoteRequestProductVersions.replyDueAt,
+        declineReasonCode: quoteRequestProductVersions.declineReasonCode,
+        declineCustomerNote: quoteRequestProductVersions.declineCustomerNote,
       })
       .from(quoteRequestProductVersions)
       .innerJoin(insurers, eq(insurers.id, quoteRequestProductVersions.insurerId))
@@ -343,10 +361,10 @@ export class QuoteRequestsRepository {
   async insertSelectedProductVersions(
     tx: Transaction,
     quoteRequestId: string,
-    selected: AvailableProductVersion[],
-  ): Promise<void> {
-    if (selected.length === 0) return;
-    await tx.insert(quoteRequestProductVersions).values(
+    selected: Array<AvailableProductVersion & Pick<typeof quoteRequestProductVersions.$inferInsert, 'status' | 'replyDueAt' | 'pausedAt'>>,
+  ) {
+    if (selected.length === 0) return [];
+    return tx.insert(quoteRequestProductVersions).values(
       selected.map((version) => ({
         quoteRequestId,
         productVersionId: version.productVersionId,
@@ -359,8 +377,15 @@ export class QuoteRequestsRepository {
         inspectionRule: version.inspectionRule,
         inspectionTiming: version.inspectionTiming,
         inspectionMethod: version.inspectionMethod,
+        status: version.status,
+        replyDueAt: version.replyDueAt,
+        pausedAt: version.pausedAt,
       })),
-    );
+    ).returning({
+      id: quoteRequestProductVersions.id,
+      productVersionId: quoteRequestProductVersions.productVersionId,
+      status: quoteRequestProductVersions.status,
+    });
   }
 
   productRequirementsForVersions(
@@ -447,15 +472,6 @@ export class QuoteRequestsRepository {
         ),
       )
       .returning({ quoteRequestId: quoteRequestRecipients.quoteRequestId });
-  }
-
-  /** Marks each selected version as unavailable while preserving its historic terms and replies. */
-  async cancelSelectedVersionsForSuspension(tx: Transaction, insurerId: string, cancelledAt: Date) {
-    return tx
-      .update(quoteRequestProductVersions)
-      .set({ cancelledAt, cancelledReason: 'INSURER_SUSPENDED' })
-      .where(and(eq(quoteRequestProductVersions.insurerId, insurerId), isNull(quoteRequestProductVersions.cancelledAt)))
-      .returning({ quoteRequestId: quoteRequestProductVersions.quoteRequestId });
   }
 
   /** Final quotes without a confirmed payment stay visible as history but may no longer be paid. */

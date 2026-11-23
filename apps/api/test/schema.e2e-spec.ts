@@ -30,6 +30,9 @@ const SCANNING = TAGS.findIndex((tag) => tag.startsWith('0009_'));
 /** The additive selected-product model begins at Batch 12. */
 const PRODUCT_CHOICES = TAGS.findIndex((tag) => tag.startsWith('0028_'));
 
+/** How many migrations precede 0033, which gives each chosen version its own state. */
+const QUOTE_WORKFLOW = TAGS.findIndex((tag) => tag.startsWith('0033_'));
+
 const created: ScratchDatabase[] = [];
 
 afterEach(async () => {
@@ -78,7 +81,23 @@ async function pushed(): Promise<ScratchDatabase> {
   // the push-built catalog comparable to the real migration-built catalog.
   await query(db, applyAuditLogAppendOnlyInvariant);
   await query(db, applyProductSelectionIntegrityInvariants);
+  await query(db, applyInternalNotesAppendOnlyInvariant);
   return db;
+}
+
+async function applyInternalNotesAppendOnlyInvariant(client: ClientBase) {
+  // Byte-for-byte the definition in migration 0033.
+  await client.query(`CREATE OR REPLACE FUNCTION "quote_internal_notes_reject_mutation"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'quote_internal_notes is append-only' USING ERRCODE = '55000';
+END;
+$$;`);
+  await client.query(`CREATE TRIGGER "quote_internal_notes_append_only"
+BEFORE UPDATE OR DELETE ON "quote_internal_notes"
+FOR EACH ROW EXECUTE FUNCTION "quote_internal_notes_reject_mutation"()`);
 }
 
 async function applyAuditLogAppendOnlyInvariant(client: ClientBase) {
@@ -893,6 +912,128 @@ describe('0030_batch_12_quote_request_drafts', () => {
   });
 });
 
+describe('0033_batch_13_quote_workflow', () => {
+  it('gives each existing chosen version the state its facts already say, and keeps internal notes append-only', async () => {
+    const db = await scratch(async (client) => {
+      await buildPrismaEraDatabase(client, { data: true });
+      for (let index = 1; index < QUOTE_WORKFLOW; index += 1) await applyMigration(client, index);
+    });
+
+    const insurerId = '00000000-0000-4000-8000-000000000011';
+    const staffId = '00000000-0000-4000-8000-000000000002';
+    const versions = {
+      quoted: randomUUID(),
+      cancelledUnquoted: randomUUID(),
+      cancelledWithUnpaidQuote: randomUUID(),
+      inspectionFirst: randomUUID(),
+      waiting: randomUUID(),
+    };
+
+    await query(db, async (client) => {
+      // Only a product-selection request may carry quotes for chosen versions.
+      await client.query(`UPDATE quote_requests SET model = 'PRODUCT_SELECTION' WHERE id = 'QR-1'`);
+      const productId = randomUUID();
+      await client.query(
+        `INSERT INTO insurer_products (id, "insurerId", code, "coverType", "updatedAt")
+         VALUES ($1, $2, 'B13-COMP', 'COMPREHENSIVE', CURRENT_TIMESTAMP)`,
+        [productId, insurerId],
+      );
+      let number = 0;
+      for (const [name, versionId] of Object.entries(versions)) {
+        number += 1;
+        const inspectionFirst = name === 'inspectionFirst';
+        await client.query(
+          `INSERT INTO insurer_product_versions
+             (id, "productId", "versionNumber", status, name, "coverType", "coverGuide", "inspectionRule", "inspectionTiming", "inspectionMethod", "rateBps", "effectiveFrom", "createdByStaffId", "updatedAt")
+           VALUES ($1, $2, $3, 'APPROVED', $4, 'COMPREHENSIVE', '{}'::jsonb, $5, $6, $7, 500, '2026-01-01', $8, CURRENT_TIMESTAMP)`,
+          [
+            versionId, productId, number, name,
+            inspectionFirst ? 'REQUIRED' : 'NOT_REQUIRED',
+            inspectionFirst ? 'BEFORE_QUOTATION' : null,
+            inspectionFirst ? 'PHYSICAL' : null,
+            staffId,
+          ],
+        );
+        const cancelled = name.startsWith('cancelled');
+        await client.query(
+          `INSERT INTO quote_request_product_versions
+             (id, "quoteRequestId", "productVersionId", "insurerId", "productCode", "productVersionNumber", "productName", "coverType", "coverGuide", "inspectionRule", "inspectionTiming", "inspectionMethod", "cancelledAt", "cancelledReason")
+           VALUES ($1, 'QR-1', $2, $3, 'B13-COMP', $4, $5, 'COMPREHENSIVE', '{}'::jsonb, $6, $7, $8, $9, $10)`,
+          [
+            randomUUID(), versionId, insurerId, number, name,
+            inspectionFirst ? 'REQUIRED' : 'NOT_REQUIRED',
+            inspectionFirst ? 'BEFORE_QUOTATION' : null,
+            inspectionFirst ? 'PHYSICAL' : null,
+            cancelled ? '2026-10-01T00:00:00Z' : null,
+            cancelled ? 'INSURER_SUSPENDED' : null,
+          ],
+        );
+        if (name === 'quoted' || name === 'cancelledWithUnpaidQuote') {
+          const documentId = randomUUID();
+          await client.query(
+            `INSERT INTO documents (id, kind, "fileName", "mimeType", "sizeBytes", "storageKey", "retentionClass")
+             VALUES ($1, 'QUOTATION', 'quote.pdf', 'application/pdf', 10, $2, 'UNDERWRITING_EVIDENCE')`,
+            [documentId, `batch-13/${documentId}`],
+          );
+          await client.query(
+            `INSERT INTO insurer_quotes
+               (id, "quoteRequestId", "insurerId", "productVersionId", "premiumMinor", "validityDays", "sentAt", "validUntil", "documentId")
+             VALUES ($1, 'QR-1', $2, $3, 50000, 14, '2026-09-20T08:00:00Z', '2026-10-04T08:00:00Z', $4)`,
+            [randomUUID(), insurerId, versionId, documentId],
+          );
+        }
+      }
+
+      await applyMigration(client, QUOTE_WORKFLOW);
+
+      const { rows } = await client.query<{ name: string; status: string; paused: boolean; due: boolean; changed: string }>(
+        `SELECT v."productName" AS name, v.status, v."pausedAt" IS NOT NULL AS paused,
+                v."replyDueAt" = r."expiresAt" AS due, to_char(v."statusChangedAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS changed
+         FROM quote_request_product_versions v JOIN quote_requests r ON r.id = v."quoteRequestId"
+         ORDER BY v."productVersionNumber"`,
+      );
+      expect(rows).toEqual([
+        { name: 'quoted', status: 'QUOTED', paused: false, due: true, changed: '2026-09-20' },
+        { name: 'cancelledUnquoted', status: 'CANCELLED', paused: false, due: true, changed: '2026-10-01' },
+        { name: 'cancelledWithUnpaidQuote', status: 'CANCELLED', paused: false, due: true, changed: '2026-10-01' },
+        { name: 'inspectionFirst', status: 'INSPECTION_REQUIRED', paused: true, due: true, changed: expect.any(String) },
+        { name: 'waiting', status: 'SUBMITTED', paused: false, due: true, changed: expect.any(String) },
+      ]);
+
+      await expect(
+        client.query(
+          `UPDATE quote_request_product_versions SET status = 'DECLINED' WHERE "productVersionId" = $1`,
+          [versions.waiting],
+        ),
+      ).rejects.toMatchObject({ code: '23514', constraint: 'quote_request_product_versions_decline_check' });
+
+      const noteId = randomUUID();
+      await client.query(
+        `INSERT INTO quote_internal_notes (id, "quoteRequestId", "productVersionId", "insurerId", "authorStaffId", body)
+         VALUES ($1, 'QR-1', $2, $3, $4, 'Checked the white book.')`,
+        [noteId, versions.waiting, insurerId, staffId],
+      );
+      await expect(client.query(`UPDATE quote_internal_notes SET body = 'changed' WHERE id = $1`, [noteId]))
+        .rejects.toMatchObject({ message: expect.stringContaining('quote_internal_notes is append-only') });
+      await expect(client.query(`DELETE FROM quote_internal_notes WHERE id = $1`, [noteId]))
+        .rejects.toMatchObject({ message: expect.stringContaining('quote_internal_notes is append-only') });
+
+      await client.query(
+        `INSERT INTO quote_information_requests (id, "quoteRequestId", "productVersionId", "insurerId", message, "dueAt")
+         VALUES ($1, 'QR-1', $2, $3, 'Send the white book.', CURRENT_TIMESTAMP + interval '3 days')`,
+        [randomUUID(), versions.waiting, insurerId],
+      );
+      await expect(
+        client.query(
+          `INSERT INTO quote_information_requests (id, "quoteRequestId", "productVersionId", "insurerId", message, "dueAt")
+           VALUES ($1, 'QR-1', $2, $3, 'And the licence.', CURRENT_TIMESTAMP + interval '3 days')`,
+          [randomUUID(), versions.waiting, insurerId],
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'quote_information_requests_open_key' });
+    });
+  });
+});
+
 describe('drizzle-kit', () => {
   it('generate finds no difference between src/db/schema.ts and the migrations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'insurshield-generate-'));
@@ -951,8 +1092,10 @@ describe('the final schema', () => {
     // Batch 12 adds the selected-product and cancellation timestamps, three
     // draft timestamps plus its document timestamp, and four timestamps for
     // insurer-defined product requirements and the customer's answers.
-    // Effective dates remain `date` values.
-    expect(timestampColumns).toHaveLength(131);
+    // Effective dates remain `date` values. Batch 13 adds eight: the chosen
+    // version's state change, reply due date and pause, the information
+    // request's four, and the internal note's creation.
+    expect(timestampColumns).toHaveLength(139);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

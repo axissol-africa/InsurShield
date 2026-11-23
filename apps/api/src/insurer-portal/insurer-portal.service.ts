@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../common/insurer-standing.js';
@@ -30,13 +30,19 @@ import {
   toNcdDecision,
   toPortalClaim,
   toPortalPolicy,
+  toInformationRequest,
   toPortalRequest,
   toReply,
 } from './dto/portal.response.js';
 import { coverTermLabel, premiumFloorMinor } from './domain/premium-floor.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { QuoteProductsRepository, type VersionRow } from '../customer/quote-products.repository.js';
+import { customerDate, QuoteWorkflowService } from '../customer/quote-workflow.service.js';
 import type {
   AcknowledgeClaimDto,
+  DeclineProductDto,
+  InternalNoteDto,
+  RequestInformationDto,
   ExtendQuoteDto,
   IssueCertificateDto,
   NcdDecisionDto,
@@ -66,6 +72,8 @@ export class InsurerPortalService {
     @Inject(NCD_CODE_PICK) private readonly pick: (n: number) => number,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly versions: QuoteProductsRepository,
+    private readonly workflow: QuoteWorkflowService,
   ) {}
 
   /**
@@ -124,10 +132,13 @@ export class InsurerPortalService {
     const insurerId = this.insurerOf(principal);
     const requests = await this.portal.listRequests(insurerId);
     const requestIds = requests.map((request) => request.id);
-    const [shots, selectedProducts] = await Promise.all([
+    const [shots, selectedProducts, informationRequests, reasons] = await Promise.all([
       this.portal.shotKeys(insurerId, requestIds),
       this.portal.selectedProductsForRequests(insurerId, requestIds),
+      this.versions.informationRequestsFor(requestIds, insurerId),
+      this.workflow.declineReasons(),
     ]);
+    const declineReasons = new Map(reasons.map((reason) => [reason.code, reason]));
 
     return Promise.all(
       requests.map(async (request) => {
@@ -143,6 +154,8 @@ export class InsurerPortalService {
               replyDocument: selection.reply ? await this.documents.record(selection.reply.documentId) : null,
             })),
           ),
+          informationRequests.filter((asked) => asked.quoteRequestId === request.id),
+          declineReasons,
         );
       }),
     );
@@ -176,13 +189,14 @@ export class InsurerPortalService {
 
       if (delivery.cancelledAt) throw requestUnavailable();
 
-      const productVersionId = await this.productVersionForDelivery(
+      const version = await this.productVersionForDelivery(
         tx,
         requestId,
         insurerId,
         delivery,
         dto.productVersionId,
       );
+      const productVersionId = version?.productVersionId ?? null;
 
       if (await this.portal.hasQuote(requestId, insurerId, productVersionId, tx)) {
         throw ApiException.conflict(
@@ -191,7 +205,16 @@ export class InsurerPortalService {
         );
       }
       const sentAt = new Date();
-      if (!isRequestOpen(delivery.status, delivery.expiresAt, sentAt)) throw requestExpired();
+      if (version) {
+        // A chosen product runs on its own reply clock, which waiting for the
+        // customer stops, so the request's original expiry does not decide it.
+        if (version.status !== 'SUBMITTED' && version.status !== 'INSURER_PROCESSING' && version.status !== 'VERIFICATION_REQUIRED') {
+          throw this.workflow.refusal(version.status, 'QUOTE');
+        }
+        this.workflow.assertWithinDeadline(version, sentAt);
+      } else if (!isRequestOpen(delivery.status, delivery.expiresAt, sentAt)) {
+        throw requestExpired();
+      }
 
       const minimumPremiumMinor = premiumFloorMinor(
         delivery.vehicleValueMinor,
@@ -222,6 +245,14 @@ export class InsurerPortalService {
       });
       // The request is "Quoted" as soon as one insurer replies; others may still reply afterwards.
       if (!(await this.portal.markQuoted(tx, requestId, insurerId, sentAt))) throw requestExpired();
+      if (version) {
+        await this.workflow.move(tx, version, 'QUOTE', {
+          actor: auditActor(principal),
+          note: 'Insurer sent a final quote.',
+          at: sentAt,
+          patch: { pausedAt: null },
+        });
+      }
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'insurer_quote.issued',
@@ -280,13 +311,9 @@ export class InsurerPortalService {
       if (delivery.cancelledAt) {
         throw ApiException.conflict('REQUEST_UNAVAILABLE', 'This request is no longer available to quote.');
       }
-      const productVersionId = await this.productVersionForDelivery(
-        tx,
-        requestId,
-        insurerId,
-        delivery,
-        dto.productVersionId,
-      );
+      const productVersionId =
+        (await this.productVersionForDelivery(tx, requestId, insurerId, delivery, dto.productVersionId))
+          ?.productVersionId ?? null;
       const result = await this.portal.extendOpenQuote(
         tx,
         requestId,
@@ -346,7 +373,7 @@ export class InsurerPortalService {
     insurerId: string,
     delivery: { model: 'LEGACY' | 'PRODUCT_SELECTION' },
     requestedProductVersionId: string | undefined,
-  ): Promise<string | null> {
+  ): Promise<VersionRow | null> {
     if (delivery.model === 'LEGACY') {
       if (requestedProductVersionId) {
         throw ApiException.conflict(
@@ -362,19 +389,192 @@ export class InsurerPortalService {
         'InsurShield has been updated; reload the page and choose the product you are quoting.',
       );
     }
-    const selection = await this.portal.lockSelectedProductVersion(
-      tx,
-      quoteRequestId,
-      insurerId,
-      requestedProductVersionId,
-    );
+    const selection = await this.versions.lock(tx, quoteRequestId, requestedProductVersionId, { insurerId });
     if (!selection || selection.cancelledAt) {
       throw ApiException.conflict(
         'PRODUCT_VERSION_UNAVAILABLE',
         'This selected product is no longer available to quote.',
       );
     }
-    return selection.productVersionId;
+    return selection;
+  }
+
+  /**
+   * Locks a chosen version of this insurer for a workflow action. A version
+   * of another insurer answers as absent, audited like every other reach.
+   */
+  private async ownVersion(
+    tx: Transaction,
+    principal: Principal,
+    requestId: string,
+    productVersionId: string,
+  ): Promise<{ version: VersionRow; insurerId: string }> {
+    const insurerId = this.insurerOf(principal);
+    const standing = await this.portal.insurerStanding(tx, insurerId);
+    if (!standing) throw ApiException.notFound('Insurer', insurerId);
+    if (!takesNewBusiness(standing, new Date())) {
+      throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
+    }
+    const version = await this.versions.lock(tx, requestId, productVersionId, { insurerId });
+    if (!version) {
+      throw await this.absent(
+        principal,
+        { type: 'QUOTE_REQUEST', label: 'Quote request' },
+        requestId,
+        await this.portal.quoteRequestExists(requestId, tx),
+      );
+    }
+    return { version, insurerId };
+  }
+
+  /** The approved reasons an insurer may decline with, as the rule in force states them. */
+  async declineReasons(principal: Principal) {
+    this.insurerOf(principal);
+    return (await this.workflow.declineReasons()).map(({ code, customerText, internalText }) => ({
+      code,
+      customerText,
+      internalText,
+    }));
+  }
+
+  /** Declines one chosen product with an approved reason. The customer sees only the customer wording. */
+  async declineProduct(principal: Principal, requestId: string, productVersionId: string, dto: DeclineProductDto) {
+    return this.portal.transaction(async (tx) => {
+      const { version, insurerId } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      const at = new Date();
+      const reason = (await this.workflow.declineReasons(at, tx)).find((candidate) => candidate.code === dto.reasonCode);
+      if (!reason) {
+        throw new ApiException('VALIDATION_FAILED', 'Choose one of the listed reasons for declining.', HttpStatus.BAD_REQUEST, { reasonCode: 'Unknown reason.' });
+      }
+      const customerNote = dto.customerNote?.trim() || null;
+      const status = await this.workflow.move(tx, version, 'DECLINE', {
+        actor: auditActor(principal),
+        note: `Declined: ${reason.code}.`,
+        at,
+        patch: { declineReasonCode: reason.code, declineCustomerNote: customerNote, pausedAt: null },
+      });
+      const internalNote = dto.internalNote?.trim();
+      if (internalNote) {
+        await this.versions.insertNote(tx, {
+          quoteRequestId: requestId,
+          productVersionId,
+          insurerId,
+          authorStaffId: this.staffOf(principal).id,
+          body: internalNote,
+        });
+      }
+      await this.notifications.notify(tx, {
+        customerId: version.customerId,
+        key: 'quote.version_declined',
+        entity: { type: 'QUOTE_REQUEST', id: requestId },
+        values: {
+          insurer: version.insurerName,
+          product: version.productName,
+          quoteRequestId: requestId,
+          reason: reason.customerText,
+        },
+      });
+      return { productVersionId, status, decline: { reasonCode: reason.code, customerText: reason.customerText, customerNote } };
+    });
+  }
+
+  /** Asks the customer for more information. The reply clock stops until they answer. */
+  async requestInformation(
+    principal: Principal,
+    requestId: string,
+    productVersionId: string,
+    dto: RequestInformationDto,
+  ) {
+    const message = dto.message.trim();
+    if (message.length < 5) {
+      throw new ApiException('VALIDATION_FAILED', 'Write what you need from the customer.', HttpStatus.BAD_REQUEST, { message: 'Too short.' });
+    }
+    return this.portal.transaction(async (tx) => {
+      const { version, insurerId } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      const at = new Date();
+      this.workflow.assertWithinDeadline(version, at);
+      const status = await this.workflow.move(tx, version, 'REQUEST_INFORMATION', {
+        actor: auditActor(principal),
+        note: 'Insurer asked the customer for more information.',
+        at,
+        patch: { pausedAt: at },
+      });
+      const asked = await this.versions.insertInformationRequest(tx, {
+        quoteRequestId: requestId,
+        productVersionId,
+        insurerId,
+        requestedByStaffId: this.staffOf(principal).id,
+        message,
+        dueAt: addDays(at, dto.dueInDays),
+      });
+      await this.notifications.notify(tx, {
+        customerId: version.customerId,
+        key: 'quote.information_requested',
+        entity: { type: 'QUOTE_REQUEST', id: requestId },
+        values: {
+          insurer: version.insurerName,
+          product: version.productName,
+          quoteRequestId: requestId,
+          dueDate: customerDate(asked.dueAt),
+        },
+      });
+      return { productVersionId, status, informationRequest: toInformationRequest(asked) };
+    });
+  }
+
+  /** This insurer's notes on one chosen product, newest first. */
+  async listNotes(principal: Principal, requestId: string, productVersionId: string) {
+    const insurerId = this.insurerOf(principal);
+    const owned = await this.portal.transaction((tx) => this.versions.lock(tx, requestId, productVersionId, { insurerId }));
+    if (!owned) {
+      throw await this.absent(
+        principal,
+        { type: 'QUOTE_REQUEST', label: 'Quote request' },
+        requestId,
+        await this.portal.quoteRequestExists(requestId),
+      );
+    }
+    const notes = await this.versions.notesFor(requestId, productVersionId, insurerId);
+    return notes.map((note) => ({ id: note.id, body: note.body, author: note.authorName, createdAt: note.createdAt.toISOString() }));
+  }
+
+  /** Adds an internal note. Notes are append-only and never reach the customer. */
+  async addNote(principal: Principal, requestId: string, productVersionId: string, dto: InternalNoteDto) {
+    const body = dto.body.trim();
+    if (!body) throw new ApiException('VALIDATION_FAILED', 'Write the note before saving it.', HttpStatus.BAD_REQUEST, { body: 'Empty.' });
+    const insurerId = this.insurerOf(principal);
+    const staff = this.staffOf(principal);
+    const created = await this.portal.transaction(async (tx) => {
+      const version = await this.versions.lock(tx, requestId, productVersionId, { insurerId });
+      if (!version) return null;
+      const note = await this.versions.insertNote(tx, {
+        quoteRequestId: requestId,
+        productVersionId,
+        insurerId,
+        authorStaffId: staff.id,
+        body,
+      });
+      // The audit row says a note was written, never what it says.
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'quote_note.added',
+        entityType: 'QUOTE_REQUEST_PRODUCT',
+        entityId: version.id,
+        note: 'Insurer added an internal note.',
+        correlationId: requestId,
+      });
+      return note;
+    });
+    if (!created) {
+      throw await this.absent(
+        principal,
+        { type: 'QUOTE_REQUEST', label: 'Quote request' },
+        requestId,
+        await this.portal.quoteRequestExists(requestId),
+      );
+    }
+    const author = (await this.versions.notesFor(requestId, productVersionId, insurerId)).find((note) => note.id === created.id)?.authorName;
+    return { id: created.id, body: created.body, author: author ?? null, createdAt: created.createdAt.toISOString() };
   }
 
   // ── Paid policies ───────────────────────────────────────────────

@@ -138,6 +138,11 @@ export class InsurerPortalRepository {
         inspectionTiming: quoteRequestProductVersions.inspectionTiming,
         inspectionMethod: quoteRequestProductVersions.inspectionMethod,
         cancelledAt: quoteRequestProductVersions.cancelledAt,
+        status: quoteRequestProductVersions.status,
+        replyDueAt: quoteRequestProductVersions.replyDueAt,
+        pausedAt: quoteRequestProductVersions.pausedAt,
+        declineReasonCode: quoteRequestProductVersions.declineReasonCode,
+        declineCustomerNote: quoteRequestProductVersions.declineCustomerNote,
         reply: replyColumns,
       })
       .from(quoteRequestProductVersions)
@@ -201,30 +206,6 @@ export class InsurerPortalRepository {
       )
       .for('update', { of: quoteRequestRecipients });
     return delivery;
-  }
-
-  /** Locks and scopes a selected product version to this insurer's recipient row. */
-  async lockSelectedProductVersion(
-    tx: Transaction,
-    quoteRequestId: string,
-    insurerId: string,
-    productVersionId: string,
-  ) {
-    const [selection] = await tx
-      .select({
-        productVersionId: quoteRequestProductVersions.productVersionId,
-        cancelledAt: quoteRequestProductVersions.cancelledAt,
-      })
-      .from(quoteRequestProductVersions)
-      .where(
-        and(
-          eq(quoteRequestProductVersions.quoteRequestId, quoteRequestId),
-          eq(quoteRequestProductVersions.insurerId, insurerId),
-          eq(quoteRequestProductVersions.productVersionId, productVersionId),
-        ),
-      )
-      .for('update');
-    return selection;
   }
 
   /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */

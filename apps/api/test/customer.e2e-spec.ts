@@ -569,6 +569,16 @@ describe('customer', () => {
         ]),
       );
       expect(await storedRequest(submitted.body.id)).toMatchObject({ model: 'PRODUCT_SELECTION' });
+      // Each chosen product starts waiting for its insurer, due by the reply
+      // deadline rule's default of seven days.
+      const submittedAt = new Date(submitted.body.submittedAt).getTime();
+      for (const selection of await selectedProductsOf(submitted.body.id)) {
+        expect(selection).toMatchObject({ status: 'SUBMITTED', pausedAt: null });
+        expect(selection.replyDueAt!.getTime() - submittedAt).toBe(7 * 24 * 60 * 60 * 1000);
+      }
+      for (const product of submitted.body.selectedProducts) {
+        expect(product).toMatchObject({ status: 'SUBMITTED', statusLabel: 'Waiting for the insurer', decline: null, informationRequests: [] });
+      }
       const deliveries = await testApp.db
         .select()
         .from(integrationDeliveries)

@@ -2,6 +2,8 @@ import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
 import type { QuoteRow, RecipientRow, RequestWithParties, SelectedProductVersionRow } from '../quote-requests.repository.js';
+import type { InformationRequestRow } from '../quote-products.repository.js';
+import { CUSTOMER_STATUS_LABELS } from '../domain/quote-workflow.js';
 
 export type QuoteWithDocument = QuoteRow & { document: DocumentRecord };
 
@@ -70,6 +72,21 @@ export interface QuoteRequestResponse {
     coverGuide: Record<string, unknown>;
     inspection: { rule: string; timing: string | null; method: string | null };
     unavailableAt: string | null;
+    /** Where this product stands with its insurer, and the wording the customer reads for it. */
+    status: string;
+    statusLabel: string;
+    replyDueAt: string | null;
+    /** Only the approved customer wording and the insurer's note to the customer; never the internal reason. */
+    decline: { reason: string | null; note: string | null } | null;
+    informationRequests: Array<{
+      id: string;
+      message: string;
+      dueAt: string;
+      askedAt: string;
+      answeredAt: string | null;
+      answer: string | null;
+      open: boolean;
+    }>;
   }>;
   insurerQuotes: Record<string, InsurerQuoteResponse>;
   productQuotes: ProductQuoteResponse[];
@@ -90,6 +107,8 @@ export function toQuoteRequestResponse(
   selectedProducts: SelectedProductVersionRow[],
   requotedAs: string | null,
   currentRtsaAnniversaryFeeMinor: number,
+  informationRequests: InformationRequestRow[] = [],
+  declineCustomerText: ReadonlyMap<string, string> = new Map(),
 ): QuoteRequestResponse {
   const insurerQuotes: Record<string, InsurerQuoteResponse> = {};
   const productQuotes: ProductQuoteResponse[] = [];
@@ -168,6 +187,23 @@ export function toQuoteRequestResponse(
         method: selection.inspectionMethod,
       },
       unavailableAt: selection.cancelledAt?.toISOString() ?? null,
+      status: selection.status,
+      statusLabel: CUSTOMER_STATUS_LABELS[selection.status],
+      replyDueAt: selection.replyDueAt?.toISOString() ?? null,
+      decline: selection.declineReasonCode
+        ? { reason: declineCustomerText.get(selection.declineReasonCode) ?? null, note: selection.declineCustomerNote }
+        : null,
+      informationRequests: informationRequests
+        .filter((asked) => asked.productVersionId === selection.productVersionId)
+        .map((asked) => ({
+          id: asked.id,
+          message: asked.message,
+          dueAt: asked.dueAt.toISOString(),
+          askedAt: asked.createdAt.toISOString(),
+          answeredAt: asked.answeredAt?.toISOString() ?? null,
+          answer: asked.answerText,
+          open: asked.closedAt === null,
+        })),
     })),
     insurerQuotes,
     productQuotes,

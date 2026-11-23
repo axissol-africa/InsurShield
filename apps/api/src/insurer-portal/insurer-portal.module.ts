@@ -5,9 +5,10 @@ import { InsurerPortalController } from './insurer-portal.controller.js';
 import { InsurerPortalRepository } from './insurer-portal.repository.js';
 import { InsurersModule } from '../insurers/insurers.module.js';
 import { PiaModule } from '../pia/pia.module.js';
+import { CustomerModule } from '../customer/customer.module.js';
 
 @Module({
-  imports: [InsurersModule, PiaModule],
+  imports: [InsurersModule, PiaModule, CustomerModule],
   controllers: [InsurerPortalController],
   providers: [InsurerPortalService, InsurerPortalRepository, { provide: NCD_CODE_PICK, useValue: randomInt }],
 })

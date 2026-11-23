@@ -38,6 +38,41 @@ export class SubmitQuoteDto {
   @IsOptional() @IsInt() @Min(1) @Max(30) validityDays?: number;
 }
 
+export class DeclineProductDto {
+  /** A code from the approved QUOTE_DECLINE_REASONS list. */
+  @IsString({ message: 'Choose a reason for declining.' })
+  @MinLength(2, { message: 'Choose a reason for declining.' })
+  @MaxLength(80)
+  reasonCode!: string;
+
+  /** Shown to the customer under the reason's approved wording. */
+  @IsOptional() @IsString() @MaxLength(1000) customerNote?: string;
+
+  /** Kept as an internal note; never shown to the customer. */
+  @IsOptional() @IsString() @MaxLength(4000) internalNote?: string;
+}
+
+export class RequestInformationDto {
+  /** What the customer is asked, shown to them as written. */
+  @IsString()
+  @MinLength(5, { message: 'Write what you need from the customer.' })
+  @MaxLength(2000, { message: 'Keep the question under 2,000 characters.' })
+  message!: string;
+
+  /** How many days the customer has to answer. */
+  @IsInt()
+  @Min(1, { message: 'Give the customer at least one day to answer.' })
+  @Max(14, { message: 'Give the customer at most 14 days to answer.' })
+  dueInDays!: number;
+}
+
+export class InternalNoteDto {
+  @IsString()
+  @MinLength(1, { message: 'Write the note before saving it.' })
+  @MaxLength(4000, { message: 'Keep the note under 4,000 characters.' })
+  body!: string;
+}
+
 export class ExtendQuoteDto {
   /** Required when extending a quote for a customer-selected product version. */
   @IsOptional()

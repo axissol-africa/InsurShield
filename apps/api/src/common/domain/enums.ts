@@ -11,6 +11,25 @@ export type QuoteRequestStatus = (typeof QUOTE_REQUEST_STATUSES)[number];
 export const QUOTE_REQUEST_MODELS = ['LEGACY', 'PRODUCT_SELECTION'] as const;
 export type QuoteRequestModel = (typeof QUOTE_REQUEST_MODELS)[number];
 
+/**
+ * Where one chosen product version stands with its insurer. Each version moves
+ * on its own, so a request with two products can be quoted for one and
+ * declined for the other. The transitions are in `customer/domain/quote-workflow.ts`.
+ */
+export const QUOTE_PRODUCT_STATUSES = [
+  'SUBMITTED',
+  'INSURER_PROCESSING',
+  'VERIFICATION_REQUIRED',
+  'INSPECTION_REQUIRED',
+  'QUOTED',
+  'DECLINED',
+  'TIMED_OUT',
+  'EXPIRED',
+  'CANCELLED',
+  'MANUAL_REVIEW',
+] as const;
+export type QuoteProductStatus = (typeof QUOTE_PRODUCT_STATUSES)[number];
+
 export const INSURANCE_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'] as const;
 export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 
@@ -37,6 +56,7 @@ export const RULE_SETTING_KEYS = [
   'ADD_ON_CATALOGUE',
   'USAGE_LOADINGS',
   'DOCUMENT_RETENTION',
+  'QUOTE_DECLINE_REASONS',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 

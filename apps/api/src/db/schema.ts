@@ -53,6 +53,7 @@ import {
   COMPARISON_VALUE_TYPES,
   COMPARISON_DISPLAY_RULES,
   QUOTE_UNAVAILABILITY_REASONS,
+  QUOTE_PRODUCT_STATUSES,
   QUOTE_REQUEST_MODELS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
@@ -67,6 +68,7 @@ import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/doma
 
 export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STATUSES);
 export const quoteRequestModel = pgEnum('QuoteRequestModel', QUOTE_REQUEST_MODELS);
+export const quoteProductStatus = pgEnum('QuoteProductStatus', QUOTE_PRODUCT_STATUSES);
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
@@ -920,6 +922,18 @@ export const quoteRequestProductVersions = pgTable(
     // selection or to the delivery record's operational state.
     cancelledAt: timestamptz('cancelledAt'),
     cancelledReason: quoteUnavailabilityReason('cancelledReason'),
+    // Batch 13: where this version stands with its insurer. Only the
+    // transitions in customer/domain/quote-workflow.ts write it.
+    status: quoteProductStatus('status').notNull().default('SUBMITTED'),
+    statusChangedAt: createdAt('statusChangedAt'),
+    /** When the insurer must answer by. Waiting for the customer moves it on (see pausedAt). */
+    replyDueAt: timestamptz('replyDueAt'),
+    /** Set while the customer is being waited for, so the reply clock is stopped. */
+    pausedAt: timestamptz('pausedAt'),
+    /** A code from the QUOTE_DECLINE_REASONS rule in force when the insurer declined. */
+    declineReasonCode: varchar('declineReasonCode', { length: 80 }),
+    /** Shown to the customer under the reason's customer wording. */
+    declineCustomerNote: text('declineCustomerNote'),
   },
   (t) => [
     // This is a referenced key, so it is a constraint rather than only a
@@ -945,6 +959,94 @@ export const quoteRequestProductVersions = pgTable(
       'quote_request_product_versions_cancellation_mark_check',
       sql`(${t.cancelledAt} IS NULL) = (${t.cancelledReason} IS NULL)`,
     ),
+    // The reply-deadline job reads open versions by due date.
+    index('quote_request_product_versions_status_replyDueAt_idx').on(t.status, t.replyDueAt),
+    check(
+      'quote_request_product_versions_decline_check',
+      sql`(${t.status} = 'DECLINED') = (${t.declineReasonCode} IS NOT NULL)
+        AND (${t.declineCustomerNote} IS NULL OR ${t.declineReasonCode} IS NOT NULL)`,
+    ),
+    check(
+      'quote_request_product_versions_cancelled_check',
+      sql`${t.status} <> 'CANCELLED' OR ${t.cancelledAt} IS NOT NULL`,
+    ),
+    check(
+      'quote_request_product_versions_paused_check',
+      sql`${t.pausedAt} IS NULL OR ${t.status} IN ('VERIFICATION_REQUIRED', 'INSPECTION_REQUIRED')`,
+    ),
+  ],
+);
+
+/**
+ * An insurer's question to the customer about one chosen version. While it is
+ * open the version waits in VERIFICATION_REQUIRED with its reply clock
+ * stopped. It closes when the customer answers, or when the version moves on
+ * without an answer (quoted, declined, cancelled or timed out).
+ */
+export const quoteInformationRequests = pgTable(
+  'quote_information_requests',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    requestedByStaffId: uuid('requestedByStaffId'),
+    /** Shown to the customer as written. */
+    message: text('message').notNull(),
+    dueAt: timestamptz('dueAt').notNull(),
+    createdAt: createdAt(),
+    answeredAt: timestamptz('answeredAt'),
+    answerText: text('answerText'),
+    closedAt: timestamptz('closedAt'),
+  },
+  (t) => [
+    // At most one open question per chosen version.
+    uniqueIndex('quote_information_requests_open_key')
+      .on(t.quoteRequestId, t.productVersionId)
+      .where(sql`${t.closedAt} IS NULL`),
+    index('quote_information_requests_insurerId_createdAt_idx').on(t.insurerId, t.createdAt),
+    foreignKey({
+      name: 'quote_information_requests_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+    fk('quote_information_requests_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('quote_information_requests_requestedByStaffId_fkey', [t.requestedByStaffId], [staffUsers.id], 'set null'),
+    check(
+      'quote_information_requests_answer_check',
+      sql`(${t.answeredAt} IS NULL) = (${t.answerText} IS NULL)
+        AND (${t.answeredAt} IS NULL OR ${t.closedAt} IS NOT NULL)`,
+    ),
+    check('quote_information_requests_message_check', sql`char_length(${t.message}) BETWEEN 1 AND 2000`),
+  ],
+);
+
+/**
+ * The insurer's own notes on a chosen version. They are append-only (a
+ * trigger refuses UPDATE and DELETE, as for audit_logs) and never reach a
+ * customer response, a notification or an audit summary.
+ */
+export const quoteInternalNotes = pgTable(
+  'quote_internal_notes',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    authorStaffId: uuid('authorStaffId'),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('quote_internal_notes_selection_createdAt_idx').on(t.quoteRequestId, t.productVersionId, t.createdAt),
+    foreignKey({
+      name: 'quote_internal_notes_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('restrict'),
+    fk('quote_internal_notes_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('quote_internal_notes_authorStaffId_fkey', [t.authorStaffId], [staffUsers.id], 'set null'),
+    check('quote_internal_notes_body_check', sql`char_length(${t.body}) BETWEEN 1 AND 4000`),
   ],
 );
 

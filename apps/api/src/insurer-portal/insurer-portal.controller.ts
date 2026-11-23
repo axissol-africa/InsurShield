@@ -3,7 +3,10 @@ import { InsurerPortalService } from './insurer-portal.service.js';
 import { InsurersService } from '../insurers/insurers.service.js';
 import {
   AcknowledgeClaimDto,
+  DeclineProductDto,
   ExtendQuoteDto,
+  InternalNoteDto,
+  RequestInformationDto,
   IssueCertificateDto,
   NcdDecisionDto,
   SubmitQuoteDto,
@@ -79,6 +82,60 @@ export class InsurerPortalController {
     @CurrentUser() principal: Principal,
   ) {
     return this.portal.extendQuote(principal, id, dto);
+  }
+
+  // ── One chosen product ──────────────────────────────────────────
+
+  @Needs('portal:request:read')
+  @Get('decline-reasons')
+  declineReasons(@CurrentUser() principal: Principal) {
+    return this.portal.declineReasons(principal);
+  }
+
+  @Needs('portal:quote:decline')
+  @Post('quote-requests/:id/products/:productVersionId/decline')
+  @HttpCode(HttpStatus.OK)
+  declineProduct(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: DeclineProductDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.declineProduct(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:quote:request-info')
+  @Post('quote-requests/:id/products/:productVersionId/information-requests')
+  @HttpCode(HttpStatus.CREATED)
+  requestInformation(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: RequestInformationDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.requestInformation(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:note:read')
+  @Get('quote-requests/:id/products/:productVersionId/notes')
+  listNotes(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.listNotes(principal, id, productVersionId);
+  }
+
+  @Needs('portal:note:write')
+  @Post('quote-requests/:id/products/:productVersionId/notes')
+  @HttpCode(HttpStatus.CREATED)
+  addNote(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: InternalNoteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.addNote(principal, id, productVersionId, dto);
   }
 
   // ── Paid policies ───────────────────────────────────────────────

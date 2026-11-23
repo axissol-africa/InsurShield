@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
@@ -13,11 +13,15 @@ import type { Transaction } from '../db/database.module.js';
 import { newReference } from '../common/domain/reference.js';
 import type { CoverageDuration, DocumentKind, InsuranceType } from '../common/domain/enums.js';
 import type { CustomerPrincipal } from './customer-principal.js';
+import { QuoteWorkflowService } from './quote-workflow.service.js';
+import { initialStatus, resumedReplyDueAt } from './domain/quote-workflow.js';
+import { QuoteProductsRepository } from './quote-products.repository.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
 import {
   CHOOSE_A_COVER_PERIOD,
   CHOOSE_A_COVER_TYPE,
+  type AnswerInformationRequestDto,
   type SubmitQuoteRequestDto,
   type VehicleDetailsDto,
 } from './dto/customer.dto.js';
@@ -64,6 +68,8 @@ export class QuoteRequestsService {
     private readonly config: ConfigService<Env, true>,
     private readonly audit: AuditService,
     private readonly integrations: IntegrationsService,
+    private readonly workflow: QuoteWorkflowService,
+    private readonly versions: QuoteProductsRepository,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -198,6 +204,47 @@ export class QuoteRequestsService {
     });
   }
 
+  /**
+   * The customer answers the insurer's open question about one chosen
+   * product. The insurer's reply clock starts again, with the time it spent
+   * waiting added to its due date.
+   */
+  async answerInformationRequest(
+    customer: CustomerPrincipal,
+    id: string,
+    productVersionId: string,
+    dto: AnswerInformationRequestDto,
+  ): Promise<QuoteRequestResponse> {
+    const answer = dto.answer.trim();
+    if (!answer) {
+      throw new ApiException('VALIDATION_FAILED', 'Write your answer before sending it.', HttpStatus.BAD_REQUEST, {
+        answer: 'Empty.',
+      });
+    }
+    return this.repository.transaction(async (tx) => {
+      const version = await this.versions.lock(tx, id, productVersionId, { customerId: customer.id });
+      if (!version) throw ApiException.notFound('Quote request', id);
+      const open = await this.versions.lockOpenInformationRequest(tx, id, productVersionId);
+      if (version.status !== 'VERIFICATION_REQUIRED' || !open) throw this.workflow.refusal(version.status, 'CUSTOMER_ANSWERED');
+
+      const at = new Date();
+      await this.versions.answerInformationRequest(tx, open.id, answer, at);
+      await this.workflow.move(tx, version, 'CUSTOMER_ANSWERED', {
+        actor: auditActor(customer),
+        note: 'Customer answered the insurer\'s question.',
+        at,
+        patch: {
+          pausedAt: null,
+          replyDueAt: version.replyDueAt && version.pausedAt ? resumedReplyDueAt(version.replyDueAt, version.pausedAt, at) : version.replyDueAt,
+        },
+      });
+      const row = await this.repository.findOwned(customer.id, id, tx);
+      if (!row) throw ApiException.notFound('Quote request', id);
+      const [response] = await this.responses([row], tx);
+      return response;
+    });
+  }
+
   /** Writes a request with its recipients and photos in `tx` and reads it back for the response. */
   async distribute(
     tx: Transaction,
@@ -210,7 +257,16 @@ export class QuoteRequestsService {
   ): Promise<QuoteRequestResponse> {
     const created = await this.repository.insertRequest(tx, request);
     await this.repository.insertRecipients(tx, created.id, insurerIds);
-    await this.repository.insertSelectedProductVersions(tx, created.id, selectedVersions);
+    const replyDueAt = selectedVersions.length > 0 ? await this.workflow.replyDueAt(created.submittedAt, tx) : null;
+    const chosen = await this.repository.insertSelectedProductVersions(
+      tx,
+      created.id,
+      selectedVersions.map((version) => {
+        const status = initialStatus(version.inspectionRule, version.inspectionTiming);
+        // A version waiting for an inspection before quotation starts with its clock stopped.
+        return { ...version, status, replyDueAt, pausedAt: status === 'INSPECTION_REQUIRED' ? created.submittedAt : null };
+      }),
+    );
     await this.repository.insertProductRequirementAnswers(tx, created.id, productRequirements.answers);
     await this.repository.insertProductRequirementDeclarations(tx, created.id, productRequirements.declarations);
     await this.repository.insertProductRequirementDocuments(tx, created.id, productRequirements.documents);
@@ -256,6 +312,20 @@ export class QuoteRequestsService {
       note: 'Quote request submitted.',
       correlationId: created.id,
     });
+    for (const version of chosen) {
+      await this.audit.transition(tx, {
+        actor,
+        entityType: 'QUOTE_REQUEST_PRODUCT',
+        entityId: version.id,
+        fromStatus: null,
+        toStatus: version.status,
+        note:
+          version.status === 'INSPECTION_REQUIRED'
+            ? 'Product chosen; it needs an inspection before it can be quoted.'
+            : 'Product chosen.',
+        correlationId: created.id,
+      });
+    }
     return response;
   }
 
@@ -561,6 +631,10 @@ export class QuoteRequestsService {
     const quotes = await this.repository.quotesOf(ids, tx);
     const selectedProducts = await this.repository.selectedProductVersionsOf(ids, tx);
     const links = await this.repository.requoteLinksOf(ids, tx);
+    const informationRequests = await this.versions.informationRequestsFor(ids, undefined, tx);
+    const declineCustomerText = selectedProducts.some((selection) => selection.declineReasonCode)
+      ? new Map((await this.workflow.declineReasons(new Date(), tx)).map((reason) => [reason.code, reason.customerText]))
+      : new Map<string, string>();
 
     const responses: QuoteRequestResponse[] = [];
     for (const row of rows) {
@@ -576,6 +650,8 @@ export class QuoteRequestsService {
           selectedProducts.filter((selection) => selection.quoteRequestId === row.request.id),
           links.find((link) => link.requotedFromId === row.request.id)?.id ?? null,
           currentRtsaAnniversaryFeeMinor,
+          informationRequests.filter((asked) => asked.quoteRequestId === row.request.id),
+          declineCustomerText,
         ),
       );
     }

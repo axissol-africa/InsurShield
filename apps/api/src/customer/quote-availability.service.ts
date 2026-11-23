@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { Transaction } from '../db/database.module.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { QuoteRequestsRepository } from './quote-requests.repository.js';
+import { QuoteWorkflowService } from './quote-workflow.service.js';
 
 /**
  * Owns a quote's availability after it has been distributed. Insurers own
@@ -13,6 +14,7 @@ export class QuoteAvailabilityService {
   constructor(
     private readonly quotes: QuoteRequestsRepository,
     private readonly notifications: NotificationsService,
+    private readonly workflow: QuoteWorkflowService,
   ) {}
 
   async cancelForSuspendedInsurer(
@@ -20,10 +22,10 @@ export class QuoteAvailabilityService {
     input: { insurerId: string; insurerName: string; suspendedAt: Date },
   ): Promise<{ cancelledDeliveries: number; unpayableQuotes: number }> {
     const cancelled = await this.quotes.cancelUnansweredForSuspension(tx, input.insurerId, input.suspendedAt);
-    const cancelledSelections = await this.quotes.cancelSelectedVersionsForSuspension(tx, input.insurerId, input.suspendedAt);
+    const cancelledSelections = await this.workflow.cancelForSuspendedInsurer(tx, input.insurerId, input.suspendedAt);
     const customers = await this.quotes.customersForRequests(
       tx,
-      [...new Set([...cancelled, ...cancelledSelections].map((row) => row.quoteRequestId))],
+      [...new Set([...cancelled.map((row) => row.quoteRequestId), ...cancelledSelections])],
     );
     for (const customer of customers) {
       await this.notifications.notify(tx, {
