@@ -43,17 +43,44 @@ export const hydrateCustomer = async () => {
   ]);
 };
 
-/** Everything the insurer portal works from, scoped to the signed-in insurer. */
+/**
+ * Everything the insurer portal works from, scoped to the signed-in insurer.
+ *
+ * The `/insurer/*` routes already return only this insurer's records, so they
+ * do not repeat its name on each one. The portal screens also run in mock mode,
+ * where one store holds every insurer's records and the name is what tells them
+ * apart, so each record is tagged with the signed-in insurer as it is loaded.
+ */
 export const hydrateInsurerPortal = async () => {
   const store = useStore.getState();
+  let insurerName = store.staffSession?.insurerName ?? null;
+  await load('your insurer profile', api.insurers.profile, (profile) => {
+    store.setInsurers(profile ? [profile] : []);
+    insurerName = profile?.name ?? insurerName;
+  });
   await Promise.all([
-    load('your insurer profile', api.insurers.profile, (profile) => store.setInsurers(profile ? [profile] : [])),
-    load('the quote queue', api.quotes.listForInsurer, store.setQuoteRequests),
-    load('paid policies', api.policies.listForInsurer, store.setPolicies),
-    load('claim notifications', api.claims.listForInsurer, store.setClaims),
-    load('NCD applications', api.ncd.listForInsurer, store.setNcdApplications),
+    load('the quote queue', api.quotes.listForInsurer, (requests) => store.setQuoteRequests(scopeQuoteRequests(requests, insurerName))),
+    load('paid policies', api.policies.listForInsurer, (policies) => store.setPolicies(scopeRecords(policies, insurerName))),
+    load('claim notifications', api.claims.listForInsurer, (claims) => store.setClaims(scopeRecords(claims, insurerName))),
+    load('NCD applications', api.ncd.listForInsurer, (applications) => store.setNcdApplications(scopeRecords(applications, insurerName))),
   ]);
 };
+
+/** Marks records from an `/insurer/*` route as belonging to that insurer. */
+export const scopeRecords = (records, insurerName) =>
+  (records || []).map((record) => ({ ...record, insurer: record.insurer ?? insurerName }));
+
+/**
+ * The portal route returns this insurer's own reply as `reply`; the screens
+ * read replies by insurer name, as the customer view and mock mode hold them.
+ */
+export const scopeQuoteRequests = (requests, insurerName) =>
+  (requests || []).map((request) => ({
+    ...request,
+    insurers: request.insurers ?? (insurerName ? [insurerName] : []),
+    insurerQuotes: request.insurerQuotes ?? (request.reply && insurerName ? { [insurerName]: request.reply } : {}),
+    selectedProducts: request.selectedProducts?.map((product) => ({ ...product, insurerName: product.insurerName ?? insurerName })),
+  }));
 
 /** The insurer catalogue and PIA floor the administrator maintains. */
 export const hydrateAdmin = async () => {
