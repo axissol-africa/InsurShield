@@ -513,10 +513,29 @@ Where part 1 differs from the plan above, on purpose:
 - The insurer's officer is not emailed when the customer answers; the portal shows the answer on the next load.
 - `MANUAL_REVIEW` exists in the enum but nothing moves a product into it yet.
 
-### Part 2: queues, quote content and comparison
+### Part 2a: the insurer's queue (delivered)
 
-B13.2 items 1, 4 and 5 (claim, full quote content, withdraw and replace), B13.3 (queue, assignment, priority, SLA
-warnings), B13.5 (selection with purchase-critical conditions, comparison and sorting) and the derived request status.
+- A product has an owner (`assignedStaffId`, `assignedAt`), a priority (`NORMAL | HIGH`) and `slaWarnedAt`
+  (migration 0034).
+- `POST .../claim` takes an unowned product and starts work on it (`SUBMITTED` to `INSURER_PROCESSING`). The first
+  quote, question or decline on an unowned product also makes the person who did it its owner.
+- `POST .../assign` and `POST .../priority`: any quoting role may assign to themselves; only `INSURER_ADMIN` assigns
+  to a colleague, clears an owner or changes priority. A colleague must be an active member of the same insurer with a
+  quoting role.
+- `GET /insurer/queue` lists this insurer's open products, urgent first then by due date, with owner, priority and
+  deadline state (`ON_TRACK | DUE_SOON | BREACHED | PAUSED`). Filters: status, owner (me, unassigned, any), priority,
+  deadline state, and a search on request reference or plate. It returns at most 200 rows; cursor paging waits until a
+  real insurer's queue needs it.
+- The hourly sweep emails the owner, or the insurer's administrators when nobody owns it, once per product, when the
+  reply is due within the new `QUOTE_SLA_WARNING` rule (default 24 hours). The email is a job, so a mail outage delays
+  it rather than losing it. Its wording is in code for now, because notification templates are for customers only.
+- Web: owner, urgency and deadline on each queue row; All, Mine and Unassigned views; take, assign and priority
+  controls on the product panel.
+
+### Part 2b: quote content and comparison
+
+B13.2 items 4 and 5 (full quote content, withdraw and replace), B13.5 (selection with purchase-critical conditions,
+comparison and sorting) and the derived request status.
 
 ### Part 3: inspections
 

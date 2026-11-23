@@ -1094,8 +1094,9 @@ describe('the final schema', () => {
     // insurer-defined product requirements and the customer's answers.
     // Effective dates remain `date` values. Batch 13 adds eight: the chosen
     // version's state change, reply due date and pause, the information
-    // request's four, and the internal note's creation.
-    expect(timestampColumns).toHaveLength(139);
+    // request's four, and the internal note's creation; its second part adds
+    // when a product was assigned and when its owner was warned.
+    expect(timestampColumns).toHaveLength(141);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

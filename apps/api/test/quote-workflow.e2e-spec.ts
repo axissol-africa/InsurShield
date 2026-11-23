@@ -5,6 +5,7 @@ import {
   auditLogs,
   insurerProductVersions,
   insurerProducts,
+  jobs,
   notifications,
   quoteInformationRequests,
   quoteRequestProductVersions,
@@ -487,6 +488,120 @@ describe('the quote workflow of a chosen product', () => {
         .set(await signIn(testApp.http, asking.customer))
         .send({ answer: 'Lusaka.' });
       expect(answer.body.code).toBe('NO_OPEN_QUESTION');
+    });
+  });
+
+  describe('the queue', () => {
+    const staffPost = async (staff: { email: string }, path: string, body: Record<string, unknown> = {}) =>
+      testApp.http.post(`/api/v1/insurer/${path}`).set(await portal(staff)).send(body);
+    const queueFor = async (staff: { email: string }, query = '') =>
+      testApp.http.get(`/api/v1/insurer/queue${query}`).set(await portal(staff));
+
+    it('lets an officer claim a product, which starts the work and makes them its owner', async () => {
+      const insurer = await buildInsurer(testApp.db, { staff: { role: 'QUOTE_OFFICER' } });
+      const colleague = await buildStaffUser(testApp.db, { role: 'QUOTE_OFFICER', insurerId: insurer.insurer.id });
+      const { request, productVersion, row } = await chosen(insurer);
+      const base = `quote-requests/${request.id}/products/${productVersion.id}`;
+
+      const claimed = await staffPost(insurer.staff, `${base}/claim`);
+      expect(claimed.status).toBe(200);
+      expect(await versionRow(row.id)).toMatchObject({ status: 'INSURER_PROCESSING', assignedStaffId: insurer.staff.id });
+
+      const taken = await staffPost(colleague, `${base}/claim`);
+      expect(taken.body.code).toBe('ALREADY_ASSIGNED');
+
+      // An officer cannot hand work to someone else or change its priority.
+      expect((await staffPost(insurer.staff, `${base}/assign`, { staffId: colleague.id })).status).toBe(403);
+      expect((await staffPost(insurer.staff, `${base}/priority`, { priority: 'HIGH' })).status).toBe(403);
+
+      const mine = await queueFor(insurer.staff, '?owner=me');
+      expect(mine.body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).toEqual([request.id]);
+      expect(mine.body[0]).toMatchObject({
+        status: 'INSURER_PROCESSING',
+        owner: { id: insurer.staff.id },
+        priority: 'NORMAL',
+        sla: 'ON_TRACK',
+      });
+      expect((await queueFor(colleague, '?owner=me')).body).toEqual([]);
+    });
+
+    it("lets the administrator assign within the team, never to another insurer's staff", async () => {
+      const insurer = await buildInsurer(testApp.db, { staff: { role: 'INSURER_ADMIN' } });
+      const officer = await buildStaffUser(testApp.db, { role: 'QUOTE_OFFICER', insurerId: insurer.insurer.id });
+      const claims = await buildStaffUser(testApp.db, { role: 'CLAIMS_OFFICER', insurerId: insurer.insurer.id });
+      const rival = await buildInsurer(testApp.db);
+      const { request, productVersion, row } = await chosen(insurer);
+      const base = `quote-requests/${request.id}/products/${productVersion.id}`;
+
+      expect((await staffPost(insurer.staff, `${base}/assign`, { staffId: rival.staff.id })).status).toBe(400);
+      expect((await staffPost(insurer.staff, `${base}/assign`, { staffId: claims.id })).status).toBe(400);
+      expect((await staffPost(insurer.staff, `${base}/assign`, { staffId: officer.id })).status).toBe(200);
+      expect((await staffPost(insurer.staff, `${base}/priority`, { priority: 'HIGH' })).status).toBe(200);
+      // Assigning does not start the work; the owner does.
+      expect(await versionRow(row.id)).toMatchObject({ status: 'SUBMITTED', assignedStaffId: officer.id, priority: 'HIGH' });
+
+      const high = await queueFor(insurer.staff, '?priority=HIGH');
+      expect(high.body).toEqual([expect.objectContaining({ quoteRequestId: request.id, owner: { id: officer.id, name: officer.fullName } })]);
+      expect((await queueFor(rival.staff)).body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).not.toContain(request.id);
+
+      expect((await staffPost(insurer.staff, `${base}/assign`, { staffId: null })).status).toBe(200);
+      expect((await versionRow(row.id)).assignedStaffId).toBeNull();
+      const unassigned = await queueFor(insurer.staff, '?owner=unassigned');
+      expect(unassigned.body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).toContain(request.id);
+    });
+
+    it('makes whoever first declines an unowned product its owner', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const { request, productVersion, row } = await chosen(insurer);
+      await insurerPost(insurer, `quote-requests/${request.id}/products/${productVersion.id}/decline`, { reasonCode: 'OTHER' });
+      expect((await versionRow(row.id)).assignedStaffId).toBe(insurer.staff.id);
+    });
+
+    it('filters by deadline and searches by plate, and answers closed products as not in the queue', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const soon = await chosen(insurer, { replyDueAt: new Date(Date.now() + 2 * HOUR_MS) });
+      const later = await chosen(insurer);
+      const late = await chosen(insurer, { replyDueAt: new Date(Date.now() - HOUR_MS) });
+      await insurerPost(insurer, `quote-requests/${later.request.id}/products/${later.productVersion.id}/decline`, { reasonCode: 'OTHER' });
+
+      const all = await queueFor(insurer.staff);
+      const ids = all.body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId);
+      expect(ids).toEqual([late.request.id, soon.request.id]);
+      expect((await queueFor(insurer.staff, '?sla=DUE_SOON')).body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).toEqual([soon.request.id]);
+      expect((await queueFor(insurer.staff, '?sla=BREACHED')).body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).toEqual([late.request.id]);
+      expect((await queueFor(insurer.staff, '?status=DECLINED')).body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).toEqual([later.request.id]);
+      expect((await queueFor(insurer.staff, '?status=NOPE')).status).toBe(400);
+
+      const plate = all.body.find((entry: { quoteRequestId: string }) => entry.quoteRequestId === soon.request.id).plateNumber;
+      expect((await queueFor(insurer.staff, `?search=${encodeURIComponent(plate)}`)).body.map((entry: { quoteRequestId: string }) => entry.quoteRequestId)).toEqual([soon.request.id]);
+      // A search is matched literally, so a LIKE wildcard finds nothing.
+      expect((await queueFor(insurer.staff, '?search=%25')).body).toEqual([]);
+    });
+
+    it('warns the owner once when a reply is nearly due, or the administrators when nobody owns it', async () => {
+      const insurer = await buildInsurer(testApp.db, { staff: { role: 'INSURER_ADMIN' } });
+      const officer = await buildStaffUser(testApp.db, { role: 'QUOTE_OFFICER', insurerId: insurer.insurer.id });
+      const owned = await chosen(insurer, { replyDueAt: new Date(Date.now() + 3 * HOUR_MS) });
+      const unowned = await chosen(insurer, { replyDueAt: new Date(Date.now() + 5 * HOUR_MS) });
+      const relaxed = await chosen(insurer, { replyDueAt: new Date(Date.now() + 5 * DAY_MS) });
+      await testApp.db
+        .update(quoteRequestProductVersions)
+        .set({ assignedStaffId: officer.id, assignedAt: new Date() })
+        .where(eq(quoteRequestProductVersions.id, owned.row.id));
+
+      const workflow = testApp.app.get(QuoteWorkflowService);
+      await workflow.warnDue(new Date());
+      await workflow.warnDue(new Date());
+
+      const sent = async (versionId: string) =>
+        (await testApp.db.select({ key: jobs.key, payload: jobs.payload }).from(jobs).where(eq(jobs.kind, 'quote-workflow.staff-email')))
+          .filter((job) => job.key.includes(versionId))
+          .map((job) => (job.payload as { to: string }).to);
+      expect(await sent(owned.row.id)).toEqual([officer.email]);
+      expect(await sent(unowned.row.id)).toEqual([insurer.staff.email]);
+      expect(await sent(relaxed.row.id)).toEqual([]);
+      expect((await versionRow(owned.row.id)).slaWarnedAt).not.toBeNull();
+      expect((await versionRow(relaxed.row.id)).slaWarnedAt).toBeNull();
     });
   });
 });

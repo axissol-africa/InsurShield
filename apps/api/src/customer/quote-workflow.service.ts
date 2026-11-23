@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { MAIL_SENDER, type MailSender } from '../mail/mail.port.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import type { AuditActor } from '../common/audit/audit.types.js';
 import type { QuoteProductStatus } from '../common/domain/enums.js';
@@ -13,6 +14,8 @@ import { QuoteProductsRepository, type VersionPatch, type VersionRow } from './q
 export const QUOTE_WORKFLOW_SWEEP = 'quote-workflow.sweep';
 export const QUOTE_WORKFLOW_SWEEP_INTERVAL_MS = 60 * 60_000;
 export const QUOTE_WORKFLOW_SWEEP_BATCH = 500;
+/** An email to insurer staff about their own work. Customers are told through notifications instead. */
+export const QUOTE_STAFF_EMAIL = 'quote-workflow.staff-email';
 
 const SYSTEM: AuditActor = { type: 'SYSTEM', id: null };
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -42,12 +45,18 @@ export class QuoteWorkflowService {
     private readonly notifications: NotificationsService,
     private readonly settings: SettingsService,
     private readonly jobs: JobsRepository,
+    @Inject(MAIL_SENDER) private readonly mail: MailSender,
   ) {}
 
   /** The reply due date for a version chosen at `submittedAt`, from the deadline rule in force then. */
   async replyDueAt(submittedAt: Date, tx?: Transaction): Promise<Date> {
     const { value } = await this.settings.effective('QUOTE_REPLY_DEADLINE', submittedAt, tx);
     return new Date(submittedAt.getTime() + value.days * DAY_MS);
+  }
+
+  /** How long before a reply is due its owner is warned, as the rule in force says. */
+  slaWarning(now = new Date(), tx?: Transaction) {
+    return this.settings.effective('QUOTE_SLA_WARNING', now, tx);
   }
 
   /** The approved decline reasons in force now. */
@@ -162,14 +171,66 @@ export class QuoteWorkflowService {
     );
   }
 
-  /** Times out versions the insurer did not answer, then expires quotes nobody paid. */
-  async sweep(now = new Date()): Promise<{ timedOut: number; expired: number }> {
+  /** Warns owners of products nearly due, times out those nobody answered, then expires quotes nobody paid. */
+  async sweep(now = new Date()): Promise<{ warned: number; timedOut: number; expired: number }> {
     await this.schedule(new Date(now.getTime() + QUOTE_WORKFLOW_SWEEP_INTERVAL_MS));
+    const warned = await this.warnDue(now);
     const timedOut = await this.timeOutDue(now);
     const expired = await this.expireDue(now);
-    if (timedOut + expired > 0) this.logger.log(`Timed out ${timedOut} and expired ${expired} chosen products`);
-    if (timedOut === QUOTE_WORKFLOW_SWEEP_BATCH || expired === QUOTE_WORKFLOW_SWEEP_BATCH) await this.schedule(now);
-    return { timedOut, expired };
+    if (warned + timedOut + expired > 0) {
+      this.logger.log(`Warned ${warned}, timed out ${timedOut} and expired ${expired} chosen products`);
+    }
+    if ([warned, timedOut, expired].includes(QUOTE_WORKFLOW_SWEEP_BATCH)) await this.schedule(now);
+    return { warned, timedOut, expired };
+  }
+
+  /**
+   * Emails the owner of each product whose reply is nearly due, or the
+   * insurer's administrators when nobody owns it yet. Each product is warned
+   * once; the email is a job, so a mail outage delays it rather than losing it.
+   */
+  async warnDue(now: Date): Promise<number> {
+    const { value } = await this.slaWarning(now);
+    let count = 0;
+    for (const due of await this.versions.dueForWarning(now, value.hoursBeforeDue, QUOTE_WORKFLOW_SWEEP_BATCH)) {
+      const warned = await this.versions.transaction(async (tx) => {
+        if (!(await this.versions.markWarned(tx, due.id, now))) return false;
+        const owner = due.assignedStaffId
+          ? await this.versions.insurerStaffMember(due.insurerId, due.assignedStaffId, tx)
+          : undefined;
+        const recipients = owner
+          ? [owner]
+          : await this.versions.insurerStaffWithRoles(due.insurerId, ['INSURER_ADMIN'], tx);
+        for (const recipient of recipients) {
+          await this.jobs.enqueue(tx, {
+            kind: QUOTE_STAFF_EMAIL,
+            key: `sla-warning:${due.id}:${recipient.id}`,
+            payload: {
+              to: recipient.email,
+              subject: `Reply due soon: ${due.productName} on ${due.quoteRequestId}`,
+              body:
+                `The reply for ${due.productName} on quote request ${due.quoteRequestId} is due by ` +
+                `${customerDate(due.replyDueAt!)}. Open the InsurShield insurer portal to quote, ask the ` +
+                'customer for information or decline it. After the due date the customer can no longer receive your quote.',
+            },
+          });
+        }
+        return true;
+      });
+      if (warned) count += 1;
+    }
+    return count;
+  }
+
+  /** Sends one staff email; a retryable failure is thrown so the runner tries again later. */
+  async sendStaffEmail(key: string, payload: { to: string; subject: string; body: string }): Promise<void> {
+    const result = await this.mail.send({ ...payload, idempotencyKey: `quote-workflow:${key}` });
+    if (result.result === 'sent') return;
+    if (!result.retryable) {
+      this.logger.error(`Mail refused for staff email ${key}: ${result.reason}`);
+      return;
+    }
+    throw new Error(`Mail provider unavailable for staff email ${key}: ${result.reason}`);
   }
 
   async timeOutDue(now: Date): Promise<number> {

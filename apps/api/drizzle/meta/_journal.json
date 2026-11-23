@@ -239,6 +239,13 @@
       "when": 1795441469948,
       "tag": "0033_batch_13_quote_workflow",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795445429671,
+      "tag": "0034_batch_13_quote_queue",
+      "breakpoints": true
     }
   ]
 }

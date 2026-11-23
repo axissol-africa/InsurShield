@@ -7,6 +7,7 @@ import type { InspectionRule, InspectionTiming, QuoteProductStatus } from '../..
  * never jump somewhere the table below does not allow.
  */
 export type QuoteProductEvent =
+  | 'CLAIM'
   | 'REQUEST_INFORMATION'
   | 'CUSTOMER_ANSWERED'
   | 'QUOTE'
@@ -35,6 +36,8 @@ export const QUOTABLE_STATUSES = [
 export const PAUSED_STATUSES = ['VERIFICATION_REQUIRED', 'INSPECTION_REQUIRED'] as const satisfies readonly QuoteProductStatus[];
 
 const TRANSITIONS: Record<QuoteProductEvent, { from: readonly QuoteProductStatus[]; to: QuoteProductStatus }> = {
+  // An officer picks the product up, by claiming it or by the first thing they do with it.
+  CLAIM: { from: ['SUBMITTED'], to: 'INSURER_PROCESSING' },
   REQUEST_INFORMATION: { from: ['SUBMITTED', 'INSURER_PROCESSING'], to: 'VERIFICATION_REQUIRED' },
   CUSTOMER_ANSWERED: { from: ['VERIFICATION_REQUIRED'], to: 'INSURER_PROCESSING' },
   QUOTE: { from: QUOTABLE_STATUSES, to: 'QUOTED' },
@@ -83,6 +86,25 @@ export function initialStatus(rule: InspectionRule, timing: InspectionTiming | n
 export function resumedReplyDueAt(replyDueAt: Date, pausedAt: Date, resumedAt: Date): Date {
   const waited = Math.max(0, resumedAt.getTime() - pausedAt.getTime());
   return new Date(replyDueAt.getTime() + waited);
+}
+
+/** How a version stands against its reply deadline, as the insurer's queue shows it. */
+export type SlaState = 'ON_TRACK' | 'DUE_SOON' | 'BREACHED' | 'PAUSED';
+
+/**
+ * Null for a version that no longer waits on the insurer. A paused clock is
+ * never due soon or breached: the insurer is not the one being waited for.
+ */
+export function slaState(
+  version: { status: QuoteProductStatus; replyDueAt: Date | null; pausedAt: Date | null },
+  hoursBeforeDue: number,
+  now: Date,
+): SlaState | null {
+  if (!isOpenStatus(version.status)) return null;
+  if (version.pausedAt) return 'PAUSED';
+  if (!version.replyDueAt) return 'ON_TRACK';
+  if (version.replyDueAt <= now) return 'BREACHED';
+  return version.replyDueAt.getTime() - now.getTime() <= hoursBeforeDue * 3_600_000 ? 'DUE_SOON' : 'ON_TRACK';
 }
 
 /** What the customer reads for each state. Internal detail never appears here. */

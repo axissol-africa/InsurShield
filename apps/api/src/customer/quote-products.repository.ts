@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   insurerQuotes,
@@ -10,8 +10,10 @@ import {
   quoteRequestProductVersions,
   quoteRequests,
   staffUsers,
+  vehicles,
 } from '../db/schema.js';
-import type { QuoteProductStatus } from '../common/domain/enums.js';
+import type { QuotePriority, QuoteProductStatus, StaffRole } from '../common/domain/enums.js';
+import { OPEN_QUOTE_PRODUCT_STATUSES } from './domain/quote-workflow.js';
 
 /** One chosen version with what its workflow needs to decide and to tell people. */
 export const versionColumns = {
@@ -24,6 +26,8 @@ export const versionColumns = {
   replyDueAt: quoteRequestProductVersions.replyDueAt,
   pausedAt: quoteRequestProductVersions.pausedAt,
   cancelledAt: quoteRequestProductVersions.cancelledAt,
+  assignedStaffId: quoteRequestProductVersions.assignedStaffId,
+  priority: quoteRequestProductVersions.priority,
   customerId: quoteRequests.customerId,
   insurerName: insurers.name,
 };
@@ -38,9 +42,19 @@ export type VersionRow = {
   replyDueAt: Date | null;
   pausedAt: Date | null;
   cancelledAt: Date | null;
+  assignedStaffId: string | null;
+  priority: QuotePriority;
   customerId: string;
   insurerName: string;
 };
+
+/** Filters for the insurer's queue. Every one narrows; none widens past the insurer. */
+export interface QueueFilter {
+  statuses?: QuoteProductStatus[];
+  ownerStaffId?: string | null;
+  priority?: QuotePriority;
+  search?: string;
+}
 
 export type VersionPatch = Partial<
   Pick<
@@ -134,6 +148,113 @@ export class QuoteProductsRepository {
       .where(and(eq(quoteRequestProductVersions.id, id), eq(quoteRequestProductVersions.status, from)))
       .returning({ id: quoteRequestProductVersions.id });
     return moved.length === 1;
+  }
+
+  /** Assigns a version to a staff member, or clears it with null. */
+  async assign(tx: Transaction, id: string, staffId: string | null, at: Date): Promise<void> {
+    await tx
+      .update(quoteRequestProductVersions)
+      .set({ assignedStaffId: staffId, assignedAt: staffId ? at : null })
+      .where(eq(quoteRequestProductVersions.id, id));
+  }
+
+  async setPriority(tx: Transaction, id: string, priority: QuotePriority): Promise<void> {
+    await tx.update(quoteRequestProductVersions).set({ priority }).where(eq(quoteRequestProductVersions.id, id));
+  }
+
+  /** An active staff member of `insurerId`, with their role and email; undefined for anyone else. */
+  async insurerStaffMember(insurerId: string, staffId: string, tx: Database | Transaction = this.db) {
+    const [staff] = await tx
+      .select({ id: staffUsers.id, fullName: staffUsers.fullName, email: staffUsers.email, role: staffUsers.role })
+      .from(staffUsers)
+      .where(and(eq(staffUsers.id, staffId), eq(staffUsers.insurerId, insurerId), eq(staffUsers.isActive, true)));
+    return staff;
+  }
+
+  /** The active staff of `insurerId` holding one of `roles`, for a warning nobody owns yet. */
+  insurerStaffWithRoles(insurerId: string, roles: StaffRole[], tx: Database | Transaction = this.db) {
+    return tx
+      .select({ id: staffUsers.id, email: staffUsers.email })
+      .from(staffUsers)
+      .where(and(eq(staffUsers.insurerId, insurerId), eq(staffUsers.isActive, true), inArray(staffUsers.role, roles)))
+      .orderBy(asc(staffUsers.email));
+  }
+
+  /**
+   * Open versions whose clock is running and whose due date falls within
+   * `hoursBeforeDue`, not yet warned. A breached one is still warned once.
+   */
+  dueForWarning(now: Date, hoursBeforeDue: number, limit: number, tx: Database | Transaction = this.db) {
+    return this.versions(tx)
+      .where(
+        and(
+          inArray(quoteRequestProductVersions.status, ['SUBMITTED', 'INSURER_PROCESSING']),
+          isNull(quoteRequestProductVersions.pausedAt),
+          isNull(quoteRequestProductVersions.slaWarnedAt),
+          isNotNull(quoteRequestProductVersions.replyDueAt),
+          lte(quoteRequestProductVersions.replyDueAt, new Date(now.getTime() + hoursBeforeDue * 3_600_000)),
+          gt(quoteRequestProductVersions.replyDueAt, now),
+        ),
+      )
+      .orderBy(asc(quoteRequestProductVersions.replyDueAt), asc(quoteRequestProductVersions.id))
+      .limit(limit);
+  }
+
+  /** Marks the warning sent; false when another sweep marked it first. */
+  async markWarned(tx: Transaction, id: string, at: Date): Promise<boolean> {
+    const marked = await tx
+      .update(quoteRequestProductVersions)
+      .set({ slaWarnedAt: at })
+      .where(and(eq(quoteRequestProductVersions.id, id), isNull(quoteRequestProductVersions.slaWarnedAt)))
+      .returning({ id: quoteRequestProductVersions.id });
+    return marked.length === 1;
+  }
+
+  /** This insurer's open chosen products, most urgent first, one row each. */
+  queue(insurerId: string, filter: QueueFilter, limit: number) {
+    const search = filter.search?.trim();
+    return this.db
+      .select({
+        id: quoteRequestProductVersions.id,
+        quoteRequestId: quoteRequestProductVersions.quoteRequestId,
+        productVersionId: quoteRequestProductVersions.productVersionId,
+        productName: quoteRequestProductVersions.productName,
+        productVersionNumber: quoteRequestProductVersions.productVersionNumber,
+        status: quoteRequestProductVersions.status,
+        priority: quoteRequestProductVersions.priority,
+        replyDueAt: quoteRequestProductVersions.replyDueAt,
+        pausedAt: quoteRequestProductVersions.pausedAt,
+        assignedAt: quoteRequestProductVersions.assignedAt,
+        owner: { id: staffUsers.id, fullName: staffUsers.fullName },
+        submittedAt: quoteRequests.submittedAt,
+        plateNumber: vehicles.plateNumber,
+        vehicle: sql<string>`trim(${vehicles.year} || ' ' || ${vehicles.make} || ' ' || ${vehicles.model})`,
+      })
+      .from(quoteRequestProductVersions)
+      .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestProductVersions.quoteRequestId))
+      .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
+      .leftJoin(staffUsers, eq(staffUsers.id, quoteRequestProductVersions.assignedStaffId))
+      .where(
+        and(
+          eq(quoteRequestProductVersions.insurerId, insurerId),
+          inArray(quoteRequestProductVersions.status, filter.statuses ?? [...OPEN_QUOTE_PRODUCT_STATUSES]),
+          filter.ownerStaffId === undefined
+            ? undefined
+            : filter.ownerStaffId === null
+              ? isNull(quoteRequestProductVersions.assignedStaffId)
+              : eq(quoteRequestProductVersions.assignedStaffId, filter.ownerStaffId),
+          filter.priority ? eq(quoteRequestProductVersions.priority, filter.priority) : undefined,
+          search
+            ? or(ilike(quoteRequests.id, `%${escapeLike(search)}%`), ilike(vehicles.plateNumber, `%${escapeLike(search)}%`))
+            : undefined,
+        ),
+      )
+      .orderBy(
+        desc(sql`${quoteRequestProductVersions.priority} = 'HIGH'`),
+        sql`${quoteRequestProductVersions.replyDueAt} ASC NULLS LAST`,
+        asc(quoteRequestProductVersions.id),
+      )
+      .limit(limit);
   }
 
   /** Versions past their reply due date with the clock running, oldest first. */
@@ -327,4 +448,9 @@ export class QuoteProductsRepository {
       )
       .orderBy(desc(quoteInternalNotes.createdAt), desc(quoteInternalNotes.id));
   }
+}
+
+/** A search typed by a person matches literally, never as a LIKE pattern. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }

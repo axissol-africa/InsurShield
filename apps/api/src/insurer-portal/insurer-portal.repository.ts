@@ -16,6 +16,7 @@ import {
   quoteRequestProductVersions,
   quoteRequestRecipients,
   quoteRequests,
+  staffUsers,
   vehicles,
 } from '../db/schema.js';
 import type { NcdStatus } from '../common/domain/enums.js';
@@ -143,9 +144,12 @@ export class InsurerPortalRepository {
         pausedAt: quoteRequestProductVersions.pausedAt,
         declineReasonCode: quoteRequestProductVersions.declineReasonCode,
         declineCustomerNote: quoteRequestProductVersions.declineCustomerNote,
+        priority: quoteRequestProductVersions.priority,
+        owner: { id: staffUsers.id, fullName: staffUsers.fullName },
         reply: replyColumns,
       })
       .from(quoteRequestProductVersions)
+      .leftJoin(staffUsers, eq(staffUsers.id, quoteRequestProductVersions.assignedStaffId))
       .leftJoin(
         insurerQuotes,
         and(

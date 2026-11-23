@@ -38,9 +38,14 @@ import { coverTermLabel, premiumFloorMinor } from './domain/premium-floor.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { QuoteProductsRepository, type VersionRow } from '../customer/quote-products.repository.js';
 import { customerDate, QuoteWorkflowService } from '../customer/quote-workflow.service.js';
+import { slaState } from '../customer/domain/quote-workflow.js';
+import { QUOTE_PRODUCT_STATUSES, type QuoteProductStatus } from '../common/domain/enums.js';
 import type {
   AcknowledgeClaimDto,
+  AssignProductDto,
   DeclineProductDto,
+  ProductPriorityDto,
+  QueueQueryDto,
   InternalNoteDto,
   RequestInformationDto,
   ExtendQuoteDto,
@@ -53,6 +58,8 @@ import type {
 export const NCD_CODE_PICK = Symbol('NCD_CODE_PICK');
 
 const NCD_CODE_ATTEMPTS = 5;
+/** The queue answers its most urgent rows; filters narrow it further. */
+const QUEUE_LIMIT = 200;
 
 /**
  * Everything the insurer portal does.
@@ -132,11 +139,13 @@ export class InsurerPortalService {
     const insurerId = this.insurerOf(principal);
     const requests = await this.portal.listRequests(insurerId);
     const requestIds = requests.map((request) => request.id);
-    const [shots, selectedProducts, informationRequests, reasons] = await Promise.all([
+    const now = new Date();
+    const [shots, selectedProducts, informationRequests, reasons, warning] = await Promise.all([
       this.portal.shotKeys(insurerId, requestIds),
       this.portal.selectedProductsForRequests(insurerId, requestIds),
       this.versions.informationRequestsFor(requestIds, insurerId),
-      this.workflow.declineReasons(),
+      this.workflow.declineReasons(now),
+      this.workflow.slaWarning(now),
     ]);
     const declineReasons = new Map(reasons.map((reason) => [reason.code, reason]));
 
@@ -156,6 +165,7 @@ export class InsurerPortalService {
           ),
           informationRequests.filter((asked) => asked.quoteRequestId === request.id),
           declineReasons,
+          { hoursBeforeDue: warning.value.hoursBeforeDue, now },
         );
       }),
     );
@@ -246,6 +256,7 @@ export class InsurerPortalService {
       // The request is "Quoted" as soon as one insurer replies; others may still reply afterwards.
       if (!(await this.portal.markQuoted(tx, requestId, insurerId, sentAt))) throw requestExpired();
       if (version) {
+        await this.ownIfUnowned(tx, principal, version, sentAt);
         await this.workflow.move(tx, version, 'QUOTE', {
           actor: auditActor(principal),
           note: 'Insurer sent a final quote.',
@@ -427,6 +438,136 @@ export class InsurerPortalService {
     return { version, insurerId };
   }
 
+  /** The first person to act on an unowned product becomes its owner. */
+  private async ownIfUnowned(tx: Transaction, principal: Principal, version: VersionRow, at: Date): Promise<void> {
+    if (!version.assignedStaffId) await this.versions.assign(tx, version.id, this.staffOf(principal).id, at);
+  }
+
+  /** Takes a product for yourself and starts work on it. */
+  async claimProduct(principal: Principal, requestId: string, productVersionId: string) {
+    return this.portal.transaction(async (tx) => {
+      const { version } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      const staff = this.staffOf(principal);
+      if (version.assignedStaffId && version.assignedStaffId !== staff.id) {
+        throw ApiException.conflict('ALREADY_ASSIGNED', 'A colleague already owns this product. Ask your administrator to reassign it.');
+      }
+      const at = new Date();
+      await this.versions.assign(tx, version.id, staff.id, at);
+      const status = version.status === 'SUBMITTED'
+        ? await this.workflow.move(tx, version, 'CLAIM', { actor: auditActor(principal), note: 'Insurer officer claimed the product.', at })
+        : version.status;
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'quote_product.assigned',
+        entityType: 'QUOTE_REQUEST_PRODUCT',
+        entityId: version.id,
+        before: { assignedStaffId: version.assignedStaffId },
+        after: { assignedStaffId: staff.id },
+        note: 'Claimed by the officer.',
+        correlationId: requestId,
+      });
+      return { productVersionId, status, ownerStaffId: staff.id };
+    });
+  }
+
+  /**
+   * Gives a product to a member of this insurer's quoting team, or leaves it
+   * unowned. Only the insurer's administrator assigns to someone else.
+   */
+  async assignProduct(principal: Principal, requestId: string, productVersionId: string, dto: AssignProductDto) {
+    const staff = this.staffOf(principal);
+    const target = dto.staffId ?? null;
+    if (staff.role !== 'INSURER_ADMIN' && target !== staff.id) {
+      throw ApiException.forbidden('Only your administrator can assign products to someone else.');
+    }
+    return this.portal.transaction(async (tx) => {
+      const { version, insurerId } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      if (target) {
+        const member = await this.versions.insurerStaffMember(insurerId, target, tx);
+        if (!member || !['INSURER_ADMIN', 'QUOTE_OFFICER', 'INSURER_USER'].includes(member.role)) {
+          throw new ApiException('VALIDATION_FAILED', 'Choose an active member of your quoting team.', HttpStatus.BAD_REQUEST, {
+            staffId: 'Not on your quoting team.',
+          });
+        }
+      }
+      await this.versions.assign(tx, version.id, target, new Date());
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'quote_product.assigned',
+        entityType: 'QUOTE_REQUEST_PRODUCT',
+        entityId: version.id,
+        before: { assignedStaffId: version.assignedStaffId },
+        after: { assignedStaffId: target },
+        note: target ? 'Product assigned.' : 'Product left unassigned.',
+        correlationId: requestId,
+      });
+      return { productVersionId, ownerStaffId: target };
+    });
+  }
+
+  /** Marks a product as urgent or normal for the team. Administrator only. */
+  async setProductPriority(principal: Principal, requestId: string, productVersionId: string, dto: ProductPriorityDto) {
+    if (this.staffOf(principal).role !== 'INSURER_ADMIN') {
+      throw ApiException.forbidden('Only your administrator can change a product\'s priority.');
+    }
+    return this.portal.transaction(async (tx) => {
+      const { version } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      await this.versions.setPriority(tx, version.id, dto.priority);
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'quote_product.priority_changed',
+        entityType: 'QUOTE_REQUEST_PRODUCT',
+        entityId: version.id,
+        before: { priority: version.priority },
+        after: { priority: dto.priority },
+        note: `Priority set to ${dto.priority.toLowerCase()}.`,
+        correlationId: requestId,
+      });
+      return { productVersionId, priority: dto.priority };
+    });
+  }
+
+  /** This insurer's open chosen products, most urgent first, with who owns each and how it stands against its deadline. */
+  async queue(principal: Principal, query: QueueQueryDto) {
+    const staff = this.staffOf(principal);
+    const statuses = query.status
+      ?.split(',')
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean);
+    const unknown = statuses?.find((value) => !(QUOTE_PRODUCT_STATUSES as readonly string[]).includes(value));
+    if (unknown) {
+      throw new ApiException('VALIDATION_FAILED', `Unknown status ${unknown}.`, HttpStatus.BAD_REQUEST, { status: 'Unknown status.' });
+    }
+    const now = new Date();
+    const { value } = await this.workflow.slaWarning(now);
+    const rows = await this.versions.queue(
+      staff.insurerId,
+      {
+        statuses: statuses as QuoteProductStatus[] | undefined,
+        ownerStaffId: query.owner === 'me' ? staff.id : query.owner === 'unassigned' ? null : undefined,
+        priority: query.priority,
+        search: query.search,
+      },
+      QUEUE_LIMIT,
+    );
+    return rows
+      .map((row) => ({
+        quoteRequestId: row.quoteRequestId,
+        productVersionId: row.productVersionId,
+        productName: row.productName,
+        productVersionNumber: row.productVersionNumber,
+        vehicle: row.vehicle,
+        plateNumber: row.plateNumber,
+        status: row.status,
+        priority: row.priority,
+        owner: row.owner?.id ? { id: row.owner.id, name: row.owner.fullName } : null,
+        submittedAt: row.submittedAt.toISOString(),
+        replyDueAt: row.replyDueAt?.toISOString() ?? null,
+        sla: slaState(row, value.hoursBeforeDue, now),
+      }))
+      .filter((row) => !query.sla || row.sla === query.sla);
+  }
+
   /** The approved reasons an insurer may decline with, as the rule in force states them. */
   async declineReasons(principal: Principal) {
     this.insurerOf(principal);
@@ -447,6 +588,7 @@ export class InsurerPortalService {
         throw new ApiException('VALIDATION_FAILED', 'Choose one of the listed reasons for declining.', HttpStatus.BAD_REQUEST, { reasonCode: 'Unknown reason.' });
       }
       const customerNote = dto.customerNote?.trim() || null;
+      await this.ownIfUnowned(tx, principal, version, at);
       const status = await this.workflow.move(tx, version, 'DECLINE', {
         actor: auditActor(principal),
         note: `Declined: ${reason.code}.`,
@@ -493,6 +635,7 @@ export class InsurerPortalService {
       const { version, insurerId } = await this.ownVersion(tx, principal, requestId, productVersionId);
       const at = new Date();
       this.workflow.assertWithinDeadline(version, at);
+      await this.ownIfUnowned(tx, principal, version, at);
       const status = await this.workflow.move(tx, version, 'REQUEST_INFORMATION', {
         actor: auditActor(principal),
         note: 'Insurer asked the customer for more information.',

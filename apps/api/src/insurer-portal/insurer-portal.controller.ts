@@ -1,9 +1,12 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { InsurerPortalService } from './insurer-portal.service.js';
 import { InsurersService } from '../insurers/insurers.service.js';
 import {
   AcknowledgeClaimDto,
+  AssignProductDto,
   DeclineProductDto,
+  ProductPriorityDto,
+  QueueQueryDto,
   ExtendQuoteDto,
   InternalNoteDto,
   RequestInformationDto,
@@ -85,6 +88,49 @@ export class InsurerPortalController {
   }
 
   // ── One chosen product ──────────────────────────────────────────
+
+  /** Open chosen products, one row each, most urgent first. */
+  @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:queue:read')
+  @Get('queue')
+  queue(@Query() query: QueueQueryDto, @CurrentUser() principal: Principal) {
+    return this.portal.queue(principal, query);
+  }
+
+  @Needs('portal:queue:claim')
+  @Post('quote-requests/:id/products/:productVersionId/claim')
+  @HttpCode(HttpStatus.OK)
+  claimProduct(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.claimProduct(principal, id, productVersionId);
+  }
+
+  @Needs('portal:queue:assign')
+  @Post('quote-requests/:id/products/:productVersionId/assign')
+  @HttpCode(HttpStatus.OK)
+  assignProduct(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: AssignProductDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.assignProduct(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:queue:assign')
+  @Post('quote-requests/:id/products/:productVersionId/priority')
+  @HttpCode(HttpStatus.OK)
+  setProductPriority(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: ProductPriorityDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.setProductPriority(principal, id, productVersionId, dto);
+  }
 
   @Needs('portal:request:read')
   @Get('decline-reasons')

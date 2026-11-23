@@ -54,6 +54,7 @@ import {
   COMPARISON_DISPLAY_RULES,
   QUOTE_UNAVAILABILITY_REASONS,
   QUOTE_PRODUCT_STATUSES,
+  QUOTE_PRIORITIES,
   QUOTE_REQUEST_MODELS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
@@ -69,6 +70,7 @@ import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/doma
 export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STATUSES);
 export const quoteRequestModel = pgEnum('QuoteRequestModel', QUOTE_REQUEST_MODELS);
 export const quoteProductStatus = pgEnum('QuoteProductStatus', QUOTE_PRODUCT_STATUSES);
+export const quotePriority = pgEnum('QuotePriority', QUOTE_PRIORITIES);
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
@@ -934,6 +936,12 @@ export const quoteRequestProductVersions = pgTable(
     declineReasonCode: varchar('declineReasonCode', { length: 80 }),
     /** Shown to the customer under the reason's customer wording. */
     declineCustomerNote: text('declineCustomerNote'),
+    // Batch 13 part 2: who at the insurer owns this product, and how urgent it is.
+    assignedStaffId: uuid('assignedStaffId'),
+    assignedAt: timestamptz('assignedAt'),
+    priority: quotePriority('priority').notNull().default('NORMAL'),
+    /** Set once the owner has been warned that the reply due date is near, so they are warned once. */
+    slaWarnedAt: timestamptz('slaWarnedAt'),
   },
   (t) => [
     // This is a referenced key, so it is a constraint rather than only a
@@ -961,6 +969,12 @@ export const quoteRequestProductVersions = pgTable(
     ),
     // The reply-deadline job reads open versions by due date.
     index('quote_request_product_versions_status_replyDueAt_idx').on(t.status, t.replyDueAt),
+    index('quote_request_product_versions_assignedStaffId_idx').on(t.assignedStaffId),
+    fk('quote_request_product_versions_assignedStaffId_fkey', [t.assignedStaffId], [staffUsers.id], 'set null'),
+    check(
+      'quote_request_product_versions_assignment_check',
+      sql`(${t.assignedStaffId} IS NULL) = (${t.assignedAt} IS NULL)`,
+    ),
     check(
       'quote_request_product_versions_decline_check',
       sql`(${t.status} = 'DECLINED') = (${t.declineReasonCode} IS NOT NULL)

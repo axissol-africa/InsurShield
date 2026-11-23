@@ -6,10 +6,12 @@ import {
   isOpenStatus,
   nextStatus,
   resumedReplyDueAt,
+  slaState,
   type QuoteProductEvent,
 } from './quote-workflow.js';
 
 const allowed: Record<QuoteProductEvent, Partial<Record<QuoteProductStatus, QuoteProductStatus>>> = {
+  CLAIM: { SUBMITTED: 'INSURER_PROCESSING' },
   REQUEST_INFORMATION: { SUBMITTED: 'VERIFICATION_REQUIRED', INSURER_PROCESSING: 'VERIFICATION_REQUIRED' },
   CUSTOMER_ANSWERED: { VERIFICATION_REQUIRED: 'INSURER_PROCESSING' },
   QUOTE: { SUBMITTED: 'QUOTED', INSURER_PROCESSING: 'QUOTED', VERIFICATION_REQUIRED: 'QUOTED' },
@@ -96,5 +98,22 @@ describe('labels', () => {
       'INSPECTION_REQUIRED',
       'MANUAL_REVIEW',
     ]);
+  });
+});
+
+describe('slaState', () => {
+  const now = new Date('2026-11-23T12:00:00Z');
+  const due = (hours: number) => new Date(now.getTime() + hours * 3_600_000);
+
+  it.each([
+    [{ status: 'SUBMITTED', replyDueAt: due(48), pausedAt: null }, 'ON_TRACK'],
+    [{ status: 'INSURER_PROCESSING', replyDueAt: due(24), pausedAt: null }, 'DUE_SOON'],
+    [{ status: 'SUBMITTED', replyDueAt: due(-1), pausedAt: null }, 'BREACHED'],
+    [{ status: 'VERIFICATION_REQUIRED', replyDueAt: due(-1), pausedAt: now }, 'PAUSED'],
+    [{ status: 'SUBMITTED', replyDueAt: null, pausedAt: null }, 'ON_TRACK'],
+    [{ status: 'QUOTED', replyDueAt: due(-1), pausedAt: null }, null],
+    [{ status: 'DECLINED', replyDueAt: due(1), pausedAt: null }, null],
+  ] as const)('%o is %s', (version, expected) => {
+    expect(slaState(version, 24, now)).toBe(expected);
   });
 });

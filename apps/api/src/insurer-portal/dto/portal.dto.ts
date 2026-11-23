@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 import { CONTRACT_VALUES, fromContract, type NcdDecisionStatus } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
+import { QUOTE_PRIORITIES, type QuotePriority } from '../../common/domain/enums.js';
 
 export class SubmitQuoteDto {
   /** Required when this request contains customer-selected product versions. */
@@ -71,6 +72,32 @@ export class InternalNoteDto {
   @MinLength(1, { message: 'Write the note before saving it.' })
   @MaxLength(4000, { message: 'Keep the note under 4,000 characters.' })
   body!: string;
+}
+
+export class AssignProductDto {
+  /** The staff member who will own this product, or null to leave it unassigned. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Choose a member of your team.' })
+  staffId!: string | null;
+}
+
+export class ProductPriorityDto {
+  @IsIn(QUOTE_PRIORITIES, { message: 'Priority must be NORMAL or HIGH.' })
+  priority!: QuotePriority;
+}
+
+export class QueueQueryDto {
+  /** One state, or several separated by commas. */
+  @IsOptional() @IsString() @MaxLength(200) status?: string;
+
+  @IsOptional() @IsIn(['me', 'unassigned', 'any']) owner?: 'me' | 'unassigned' | 'any';
+
+  @IsOptional() @IsIn(QUOTE_PRIORITIES) priority?: QuotePriority;
+
+  @IsOptional() @IsIn(['ON_TRACK', 'DUE_SOON', 'BREACHED', 'PAUSED']) sla?: 'ON_TRACK' | 'DUE_SOON' | 'BREACHED' | 'PAUSED';
+
+  /** Part of a request reference or a number plate. */
+  @IsOptional() @IsString() @MaxLength(60) search?: string;
 }
 
 export class ExtendQuoteDto {

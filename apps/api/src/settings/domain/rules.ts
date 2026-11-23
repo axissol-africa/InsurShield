@@ -73,6 +73,7 @@ const schemas = {
   }),
   DOCUMENT_RETENTION: documentRetention,
   QUOTE_DECLINE_REASONS: declineReasons,
+  QUOTE_SLA_WARNING: z.object({ hoursBeforeDue: z.number().int().min(1).max(240) }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
 export type RuleValue = {
@@ -147,6 +148,8 @@ const defaults = {
       },
     ],
   },
+  // How long before a product's reply due date its owner is warned.
+  QUOTE_SLA_WARNING: { hoursBeforeDue: 24 },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 
 /** Default values seed demonstrations only; a response always says whether its value is provisional. */

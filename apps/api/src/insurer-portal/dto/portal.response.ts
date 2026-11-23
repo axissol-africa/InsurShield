@@ -3,6 +3,7 @@ import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
 import type { InsurerPortalRepository } from '../insurer-portal.repository.js';
 import type { InformationRequestRow } from '../../customer/quote-products.repository.js';
+import { slaState } from '../../customer/domain/quote-workflow.js';
 
 /** The approved wording for a decline code, as the rule in force states it. */
 export type DeclineReasonText = { customerText: string; internalText: string };
@@ -45,6 +46,7 @@ export function toPortalRequest(
   selectedProducts: Array<{ selection: SelectedProductRow; replyDocument: DocumentRecord | null }> = [],
   informationRequests: InformationRequestRow[] = [],
   declineReasons: ReadonlyMap<string, DeclineReasonText> = new Map(),
+  sla: { hoursBeforeDue: number; now: Date } = { hoursBeforeDue: 24, now: new Date() },
 ) {
   return {
     id: request.id,
@@ -101,6 +103,9 @@ export function toPortalRequest(
               status: selection.status,
               replyDueAt: iso(selection.replyDueAt),
               clockPausedAt: iso(selection.pausedAt),
+              priority: selection.priority,
+              owner: selection.owner?.id ? { id: selection.owner.id, name: selection.owner.fullName } : null,
+              sla: slaState(selection, sla.hoursBeforeDue, sla.now),
               decline: selection.declineReasonCode
                 ? {
                     reasonCode: selection.declineReasonCode,

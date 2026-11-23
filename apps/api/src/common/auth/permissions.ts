@@ -126,6 +126,11 @@ export const PERMISSIONS = {
   // Notes are read by whoever reads the queue, and written by whoever works it.
   'portal:note:read': READS_REQUESTS,
   'portal:note:write': QUOTING,
+  'portal:queue:read': READS_REQUESTS,
+  // Claiming is taking the work for yourself. Assigning it to someone else, or
+  // changing its priority, is the administrator's; the service enforces that.
+  'portal:queue:claim': QUOTING,
+  'portal:queue:assign': QUOTING,
   'portal:policy:read': ANY_INSURER,
   'portal:certificate:issue': ISSUING,
   'portal:claim:read': READS_CLAIMS,

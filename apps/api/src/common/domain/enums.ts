@@ -30,6 +30,10 @@ export const QUOTE_PRODUCT_STATUSES = [
 ] as const;
 export type QuoteProductStatus = (typeof QUOTE_PRODUCT_STATUSES)[number];
 
+/** How urgently an insurer's team should work on a chosen product. */
+export const QUOTE_PRIORITIES = ['NORMAL', 'HIGH'] as const;
+export type QuotePriority = (typeof QUOTE_PRIORITIES)[number];
+
 export const INSURANCE_TYPES = ['COMPREHENSIVE', 'THIRD_PARTY'] as const;
 export type InsuranceType = (typeof INSURANCE_TYPES)[number];
 
@@ -57,6 +61,7 @@ export const RULE_SETTING_KEYS = [
   'USAGE_LOADINGS',
   'DOCUMENT_RETENTION',
   'QUOTE_DECLINE_REASONS',
+  'QUOTE_SLA_WARNING',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
