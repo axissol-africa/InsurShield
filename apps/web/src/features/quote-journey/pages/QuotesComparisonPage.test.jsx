@@ -6,6 +6,8 @@ import { useStore } from '@/store';
 import QuotesComparisonPage from './QuotesComparisonPage';
 
 vi.mock('@/api/sync', () => ({ hydrateDirectory: vi.fn(), hydrateCustomer: vi.fn() }));
+const answerInformation = vi.hoisted(() => vi.fn());
+vi.mock('@/api', () => ({ api: { quotes: { answerInformation } } }));
 
 beforeEach(() => {
   useStore.setState({
@@ -256,5 +258,48 @@ describe('quote comparison', () => {
         name: 'Request fresh quotes after Prestige Assurance became unavailable',
       }),
     ).toBeEnabled();
+  });
+
+  describe('a chosen product the insurer is working on', () => {
+    const product = (productVersionId, insurerName, extra) => ({
+      productVersionId, insurerId: insurerName, insurerName, productCode: productVersionId, productVersionNumber: 1,
+      productName: `${insurerName} Essential`, coverType: 'Comprehensive', coverGuide: {}, inspection: { rule: 'NOT_REQUIRED' },
+      unavailableAt: null, decline: null, informationRequests: [], ...extra,
+    });
+    const withProducts = (...selectedProducts) => {
+      const request = useStore.getState().quoteRequests[0];
+      useStore.setState({ quoteRequests: [{ ...request, selectedProducts, productQuotes: [] }] });
+    };
+
+    it('shows a declined product with the insurer reason and offers fresh quotes, never payment', () => {
+      withProducts(product('pv-1', 'Prestige Assurance', {
+        status: 'DECLINED', statusLabel: 'Declined',
+        decline: { reason: 'Your vehicle does not meet the rules.', note: 'Under 15 years only.' },
+      }));
+      renderPage();
+      const card = within(screen.getByRole('list', { name: 'Insurer quotes' })).getByRole('listitem');
+      expect(within(card).getByText('No quote')).toBeVisible();
+      expect(screen.getByText('0 of 1 selected products have an available final quote. 1 product was not quoted.')).toBeVisible();
+      expect(within(card).getByText('Your vehicle does not meet the rules.')).toBeVisible();
+      expect(within(card).getByText('Under 15 years only.')).toBeVisible();
+      expect(within(card).getByRole('button', { name: 'Request fresh quotes' })).toBeVisible();
+      expect(within(card).queryByRole('button', { name: /Continue to payment|Choose/ })).not.toBeInTheDocument();
+    });
+
+    it("answers the insurer's question from the product's card", async () => {
+      const user = userEvent.setup();
+      answerInformation.mockResolvedValue({});
+      withProducts(product('pv-2', 'Global Guard Insurance', {
+        status: 'VERIFICATION_REQUIRED', statusLabel: 'The insurer needs more information',
+        informationRequests: [{ id: 'q1', message: 'Please send the odometer reading.', dueAt: '2026-11-26T10:00:00.000Z', askedAt: '2026-11-23T10:00:00.000Z', answeredAt: null, answer: null, open: true }],
+      }));
+      renderPage();
+
+      const form = screen.getByRole('form', { name: 'Answer Global Guard Insurance' });
+      expect(within(form).getByText(/Please send the odometer reading/)).toBeVisible();
+      await user.type(within(form).getByLabelText('Global Guard Insurance needs more information'), '84,200 km');
+      await user.click(within(form).getByRole('button', { name: 'Send answer' }));
+      expect(answerInformation).toHaveBeenCalledWith('QR-TEST', 'pv-2', '84,200 km');
+    });
   });
 });

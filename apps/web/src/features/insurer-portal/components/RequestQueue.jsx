@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/primitives/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/primitives/card';
 import { DataTable } from '@/components/ui/data-table';
 import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
-import { EXTENSION_DAYS, days, replyDeadline } from '@/features/insurer-portal/portal';
+import { EXTENSION_DAYS, days, quotableNow, replyDeadline } from '@/features/insurer-portal/portal';
+import { PORTAL_STATUS_LABELS } from '@/domain/quoteWorkflow';
 
 const PAGE_SIZE = 4;
 /** A chosen product is its own row; a request from before product selection is keyed by its id. */
@@ -22,8 +23,11 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
       extending={extending.pending(rowKey(request))}
       error={extending.error(rowKey(request))}
     />
-  ) : (
+  ) : quotableNow(request) ? (
     <Button type="button" onClick={onQuote && (() => onQuote(request))} className={className}>Send quote</Button>
+  ) : (
+    // Waiting on an inspection: the request can still be opened, to decline it or to read it.
+    <Button type="button" variant="outline" onClick={onQuote && (() => onQuote(request))} className={className}>Open request</Button>
   );
 
   const columns = [
@@ -111,7 +115,16 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
 export function ProductLine({ request }) {
   if (!request.productName) return null;
   const version = request.productVersionNumber ? ` · version ${request.productVersionNumber}` : '';
-  return <p className="mt-1 text-sm text-foreground">{request.productName}<span className="text-muted-foreground">{version}</span></p>;
+  const status = request.workflow?.status;
+  return (
+    <>
+      <p className="mt-1 text-sm text-foreground">{request.productName}<span className="text-muted-foreground">{version}</span></p>
+      {/* New work needs no badge; anything further along says where it is. */}
+      {status && status !== 'SUBMITTED' && status !== 'QUOTED' && (
+        <Badge variant="outline" className="mt-1">{PORTAL_STATUS_LABELS[status] ?? status}</Badge>
+      )}
+    </>
+  );
 }
 
 /** While a request still needs a reply, how long is left to send one. */

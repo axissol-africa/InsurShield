@@ -4,6 +4,7 @@ import { addDays, quoteValidity } from '@/domain/quoteValidity';
 import { coverPeriodLabel } from '@/domain/coverPeriod';
 import { COVERAGE_DURATION_OPTIONS } from '@/domain/insurers';
 import { timeAgo } from '@/lib/time';
+import { canQuote, endedWithoutQuote } from '@/domain/quoteWorkflow';
 
 export const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
 export const CLAIM_NOTIFIED = 'Notified';
@@ -47,7 +48,9 @@ export const days = (count) => `${count} day${count === 1 ? '' : 's'}`;
  * quote being sent, so the label does not say the request is closed.
  */
 export const replyDeadline = (request, now = new Date()) => {
-  const { validUntil, daysLeft, expired, expiringSoon } = quoteValidity({ validUntil: request.expiresAt }, now);
+  // A chosen product's clock stops while the customer is being waited for.
+  if (request.workflow?.clockPausedAt) return { label: 'Clock stopped · waiting for the customer', urgent: false };
+  const { validUntil, daysLeft, expired, expiringSoon } = quoteValidity({ validUntil: request.workflow?.replyDueAt || request.expiresAt }, now);
   if (!validUntil || Number.isNaN(daysLeft)) return null;
   return {
     label: expired ? `Reply was due ${formatDate(validUntil)}` : `Reply by ${formatDate(validUntil)} · ${days(daysLeft)} left`,
@@ -148,9 +151,36 @@ export const toPortalCases = (request, insurerName) => {
         ?? request.productQuotes?.find((quote) => quote.productVersionId === product.productVersionId)
         ?? null,
       unavailable: Boolean(product.unavailableAt),
+      workflow: productWorkflow(product),
     }))
     .filter((portalCase) => portalCase.reply || !portalCase.unavailable);
 };
+
+/**
+ * One shape for a product's workflow whichever source it came from: the
+ * portal route nests it under `workflow`, the browser-only prototype keeps it
+ * on the product as the customer route does. A product with no state at all
+ * predates the workflow and is treated as new.
+ */
+export const productWorkflow = (product) => {
+  if (product.workflow) return product.workflow;
+  return {
+    status: product.status || 'SUBMITTED',
+    replyDueAt: product.replyDueAt || null,
+    clockPausedAt: product.status === 'VERIFICATION_REQUIRED'
+      ? product.informationRequests?.find((asked) => asked.open)?.askedAt ?? null
+      : null,
+    decline: product.decline ? { customerText: product.decline.reason, customerNote: product.decline.note } : null,
+    informationRequests: product.informationRequests || [],
+  };
+};
+
+/** Work still waiting on the insurer: no quote yet, and not closed. */
+export const awaitsInsurer = (portalCase) =>
+  !portalCase.reply && !endedWithoutQuote(portalCase.workflow?.status);
+
+/** Whether the insurer can send a quote for this case now. */
+export const quotableNow = (portalCase) => canQuote(portalCase.workflow?.status);
 
 /** One address per piece of work: the request, and the chosen product when there is one. */
 export const portalCaseKey = (requestId, productVersionId) =>

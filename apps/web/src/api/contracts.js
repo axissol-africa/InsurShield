@@ -103,6 +103,22 @@
  * @property {Object} coverGuide
  * @property {{rule:string,timing:string|null,method:string|null}} inspection
  * @property {string|null} unavailableAt
+ * @property {string} status where the product stands with its insurer (see domain/quoteWorkflow.js)
+ * @property {string} statusLabel the customer's wording for `status`
+ * @property {string|null} replyDueAt when the insurer must answer by
+ * @property {{reason:string|null, note:string|null}|null} decline the approved customer wording only
+ * @property {InformationRequest[]} informationRequests the insurer's questions and the customer's answers
+ */
+
+/**
+ * @typedef {Object} InformationRequest  An insurer's question to the customer about one chosen product.
+ * @property {string} id
+ * @property {string} message
+ * @property {string} dueAt
+ * @property {string} askedAt
+ * @property {string|null} answeredAt
+ * @property {string|null} answer
+ * @property {boolean} open true while the customer can still answer
  */
 
 /**

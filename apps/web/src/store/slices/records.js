@@ -1,5 +1,6 @@
 import { DEFAULT_QUOTE_VALIDITY_DAYS, addDays } from '@/domain/quoteValidity';
 import { env } from '@/config/env';
+import { CUSTOMER_STATUS_LABELS } from '@/domain/quoteWorkflow';
 import { SEED_CLAIMS, SEED_INSURER_REVIEWS, SEED_NCD_APPLICATIONS, SEED_POLICIES, SEED_QUOTE_REQUESTS } from '../demoSeed';
 
 /**
@@ -68,6 +69,14 @@ export const createRecordsSlice = (set) => ({
             return {
               ...request,
               status: 'Quoted',
+              selectedProducts: request.selectedProducts.map((product) => (product === selection
+                ? {
+                  ...product,
+                  status: 'QUOTED',
+                  statusLabel: CUSTOMER_STATUS_LABELS.QUOTED,
+                  informationRequests: (product.informationRequests || []).map((asked) => ({ ...asked, open: false })),
+                }
+                : product)),
               productQuotes: [
                 ...(request.productQuotes || []).filter((item) => item.productVersionId !== selection.productVersionId),
                 reply,
@@ -85,6 +94,16 @@ export const createRecordsSlice = (set) => ({
         }),
       };
     }),
+
+  /** Changes one chosen product of a request, as the API's workflow would. */
+  updateSelectedProduct: (requestId, productVersionId, change) =>
+    set((state) => ({
+      quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({
+        ...request,
+        selectedProducts: (request.selectedProducts || []).map((product) =>
+          (product.productVersionId === productVersionId ? { ...product, ...change(product) } : product)),
+      })),
+    })),
 
   /** Insurer portal: extend an unexpired quote's validity. */
   extendInsurerQuote: (requestId, insurerName, extraDays, productVersionId) =>

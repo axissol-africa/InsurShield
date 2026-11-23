@@ -11,6 +11,7 @@ import { useStore, belongsToCustomer } from '@/store';
 import { demoCoverGuides } from '@/domain/insurers';
 import { wait } from '../shared';
 import { documentToRecord } from '@/lib/files';
+import { canAskCustomer, canDecline, CUSTOMER_STATUS_LABELS, openQuestion, PROTOTYPE_DECLINE_REASONS } from '@/domain/quoteWorkflow';
 
 const state = () => useStore.getState();
 const call = async (fn) => { await wait(env.mockLatencyMs); return fn(state()); };
@@ -184,6 +185,15 @@ const selectedProductSnapshot = (product) => ({
   coverGuide: product.version.coverGuide,
   inspection: product.version.inspection,
   unavailableAt: null,
+  status: product.version.inspection?.rule === 'REQUIRED' && product.version.inspection?.timing === 'BEFORE_QUOTATION'
+    ? 'INSPECTION_REQUIRED'
+    : 'SUBMITTED',
+  statusLabel: product.version.inspection?.rule === 'REQUIRED' && product.version.inspection?.timing === 'BEFORE_QUOTATION'
+    ? CUSTOMER_STATUS_LABELS.INSPECTION_REQUIRED
+    : CUSTOMER_STATUS_LABELS.SUBMITTED,
+  replyDueAt: null,
+  decline: null,
+  informationRequests: [],
 });
 const toProduct = (product) => ({ ...product, versions: [...(product.versions || [])].sort((a, b) => b.versionNumber - a.versionNumber) });
 const toAdminProduct = (s, product, version) => {
@@ -481,6 +491,75 @@ export const quotes = {
   listForInsurer: () => call((s) => s.quoteRequests.filter((r) => r.insurers?.includes(insurerName()))),
   reply: (id, quote) => call((s) => { s.addInsurerQuote(id, insurerName(), quote); return state().quoteRequests.find((r) => r.id === id); }),
   extend: (id, extraDays, productVersionId) => call((s) => { s.extendInsurerQuote(id, insurerName(), extraDays, productVersionId); return state().quoteRequests.find((r) => r.id === id); }),
+  declineReasons: () => call(() => PROTOTYPE_DECLINE_REASONS),
+  decline: (id, productVersionId, { reasonCode, customerNote, internalNote }) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    if (!canDecline(product.status)) throw new Error('This product can no longer be declined.');
+    const reason = PROTOTYPE_DECLINE_REASONS.find((candidate) => candidate.code === reasonCode);
+    if (!reason) throw new Error('Choose one of the listed reasons for declining.');
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      status: 'DECLINED',
+      statusLabel: CUSTOMER_STATUS_LABELS.DECLINED,
+      decline: { reason: reason.customerText, note: customerNote?.trim() || null },
+      informationRequests: (current.informationRequests || []).map((asked) => ({ ...asked, open: false })),
+    }));
+    if (internalNote?.trim()) addPrototypeNote(s, id, productVersionId, internalNote.trim());
+    return { productVersionId, status: 'DECLINED' };
+  }),
+  requestInformation: (id, productVersionId, { message, dueInDays }) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    if (product.status === 'VERIFICATION_REQUIRED') throw new Error('You have already asked the customer for information about this product. Wait for their answer.');
+    if (!canAskCustomer(product.status)) throw new Error('This product can no longer be asked about.');
+    const askedAt = new Date();
+    const asked = { id: newReference('INFO'), message: message.trim(), dueAt: new Date(askedAt.getTime() + dueInDays * 86_400_000).toISOString(), askedAt: askedAt.toISOString(), answeredAt: null, answer: null, open: true };
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      status: 'VERIFICATION_REQUIRED',
+      statusLabel: CUSTOMER_STATUS_LABELS.VERIFICATION_REQUIRED,
+      informationRequests: [...(current.informationRequests || []), asked],
+    }));
+    return { productVersionId, status: 'VERIFICATION_REQUIRED', informationRequest: asked };
+  }),
+  notes: (id, productVersionId) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    return [...(prototypeNotes.get(`${id}~${productVersionId}`) || [])].reverse();
+  }),
+  addNote: (id, productVersionId, body) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    if (!body?.trim()) throw new Error('Write the note before saving it.');
+    return addPrototypeNote(s, id, productVersionId, body.trim());
+  }),
+  answerInformation: (id, productVersionId, answer) => call((s) => {
+    const request = mine(s.quoteRequests).find((entry) => entry.id === id);
+    const product = request?.selectedProducts?.find((entry) => entry.productVersionId === productVersionId);
+    if (!product) throw new Error('Quote request was not found.');
+    if (!openQuestion(product)) throw new Error('The insurer is not waiting for an answer about this product.');
+    if (!answer?.trim()) throw new Error('Write your answer before sending it.');
+    const answeredAt = new Date().toISOString();
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      status: 'INSURER_PROCESSING',
+      statusLabel: CUSTOMER_STATUS_LABELS.INSURER_PROCESSING,
+      informationRequests: current.informationRequests.map((asked) => (asked.open ? { ...asked, open: false, answer: answer.trim(), answeredAt } : asked)),
+    }));
+    return state().quoteRequests.find((entry) => entry.id === id);
+  }),
+};
+
+/**
+ * Internal notes exist only for this browser session in the prototype; the
+ * API keeps them append-only and never shows them to a customer.
+ */
+const prototypeNotes = new Map();
+const addPrototypeNote = (s, id, productVersionId, body) => {
+  const key = `${id}~${productVersionId}`;
+  const note = { id: newReference('NOTE'), body, author: s.staffSession?.name || null, createdAt: new Date().toISOString() };
+  prototypeNotes.set(key, [...(prototypeNotes.get(key) || []), note]);
+  return note;
+};
+const ownSelectedProduct = (s, id, productVersionId) => {
+  const request = s.quoteRequests.find((entry) => entry.id === id && entry.insurers?.includes(insurerName()));
+  const product = request?.selectedProducts?.find((entry) => entry.productVersionId === productVersionId && entry.insurerName === insurerName());
+  if (!product) throw new Error('Quote request was not found.');
+  return product;
 };
 
 export const insurers = {

@@ -9,7 +9,7 @@ import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import {
   AWAITING_CERTIFICATE, CLAIM_NOTIFIED, CLAIM_RECEIVED, EXTENSION_DAYS, PORTAL_CONTENT_ID,
-  coverTypeOf, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
+  awaitsInsurer, coverTypeOf, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
 } from '@/features/insurer-portal/portal';
 import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
@@ -66,7 +66,7 @@ export default function InsurerDashboard() {
   const myPolicies = policies.filter((policy) => policy.insurer === insurerName && ['Active', AWAITING_CERTIFICATE].includes(policy.status)).sort(byNewest('receivedAt'));
   const myRequests = quoteRequests.filter((request) => request.insurers?.includes(insurerName)).sort(byNewest('submittedAt')).flatMap((request) => toPortalCases(request, insurerName));
 
-  const awaitingQuote = myRequests.filter((request) => !request.reply);
+  const awaitingQuote = myRequests.filter(awaitsInsurer);
   const quoted = myRequests.filter((request) => request.reply);
   const newClaims = myClaims.filter((claim) => claim.status === CLAIM_NOTIFIED);
   const receivedClaims = myClaims.filter((claim) => claim.status === CLAIM_RECEIVED);
@@ -164,6 +164,16 @@ export default function InsurerDashboard() {
         piaRatePercentage={piaConfig?.piaRatePercentage}
         defaultValidityDays={defaultValidityDays}
         onBack={backToSection}
+        workflowApi={api}
+        onWorkflowChanged={async (change) => {
+          await hydrateInsurerPortal();
+          if (change === 'declined') {
+            toast.success('Product declined', { description: `The customer has been told ${quotingRequest.productName || 'this product'} will not be quoted.` });
+            navigate(sectionPath, { replace: true });
+          } else {
+            toast.success('Question sent', { description: 'The customer has been asked. Your reply deadline is paused until they answer.' });
+          }
+        }}
         onSubmit={async (quote) => {
           // A chosen product is quoted on its own; a request from before product selection is quoted whole.
           const reply = quotingRequest.productVersionId ? { ...quote, productVersionId: quotingRequest.productVersionId } : quote;

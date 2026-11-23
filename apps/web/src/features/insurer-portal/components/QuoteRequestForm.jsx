@@ -6,7 +6,8 @@ import { isForeignRegistered } from '@/domain/countries';
 import { COVER_TYPE_LABELS, isCoverGuideComplete } from '@/domain/coverGuide';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
-import { coverTypeOf, days, portalPath, premiumCheck, quoteOpenUntil, replyDeadline } from '@/features/insurer-portal/portal';
+import { coverTypeOf, days, portalPath, premiumCheck, quotableNow, quoteOpenUntil, replyDeadline } from '@/features/insurer-portal/portal';
+import ProductWorkflowPanel from './ProductWorkflowPanel';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
 import { Button } from '@/components/ui/primitives/button';
@@ -50,7 +51,7 @@ const validityFrom = (typed, usual) => {
  * What the customer will see builds up beside the Send button, so the figure
  * that will be charged is read back before it goes.
  */
-export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack }) {
+export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack, workflowApi, onWorkflowChanged }) {
   const quotation = useDocumentUpload();
   const quotationInput = useRef(null);
   const validityInput = useRef(null);
@@ -144,156 +145,164 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
         </TaskPanel>
       )}
     >
-      <TaskPanel title="Your quotation" description="Record the quotation you prepared in your own system. The customer compares it with other insurers and pays the premium you enter.">
-        <form onSubmit={handleSubmit}>
-          <FieldGroup>
-            {/* The one thing that blocks a quote comes before any typing. */}
-            {!guidePublished && (
-              <Alert variant="destructive" id="cover-guide-needed">
-                <TriangleAlert aria-hidden="true" />
-                <AlertTitle>Publish your {coverLabel.toLowerCase()} cover guide before sending this quote.</AlertTitle>
-                <AlertDescription>
-                  <p>Customers read this guide before choosing whom to request a quote from. Publish it before responding.</p>
-                  <Button asChild variant="outline" size="sm" className="w-fit text-foreground no-underline!">
-                    <Link to={portalPath.section('guides')}>Open cover guides</Link>
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <FieldSet>
-              <FieldLegend>1. Price</FieldLegend>
-              <Field>
-                <FieldLabel htmlFor="quote-premium">Premium on your quotation (ZMW) *</FieldLabel>
-                <div className="flex gap-2">
-                  <InputGroup>
-                    <InputGroupAddon><InputGroupText>ZMW</InputGroupText></InputGroupAddon>
-                    <InputGroupInput
-                      ref={premiumInput}
-                      id="quote-premium"
-                      required
-                      type="number"
-                      inputMode="decimal"
-                      min="1"
-                      step="0.01"
-                      value={premium}
-                      onChange={(event) => setPremium(event.target.value)}
-                      placeholder="e.g. 21000"
-                      aria-describedby="quote-premium-hint"
-                    />
-                  </InputGroup>
-                  {estimate > 0 && (
-                    <Button type="button" variant="outline" onClick={() => setPremium(estimate.toFixed(2))} className="shrink-0">Use estimate</Button>
-                  )}
-                </div>
-                <FieldDescription id="quote-premium-hint">
-                  The customer pays exactly this amount, so it must match your quotation.
-                  {estimate > 0 && <> InsurShield’s indicative estimate is {formatZMW(estimate)}.</>}
-                </FieldDescription>
-                <p aria-live="polite" className={premiumQuestion ? 'flex items-start gap-2 rounded-xl bg-primary/5 px-3 py-2 text-sm leading-relaxed text-foreground' : 'sr-only'}>
-                  {premiumQuestion && (
-                    <>
-                      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-                      <span>This is {premiumQuestion} InsurShield’s estimate of {formatZMW(estimate)}. Check it against your quotation before sending.</span>
-                    </>
-                  )}
-                </p>
-              </Field>
-            </FieldSet>
-
-            <FieldSeparator />
-
-            <FieldSet>
-              <FieldLegend>2. Terms</FieldLegend>
+      <div className="space-y-6">
+        {/* A chosen product has its own workflow; a request from before product selection is only quoted. */}
+        {request.productVersionId && workflowApi && (
+          <ProductWorkflowPanel request={request} api={workflowApi} onChanged={onWorkflowChanged} />
+        )}
+        {quotableNow(request) && (
+          <TaskPanel title="Your quotation" description="Record the quotation you prepared in your own system. The customer compares it with other insurers and pays the premium you enter.">
+            <form onSubmit={handleSubmit}>
               <FieldGroup>
-                <Field data-invalid={validityProblem ? true : undefined}>
-                  <FieldLabel htmlFor="quote-validity">Quote valid for (days)</FieldLabel>
-                  <InputGroup className="sm:max-w-48">
-                    <InputGroupInput
-                      ref={validityInput}
-                      id="quote-validity"
-                      type="number"
-                      inputMode="numeric"
-                      min="1"
-                      max={MAX_VALIDITY_DAYS}
-                      value={validityDays}
-                      onChange={(event) => setValidityDays(event.target.value)}
-                      placeholder={String(defaultValidityDays)}
-                      aria-invalid={validityProblem ? true : undefined}
-                      aria-describedby={validityProblem ? 'quote-validity-error quote-validity-hint' : 'quote-validity-hint'}
-                    />
-                    <InputGroupAddon align="inline-end"><InputGroupText>days</InputGroupText></InputGroupAddon>
-                  </InputGroup>
-                  {validityProblem && <FieldError id="quote-validity-error">{validityProblem}</FieldError>}
-                  <FieldDescription id="quote-validity-hint">
-                    Leave empty for your usual {days(defaultValidityDays)}. Once it lapses the customer has to ask for new quotes; you can extend an open quote from the overview.
-                  </FieldDescription>
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="quote-notes">Special conditions / notes</FieldLabel>
-                  <Textarea id="quote-notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. Requires tracking device installation…" aria-describedby="quote-notes-hint" />
-                  <FieldDescription id="quote-notes-hint">Shown to the customer with your quote.</FieldDescription>
-                </Field>
+                {/* The one thing that blocks a quote comes before any typing. */}
+                {!guidePublished && (
+                  <Alert variant="destructive" id="cover-guide-needed">
+                    <TriangleAlert aria-hidden="true" />
+                    <AlertTitle>Publish your {coverLabel.toLowerCase()} cover guide before sending this quote.</AlertTitle>
+                    <AlertDescription>
+                      <p>Customers read this guide before choosing whom to request a quote from. Publish it before responding.</p>
+                      <Button asChild variant="outline" size="sm" className="w-fit text-foreground no-underline!">
+                        <Link to={portalPath.section('guides')}>Open cover guides</Link>
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                <FieldSet>
+                  <FieldLegend>1. Price</FieldLegend>
+                  <Field>
+                    <FieldLabel htmlFor="quote-premium">Premium on your quotation (ZMW) *</FieldLabel>
+                    <div className="flex gap-2">
+                      <InputGroup>
+                        <InputGroupAddon><InputGroupText>ZMW</InputGroupText></InputGroupAddon>
+                        <InputGroupInput
+                          ref={premiumInput}
+                          id="quote-premium"
+                          required
+                          type="number"
+                          inputMode="decimal"
+                          min="1"
+                          step="0.01"
+                          value={premium}
+                          onChange={(event) => setPremium(event.target.value)}
+                          placeholder="e.g. 21000"
+                          aria-describedby="quote-premium-hint"
+                        />
+                      </InputGroup>
+                      {estimate > 0 && (
+                        <Button type="button" variant="outline" onClick={() => setPremium(estimate.toFixed(2))} className="shrink-0">Use estimate</Button>
+                      )}
+                    </div>
+                    <FieldDescription id="quote-premium-hint">
+                      The customer pays exactly this amount, so it must match your quotation.
+                      {estimate > 0 && <> InsurShield’s indicative estimate is {formatZMW(estimate)}.</>}
+                    </FieldDescription>
+                    <p aria-live="polite" className={premiumQuestion ? 'flex items-start gap-2 rounded-xl bg-primary/5 px-3 py-2 text-sm leading-relaxed text-foreground' : 'sr-only'}>
+                      {premiumQuestion && (
+                        <>
+                          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                          <span>This is {premiumQuestion} InsurShield’s estimate of {formatZMW(estimate)}. Check it against your quotation before sending.</span>
+                        </>
+                      )}
+                    </p>
+                  </Field>
+                </FieldSet>
+
+                <FieldSeparator />
+
+                <FieldSet>
+                  <FieldLegend>2. Terms</FieldLegend>
+                  <FieldGroup>
+                    <Field data-invalid={validityProblem ? true : undefined}>
+                      <FieldLabel htmlFor="quote-validity">Quote valid for (days)</FieldLabel>
+                      <InputGroup className="sm:max-w-48">
+                        <InputGroupInput
+                          ref={validityInput}
+                          id="quote-validity"
+                          type="number"
+                          inputMode="numeric"
+                          min="1"
+                          max={MAX_VALIDITY_DAYS}
+                          value={validityDays}
+                          onChange={(event) => setValidityDays(event.target.value)}
+                          placeholder={String(defaultValidityDays)}
+                          aria-invalid={validityProblem ? true : undefined}
+                          aria-describedby={validityProblem ? 'quote-validity-error quote-validity-hint' : 'quote-validity-hint'}
+                        />
+                        <InputGroupAddon align="inline-end"><InputGroupText>days</InputGroupText></InputGroupAddon>
+                      </InputGroup>
+                      {validityProblem && <FieldError id="quote-validity-error">{validityProblem}</FieldError>}
+                      <FieldDescription id="quote-validity-hint">
+                        Leave empty for your usual {days(defaultValidityDays)}. Once it lapses the customer has to ask for new quotes; you can extend an open quote from the overview.
+                      </FieldDescription>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="quote-notes">Special conditions / notes</FieldLabel>
+                      <Textarea id="quote-notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. Requires tracking device installation…" aria-describedby="quote-notes-hint" />
+                      <FieldDescription id="quote-notes-hint">Shown to the customer with your quote.</FieldDescription>
+                    </Field>
+                  </FieldGroup>
+                </FieldSet>
+
+                <FieldSeparator />
+
+                <FieldSet>
+                  <FieldLegend>3. Quotation document</FieldLegend>
+                  <FieldGroup>
+                    <Field data-invalid={quotation.error ? true : undefined}>
+                      <FieldLabel htmlFor="quotation-document">Quotation document (PDF or image) *</FieldLabel>
+                      <DocumentPicker
+                        id="quotation-document"
+                        inputRef={quotationInput}
+                        document={quotation.document}
+                        onPick={quotation.pick}
+                        onClear={quotation.clear}
+                        error={quotation.error}
+                        prompt="Attach quotation from your system"
+                      />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="quote-reference">Your internal quote reference</FieldLabel>
+                      <Input id="quote-reference" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="e.g. PA-Q-2026-00412" aria-describedby="quote-reference-hint" />
+                      <FieldDescription id="quote-reference-hint">Shown to the customer so they can quote it when they call you.</FieldDescription>
+                    </Field>
+                  </FieldGroup>
+                </FieldSet>
+
+                <TaskOutcome title="What the customer will see">
+                  <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                    <Fact label="Cover requested" value={coverLabel} />
+                    <Fact label="Premium to pay" value={Number(premium) > 0 ? <span className="text-base font-semibold tabular-nums">{formatZMW(Number(premium))}</span> : <Missing>Not entered yet</Missing>} />
+                    <Fact label="Open until" value={openDays ? `${quoteOpenUntil(openDays)} · ${days(openDays)}` : <Missing>Enter 1 to {MAX_VALIDITY_DAYS} days</Missing>} />
+                    <Fact label="Quotation document" value={quotation.document ? 'Attached' : <Missing>Not attached yet</Missing>} />
+                    <Fact wide label="Special conditions" value={notes.trim() || 'None'} />
+                  </dl>
+                </TaskOutcome>
+
+                {sending.error && (
+                  <Alert variant="destructive">
+                    <TriangleAlert aria-hidden="true" />
+                    <AlertTitle>{sending.error}</AlertTitle>
+                    <AlertDescription>What you entered is still here.</AlertDescription>
+                  </Alert>
+                )}
+
+                <Button
+                  type="submit"
+                  size="lg"
+                  disabled={sending.pending || !guidePublished}
+                  aria-busy={sending.pending}
+                  aria-describedby={guidePublished ? undefined : 'cover-guide-needed'}
+                  className="w-full"
+                >
+                  {sending.pending ? <Spinner aria-hidden="true" /> : <Send aria-hidden="true" />}
+                  {sending.pending ? 'Sending…' : 'Send quote to customer'}
+                </Button>
               </FieldGroup>
-            </FieldSet>
-
-            <FieldSeparator />
-
-            <FieldSet>
-              <FieldLegend>3. Quotation document</FieldLegend>
-              <FieldGroup>
-                <Field data-invalid={quotation.error ? true : undefined}>
-                  <FieldLabel htmlFor="quotation-document">Quotation document (PDF or image) *</FieldLabel>
-                  <DocumentPicker
-                    id="quotation-document"
-                    inputRef={quotationInput}
-                    document={quotation.document}
-                    onPick={quotation.pick}
-                    onClear={quotation.clear}
-                    error={quotation.error}
-                    prompt="Attach quotation from your system"
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="quote-reference">Your internal quote reference</FieldLabel>
-                  <Input id="quote-reference" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="e.g. PA-Q-2026-00412" aria-describedby="quote-reference-hint" />
-                  <FieldDescription id="quote-reference-hint">Shown to the customer so they can quote it when they call you.</FieldDescription>
-                </Field>
-              </FieldGroup>
-            </FieldSet>
-
-            <TaskOutcome title="What the customer will see">
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                <Fact label="Cover requested" value={coverLabel} />
-                <Fact label="Premium to pay" value={Number(premium) > 0 ? <span className="text-base font-semibold tabular-nums">{formatZMW(Number(premium))}</span> : <Missing>Not entered yet</Missing>} />
-                <Fact label="Open until" value={openDays ? `${quoteOpenUntil(openDays)} · ${days(openDays)}` : <Missing>Enter 1 to {MAX_VALIDITY_DAYS} days</Missing>} />
-                <Fact label="Quotation document" value={quotation.document ? 'Attached' : <Missing>Not attached yet</Missing>} />
-                <Fact wide label="Special conditions" value={notes.trim() || 'None'} />
-              </dl>
-            </TaskOutcome>
-
-            {sending.error && (
-              <Alert variant="destructive">
-                <TriangleAlert aria-hidden="true" />
-                <AlertTitle>{sending.error}</AlertTitle>
-                <AlertDescription>What you entered is still here.</AlertDescription>
-              </Alert>
-            )}
-
-            <Button
-              type="submit"
-              size="lg"
-              disabled={sending.pending || !guidePublished}
-              aria-busy={sending.pending}
-              aria-describedby={guidePublished ? undefined : 'cover-guide-needed'}
-              className="w-full"
-            >
-              {sending.pending ? <Spinner aria-hidden="true" /> : <Send aria-hidden="true" />}
-              {sending.pending ? 'Sending…' : 'Send quote to customer'}
-            </Button>
-          </FieldGroup>
-        </form>
-      </TaskPanel>
+            </form>
+          </TaskPanel>
+        )}
+      </div>
     </TaskScreen>
   );
 }

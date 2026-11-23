@@ -145,3 +145,21 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.post).toHaveBeenCalledWith('/insurer/quote-requests/QR-LEGACY/extend', { extraDays: 7 });
   });
 });
+
+describe('the quote workflow routes', () => {
+  it('addresses each chosen product under its request', () => {
+    quotes.declineReasons();
+    quotes.decline('QR-1', 'pv-1', { reasonCode: 'OTHER' });
+    quotes.requestInformation('QR-1', 'pv-1', { message: 'Odometer?', dueInDays: 3 });
+    quotes.notes('QR-1', 'pv-1');
+    quotes.addNote('QR-1', 'pv-1', 'Checked.');
+    quotes.answerInformation('QR-1', 'pv-1', '84,200 km');
+
+    expect(transport.get).toHaveBeenNthCalledWith(1, '/insurer/decline-reasons');
+    expect(transport.get).toHaveBeenNthCalledWith(2, '/insurer/quote-requests/QR-1/products/pv-1/notes');
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/decline', { reasonCode: 'OTHER' });
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/insurer/quote-requests/QR-1/products/pv-1/information-requests', { message: 'Odometer?', dueInDays: 3 });
+    expect(transport.post).toHaveBeenNthCalledWith(3, '/insurer/quote-requests/QR-1/products/pv-1/notes', { body: 'Checked.' });
+    expect(transport.post).toHaveBeenNthCalledWith(4, '/quote-requests/QR-1/products/pv-1/information', { answer: '84,200 km' });
+  });
+});
