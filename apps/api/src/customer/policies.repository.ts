@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { customers, insurers, payments, policies, quoteRequests, vehicles } from '../db/schema.js';
+import { customers, insurerProductVersions, insurers, payments, policies, quoteRequests, vehicles } from '../db/schema.js';
 import type { RenewalRequest } from './domain/renewal.js';
 
 export type PolicyRow = typeof policies.$inferSelect;
@@ -21,6 +21,7 @@ export interface PolicyWithParties {
     currency: string;
     confirmedAt: Date | null;
   };
+  product: { name: string; versionNumber: number } | null;
 }
 
 export type PolicyRenewal = RenewalRequest & { renewalOfPolicyNumber: string };
@@ -39,6 +40,7 @@ const PARTIES = {
     currency: payments.currency,
     confirmedAt: payments.confirmedAt,
   },
+  product: { name: insurerProductVersions.name, versionNumber: insurerProductVersions.versionNumber },
 };
 
 @Injectable()
@@ -56,7 +58,8 @@ export class PoliciesRepository {
       .innerJoin(customers, eq(customers.id, policies.customerId))
       .innerJoin(insurers, eq(insurers.id, policies.insurerId))
       .innerJoin(vehicles, eq(vehicles.id, policies.vehicleId))
-      .innerJoin(payments, eq(payments.id, policies.paymentId));
+      .innerJoin(payments, eq(payments.id, policies.paymentId))
+      .leftJoin(insurerProductVersions, eq(insurerProductVersions.id, policies.productVersionId));
   }
 
   listForCustomer(customerId: string): Promise<PolicyWithParties[]> {

@@ -1,6 +1,7 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
+import { issuanceOf } from '../../insurer-portal/dto/portal.response.js';
 import type { RenewalState } from '../domain/renewal.js';
 import type { PolicyWithParties } from '../policies.repository.js';
 
@@ -45,10 +46,14 @@ export interface PolicyResponse {
   };
   receivedAt: string;
   issuedAt: string | null;
+  /** While the insurer issues: when it is due, whether it is late, and why it failed if it did. */
+  issuance: ReturnType<typeof issuanceOf>;
+  /** The product bought, from the quoted version; null for policies from before product selection. */
+  product: { name: string; versionNumber: number } | null;
 }
 
 export function toPolicyResponse(
-  { policy, customer, insurerName, vehicle, payment }: PolicyWithParties,
+  { policy, customer, insurerName, vehicle, payment, product }: PolicyWithParties,
   renewal: RenewalState,
   quoteDocument: DocumentRecord | null,
   certificateDocument: DocumentRecord | null,
@@ -100,5 +105,7 @@ export function toPolicyResponse(
     },
     receivedAt: policy.receivedAt.toISOString(),
     issuedAt: policy.issuedAt?.toISOString() ?? null,
+    issuance: issuanceOf(policy, new Date()),
+    product: product?.name ? { name: product.name, versionNumber: product.versionNumber } : null,
   };
 }

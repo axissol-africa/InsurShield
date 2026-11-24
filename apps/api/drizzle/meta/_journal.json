@@ -274,6 +274,13 @@
       "when": 1795507093784,
       "tag": "0038_batch_14_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795524312487,
+      "tag": "0039_batch_14_issuance",
+      "breakpoints": true
     }
   ]
 }

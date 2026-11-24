@@ -524,6 +524,9 @@ describe('payments', () => {
       expect(response.body.status).toBe('Confirmed');
       const [policy] = await policiesFor([quoteRequest.id]);
       expect(policy).toMatchObject({ insurerQuoteId: sibling.id, premiumMinor: 88_888, productVersionId: versions[1].id });
+      const shown = await testApp.http.get(`/api/v1/policies/${policy.policyNumber}`).set(await asCustomer(customer));
+      expect(shown.body.product).toEqual({ name: versions[1].name, versionNumber: 2 });
+      expect(shown.body.issuance).toMatchObject({ dueAt: expect.any(String), overdue: false });
     });
 
     it.each([

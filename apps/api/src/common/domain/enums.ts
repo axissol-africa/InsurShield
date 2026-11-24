@@ -345,3 +345,7 @@ export const NOTIFICATION_CATEGORIES = [
   'MARKETING',
 ] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/** Why an insurer could not issue a paid policy. The customer is told in the insurer's own words. */
+export const ISSUANCE_FAILURE_REASONS = ['RISK_NOT_ACCEPTED', 'VEHICLE_DETAILS_WRONG', 'DOCUMENTS_MISSING', 'DUPLICATE_COVER', 'OTHER'] as const;
+export type IssuanceFailureReason = (typeof ISSUANCE_FAILURE_REASONS)[number];

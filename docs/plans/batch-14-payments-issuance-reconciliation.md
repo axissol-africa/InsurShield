@@ -449,7 +449,15 @@ As batch 13 did, this batch is delivered in parts on one branch, `feat/batch-14-
     the page adds the premium, the chosen add-ons and the RTSA fee it knows. The customer chooses optional add-ons on
     the compare page.
   - `docs/PAYMENTS.md` is started with the part 1 flow, the stand-in wallets and the settings.
-- **Part 2**: B14.4 (issuance accept, certificate and failure, the overdue job) with its portal and customer screens.
+- **Part 2** (delivered): B14.4 (issuance accept, certificate and failure, the overdue job) with its portal and
+  customer screens. Where it differs from the plan:
+  - The three issuing routes use the existing `portal:certificate:issue` permission rather than a new
+    `portal:policy:issue`; the roles allowed are the same.
+  - A certificate without an earlier acceptance accepts and issues in one step.
+  - Migration 0039 adds only the customer notification templates; the columns came with 0038.
+  - When a late policy is issued, its `ISSUANCE_OVERDUE` item is resolved as `ISSUED`, so nothing is left open.
+  - The insurer API path (`POLICY_ISSUED` callback with a certificate uploaded through the API) waits for an API
+    document upload route for insurers. Until then the portal is the only way to issue, as it is the standard path.
 - **Part 3**: B14.5 to B14.7 (refunds and adjustments under two-person approval, reconciliation, settlement) with the
   admin console screens.
 

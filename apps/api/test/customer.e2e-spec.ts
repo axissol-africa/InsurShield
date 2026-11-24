@@ -123,12 +123,14 @@ const POLICY_KEYS = [
   'insurer',
   'insurerPolicyNumber',
   'insurerQuoteReference',
+  'issuance',
   'issuedAt',
   'paymentProof',
   'plan',
   'policyDates',
   'policyNumber',
   'premium',
+  'product',
   'quoteDocument',
   'quoteRequestId',
   'receivedAt',
@@ -1358,6 +1360,8 @@ describe('customer', () => {
         },
         receivedAt: '2026-01-01T10:00:00.123Z',
         issuedAt: null,
+        issuance: { dueAt: null, acceptedAt: null, overdue: false, failedAt: null, failureReason: null },
+        product: null,
       });
     });
 

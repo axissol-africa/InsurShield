@@ -1,7 +1,7 @@
 # Payments
 
-How InsurShield takes a payment for an accepted quote. Batch 14 builds this in parts; this page covers what part 1
-delivered and grows with the later parts (issuance, refunds, reconciliation and settlement).
+How InsurShield takes a payment for an accepted quote, and how the insurer then issues the policy. Batch 14 builds
+this in parts; this page covers parts 1 and 2 and grows with part 3 (refunds, reconciliation and settlement).
 
 ## The rules
 
@@ -66,6 +66,31 @@ A quote that expires while its payment is pending is honoured when the confirmat
 When an insurer is suspended, its open attempts are queued for cancellation at the provider. Any confirmation that
 still arrives follows the `REFUND_REQUIRED` row above.
 
+## Issuing the policy
+
+A confirmed payment creates the policy in "Policy issuing" (`AWAITING_INSURER_CERTIFICATE`), due by
+`issuanceDueAt`, which is the confirmation time plus `ISSUANCE_DEADLINE`. From the insurer portal, or the same routes
+under `/api/v1/insurer/policies/:policyNumber`:
+
+| Route | Effect |
+| --- | --- |
+| `POST .../accept` | Records that the insurer has taken it on, with its own policy number if it has one. A repeat answers what was recorded. The customer is told. |
+| `POST .../certificate` | Uploads the certificate and makes the policy `ACTIVE`. Without an earlier acceptance, it accepts at the same moment. |
+| `POST .../issuance-failure` | `reasonCode` and `customerMessage` (at least 10 characters, shown to the customer as written). The policy becomes `ISSUANCE_FAILED`, an `ISSUANCE_FAILED` reconciliation item opens for the refund, and the customer is told. |
+
+All three refuse a policy that is no longer waiting to be issued: an active one with `ALREADY_ISSUED`, a failed one
+with `ISSUANCE_CLOSED`. Another insurer's policy answers as absent, and the attempt is audited.
+
+Reason codes: `RISK_NOT_ACCEPTED`, `VEHICLE_DETAILS_WRONG`, `DOCUMENTS_MISSING`, `DUPLICATE_COVER`, `OTHER`.
+
+The issuance check runs every hour. A policy still issuing after `issuanceDueAt` gets one `ISSUANCE_OVERDUE`
+reconciliation item, a notice to the customer that it is delayed, and an email to each of the insurer's
+administrators. The policy is not failed automatically: operations confirm a failure with the insurer. When the late
+policy is issued, its overdue item is resolved as `ISSUED`.
+
+Both the portal and the customer's policy show `issuance`: `dueAt`, `acceptedAt`, `overdue`, `failedAt` and
+`failureReason`. The customer's policy also shows the product bought, from the quoted version.
+
 ## The provider port and the stand-in
 
 The port is `src/payments/provider/payment-provider.ts`: `initiate`, `status`, `cancel`, `refund` and
@@ -96,6 +121,6 @@ Left unset outside production, the stand-in makes up a secret at each start.
 | --- | --- | --- |
 | `PAYMENT_CHARGES` | the RTSA anniversary fee only | Approved charges added to the premium. Until a version is approved, the fee keeps the amount in `RTSA_ANNIVERSARY_FEE_NGWEE`. |
 | `PAYMENT_PENDING_TIMEOUT` | 15 minutes | How long an attempt may stay open, and how long the price is held. |
-| `ISSUANCE_DEADLINE` | 48 hours | When a paid policy is due from the insurer. Used from batch 14 part 2. |
+| `ISSUANCE_DEADLINE` | 48 hours | When a paid policy is due from the insurer. |
 
 All three are provisional until DEC-008 and the finance questions in the batch 14 plan are answered.

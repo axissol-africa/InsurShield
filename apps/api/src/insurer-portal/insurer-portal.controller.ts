@@ -14,6 +14,8 @@ import {
   InternalNoteDto,
   RequestInformationDto,
   IssueCertificateDto,
+  AcceptIssuanceDto,
+  IssuanceFailureDto,
   NcdDecisionDto,
   SubmitQuoteDto,
   WithdrawQuoteDto,
@@ -287,6 +289,22 @@ export class InsurerPortalController {
     @CurrentUser() principal: Principal,
   ) {
     return this.portal.issueCertificate(principal, policyNumber, dto);
+  }
+
+  /** The insurer takes on issuing; the certificate can follow later. */
+  @Needs('portal:certificate:issue')
+  @Post('policies/:policyNumber/accept')
+  @HttpCode(HttpStatus.OK)
+  acceptIssuance(@Param('policyNumber') policyNumber: string, @Body() dto: AcceptIssuanceDto, @CurrentUser() principal: Principal) {
+    return this.portal.acceptIssuance(principal, policyNumber, dto);
+  }
+
+  /** The insurer cannot issue a paid policy; the customer is refunded. */
+  @Needs('portal:certificate:issue')
+  @Post('policies/:policyNumber/issuance-failure')
+  @HttpCode(HttpStatus.OK)
+  reportIssuanceFailure(@Param('policyNumber') policyNumber: string, @Body() dto: IssuanceFailureDto, @CurrentUser() principal: Principal) {
+    return this.portal.reportIssuanceFailure(principal, policyNumber, dto);
   }
 
   // ── Claims ──────────────────────────────────────────────────────
