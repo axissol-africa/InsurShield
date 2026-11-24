@@ -10,16 +10,16 @@ import { Textarea } from '@/components/ui/primitives/textarea';
 import { ContactLinks, PageHeader } from './ui';
 
 const CLOSED = ['APPROVED', 'FAILED', 'CANCELLED', 'NO_SHOW'];
-const STAGE_LABELS = { BEFORE_QUOTATION: 'Before you quote', BEFORE_PAYMENT: 'Before the customer pays', AFTER_PAYMENT: 'After payment' };
+const STAGE_LABELS = { BEFORE_QUOTATION: 'Product asks for it before quoting', BEFORE_PAYMENT: 'Product asks for it before payment', AFTER_PAYMENT: 'After payment' };
 const METHOD_LABELS = { PHYSICAL: 'In person', SELF_CAPTURE: 'Customer photos' };
 
 /** The API's own words when it gives them, otherwise the caller's plain fallback. */
 const messageOf = (fallback) => (caught) => (caught?.code && caught?.message ? caught.message : fallback);
 
 /**
- * The inspections this insurer carries out. A product whose terms need one
- * waits here until it is passed; a fail declines it unless its terms allow a
- * second inspection, and a missed or cancelled one is booked again.
+ * The inspections this insurer carries out. They are optional: the customer's
+ * live photos are enough as a rule, so nothing here holds up a quote or a
+ * purchase. A missed or cancelled appointment is booked again.
  */
 export default function InspectionsTab({ api, onChanged }) {
   const [inspections, setInspections] = useState(null);
@@ -48,7 +48,7 @@ export default function InspectionsTab({ api, onChanged }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Inspections" description="Book, staff and decide the inspections your products need before you quote or before the customer pays." />
+      <PageHeader title="Inspections" description="Optional inspections for products whose terms ask for one. The customer's live photos are enough as a rule, so an inspection never holds up a quote or a purchase. If one fails, decide yourself whether to decline the product." />
       {loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
       {inspections === null && !loadError && <p className="text-sm text-muted-foreground">Loading inspections…</p>}
       {inspections && (

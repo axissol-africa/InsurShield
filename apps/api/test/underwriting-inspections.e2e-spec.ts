@@ -4,7 +4,6 @@ import { QuoteAvailabilityService } from '../src/customer/quote-availability.ser
 import { UnderwritingInspectionsService } from '../src/customer/underwriting-inspections.service.js';
 import {
   auditLogs,
-  inspectionRequestProducts,
   inspections,
   insurerProductVersions,
   insurerProducts,
@@ -75,7 +74,6 @@ describe('underwriting inspections', () => {
           createdByStaffId: insurer.staff.id,
         })
         .returning();
-      const waits = rule.timing === 'BEFORE_QUOTATION';
       await testApp.db.insert(quoteRequestProductVersions).values({
         quoteRequestId: quoteRequest.id,
         productVersionId: version.id,
@@ -88,8 +86,7 @@ describe('underwriting inspections', () => {
         inspectionRule: 'REQUIRED',
         inspectionTiming: rule.timing,
         inspectionMethod: rule.method,
-        status: waits ? 'INSPECTION_REQUIRED' : 'SUBMITTED',
-        pausedAt: waits ? new Date(Date.now() - 2 * 3_600_000) : null,
+        status: 'SUBMITTED',
         replyDueAt: new Date(Date.now() + 5 * 24 * 3_600_000),
       });
       versions.push(version);
@@ -127,12 +124,13 @@ describe('underwriting inspections', () => {
       documentId: (await buildDocument(testApp.db, { staffId: insurer.staff.id }, { kind: 'QUOTATION' })).id,
     });
 
-  it('books, staffs and passes a physical inspection, which lets the waiting product be quoted', async () => {
+  it('quotes a product without waiting for its inspection, and lets the insurer book, staff and pass it', async () => {
     const insurer = await buildInsurer(testApp.db);
     const { customer, request, versions, inspection } = await requestNeedingInspection(insurer, [
       { timing: 'BEFORE_QUOTATION', method: 'PHYSICAL' },
     ]);
-    expect((await quote(insurer, request.id, versions[0].id)).body.code).toBe('INSPECTION_REQUIRED');
+    // Optional: the product is quoted straight away.
+    expect((await quote(insurer, request.id, versions[0].id)).status).toBe(201);
 
     expect((await insurerPost(insurer, `inspections/${inspection.id}/approve`)).body.code).toBe('INSPECTION_NOT_READY');
     const booked = await insurerPost(insurer, `inspections/${inspection.id}/schedule`, {
@@ -143,8 +141,7 @@ describe('underwriting inspections', () => {
     await insurerPost(insurer, `inspections/${inspection.id}/inspector`, { inspectorName: 'Bwalya Phiri', inspectorPhone: '+260971000000' });
     expect((await insurerPost(insurer, `inspections/${inspection.id}/approve`)).body).toMatchObject({ status: 'APPROVED', result: 'PASSED' });
 
-    expect((await productStatus(request.id, versions[0].id)).status).toBe('INSURER_PROCESSING');
-    expect((await quote(insurer, request.id, versions[0].id)).status).toBe(201);
+    expect((await productStatus(request.id, versions[0].id)).status).toBe('QUOTED');
 
     const told = await testApp.db
       .select({ key: notifications.templateKey })
@@ -165,7 +162,7 @@ describe('underwriting inspections', () => {
     expect((await insurerPost(insurer, `inspections/${inspection.id}/fail`, { reason: 'Too late.' })).body.code).toBe('INSPECTION_CLOSED');
   });
 
-  it('declines on a fail unless the product allows a second inspection, which is booked instead', async () => {
+  it('records a fail for the insurer to act on, without declining anything by itself', async () => {
     const insurer = await buildInsurer(testApp.db);
     const { request, versions, inspection } = await requestNeedingInspection(insurer, [
       { timing: 'BEFORE_QUOTATION', method: 'SELF_CAPTURE' },
@@ -176,16 +173,9 @@ describe('underwriting inspections', () => {
     const failed = await insurerPost(insurer, `inspections/${inspection.id}/fail`, { reason: 'Rear bumper damage not declared.' });
     expect(failed.body).toMatchObject({ status: 'FAILED', result: 'FAILED' });
 
-    expect(await productStatus(request.id, versions[0].id)).toEqual({ status: 'DECLINED', declineReasonCode: 'INSPECTION_FAILED' });
-    expect((await productStatus(request.id, versions[1].id)).status).toBe('INSPECTION_REQUIRED');
-    const all = await inspectionsOf(request.id);
-    const successor = all.find((entry) => entry.predecessorId === inspection.id)!;
-    expect(successor).toMatchObject({ status: 'REQUESTED', method: 'SELF_CAPTURE', stage: 'BEFORE_QUOTATION' });
-    const served = await testApp.db
-      .select({ productVersionId: inspectionRequestProducts.productVersionId })
-      .from(inspectionRequestProducts)
-      .where(eq(inspectionRequestProducts.inspectionId, successor.id));
-    expect(served).toEqual([{ productVersionId: versions[1].id }]);
+    expect((await productStatus(request.id, versions[0].id)).status).toBe('SUBMITTED');
+    expect((await productStatus(request.id, versions[1].id)).status).toBe('SUBMITTED');
+    expect(await inspectionsOf(request.id)).toHaveLength(1);
   });
 
   it('books a missed appointment again for the products still waiting', async () => {
@@ -199,21 +189,17 @@ describe('underwriting inspections', () => {
     );
   });
 
-  it('holds payment of a before-payment product until a pass, without holding up another product', async () => {
+  it('never holds up payment, whatever the inspection', async () => {
     const insurer = await buildInsurer(testApp.db);
-    const { customer, request, versions, inspection } = await requestNeedingInspection(insurer, [{ timing: 'BEFORE_PAYMENT', method: 'SELF_CAPTURE' }]);
+    const { customer, request, versions } = await requestNeedingInspection(insurer, [{ timing: 'BEFORE_PAYMENT', method: 'SELF_CAPTURE' }]);
     expect((await quote(insurer, request.id, versions[0].id)).status).toBe(201);
     const [sent] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, request.id));
-    const pay = async () =>
-      testApp.http
-        .post('/api/v1/payments')
-        .set(await signIn(testApp.http, customer))
-        .set('Idempotency-Key', randomUUID())
-        .send({ quoteRequestId: request.id, insurerQuoteId: sent.id, amount: 500, method: 'Card' });
-
-    expect((await pay()).body.code).toBe('INSPECTION_PENDING');
-    await insurerPost(insurer, `inspections/${inspection.id}/approve`);
-    expect((await pay()).status).toBe(201);
+    const paid = await testApp.http
+      .post('/api/v1/payments')
+      .set(await signIn(testApp.http, customer))
+      .set('Idempotency-Key', randomUUID())
+      .send({ quoteRequestId: request.id, insurerQuoteId: sent.id, amount: 500, method: 'Card' });
+    expect(paid.status).toBe(201);
   });
 
   it("answers another insurer's inspection as absent and audits the reach", async () => {

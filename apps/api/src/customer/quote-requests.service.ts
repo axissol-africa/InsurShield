@@ -14,7 +14,7 @@ import { newReference } from '../common/domain/reference.js';
 import type { CoverageDuration, DocumentKind, InsuranceType } from '../common/domain/enums.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import { QuoteWorkflowService } from './quote-workflow.service.js';
-import { initialStatus, resumedReplyDueAt } from './domain/quote-workflow.js';
+import { resumedReplyDueAt } from './domain/quote-workflow.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
 import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
@@ -323,11 +323,9 @@ export class QuoteRequestsService {
     const chosen = await this.repository.insertSelectedProductVersions(
       tx,
       created.id,
-      selectedVersions.map((version) => {
-        const status = initialStatus(version.inspectionRule, version.inspectionTiming);
-        // A version waiting for an inspection before quotation starts with its clock stopped.
-        return { ...version, status, replyDueAt, pausedAt: status === 'INSPECTION_REQUIRED' ? created.submittedAt : null };
-      }),
+      // Every product starts waiting for its insurer. An inspection a product's terms ask
+      // for is optional and never holds up the quote or the purchase; the live photos are enough.
+      selectedVersions.map((version) => ({ ...version, status: 'SUBMITTED' as const, replyDueAt, pausedAt: null })),
     );
     await this.repository.insertProductRequirementAnswers(tx, created.id, productRequirements.answers);
     await this.repository.insertProductRequirementDeclarations(tx, created.id, productRequirements.declarations);
@@ -335,7 +333,7 @@ export class QuoteRequestsService {
     await this.repository.insertShots(tx, created.id, shots);
     const row = await this.repository.findOwned(created.customerId, created.id, tx);
     if (!row) throw new Error(`Quote request ${created.id} is missing inside its own transaction`);
-    // Products whose terms need an inspection before quotation or payment get one now, one per insurer.
+    // Products whose terms ask for an inspection get an optional one, one per insurer, for the insurer to use if it wants.
     await this.underwriting.openForRequest(
       tx,
       {
@@ -394,10 +392,7 @@ export class QuoteRequestsService {
         entityId: version.id,
         fromStatus: null,
         toStatus: version.status,
-        note:
-          version.status === 'INSPECTION_REQUIRED'
-            ? 'Product chosen; it needs an inspection before it can be quoted.'
-            : 'Product chosen.',
+        note: 'Product chosen.',
         correlationId: created.id,
       });
     }

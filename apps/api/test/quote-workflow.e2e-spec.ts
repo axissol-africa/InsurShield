@@ -317,16 +317,6 @@ describe('the quote workflow of a chosen product', () => {
   });
 
   describe('quoting', () => {
-    it('refuses to quote a product whose rule needs an inspection before quotation', async () => {
-      const insurer = await buildInsurer(testApp.db);
-      const { request, productVersion, row } = await chosen(insurer, { inspection: 'BEFORE_QUOTATION' });
-
-      const response = await quote(insurer, request.id, productVersion.id);
-      expect(response.status).toBe(409);
-      expect(response.body.code).toBe('INSPECTION_REQUIRED');
-      expect((await versionRow(row.id)).status).toBe('INSPECTION_REQUIRED');
-    });
-
     it('refuses a quote once the reply deadline has passed, before the sweep has run', async () => {
       const insurer = await buildInsurer(testApp.db);
       const { request, productVersion } = await chosen(insurer, { replyDueAt: new Date(Date.now() - HOUR_MS) });

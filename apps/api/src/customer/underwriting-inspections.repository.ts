@@ -106,21 +106,6 @@ export class UnderwritingInspectionsRepository {
       .where(and(eq(inspectionRequestProducts.inspectionId, inspectionId), eq(inspectionRequestProducts.isOpen, true)));
   }
 
-  /** Whether an approved inspection has satisfied this chosen product's rule. */
-  async passed(tx: Database | Transaction, quoteRequestId: string, productVersionId: string): Promise<boolean> {
-    const [link] = await tx
-      .select({ id: inspectionRequestProducts.id })
-      .from(inspectionRequestProducts)
-      .where(
-        and(
-          eq(inspectionRequestProducts.quoteRequestId, quoteRequestId),
-          eq(inspectionRequestProducts.productVersionId, productVersionId),
-          eq(inspectionRequestProducts.passed, true),
-        ),
-      );
-    return link !== undefined;
-  }
-
   /** This insurer's open underwriting inspections, locked, for decision 24. */
   openForInsurer(tx: Transaction, insurerId: string) {
     return tx

@@ -614,7 +614,7 @@ describe('customer', () => {
       );
     });
 
-    it('opens one inspection per insurer for the products that need one before quotation or payment', async () => {
+    it('opens one optional inspection per insurer for the products that ask for one, without holding any product up', async () => {
       const customer = await buildCustomer(testApp.db);
       const insurer = await buildInsurer(testApp.db);
       const other = await buildInsurer(testApp.db);
@@ -649,7 +649,7 @@ describe('customer', () => {
         (await selectedProductsOf(submitted.body.id)).map((selection) => [selection.productVersionId, selection.status]),
       );
       expect(statuses).toEqual({
-        [physicalFirst.version.id]: 'INSPECTION_REQUIRED',
+        [physicalFirst.version.id]: 'SUBMITTED',
         [photosBeforePaying.version.id]: 'SUBMITTED',
         [noInspection.version.id]: 'SUBMITTED',
       });

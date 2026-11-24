@@ -14,9 +14,9 @@ import {
   type InspectedProduct,
   type InspectionEvent,
 } from '../inspections/domain/underwriting.js';
-import { isOpenStatus, nextStatus, resumedReplyDueAt } from './domain/quote-workflow.js';
+import { isOpenStatus } from './domain/quote-workflow.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
-import { customerDate, QuoteWorkflowService } from './quote-workflow.service.js';
+import { customerDate } from './quote-workflow.service.js';
 import { UnderwritingInspectionsRepository } from './underwriting-inspections.repository.js';
 
 const SYSTEM: AuditActor = { type: 'SYSTEM', id: null };
@@ -41,18 +41,18 @@ const EVENT_NOTES: Record<InspectionEvent, string> = {
 };
 
 /**
- * Inspections a chosen product needs before it is quoted or paid. Each one is
- * opened at submit, worked by the insurer, and its result moves the products
- * it serves on in the same transaction: a pass lets them be quoted or paid, a
- * fail declines them unless the product allows a second inspection, and a
- * missed or cancelled appointment books a new one.
+ * Optional inspections. The live photos taken in the journey are enough under
+ * normal circumstances, so an inspection never holds up a quote or a
+ * purchase. One is opened at submit for the products whose terms ask for it,
+ * for the insurer to book and record if it wants; a missed or cancelled
+ * appointment is booked again, and a result is kept for the insurer's own
+ * decision.
  */
 @Injectable()
 export class UnderwritingInspectionsService {
   constructor(
     private readonly inspections: UnderwritingInspectionsRepository,
     private readonly versions: QuoteProductsRepository,
-    private readonly workflow: QuoteWorkflowService,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
   ) {}
@@ -120,7 +120,7 @@ export class UnderwritingInspectionsService {
       toStatus: 'REQUESTED',
       note: input.predecessorId
         ? `A new inspection replaces ${input.predecessorId}.`
-        : `Inspection needed ${input.stage === 'BEFORE_QUOTATION' ? 'before quotation' : 'before payment'}.`,
+        : 'Optional inspection opened for the products whose terms ask for one.',
       correlationId: input.request.id,
     });
     return created;
@@ -174,56 +174,26 @@ export class UnderwritingInspectionsService {
     const after = { ...inspection, ...patch, status: to as InspectionStatus };
 
     if (inspection.purpose === 'UNDERWRITING' && inspection.quoteRequestId) {
-      if (event === 'APPROVE') await this.passed(tx, after, actor, at);
-      if (event === 'FAIL') await this.failed(tx, after, actor, at);
+      if (event === 'APPROVE') await this.passed(tx, after);
+      if (event === 'FAIL') await this.failed(tx, after);
       if (event === 'NO_SHOW' || event === 'CANCEL') await this.rebook(tx, after, actor, at, false);
     }
     await this.tell(tx, after, event);
     return after;
   }
 
-  /** A pass unblocks every product it serves that was waiting for it. */
-  private async passed(tx: Transaction, inspection: Inspection, actor: AuditActor, at: Date) {
+  /** A pass is recorded on the products it served; nothing was waiting for it. */
+  private async passed(tx: Transaction, inspection: Inspection) {
     await this.inspections.closeLinks(tx, inspection.id, true);
-    for (const link of await this.inspections.linksOf(tx, inspection.id)) {
-      const version = await this.versions.lock(tx, link.quoteRequestId, link.productVersionId, { insurerId: inspection.insurerId! });
-      if (version?.status !== 'INSPECTION_REQUIRED') continue;
-      await this.workflow.move(tx, version, 'INSPECTION_PASSED', {
-        actor,
-        note: 'The inspection passed.',
-        at,
-        patch: {
-          pausedAt: null,
-          replyDueAt: version.replyDueAt && version.pausedAt ? resumedReplyDueAt(version.replyDueAt, version.pausedAt, at) : version.replyDueAt,
-        },
-      });
-    }
   }
 
   /**
-   * A fail declines the products it serves, except those whose terms allow a
-   * second inspection: those get a new one. A product already quoted keeps its
-   * quote on record, but payment stays refused without a pass.
+   * A fail is recorded for the insurer to act on. Inspections are optional and
+   * never decide a purchase by themselves: the insurer declines the product
+   * through the normal decline action if it wants to.
    */
-  private async failed(tx: Transaction, inspection: Inspection, actor: AuditActor, at: Date) {
+  private async failed(tx: Transaction, inspection: Inspection) {
     await this.inspections.closeLinks(tx, inspection.id, false);
-    const again: string[] = [];
-    for (const link of await this.inspections.linksOf(tx, inspection.id)) {
-      const version = await this.versions.lock(tx, link.quoteRequestId, link.productVersionId, { insurerId: inspection.insurerId! });
-      if (!version) continue;
-      if (link.reinspectionAllowed && (isOpenStatus(version.status) || version.status === 'QUOTED')) {
-        again.push(link.productVersionId);
-        continue;
-      }
-      if (!nextStatus(version.status, 'DECLINE')) continue;
-      await this.workflow.move(tx, version, 'DECLINE', {
-        actor,
-        note: 'Declined: the inspection failed.',
-        at,
-        patch: { declineReasonCode: 'INSPECTION_FAILED', declineCustomerNote: inspection.resultReason ?? null, pausedAt: null },
-      });
-    }
-    if (again.length > 0) await this.successor(tx, inspection, again, actor, at);
   }
 
   /** A missed or cancelled appointment is booked again for the products still waiting on it. */
@@ -293,10 +263,5 @@ export class UnderwritingInspectionsService {
       });
       await this.rebook(tx, inspection, SYSTEM, at, true);
     }
-  }
-
-  /** Whether a product whose rule needs an inspection before payment has passed one. */
-  passedBeforePayment(tx: Transaction, quoteRequestId: string, productVersionId: string): Promise<boolean> {
-    return this.inspections.passed(tx, quoteRequestId, productVersionId);
   }
 }

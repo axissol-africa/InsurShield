@@ -201,8 +201,8 @@ export default function InspectionWorkflowPage() {
       // An inspection an insurer's product needs says which products and when.
       ...(inspection.purpose === 'UNDERWRITING'
         ? [
-            ['Needed for', (inspection.products || []).map((product) => product.productName).join(', ') || 'Your quote request'],
-            ['Needed', inspection.stage === 'BEFORE_QUOTATION' ? 'Before the insurer can quote' : 'Before you can pay'],
+            ['Asked for by', (inspection.products || []).map((product) => product.productName).join(', ') || 'Your quote request'],
+            ['Your purchase', 'Not held up by this inspection'],
             ['How', inspection.method === 'SELF_CAPTURE' ? 'From your vehicle photos' : 'In person'],
           ]
         : []),

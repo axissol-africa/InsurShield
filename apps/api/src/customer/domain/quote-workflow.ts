@@ -1,4 +1,4 @@
-import type { InspectionRule, InspectionTiming, QuoteProductStatus } from '../../common/domain/enums.js';
+import type { QuoteProductStatus } from '../../common/domain/enums.js';
 
 /**
  * The life of one chosen product version, from the customer's submit to a
@@ -74,14 +74,6 @@ export function statusesAllowing(event: QuoteProductEvent): QuoteProductStatus[]
 
 export function isOpenStatus(status: QuoteProductStatus): boolean {
   return (OPEN_QUOTE_PRODUCT_STATUSES as readonly QuoteProductStatus[]).includes(status);
-}
-
-/**
- * Where a version starts. A rule that needs an inspection before quotation
- * holds it until an inspection passes, and the reply clock waits with it.
- */
-export function initialStatus(rule: InspectionRule, timing: InspectionTiming | null): QuoteProductStatus {
-  return rule === 'REQUIRED' && timing === 'BEFORE_QUOTATION' ? 'INSPECTION_REQUIRED' : 'SUBMITTED';
 }
 
 /**

@@ -33,6 +33,9 @@ const PRODUCT_CHOICES = TAGS.findIndex((tag) => tag.startsWith('0028_'));
 /** How many migrations precede 0033, which gives each chosen version its own state. */
 const QUOTE_WORKFLOW = TAGS.findIndex((tag) => tag.startsWith('0033_'));
 
+/** The migration that releases products held for an inspection. */
+const OPTIONAL_INSPECTIONS = TAGS.findIndex((tag) => tag.startsWith('0037_'));
+
 const created: ScratchDatabase[] = [];
 
 afterEach(async () => {
@@ -1030,6 +1033,13 @@ describe('0033_batch_13_quote_workflow', () => {
           [randomUUID(), versions.waiting, insurerId],
         ),
       ).rejects.toMatchObject({ code: '23505', constraint: 'quote_information_requests_open_key' });
+
+      // 0037 makes inspections optional: a product held for one goes back to waiting for its insurer.
+      for (let index = QUOTE_WORKFLOW + 1; index <= OPTIONAL_INSPECTIONS; index += 1) await applyMigration(client, index);
+      const { rows: released } = await client.query<{ status: string; paused: boolean }>(
+        `SELECT status, "pausedAt" IS NOT NULL AS paused FROM quote_request_product_versions WHERE "productName" = 'inspectionFirst'`,
+      );
+      expect(released).toEqual([{ status: 'SUBMITTED', paused: false }]);
     });
   });
 });

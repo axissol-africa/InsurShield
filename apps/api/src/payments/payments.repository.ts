@@ -10,8 +10,6 @@ import {
   policies,
   quoteRequests,
   quoteSelections,
-  inspectionRequestProducts,
-  quoteRequestProductVersions,
 } from '../db/schema.js';
 import { ncdCodeIssuedTo } from '../customer/ncd-code-ownership.js';
 
@@ -120,35 +118,6 @@ export class PaymentsRepository {
       .where(and(eq(quoteSelections.quoteRequestId, quoteRequestId), eq(quoteSelections.insurerQuoteId, insurerQuoteId)))
       .for('share');
     return selection?.accepted;
-  }
-
-  /**
-   * Whether this chosen product still waits for an inspection before it can
-   * be paid: its rule needs one before payment and no approved inspection has
-   * served it. Another product's inspection never holds it up.
-   */
-  async awaitsInspectionBeforePayment(tx: Transaction, quoteRequestId: string, productVersionId: string): Promise<boolean> {
-    const [selection] = await tx
-      .select({ rule: quoteRequestProductVersions.inspectionRule, timing: quoteRequestProductVersions.inspectionTiming })
-      .from(quoteRequestProductVersions)
-      .where(
-        and(
-          eq(quoteRequestProductVersions.quoteRequestId, quoteRequestId),
-          eq(quoteRequestProductVersions.productVersionId, productVersionId),
-        ),
-      );
-    if (selection?.rule !== 'REQUIRED' || selection.timing !== 'BEFORE_PAYMENT') return false;
-    const [passed] = await tx
-      .select({ id: inspectionRequestProducts.id })
-      .from(inspectionRequestProducts)
-      .where(
-        and(
-          eq(inspectionRequestProducts.quoteRequestId, quoteRequestId),
-          eq(inspectionRequestProducts.productVersionId, productVersionId),
-          eq(inspectionRequestProducts.passed, true),
-        ),
-      );
-    return passed === undefined;
   }
 
   /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { QUOTE_PRODUCT_STATUSES, type QuoteProductStatus } from '../../common/domain/enums.js';
 import {
   CUSTOMER_STATUS_LABELS,
-  initialStatus,
   isOpenStatus,
   nextStatus,
   resumedReplyDueAt,
@@ -56,21 +55,6 @@ describe('nextStatus', () => {
         expect(nextStatus(closed, event)).toBeNull();
       }
     }
-  });
-});
-
-describe('initialStatus', () => {
-  it('holds a version whose rule needs an inspection before quotation', () => {
-    expect(initialStatus('REQUIRED', 'BEFORE_QUOTATION')).toBe('INSPECTION_REQUIRED');
-  });
-
-  it.each([
-    ['REQUIRED', 'BEFORE_PAYMENT'],
-    ['REQUIRED', 'AFTER_PAYMENT'],
-    ['OPTIONAL', 'BEFORE_QUOTATION'],
-    ['NOT_REQUIRED', null],
-  ] as const)('starts %s %s as submitted', (rule, timing) => {
-    expect(initialStatus(rule, timing)).toBe('SUBMITTED');
   });
 });
 
