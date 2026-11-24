@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers, integrations, policies, products, quotes, settings } from './index';
+import { account, admin, auth, insurers, integrations, payments, policies, products, quotes, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -182,7 +182,7 @@ describe('quote changes and the customer choice', () => {
     quotes.withdraw('QR-1', 'pv-1', 'Wrong use.');
     quotes.select('QR-1', 'IQ-1', ['TRACKER']);
     expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/quote/withdraw', { reason: 'Wrong use.' });
-    expect(transport.post).toHaveBeenNthCalledWith(2, '/quote-requests/QR-1/selection', { insurerQuoteId: 'IQ-1', acceptedConditionCodes: ['TRACKER'] });
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/quote-requests/QR-1/selection', { insurerQuoteId: 'IQ-1', acceptedConditionCodes: ['TRACKER'], addOnCodes: [] });
   });
 });
 
@@ -205,5 +205,16 @@ describe('the insurer inspection routes', () => {
       '/insurer/inspections/INS-1/no-show',
       '/insurer/inspections/INS-1/cancel',
     ]);
+  });
+});
+
+describe('payments', () => {
+  it('sends the caller key with each attempt, and reads and cancels by transaction', () => {
+    payments.pay({ quoteRequestId: 'QR-1' }, 'KEY-1');
+    payments.status('TXN-1');
+    payments.cancel('TXN-1');
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/payments', { quoteRequestId: 'QR-1' }, { headers: { 'Idempotency-Key': 'KEY-1' } });
+    expect(transport.get).toHaveBeenCalledWith('/payments/TXN-1');
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/payments/TXN-1/cancel');
   });
 });

@@ -9,7 +9,7 @@
 import { env } from '@/config/env';
 import { useStore, belongsToCustomer } from '@/store';
 import { demoCoverGuides } from '@/domain/insurers';
-import { wait } from '../shared';
+import { newIdempotencyKey, wait } from '../shared';
 import { documentToRecord } from '@/lib/files';
 import { canAskCustomer, canDecline, CUSTOMER_STATUS_LABELS, openQuestion, PROTOTYPE_DECLINE_REASONS } from '@/domain/quoteWorkflow';
 
@@ -548,13 +548,15 @@ export const quotes = {
     s.addInsurerQuote(id, insurerName(), { ...quote, productVersionId });
     return state().quoteRequests.find((entry) => entry.id === id).productQuotes.find((entry) => entry.productVersionId === productVersionId);
   }),
-  select: (id, insurerQuoteId, acceptedConditionCodes = []) => call((s) => {
+  select: (id, insurerQuoteId, acceptedConditionCodes = [], addOnCodes = []) => call((s) => {
     const request = mine(s.quoteRequests).find((entry) => entry.id === id);
     const quote = request?.productQuotes?.find((entry) => entry.id === insurerQuoteId);
     if (!quote) throw new Error('This quote is no longer available. Reload your quotes.');
     const missing = (quote.conditions || []).filter((condition) => condition.purchaseCritical && !acceptedConditionCodes.includes(condition.code));
     if (missing.length) throw new Error('Accept every condition marked as required before choosing this quote.');
-    s.setQuoteSelection(id, { insurerQuoteId, acceptedConditionCodes, selectedAt: new Date().toISOString() });
+    const optional = (quote.addOns || []).filter((addOn) => !addOn.included).map((addOn) => addOn.code);
+    if (addOnCodes.some((code) => !optional.includes(code))) throw new Error('Choose only optional extras this quote offers.');
+    s.setQuoteSelection(id, { insurerQuoteId, acceptedConditionCodes, selectedAddOnCodes: addOnCodes, selectedAt: new Date().toISOString() });
     return state().quoteRequests.find((entry) => entry.id === id);
   }),
   claim: (id, productVersionId) => call((s) => {
@@ -957,9 +959,51 @@ export const staff = {
   }),
 };
 
+/**
+ * The browser's stand-in for the payment provider, with the API stand-in's
+ * test wallets: a number ending 0002 is declined, 0003 waits until its
+ * deadline, anything else is confirmed on the first status check. A card
+ * attempt is confirmed the same way, as if the customer finished checkout.
+ */
+const mockAttempts = new Map();
+const MOCK_PENDING_MINUTES = 15;
+const OPEN_STATUSES = ['Initiated', 'Pending'];
+const FAILURE_WORDING = {
+  Failed: 'The payment was declined. No money was taken.',
+  Cancelled: 'The payment was cancelled. No money was taken.',
+  Expired: 'The payment was not approved in time. No money was taken.',
+};
+
+/** What the API would answer: never the full wallet number or the key. */
+const publicAttempt = (attempt) => {
+  const answer = { ...attempt };
+  delete answer.mobileNumber;
+  delete answer.idempotencyKey;
+  return answer;
+};
+
+function settleMockAttempt(s, attempt) {
+  if (!OPEN_STATUSES.includes(attempt.status)) return attempt;
+  const wallet = (attempt.mobileNumber || '').replaceAll(/\D/g, '');
+  const overdue = Date.now() >= new Date(attempt.pendingUntil).getTime();
+  let status = 'Confirmed';
+  if (wallet.endsWith('0002')) status = 'Failed';
+  else if (wallet.endsWith('0003')) status = overdue ? 'Expired' : 'Pending';
+  if (status === 'Pending') return attempt;
+  const settled = { ...attempt, status, failure: FAILURE_WORDING[status] ?? null, checkoutUrl: null };
+  if (status === 'Confirmed') {
+    settled.confirmedAt = new Date().toISOString();
+    settled.policyNumber = `POL-${Date.now().toString(36).toUpperCase()}`;
+    settled.policyStatus = 'Policy issuing';
+    s.recordPayment(publicAttempt(settled));
+  }
+  return settled;
+}
+
 export const payments = {
-  /** Simulated gateway round-trip: always confirms. */
-  pay: ({ amount, method, quoteRequestId, insurerQuoteId }) => call((s) => {
+  pay: ({ amount, method, quoteRequestId, insurerQuoteId, mobileNumber }, idempotencyKey = newIdempotencyKey()) => call((s) => {
+    const replayed = [...mockAttempts.values()].find((attempt) => attempt.idempotencyKey === idempotencyKey);
+    if (replayed) return publicAttempt(replayed);
     const request = s.quoteRequests.find((item) => item.id === quoteRequestId);
     if (!request || !insurerQuoteId) {
       throw new Error('This quote needs to be refreshed before payment.');
@@ -971,23 +1015,59 @@ export const payments = {
     const legacyQuote = legacyEntry?.[1];
     const reply = productQuote || legacyQuote;
     if (!reply) throw new Error('This quote is no longer available. Return to your quotes and choose a current final quotation.');
-    if (reply.unavailableAt || request.unavailableInsurers?.some((entry) => entry.name === (productQuote?.insurer?.name || legacyEntry?.[0]))) {
+    const insurer = productQuote?.insurer?.name || legacyEntry?.[0] || '';
+    if (reply.unavailableAt || request.unavailableInsurers?.some((entry) => entry.name === insurer)) {
       throw new Error('This quotation is no longer available for payment. Request a fresh quote from an available insurer.');
     }
-    const receipt = {
+    const open = [...mockAttempts.values()].find((attempt) => attempt.quoteRequestId === quoteRequestId && (OPEN_STATUSES.includes(attempt.status) || attempt.status === 'Confirmed'));
+    if (open?.status === 'Confirmed') throw new Error('This request is already paid for.');
+    if (open) throw new Error('A payment for this request is already under way.');
+    const rtsaAnniversaryFee = request?.rtsaAnniversaryFee ?? 0;
+    const now = new Date();
+    const digits = (mobileNumber || '').replaceAll(/\D/g, '');
+    const attempt = {
       transactionId: `TXN-${Date.now().toString(36).toUpperCase()}`,
-      status: 'Confirmed',
+      status: 'Pending',
       method,
       amount,
-      rtsaAnniversaryFee: request?.rtsaAnniversaryFee ?? 0,
+      rtsaAnniversaryFee,
+      breakdown: [
+        { kind: 'PREMIUM', code: 'PREMIUM', label: 'Premium', amount: Math.round((amount - rtsaAnniversaryFee) * 100) / 100 },
+        ...(rtsaAnniversaryFee > 0 ? [{ kind: 'CHARGE', code: 'RTSA_ANNIVERSARY_FEE', label: 'RTSA anniversary fee', amount: rtsaAnniversaryFee }] : []),
+      ],
       currency: 'ZMW',
-      confirmedAt: new Date().toISOString(),
-      policyNumber: `POL-${Date.now().toString(36).toUpperCase()}`,
+      payer: method === 'Mobile money' && digits ? `*******${digits.slice(-3)}` : null,
+      initiatedAt: now.toISOString(),
+      pendingUntil: new Date(now.getTime() + MOCK_PENDING_MINUTES * 60_000).toISOString(),
+      confirmedAt: null,
+      checkoutUrl: null,
+      failure: null,
+      quoteRequestId,
+      insurerQuoteId,
+      insurer,
+      policyNumber: null,
+      policyStatus: null,
+      mobileNumber,
+      idempotencyKey,
     };
-    s.recordPayment(receipt);
-    return receipt;
+    mockAttempts.set(attempt.transactionId, attempt);
+    return publicAttempt(attempt);
   }),
-  status: (transactionId) => call((s) => (s.paymentReceipt?.transactionId === transactionId ? s.paymentReceipt : null)),
+  status: (transactionId) => call((s) => {
+    const attempt = mockAttempts.get(transactionId);
+    if (!attempt) return s.paymentReceipt?.transactionId === transactionId ? s.paymentReceipt : null;
+    const settled = settleMockAttempt(s, attempt);
+    mockAttempts.set(transactionId, settled);
+    return publicAttempt(settled);
+  }),
+  cancel: (transactionId) => call(() => {
+    const attempt = mockAttempts.get(transactionId);
+    if (!attempt) throw new Error('Payment was not found.');
+    if (!OPEN_STATUSES.includes(attempt.status)) throw new Error('This payment has already finished, so it cannot be cancelled.');
+    const cancelled = { ...attempt, status: 'Cancelled', failure: FAILURE_WORDING.Cancelled };
+    mockAttempts.set(transactionId, cancelled);
+    return publicAttempt(cancelled);
+  }),
 };
 
 export const policies = {

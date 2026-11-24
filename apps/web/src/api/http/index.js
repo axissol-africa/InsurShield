@@ -92,9 +92,9 @@ export const quotes = {
     { ...quote, documentId: await uploadedDocumentId(document, 'quotation', 'QUOTATION') },
   ),
   // The customer's choice of quote, with the conditions they accept.
-  select: (id, insurerQuoteId, acceptedConditionCodes = []) => apiClient.post(
+  select: (id, insurerQuoteId, acceptedConditionCodes = [], addOnCodes = []) => apiClient.post(
     `/quote-requests/${encodeURIComponent(id)}/selection`,
-    { insurerQuoteId, acceptedConditionCodes },
+    { insurerQuoteId, acceptedConditionCodes, addOnCodes },
   ),
   claim: (id, productVersionId) => apiClient.post(`${productPath(id, productVersionId)}/claim`),
   assign: (id, productVersionId, staffId) => apiClient.post(`${productPath(id, productVersionId)}/assign`, { staffId }),
@@ -177,8 +177,10 @@ export const staff = {
 };
 
 export const payments = {
-  pay: (payment) => apiClient.post('/payments', payment, { headers: { 'Idempotency-Key': newIdempotencyKey() } }),
+  /** Starts an attempt. The same key is sent again when the same attempt is retried, so it is never started twice. */
+  pay: (payment, idempotencyKey = newIdempotencyKey()) => apiClient.post('/payments', payment, { headers: { 'Idempotency-Key': idempotencyKey } }),
   status: (id) => apiClient.get(`/payments/${id}`),
+  cancel: (id) => apiClient.post(`/payments/${id}/cancel`),
 };
 
 export const policies = {

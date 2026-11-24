@@ -128,16 +128,35 @@ describe('mock api adapter', () => {
       .rejects.toThrow('Choose one to five published insurance products.');
   });
 
-  it('confirms a payment for the chosen quote and records the receipt for the confirmation page', async () => {
+  const quotedPrestige = async () => {
     const { request, versionId } = await requestPrestigeProduct();
     asInsurer();
     const replied = await mock.quotes.reply(request.id, { premium: 10900, document: { name: 'q.pdf' }, productVersionId: versionId });
-    const quote = replied.productQuotes.find((entry) => entry.productVersionId === versionId);
+    return { request, quote: replied.productQuotes.find((entry) => entry.productVersionId === versionId) };
+  };
 
-    const receipt = await mock.payments.pay({ amount: 11400, method: 'Mobile money', quoteRequestId: request.id, insurerQuoteId: quote.id });
-    expect(receipt).toMatchObject({ status: 'Confirmed', amount: 11400, rtsaAnniversaryFee: 500, currency: 'ZMW' });
+  it('starts a payment as pending, then confirms it on the status check and records the receipt', async () => {
+    const { request, quote } = await quotedPrestige();
+    const started = await mock.payments.pay({ amount: 11400, method: 'Mobile money', mobileNumber: '+260970000001', quoteRequestId: request.id, insurerQuoteId: quote.id }, 'KEY-1');
+    expect(started).toMatchObject({ status: 'Pending', amount: 11400, rtsaAnniversaryFee: 500, currency: 'ZMW', payer: '*******001' });
+    expect(started).not.toHaveProperty('mobileNumber');
+    expect(await mock.payments.pay({ amount: 11400, method: 'Mobile money', quoteRequestId: request.id, insurerQuoteId: quote.id }, 'KEY-1')).toEqual(started);
+
+    const receipt = await mock.payments.status(started.transactionId);
+    expect(receipt).toMatchObject({ status: 'Confirmed', policyStatus: 'Policy issuing' });
     expect(useStore.getState().paymentReceipt).toEqual(receipt);
-    expect(await mock.payments.status(receipt.transactionId)).toEqual(receipt);
+  });
+
+  it('follows the stand-in test wallets: a decline can be tried again, and a waiting one can be cancelled', async () => {
+    const { request, quote } = await quotedPrestige();
+    const body = { amount: 11400, method: 'Mobile money', quoteRequestId: request.id, insurerQuoteId: quote.id };
+    const declined = await mock.payments.pay({ ...body, mobileNumber: '+260970000002' });
+    expect(await mock.payments.status(declined.transactionId)).toMatchObject({ status: 'Failed', failure: expect.stringContaining('No money was taken') });
+
+    const waiting = await mock.payments.pay({ ...body, mobileNumber: '+260970000003' });
+    expect((await mock.payments.status(waiting.transactionId)).status).toBe('Pending');
+    await expect(mock.payments.pay({ ...body, mobileNumber: '+260970000001' })).rejects.toThrow('already under way');
+    expect((await mock.payments.cancel(waiting.transactionId)).status).toBe('Cancelled');
   });
 
   it('refuses a payment that does not name the quote, as the API does', async () => {

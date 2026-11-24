@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/api';
+import { newIdempotencyKey } from '@/api/shared';
 import { useStore } from '@/store';
 import { COVER_TYPE_LABELS } from '@/domain/coverGuide';
 import { formatZMW } from '@/domain/premiumEngine';
@@ -16,18 +17,51 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/primit
 import { Alert, AlertDescription } from '@/components/ui/primitives/alert';
 
 const NETWORKS = ['MTN Mobile Money', 'Airtel Money', 'Zamtel Kwacha'];
+const OPEN = ['Initiated', 'Pending'];
+const ENDED = ['Failed', 'Cancelled', 'Expired', 'Reversed'];
+/** How often the waiting page asks the server where the payment stands. */
+export const POLL_MS = 3000;
 
 export default function PaymentPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { selectedQuote, insuranceType, quoteRequests, vehicleDetails, policyDates, customer, requoteFromRequest, recordPayment } = useStore();
+  const { selectedQuote, insuranceType, quoteRequests, vehicleDetails, policyDates, customer, requoteFromRequest, recordPayment, paymentAttempt, setPaymentAttempt } = useStore();
   const [expiredAtPay, setExpiredAtPay] = useState(false);
   const [method, setMethod] = useState('momo');
   const [mobileNumber, setMobileNumber] = useState(customer?.phone || '');
   const [processing, setProcessing] = useState(false);
   const [paymentError, setPaymentError] = useState('');
+  // The server's own figures when it disagreed with the page, so the customer pays what it expects.
+  const [serverAmount, setServerAmount] = useState(null);
+  const [cancelling, setCancelling] = useState(false);
+
+  // The attempt being followed: only one for the quote on this page, whether just started or back from card checkout.
+  const attempt = paymentAttempt?.transactionId && paymentAttempt.insurerQuoteId === selectedQuote?.insurerQuoteId ? paymentAttempt : null;
+  const payment = attempt?.payment ?? null;
+  const waiting = Boolean(payment && OPEN.includes(payment.status));
+
+  useEffect(() => {
+    if (!waiting) return undefined;
+    let current = true;
+    const timer = setInterval(async () => {
+      try {
+        const latest = await api.payments.status(attempt.transactionId);
+        if (current && latest) setPaymentAttempt({ ...attempt, payment: latest });
+      } catch {
+        // A missed check is retried on the next tick; the server keeps the attempt either way.
+      }
+    }, POLL_MS);
+    return () => { current = false; clearInterval(timer); };
+  }, [waiting, attempt, setPaymentAttempt]);
+
+  useEffect(() => {
+    if (payment?.status !== 'Confirmed') return;
+    recordPayment(payment);
+    setPaymentAttempt(null);
+    navigate(`/confirmation${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`, { replace: true });
+  }, [payment, recordPayment, setPaymentAttempt, navigate, captureCode]);
 
   if (!selectedQuote) return (
     <JourneyLayout step={6} title="Choose a quote first" description="Choose an insurer from your comparison before paying.">
@@ -38,7 +72,10 @@ export default function PaymentPage() {
   const selectedRequest = quoteRequests.find((request) => request.id === selectedQuote.requestId);
   const selectedCoverType = selectedRequest?.insuranceType || insuranceType;
   const rtsaFee = selectedRequest?.rtsaAnniversaryFee ?? 0;
-  const total = selectedQuote.price + rtsaFee;
+  const lines = payment?.breakdown ?? serverAmount?.breakdown ?? null;
+  const addOns = selectedQuote.addOns || [];
+  const addOnsTotal = addOns.reduce((sum, addOn) => sum + addOn.price, 0);
+  const total = payment?.amount ?? serverAmount?.expected ?? Math.round((selectedQuote.price + addOnsTotal + rtsaFee) * 100) / 100;
   const validity = quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null);
   const requote = () => {
     if (selectedQuote.requestId) requoteFromRequest(selectedQuote.requestId);
@@ -54,26 +91,90 @@ export default function PaymentPage() {
 
   const handlePay = async (event) => {
     event.preventDefault();
-    if (processing) return;
+    if (processing || waiting) return;
     // Re-check at the moment of authorisation; a quote valid now stays purchasable while confirmation is pending.
     if (quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null).expired) { setExpiredAtPay(true); return; }
     setProcessing(true);
     setPaymentError('');
+    // A retry after a lost answer sends the same key, so the server finds the attempt it already started.
+    const retrying = paymentAttempt && !paymentAttempt.transactionId && paymentAttempt.insurerQuoteId === selectedQuote.insurerQuoteId;
+    const idempotencyKey = retrying ? paymentAttempt.idempotencyKey : newIdempotencyKey();
+    setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, transactionId: null, payment: null });
     try {
-      const receipt = await api.payments.pay({
+      const started = await api.payments.pay({
         quoteRequestId: selectedQuote.requestId,
         insurerQuoteId: selectedQuote.insurerQuoteId,
         amount: total,
         method: method === 'momo' ? 'Mobile money' : 'Card',
         mobileNumber: method === 'momo' ? mobileNumber : undefined,
-      });
-      recordPayment(receipt);
-      navigate(continuation('/confirmation'), { replace: true });
-    } catch (caught) {
-      setPaymentError(caught.message || 'The payment could not be completed. Please try again.');
+        returnUrl: method === 'card' ? `${window.location.origin}${continuation('/payment')}` : undefined,
+      }, idempotencyKey);
+      setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, transactionId: started.transactionId, payment: started });
+      setServerAmount(null);
       setProcessing(false);
+      // Card details are entered on the provider's own page, never here.
+      if (started.checkoutUrl && OPEN.includes(started.status)) window.location.assign(started.checkoutUrl);
+    } catch (caught) {
+      setProcessing(false);
+      if (caught?.code === 'AMOUNT_MISMATCH' && caught.details?.expected) {
+        setPaymentAttempt(null);
+        setServerAmount({ expected: caught.details.expected, breakdown: caught.details.breakdown ?? null });
+        setPaymentError(`The amount to pay is now ${formatZMW(caught.details.expected)}. Check the summary and pay again.`);
+        return;
+      }
+      if (caught?.code === 'PAYMENT_IN_PROGRESS' && caught.details?.transactionId) {
+        // Another tab or device already started one: follow that one instead of starting another.
+        const existing = await api.payments.status(caught.details.transactionId).catch(() => null);
+        if (existing) {
+          setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, transactionId: existing.transactionId, payment: existing });
+          return;
+        }
+      }
+      // Only a lost answer keeps the key for the retry; a refusal starts afresh.
+      if (caught?.code) setPaymentAttempt(null);
+      setPaymentError(caught?.message || 'The payment could not be completed. Please try again.');
     }
   };
+
+  const cancelPayment = async () => {
+    setCancelling(true);
+    try {
+      const stopped = await api.payments.cancel(attempt.transactionId);
+      setPaymentAttempt({ ...attempt, payment: stopped });
+    } catch (caught) {
+      setPaymentError(caught?.message || 'The payment could not be stopped. Please try again.');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const tryAgain = () => {
+    setPaymentAttempt(null);
+    setPaymentError('');
+  };
+
+  if (payment && (waiting || ENDED.includes(payment.status))) return (
+    <JourneyLayout step={6} title={waiting ? 'Waiting for your payment' : 'Payment not completed'} description={`${selectedQuote.name}, ${formatZMW(payment.amount)}`}>
+      <Card className="max-w-xl">
+        <CardContent className="space-y-4 pt-6">
+          <div role="status" aria-live="polite" className="space-y-2">
+            {waiting && payment.method === 'Mobile money' && <p className="font-medium">Approve the payment prompt sent to {payment.payer || 'your phone'}.</p>}
+            {waiting && payment.method !== 'Mobile money' && <p className="font-medium">Finish the payment on the provider's page. This page updates when it is done.</p>}
+            {waiting && <p className="text-sm text-muted-foreground">{pastDeadline(payment) ? 'This is taking longer than usual. We are still checking with the provider.' : 'This page updates on its own once the provider tells us.'}</p>}
+            {!waiting && <p className="font-medium">{payment.failure || 'The payment did not go through. No money was taken.'}</p>}
+          </div>
+          {lines && <Breakdown lines={lines} total={payment.amount} />}
+          {paymentError && <Alert variant="destructive"><AlertDescription>{paymentError}</AlertDescription></Alert>}
+        </CardContent>
+        <CardFooter className="flex flex-wrap gap-3 border-t">
+          {waiting && payment.checkoutUrl && <Button onClick={() => window.location.assign(payment.checkoutUrl)}>Go to the payment page</Button>}
+          {waiting && <Button variant="outline" disabled={cancelling} onClick={cancelPayment}>{cancelling ? 'Stopping…' : 'Cancel this payment'}</Button>}
+          {!waiting && payment.status !== 'Reversed' && <Button onClick={tryAgain}>Try again</Button>}
+          {!waiting && <Button variant="outline" asChild><Link to={continuation('/quotes-comparison')}>Back to quotes</Link></Button>}
+        </CardFooter>
+      </Card>
+    </JourneyLayout>
+  );
 
   return (
     <JourneyLayout step={6} title="Confirm and pay" description={`After payment, ${selectedQuote.name} prepares your official certificate. It will be available in My account once issued.`}>
@@ -96,11 +197,14 @@ export default function PaymentPage() {
         <Card>
           <CardHeader><CardTitle><h2>Payment summary</h2></CardTitle></CardHeader>
           <CardContent className="space-y-6">
-            <dl className="space-y-3 text-sm">
-              <div className="flex justify-between gap-4"><dt>Insurance premium</dt><dd className="font-medium">{formatZMW(selectedQuote.price)}</dd></div>
-              {rtsaFee > 0 && <div className="flex justify-between gap-4"><dt>RTSA anniversary fee</dt><dd className="font-medium">{formatZMW(rtsaFee)}</dd></div>}
-              <div className="flex justify-between gap-4 border-t pt-4 text-lg font-semibold"><dt>Total</dt><dd>{formatZMW(total)}</dd></div>
-            </dl>
+            {lines ? <Breakdown lines={lines} total={total} /> : (
+              <dl className="space-y-3 text-sm">
+                <div className="flex justify-between gap-4"><dt>Insurance premium</dt><dd className="font-medium">{formatZMW(selectedQuote.price)}</dd></div>
+                {addOns.map((addOn) => <div key={addOn.code} className="flex justify-between gap-4"><dt>{addOn.label}</dt><dd className="font-medium">{formatZMW(addOn.price)}</dd></div>)}
+                {rtsaFee > 0 && <div className="flex justify-between gap-4"><dt>RTSA anniversary fee</dt><dd className="font-medium">{formatZMW(rtsaFee)}</dd></div>}
+                <div className="flex justify-between gap-4 border-t pt-4 text-lg font-semibold"><dt>Total</dt><dd>{formatZMW(total)}</dd></div>
+              </dl>
+            )}
             <form onSubmit={handlePay} className="space-y-5">
               <Tabs value={method} onValueChange={setMethod}>
                 <TabsList aria-label="Payment method" className="mb-3 w-full">
@@ -113,21 +217,32 @@ export default function PaymentPage() {
                   <p className="text-sm text-muted-foreground">You'll receive a prompt on this number to approve the payment.</p>
                 </TabsContent>
                 <TabsContent value="card" className="space-y-4">
-                  <div className="space-y-2"><Label htmlFor="payment-card">Card number</Label><Input id="payment-card" inputMode="numeric" autoComplete="cc-number" placeholder="0000 0000 0000 0000" required /></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label htmlFor="payment-expiry">Expiry</Label><Input id="payment-expiry" autoComplete="cc-exp" placeholder="MM/YY" required /></div>
-                    <div className="space-y-2"><Label htmlFor="payment-cvv">CVV</Label><Input id="payment-cvv" type="password" inputMode="numeric" autoComplete="cc-csc" placeholder="123" required /></div>
-                  </div>
+                  <p className="text-sm text-muted-foreground">You'll enter your card on the payment provider's secure page. InsurShield never sees your card details.</p>
                 </TabsContent>
               </Tabs>
               {paymentError && <Alert variant="destructive"><AlertDescription>{paymentError}</AlertDescription></Alert>}
-              <Button type="submit" size="lg" disabled={processing} className="w-full">{processing ? 'Processing payment…' : `Pay ${formatZMW(total)}`}</Button>
-              <p className="text-center text-xs text-muted-foreground">Prototype: no real charge is made.</p>
+              <Button type="submit" size="lg" disabled={processing} className="w-full">{processing ? 'Starting payment…' : `Pay ${formatZMW(total)}`}</Button>
+              <p className="text-center text-xs text-muted-foreground">Test payments only: no real money is taken.</p>
             </form>
           </CardContent>
         </Card>
       </div>
     </JourneyLayout>
+  );
+}
+
+/** Past its deadline, the server still settles the attempt; the page only says so. */
+const pastDeadline = (payment) => Boolean(payment.pendingUntil) && Date.now() > new Date(payment.pendingUntil).getTime();
+
+/** The server's itemised amount: premium, each chosen add-on and each approved charge. */
+function Breakdown({ lines, total }) {
+  return (
+    <dl className="space-y-3 text-sm">
+      {lines.map((line) => (
+        <div key={`${line.kind}-${line.code}`} className="flex justify-between gap-4"><dt>{line.kind === 'PREMIUM' ? 'Insurance premium' : line.label}</dt><dd className="font-medium">{formatZMW(line.amount)}</dd></div>
+      ))}
+      <div className="flex justify-between gap-4 border-t pt-4 text-lg font-semibold"><dt>Total</dt><dd>{formatZMW(total)}</dd></div>
+    </dl>
   );
 }
 

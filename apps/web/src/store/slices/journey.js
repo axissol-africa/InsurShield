@@ -39,6 +39,8 @@ export const JOURNEY_DEFAULTS = {
   selectedQuote: null,
   premiumBreakdown: null,
   paymentReceipt: null,
+  /** The open payment attempt, kept across a card checkout round trip: its key, transaction and the quote it pays. */
+  paymentAttempt: null,
   /** Contact choices in mock mode; absence of a row means the category is on. */
   contactPreferences: [],
   marketingConsent: false,
@@ -240,6 +242,7 @@ export const createJourneySlice = (set, get) => ({
   setActiveQuoteRequest: (activeQuoteRequestId) => set({ activeQuoteRequestId, selectedQuote: null, premiumBreakdown: null }),
   selectQuote: (quote, breakdown) => set({ selectedQuote: quote, premiumBreakdown: breakdown }),
   recordPayment: (paymentReceipt) => set({ paymentReceipt }),
+  setPaymentAttempt: (paymentAttempt) => set({ paymentAttempt }),
 
   /** One row per category and channel; saving again replaces the choice. */
   saveContactPreference: (choice) =>
