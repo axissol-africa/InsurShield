@@ -213,6 +213,14 @@ export const inspections = {
   request: (inspection) => apiClient.post('/inspections', inspection),
   list: () => apiClient.get('/inspections'),
   update: (id, changes) => apiClient.patch(`/inspections/${id}`, changes),
+  // The insurer's side: the inspections it carries out, and each step it records.
+  listForInsurer: () => apiClient.get('/insurer/inspections'),
+  schedule: (id, booking) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/schedule`, booking),
+  assignInspector: (id, inspector) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/inspector`, inspector),
+  approve: (id) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/approve`),
+  fail: (id, reason) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/fail`, { reason }),
+  noShow: (id, reason) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/no-show`, { reason }),
+  cancel: (id, reason) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/cancel`, { reason }),
 };
 
 export const config = {

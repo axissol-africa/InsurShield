@@ -202,6 +202,8 @@ describe('a chosen product\'s workflow in the portal', () => {
     const [waiting] = toPortalCases(request({ workflow: { status: 'INSPECTION_REQUIRED', informationRequests: [] } }), INSURER);
     expect(awaitsInsurer(waiting)).toBe(true);
     expect(quotableNow(waiting)).toBe(false);
+    const paused = toPortalCases(request({ workflow: { status: 'INSPECTION_REQUIRED', clockPausedAt: '2026-11-20T10:00:00.000Z', informationRequests: [] } }), INSURER)[0];
+    expect(replyDeadline(paused).label).toBe('Clock stopped · waiting for the inspection');
   });
 
   it('counts the reply deadline from the product\'s own due date', () => {

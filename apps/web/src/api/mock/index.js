@@ -1029,6 +1029,53 @@ export const inspections = {
   request: (inspection) => call((s) => { s.addInspection(inspection); return state().inspections[0]; }),
   list: () => call((s) => mine(s.inspections)),
   update: (id, changes) => call((s) => { s.updateInspectionStatus(id, 'Requested', changes); return state().inspections.find((i) => i.id === id); }),
+  listForInsurer: () => call((s) => s.inspections.filter((inspection) => inspection.insurer === insurerName()).map(toPortalInspection)),
+  schedule: (id, { scheduledDate, location }) => call((s) => prototypeInspectionStep(s, id, 'SCHEDULE', { scheduledDate, location: location || null })),
+  assignInspector: (id, { inspectorName, inspectorPhone }) => call((s) => prototypeInspectionStep(s, id, 'ASSIGN', { inspectorName, inspectorPhone: inspectorPhone || null })),
+  approve: (id) => call((s) => prototypeInspectionStep(s, id, 'APPROVE', { result: 'PASSED' })),
+  fail: (id, reason) => call((s) => prototypeInspectionStep(s, id, 'FAIL', { result: 'FAILED', resultReason: reason })),
+  noShow: (id, reason) => call((s) => prototypeInspectionStep(s, id, 'NO_SHOW', { resultReason: reason })),
+  cancel: (id, reason) => call((s) => prototypeInspectionStep(s, id, 'CANCEL', { resultReason: reason })),
+};
+
+/** The prototype keeps an inspection's status as its label; the portal reads the API's codes. */
+const INSPECTION_CODES = {
+  Requested: 'REQUESTED', Scheduled: 'SCHEDULED', 'Inspector assigned': 'INSPECTOR_ASSIGNED', 'In progress': 'IN_PROGRESS',
+  Completed: 'COMPLETED', 'Report ready': 'REPORT_READY', Approved: 'APPROVED', Failed: 'FAILED', Cancelled: 'CANCELLED', Missed: 'NO_SHOW',
+};
+const INSPECTION_LABELS = Object.fromEntries(Object.entries(INSPECTION_CODES).map(([label, code]) => [code, label]));
+const toPortalInspection = (inspection) => ({
+  purpose: 'GENERAL',
+  method: 'PHYSICAL',
+  stage: null,
+  products: [],
+  result: null,
+  resultReason: null,
+  ...inspection,
+  status: INSPECTION_CODES[inspection.status] || inspection.status,
+  statusLabel: INSPECTION_LABELS[INSPECTION_CODES[inspection.status]] || inspection.status,
+});
+const prototypeInspectionStep = (s, id, event, changes) => {
+  const inspection = s.inspections.find((entry) => entry.id === id && entry.insurer === insurerName());
+  if (!inspection) throw new Error('Inspection was not found.');
+  const current = toPortalInspection(inspection);
+  const next = nextPrototypeInspectionStatus(current.status, current.method, event);
+  if (!next) throw new Error('Book the inspection before recording that step.');
+  s.updateInspectionStatus(id, INSPECTION_LABELS[next], changes);
+  return toPortalInspection(state().inspections.find((entry) => entry.id === id));
+};
+const nextPrototypeInspectionStatus = (status, method, event) => {
+  if (['APPROVED', 'FAILED', 'CANCELLED', 'NO_SHOW'].includes(status)) return null;
+  const decidable = ['SCHEDULED', 'INSPECTOR_ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REPORT_READY'].includes(status)
+    || (method === 'SELF_CAPTURE' && status === 'REQUESTED');
+  return {
+    SCHEDULE: ['REQUESTED', 'SCHEDULED'].includes(status) ? 'SCHEDULED' : null,
+    ASSIGN: ['SCHEDULED', 'INSPECTOR_ASSIGNED'].includes(status) ? 'INSPECTOR_ASSIGNED' : null,
+    APPROVE: decidable ? 'APPROVED' : null,
+    FAIL: decidable ? 'FAILED' : null,
+    NO_SHOW: ['SCHEDULED', 'INSPECTOR_ASSIGNED'].includes(status) ? 'NO_SHOW' : null,
+    CANCEL: 'CANCELLED',
+  }[event];
 };
 
 export const config = {

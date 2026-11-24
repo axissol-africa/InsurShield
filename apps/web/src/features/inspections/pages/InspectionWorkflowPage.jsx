@@ -198,6 +198,15 @@ export default function InspectionWorkflowPage() {
         ? [['Assessor', inspection.inspectorName], ['Assessor contact', inspection.inspectorPhone]]
         : []),
       ['Location', inspection.location || inspection.preferredLocation],
+      // An inspection an insurer's product needs says which products and when.
+      ...(inspection.purpose === 'UNDERWRITING'
+        ? [
+            ['Needed for', (inspection.products || []).map((product) => product.productName).join(', ') || 'Your quote request'],
+            ['Needed', inspection.stage === 'BEFORE_QUOTATION' ? 'Before the insurer can quote' : 'Before you can pay'],
+            ['How', inspection.method === 'SELF_CAPTURE' ? 'From your vehicle photos' : 'In person'],
+          ]
+        : []),
+      ...(inspection.resultReason ? [['Reason', inspection.resultReason]] : []),
     ];
 
     return (

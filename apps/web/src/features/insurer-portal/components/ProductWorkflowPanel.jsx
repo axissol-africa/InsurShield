@@ -43,7 +43,7 @@ export default function ProductWorkflowPanel({ request, api, onChanged, session 
           <Alert>
             <TriangleAlert aria-hidden="true" />
             <AlertTitle>This product needs a vehicle inspection before it can be quoted.</AlertTitle>
-            <AlertDescription>Arrange the inspection with the customer. Until it passes you can decline the product, but not quote it.</AlertDescription>
+            <AlertDescription>Book and record it under Inspections. Until it passes you can decline the product, but not quote it.</AlertDescription>
           </Alert>
         )}
 

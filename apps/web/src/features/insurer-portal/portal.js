@@ -49,7 +49,10 @@ export const days = (count) => `${count} day${count === 1 ? '' : 's'}`;
  */
 export const replyDeadline = (request, now = new Date()) => {
   // A chosen product's clock stops while the customer is being waited for.
-  if (request.workflow?.clockPausedAt) return { label: 'Clock stopped · waiting for the customer', urgent: false };
+  if (request.workflow?.clockPausedAt) {
+    const waitingFor = request.workflow.status === 'INSPECTION_REQUIRED' ? 'the inspection' : 'the customer';
+    return { label: `Clock stopped · waiting for ${waitingFor}`, urgent: false };
+  }
   const { validUntil, daysLeft, expired, expiringSoon } = quoteValidity({ validUntil: request.workflow?.replyDueAt || request.expiresAt }, now);
   if (!validUntil || Number.isNaN(daysLeft)) return null;
   return {

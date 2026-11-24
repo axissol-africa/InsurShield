@@ -185,3 +185,25 @@ describe('quote changes and the customer choice', () => {
     expect(transport.post).toHaveBeenNthCalledWith(2, '/quote-requests/QR-1/selection', { insurerQuoteId: 'IQ-1', acceptedConditionCodes: ['TRACKER'] });
   });
 });
+
+describe('the insurer inspection routes', () => {
+  it('lists and moves the insurer\'s inspections', async () => {
+    const { inspections } = await import('./index');
+    inspections.listForInsurer();
+    inspections.schedule('INS-1', { scheduledDate: '2026-12-01T09:00:00.000Z' });
+    inspections.assignInspector('INS-1', { inspectorName: 'Bwalya' });
+    inspections.approve('INS-1');
+    inspections.fail('INS-1', 'Damage.');
+    inspections.noShow('INS-1', 'Absent.');
+    inspections.cancel('INS-1', 'Duplicate.');
+    expect(transport.get).toHaveBeenCalledWith('/insurer/inspections');
+    expect(transport.post.mock.calls.map(([path]) => path)).toEqual([
+      '/insurer/inspections/INS-1/schedule',
+      '/insurer/inspections/INS-1/inspector',
+      '/insurer/inspections/INS-1/approve',
+      '/insurer/inspections/INS-1/fail',
+      '/insurer/inspections/INS-1/no-show',
+      '/insurer/inspections/INS-1/cancel',
+    ]);
+  });
+});
