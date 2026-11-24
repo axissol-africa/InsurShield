@@ -86,6 +86,16 @@ export const quotes = {
   requestInformation: (id, productVersionId, question) => apiClient.post(`${productPath(id, productVersionId)}/information-requests`, question),
   notes: (id, productVersionId) => apiClient.get(`${productPath(id, productVersionId)}/notes`),
   addNote: (id, productVersionId, body) => apiClient.post(`${productPath(id, productVersionId)}/notes`, { body }),
+  withdraw: (id, productVersionId, reason) => apiClient.post(`${productPath(id, productVersionId)}/quote/withdraw`, { reason }),
+  replace: async (id, productVersionId, { document, ...quote }) => apiClient.post(
+    `${productPath(id, productVersionId)}/quote/replace`,
+    { ...quote, documentId: await uploadedDocumentId(document, 'quotation', 'QUOTATION') },
+  ),
+  // The customer's choice of quote, with the conditions they accept.
+  select: (id, insurerQuoteId, acceptedConditionCodes = []) => apiClient.post(
+    `/quote-requests/${encodeURIComponent(id)}/selection`,
+    { insurerQuoteId, acceptedConditionCodes },
+  ),
   claim: (id, productVersionId) => apiClient.post(`${productPath(id, productVersionId)}/claim`),
   assign: (id, productVersionId, staffId) => apiClient.post(`${productPath(id, productVersionId)}/assign`, { staffId }),
   setPriority: (id, productVersionId, priority) => apiClient.post(`${productPath(id, productVersionId)}/priority`, { priority }),

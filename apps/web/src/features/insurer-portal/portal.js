@@ -90,6 +90,7 @@ const PORTAL_ROOT = '/insurer';
 export const portalPath = {
   section: (id) => (id === 'overview' ? PORTAL_ROOT : `${PORTAL_ROOT}?view=${id}`),
   quote: (caseKey) => `${PORTAL_ROOT}?quote=${encodeURIComponent(caseKey)}`,
+  replace: (caseKey) => `${PORTAL_ROOT}?replace=${encodeURIComponent(caseKey)}`,
   issue: (policyNumber) => `${PORTAL_ROOT}?view=policies&issue=${encodeURIComponent(policyNumber)}`,
 };
 

@@ -105,6 +105,19 @@ export const createRecordsSlice = (set) => ({
       })),
     })),
 
+  /** Insurer portal: take a product's quote back. */
+  removeProductQuote: (requestId, productVersionId) =>
+    set((state) => ({
+      quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({
+        ...request,
+        productQuotes: (request.productQuotes || []).filter((quote) => quote.productVersionId !== productVersionId),
+      })),
+    })),
+
+  /** Customer: the quote they chose and the conditions they accepted. */
+  setQuoteSelection: (requestId, selection) =>
+    set((state) => ({ quoteRequests: updateById(state.quoteRequests, requestId, (request) => ({ ...request, selection })) })),
+
   /** Insurer portal: extend an unexpired quote's validity. */
   extendInsurerQuote: (requestId, insurerName, extraDays, productVersionId) =>
     set((state) => ({

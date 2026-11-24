@@ -176,3 +176,12 @@ describe('the quote queue routes', () => {
     expect(transport.get).toHaveBeenCalledWith('/insurer/queue', { params: { owner: 'me' } });
   });
 });
+
+describe('quote changes and the customer choice', () => {
+  it('withdraws, chooses and replaces with an uploaded quotation', async () => {
+    quotes.withdraw('QR-1', 'pv-1', 'Wrong use.');
+    quotes.select('QR-1', 'IQ-1', ['TRACKER']);
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/quote/withdraw', { reason: 'Wrong use.' });
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/quote-requests/QR-1/selection', { insurerQuoteId: 'IQ-1', acceptedConditionCodes: ['TRACKER'] });
+  });
+});

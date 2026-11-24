@@ -51,7 +51,7 @@ const validityFrom = (typed, usual) => {
  * What the customer will see builds up beside the Send button, so the figure
  * that will be charged is read back before it goes.
  */
-export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack, workflowApi, onWorkflowChanged, session }) {
+export default function QuoteRequestForm({ request, insurer, coverGuides, piaRatePercentage, defaultValidityDays, onSubmit, onBack, workflowApi, onWorkflowChanged, session, replacing = false }) {
   const quotation = useDocumentUpload();
   const quotationInput = useRef(null);
   const validityInput = useRef(null);
@@ -60,6 +60,8 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
   const [reference, setReference] = useState('');
   const [validityDays, setValidityDays] = useState('');
   const [notes, setNotes] = useState('');
+  const [excess, setExcess] = useState('');
+  const [conditions, setConditions] = useState([]);
   const sending = usePortalAction(onSubmit, 'This quote could not be sent. Check your connection and try again.');
 
   const estimate = indicativePremium(request, insurer, piaRatePercentage);
@@ -73,6 +75,11 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
   const deadline = replyDeadline(request);
   const { days: openDays, problem: validityProblem } = validityFrom(validityDays, defaultValidityDays);
   const premiumQuestion = PREMIUM_QUESTIONS[premiumCheck(Number(premium), estimate)];
+
+  // Each condition is numbered as it is sent; the customer reads only its wording.
+  const writtenConditions = conditions
+    .filter((condition) => condition.text.trim())
+    .map((condition, index) => ({ code: `CONDITION_${index + 1}`, text: condition.text.trim(), purchaseCritical: condition.purchaseCritical }));
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -97,12 +104,14 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
       validityDays: openDays,
       insurerReference: reference.trim() || null,
       document: quotation.document,
+      ...(excess.trim() !== '' && { excess: Number(excess) }),
+      ...(writtenConditions.length && { conditions: writtenConditions }),
     });
   };
 
   return (
     <TaskScreen
-      title="Prepare quotation"
+      title={replacing ? 'Replace quotation' : 'Prepare quotation'}
       description={<>{request.productName ? <>{request.productName} · </> : null}Request <span className="font-mono text-foreground">{request.id}</span>{request.time ? ` · received ${request.time}` : ''}</>}
       onBack={onBack}
       backLabel="Back to overview"
@@ -150,7 +159,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
         {request.productVersionId && workflowApi && (
           <ProductWorkflowPanel request={request} api={workflowApi} onChanged={onWorkflowChanged} session={session} />
         )}
-        {quotableNow(request) && (
+        {(replacing || quotableNow(request)) && (
           <TaskPanel title="Your quotation" description="Record the quotation you prepared in your own system. The customer compares it with other insurers and pays the premium you enter.">
             <form onSubmit={handleSubmit}>
               <FieldGroup>
@@ -237,6 +246,48 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
                       </FieldDescription>
                     </Field>
                     <Field>
+                      <FieldLabel htmlFor="quote-excess">Excess (ZMW)</FieldLabel>
+                      <InputGroup className="sm:max-w-64">
+                        <InputGroupAddon><InputGroupText>ZMW</InputGroupText></InputGroupAddon>
+                        <InputGroupInput id="quote-excess" type="number" inputMode="decimal" min="0" step="0.01" value={excess} onChange={(event) => setExcess(event.target.value)} aria-describedby="quote-excess-hint" />
+                      </InputGroup>
+                      <FieldDescription id="quote-excess-hint">What the customer pays towards each claim. Leave empty if your quotation sets none.</FieldDescription>
+                    </Field>
+                    <FieldSet>
+                      <FieldLegend variant="label">Conditions the customer must know about</FieldLegend>
+                      <FieldDescription>Mark a condition as required if the customer must accept it before paying, for example fitting a tracker.</FieldDescription>
+                      {conditions.map((condition, index) => (
+                        <div key={index} className="space-y-2 rounded-xl border border-border p-3">
+                          <FieldLabel htmlFor={`quote-condition-${index}`}>Condition {index + 1}</FieldLabel>
+                          <Textarea
+                            id={`quote-condition-${index}`}
+                            rows={2}
+                            maxLength={1000}
+                            value={condition.text}
+                            onChange={(event) => setConditions((current) => current.map((entry, at) => (at === index ? { ...entry, text: event.target.value } : entry)))}
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={condition.purchaseCritical}
+                                onChange={(event) => setConditions((current) => current.map((entry, at) => (at === index ? { ...entry, purchaseCritical: event.target.checked } : entry)))}
+                              />
+                              Customer must accept before paying
+                            </label>
+                            <Button type="button" variant="ghost" size="sm" onClick={() => setConditions((current) => current.filter((_, at) => at !== index))}>
+                              Remove condition {index + 1}
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {conditions.length < 20 && (
+                        <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => setConditions((current) => [...current, { text: '', purchaseCritical: false }])}>
+                          Add a condition
+                        </Button>
+                      )}
+                    </FieldSet>
+                    <Field>
                       <FieldLabel htmlFor="quote-notes">Special conditions / notes</FieldLabel>
                       <Textarea id="quote-notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. Requires tracking device installation…" aria-describedby="quote-notes-hint" />
                       <FieldDescription id="quote-notes-hint">Shown to the customer with your quote.</FieldDescription>
@@ -275,6 +326,8 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
                     <Fact label="Premium to pay" value={Number(premium) > 0 ? <span className="text-base font-semibold tabular-nums">{formatZMW(Number(premium))}</span> : <Missing>Not entered yet</Missing>} />
                     <Fact label="Open until" value={openDays ? `${quoteOpenUntil(openDays)} · ${days(openDays)}` : <Missing>Enter 1 to {MAX_VALIDITY_DAYS} days</Missing>} />
                     <Fact label="Quotation document" value={quotation.document ? 'Attached' : <Missing>Not attached yet</Missing>} />
+                    <Fact label="Excess" value={excess.trim() !== '' && Number(excess) >= 0 ? formatZMW(Number(excess)) : 'None stated'} />
+                    <Fact label="Conditions" value={writtenConditions.length ? `${writtenConditions.length}, ${writtenConditions.filter((condition) => condition.purchaseCritical).length} required before payment` : 'None listed'} />
                     <Fact wide label="Special conditions" value={notes.trim() || 'None'} />
                   </dl>
                 </TaskOutcome>
@@ -296,7 +349,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
                   className="w-full"
                 >
                   {sending.pending ? <Spinner aria-hidden="true" /> : <Send aria-hidden="true" />}
-                  {sending.pending ? 'Sending…' : 'Send quote to customer'}
+                  {sending.pending ? 'Sending…' : replacing ? 'Send replacement quote' : 'Send quote to customer'}
                 </Button>
               </FieldGroup>
             </form>

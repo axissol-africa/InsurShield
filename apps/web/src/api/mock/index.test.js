@@ -102,6 +102,26 @@ describe('mock api adapter', () => {
     ]);
   });
 
+  it('replaces and withdraws a quote, and needs required conditions accepted to choose one', async () => {
+    const { request, versionId } = await requestPrestigeProduct();
+    asInsurer();
+    await mock.quotes.reply(request.id, { premium: 10900, document: { name: 'q.pdf' }, productVersionId: versionId, conditions: [{ code: 'TRACKER', text: 'Fit a tracker.', purchaseCritical: true }] });
+    const replaced = await mock.quotes.replace(request.id, versionId, { premium: 10500, document: { name: 'q2.pdf' }, conditions: [{ code: 'TRACKER', text: 'Fit a tracker.', purchaseCritical: true }] });
+    expect(replaced.premium).toBe(10500);
+
+    await expect(mock.quotes.select(request.id, replaced.id, [])).rejects.toThrow('required');
+    const chosen = await mock.quotes.select(request.id, replaced.id, ['TRACKER']);
+    expect(chosen.selection).toMatchObject({ insurerQuoteId: replaced.id, acceptedConditionCodes: ['TRACKER'] });
+    asInsurer();
+    await expect(mock.quotes.withdraw(request.id, versionId, 'Too late.')).rejects.toThrow('chosen');
+
+    useStore.getState().setQuoteSelection(request.id, null);
+    await mock.quotes.withdraw(request.id, versionId, 'Rated on the wrong use.');
+    const after = await mock.quotes.get(request.id);
+    expect(after.productQuotes).toEqual([]);
+    expect(after.selectedProducts[0].status).toBe('INSURER_PROCESSING');
+  });
+
   it('refuses a request without chosen products, as the API does', async () => {
     await signIn();
     await expect(mock.quotes.submitRequest({ customer: useStore.getState().customer, policyDates: null }))

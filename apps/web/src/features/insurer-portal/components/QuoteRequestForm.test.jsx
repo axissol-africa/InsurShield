@@ -275,4 +275,35 @@ describe('QuoteRequestForm', () => {
     show({ request: { ...request, registrationCountry: 'Malawi' } });
     expect(screen.getByText('Malawi — not on the RTSA register')).toBeVisible();
   });
+
+  it('sends the excess and numbered conditions, saying which must be accepted before payment', async () => {
+    const user = userEvent.setup();
+    const { onSubmit, fileInput } = show();
+
+    await user.upload(fileInput, quotation());
+    await user.type(screen.getByLabelText(/Premium on your quotation/), '10650');
+    await user.type(screen.getByLabelText('Excess (ZMW)'), '2500');
+    await user.click(screen.getByRole('button', { name: 'Add a condition' }));
+    await user.type(screen.getByLabelText('Condition 1'), ' Fit a tracker within 14 days. ');
+    await user.click(screen.getByRole('checkbox', { name: 'Customer must accept before paying' }));
+    await user.click(screen.getByRole('button', { name: 'Add a condition' }));
+    await user.click(screen.getByRole('button', { name: 'Add a condition' }));
+    await user.type(screen.getByLabelText('Condition 3'), 'Park in a garage at night.');
+    expect(within(customerView()).getByText('2, 1 required before payment')).toBeVisible();
+    await user.click(send());
+
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      excess: 2500,
+      conditions: [
+        { code: 'CONDITION_1', text: 'Fit a tracker within 14 days.', purchaseCritical: true },
+        { code: 'CONDITION_2', text: 'Park in a garage at night.', purchaseCritical: false },
+      ],
+    });
+  });
+
+  it('words the screen as a replacement when replacing a sent quote', () => {
+    show({ replacing: true });
+    expect(screen.getByRole('heading', { level: 1, name: 'Replace quotation' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Send replacement quote' })).toBeVisible();
+  });
 });

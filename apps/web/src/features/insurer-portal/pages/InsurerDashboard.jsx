@@ -80,7 +80,11 @@ export default function InsurerDashboard() {
   // The quote and certificate screens are addressed by the record they act
   // on, so the browser's Back button and a refresh both keep the person's
   // place. An address for a record that is no longer waiting shows its section.
-  const quotingRequest = activeTab === 'overview' ? awaitingQuote.find((request) => request.caseKey === searchParams.get('quote')) : undefined;
+  const quotingRequest = activeTab === 'overview'
+    ? awaitingQuote.find((request) => request.caseKey === searchParams.get('quote'))
+      ?? quoted.find((request) => request.productVersionId && request.caseKey === searchParams.get('replace'))
+    : undefined;
+  const replacing = Boolean(quotingRequest?.reply);
   const issuingPolicy = activeTab === 'policies' ? awaitingCertificate.find((policy) => policy.policyNumber === searchParams.get('issue')) : undefined;
 
   // Each screen replaces the one before it; start it at the top on phones.
@@ -170,6 +174,7 @@ export default function InsurerDashboard() {
         onBack={backToSection}
         workflowApi={api}
         session={staffSession}
+        replacing={replacing}
         onWorkflowChanged={async (change) => {
           await hydrateInsurerPortal();
           if (change === 'assigned') return;
@@ -183,7 +188,9 @@ export default function InsurerDashboard() {
         onSubmit={async (quote) => {
           // A chosen product is quoted on its own; a request from before product selection is quoted whole.
           const reply = quotingRequest.productVersionId ? { ...quote, productVersionId: quotingRequest.productVersionId } : quote;
-          await thenReloadPortal(() => api.quotes.reply(quotingRequest.id, reply));
+          await thenReloadPortal(() => (replacing
+            ? api.quotes.replace(quotingRequest.id, quotingRequest.productVersionId, quote)
+            : api.quotes.reply(quotingRequest.id, reply)));
           toast.success('Quote sent', {
             description: `The customer can now see your quotation for ${quotingRequest.vehicle}.`,
             ...(nextRequest && nextOffer(
@@ -266,6 +273,11 @@ export default function InsurerDashboard() {
           requests={quoted}
           emptyMessage="No quotes have been sent yet."
           onExtend={(request) => thenReloadPortal(() => api.quotes.extend(request.id, EXTENSION_DAYS, request.productVersionId))}
+          onReplace={(request) => navigate(portalPath.replace(request.caseKey))}
+          onWithdraw={async (request, reason) => {
+            await thenReloadPortal(() => api.quotes.withdraw(request.id, request.productVersionId, reason));
+            toast.success('Quote withdrawn', { description: 'The customer has been told. The product is back in your queue.' });
+          }}
         />
       </>
     );

@@ -7,7 +7,8 @@ import QuotesComparisonPage from './QuotesComparisonPage';
 
 vi.mock('@/api/sync', () => ({ hydrateDirectory: vi.fn(), hydrateCustomer: vi.fn() }));
 const answerInformation = vi.hoisted(() => vi.fn());
-vi.mock('@/api', () => ({ api: { quotes: { answerInformation } } }));
+const select = vi.hoisted(() => vi.fn());
+vi.mock('@/api', () => ({ api: { quotes: { answerInformation, select } } }));
 
 beforeEach(() => {
   useStore.setState({
@@ -300,6 +301,38 @@ describe('quote comparison', () => {
       await user.type(within(form).getByLabelText('Global Guard Insurance needs more information'), '84,200 km');
       await user.click(within(form).getByRole('button', { name: 'Send answer' }));
       expect(answerInformation).toHaveBeenCalledWith('QR-TEST', 'pv-2', '84,200 km');
+    });
+
+    it('needs a required condition accepted before the quote can be chosen, and records the choice', async () => {
+      const user = userEvent.setup();
+      select.mockResolvedValue({});
+      const request = useStore.getState().quoteRequests[0];
+      useStore.setState({
+        quoteRequests: [{
+          ...request,
+          selectedProducts: [product('pv-3', 'Prestige Assurance', { status: 'QUOTED', statusLabel: 'Quote ready' })],
+          productQuotes: [{
+            id: 'IQ-3', productVersionId: 'pv-3', insurer: { id: 'Prestige Assurance', name: 'Prestige Assurance' },
+            premium: 9000, excess: 2500, validityDays: 7, sentAt: new Date().toISOString(),
+            validUntil: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+            conditions: [
+              { code: 'TRACKER', text: 'Fit a tracker within 14 days.', purchaseCritical: true },
+              { code: 'GARAGE', text: 'Park in a garage at night.', purchaseCritical: false },
+            ],
+          }],
+        }],
+      });
+      renderPage();
+
+      const card = within(screen.getByRole('list', { name: 'Insurer quotes' })).getByRole('listitem');
+      expect(within(card).getByText('ZMW 2,500.00')).toBeVisible();
+      expect(within(card).getByText('Park in a garage at night.')).toBeVisible();
+      const choose = within(card).getByRole('button', { name: 'Continue to payment' });
+      expect(choose).toBeDisabled();
+      await user.click(within(card).getByRole('checkbox', { name: /Fit a tracker within 14 days/ }));
+      await user.click(choose);
+      expect(select).toHaveBeenCalledWith('QR-TEST', 'IQ-3', ['TRACKER']);
+      expect(await screen.findByText(/^\/payment/)).toBeInTheDocument();
     });
   });
 });

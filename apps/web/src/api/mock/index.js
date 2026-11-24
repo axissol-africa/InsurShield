@@ -528,6 +528,35 @@ export const quotes = {
     if (!body?.trim()) throw new Error('Write the note before saving it.');
     return addPrototypeNote(s, id, productVersionId, body.trim());
   }),
+  withdraw: (id, productVersionId, reason) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    const request = s.quoteRequests.find((entry) => entry.id === id);
+    const quote = request.productQuotes?.find((entry) => entry.productVersionId === productVersionId);
+    if (!quote) throw new Error('There is no current quote for this product to change.');
+    if (request.selection?.insurerQuoteId === quote.id) throw new Error('The customer has chosen this quote. It can change only if they choose another.');
+    if (!reason?.trim()) throw new Error('Say why you are withdrawing this quote.');
+    s.removeProductQuote(id, productVersionId);
+    s.updateSelectedProduct(id, productVersionId, () => ({ status: 'INSURER_PROCESSING', statusLabel: CUSTOMER_STATUS_LABELS.INSURER_PROCESSING }));
+    return { productVersionId, status: product.status === 'QUOTED' ? 'INSURER_PROCESSING' : product.status };
+  }),
+  replace: (id, productVersionId, quote) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    const request = s.quoteRequests.find((entry) => entry.id === id);
+    const current = request.productQuotes?.find((entry) => entry.productVersionId === productVersionId);
+    if (!current) throw new Error('There is no current quote for this product to change.');
+    if (request.selection?.insurerQuoteId === current.id) throw new Error('The customer has chosen this quote. It can change only if they choose another.');
+    s.addInsurerQuote(id, insurerName(), { ...quote, productVersionId });
+    return state().quoteRequests.find((entry) => entry.id === id).productQuotes.find((entry) => entry.productVersionId === productVersionId);
+  }),
+  select: (id, insurerQuoteId, acceptedConditionCodes = []) => call((s) => {
+    const request = mine(s.quoteRequests).find((entry) => entry.id === id);
+    const quote = request?.productQuotes?.find((entry) => entry.id === insurerQuoteId);
+    if (!quote) throw new Error('This quote is no longer available. Reload your quotes.');
+    const missing = (quote.conditions || []).filter((condition) => condition.purchaseCritical && !acceptedConditionCodes.includes(condition.code));
+    if (missing.length) throw new Error('Accept every condition marked as required before choosing this quote.');
+    s.setQuoteSelection(id, { insurerQuoteId, acceptedConditionCodes, selectedAt: new Date().toISOString() });
+    return state().quoteRequests.find((entry) => entry.id === id);
+  }),
   claim: (id, productVersionId) => call((s) => {
     const product = ownSelectedProduct(s, id, productVersionId);
     const me = { id: s.staffSession?.id || 'prototype-staff', name: s.staffSession?.name || 'You' };

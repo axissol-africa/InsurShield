@@ -188,6 +188,12 @@ export default function QuotesComparisonPage() {
     );
   }, [request, insurersList, insurerReviews, piaConfig?.piaRatePercentage]);
 
+  // The default order stays the disclosed one: price. Excess is a choice the customer makes.
+  const [sortBy, setSortBy] = useState('price');
+  const sortedQuotes = useMemo(() => (sortBy === 'excess'
+    ? [...quotes].sort((a, b) => Number(a.unavailable || a.closed) - Number(b.unavailable || b.closed)
+      || (a.reply?.excess ?? Number.POSITIVE_INFINITY) - (b.reply?.excess ?? Number.POSITIVE_INFINITY))
+    : quotes), [quotes, sortBy]);
   const repliedCount = quotes.filter((quote) => quote.isFinal && !quote.unavailable).length;
   const unavailableCount = quotes.filter((quote) => quote.unavailable).length;
   const closedCount = quotes.filter((quote) => quote.closed).length;
@@ -206,10 +212,13 @@ export default function QuotesComparisonPage() {
   const cover = coverPeriod(request?.policyDates);
   const requestExpired = status.status === 'expired';
 
-  const choose = (quote) => {
+  const choose = async (quote, acceptedConditionCodes = []) => {
     // Indicative estimates explain the market but are not an offer a customer
     // can buy. A documented insurer reply is required before payment.
     if (!quote.isFinal || quote.unavailable || quote.expired || requestExpired) return;
+    // A chosen product's quote is chosen on the server too, with the conditions
+    // accepted, because payment checks the required ones were.
+    if (quote.productVersionId) await api.quotes.select(request.id, quote.reply.id, acceptedConditionCodes);
     selectQuote(
       {
         ...quote,
@@ -314,14 +323,23 @@ export default function QuotesComparisonPage() {
           )
         )}
 
+        {productRequest && quotes.length > 1 && (
+          <div className="mt-6 flex items-center gap-2 text-sm">
+            <label htmlFor="quote-sort" className="text-muted-foreground">Sort by</label>
+            <select id="quote-sort" value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="rounded-lg border border-border bg-background px-2 py-1">
+              <option value="price">Lowest price first</option>
+              <option value="excess">Lowest excess first</option>
+            </select>
+          </div>
+        )}
         <ul aria-label="Insurer quotes" className="mt-6 grid items-start gap-6 md:grid-cols-2">
-          {quotes.map((quote) => (
+          {sortedQuotes.map((quote) => (
             <li key={quote.id} aria-labelledby={`quote-${quote.id}`} className="min-w-0">
               <QuoteCard
                 quote={quote}
                 coverageType={quote.coverType || coverageType}
                 disabled={requestExpired}
-                onChoose={() => choose(quote)}
+                onChoose={(accepted) => choose(quote, accepted)}
                 onRequote={requote}
                 selectionLabel={quotes.length === 1 ? 'Continue to payment' : `Choose ${quote.productName || quote.name}`}
               />
@@ -499,7 +517,7 @@ function PriceBlock({ quote }) {
       ) : quote.isFinal ? (
         <p className="mt-1.5 text-[12px] text-ink-muted">
           Final quote from insurer
-          {quote.estimate !== quote.premium && (
+          {quote.estimate != null && quote.estimate !== quote.premium && (
             <>
               {' '}
               · estimate was <s>{formatZMW(quote.estimate)}</s>
@@ -584,7 +602,7 @@ function ValidityLine({ quote }) {
   );
 }
 
-function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
+function ChooseButton({ quote, disabled, blocked = false, onChoose, onRequote, label }) {
   if (quote.closed)
     return (
       <Button type="button" variant="outline" onClick={onRequote} className="h-auto min-h-11 w-full whitespace-normal">
@@ -616,13 +634,30 @@ function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
       </Button>
     );
   return (
-    <Button type="button" onClick={onChoose} className="h-auto min-h-11 w-full whitespace-normal">
+    <Button type="button" onClick={onChoose} disabled={blocked} className="h-auto min-h-11 w-full whitespace-normal">
       {label}
     </Button>
   );
 }
 
 function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selectionLabel }) {
+  const conditions = quote.reply?.conditions || [];
+  const required = conditions.filter((condition) => condition.purchaseCritical);
+  const [accepted, setAccepted] = useState([]);
+  const [choosing, setChoosing] = useState(false);
+  const [error, setError] = useState('');
+  const ready = required.every((condition) => accepted.includes(condition.code));
+  const choose = async () => {
+    if (!ready || choosing) return;
+    setChoosing(true);
+    setError('');
+    try {
+      await onChoose(accepted);
+    } catch (caught) {
+      setError(caught?.code && caught?.message ? caught.message : 'This quote could not be chosen. Please try again.');
+      setChoosing(false);
+    }
+  };
   return (
       <Card size="sm" className="gap-3">
         <CardHeader>
@@ -680,6 +715,27 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
             </div>
           ))}
           {quote.question && <AnswerQuestion quote={quote} />}
+          {quote.reply?.excess != null && (
+            <p className="text-sm"><span className="text-muted-foreground">Excess on each claim:</span> <strong>{formatZMW(quote.reply.excess)}</strong></p>
+          )}
+          {conditions.length > 0 && !quote.unavailable && !quote.expired && (
+            <fieldset className="space-y-2 rounded-xl border border-border p-3 text-sm">
+              <legend className="px-1 font-medium">Conditions of this quote</legend>
+              {conditions.map((condition) => (condition.purchaseCritical ? (
+                <label key={condition.code} className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={accepted.includes(condition.code)}
+                    onChange={(event) => setAccepted((current) => (event.target.checked ? [...current, condition.code] : current.filter((code) => code !== condition.code)))}
+                  />
+                  <span>{condition.text} <span className="text-ink-muted">(required to buy)</span></span>
+                </label>
+              ) : (
+                <p key={condition.code} className="flex items-start gap-2"><span aria-hidden="true">•</span><span>{condition.text}</span></p>
+              )))}
+            </fieldset>
+          )}
           {quote.reply?.notes && (
             <p className="rounded-xl bg-muted p-3 text-sm">
               <strong>Insurer note:</strong> {quote.reply.notes}
@@ -690,10 +746,15 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
           {(quote.reply?.document || quote.reply?.insurerReference) && (
             <QuoteDocuments reply={quote.reply} />
           )}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          {!ready && quote.isFinal && !quote.unavailable && !quote.expired && (
+            <p className="text-[12px] text-ink-muted">Accept the required conditions to choose this quote.</p>
+          )}
           <ChooseButton
             quote={quote}
             disabled={disabled}
-            onChoose={onChoose}
+            blocked={!ready || choosing}
+            onChoose={choose}
             onRequote={onRequote}
             label={selectionLabel}
           />
