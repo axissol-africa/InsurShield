@@ -123,6 +123,12 @@ export class PaymentsService {
             );
           }
         }
+        if (quote.productVersionId && (await this.payments.awaitsInspectionBeforePayment(tx, request.id, quote.productVersionId))) {
+          throw ApiException.conflict(
+            'INSPECTION_PENDING',
+            `${quote.insurerName} needs to inspect your vehicle before this quote can be paid. You can follow the inspection in your account.`,
+          );
+        }
         if (lockedQuote.unpayableAt) {
           throw ApiException.conflict(
             'QUOTE_UNAVAILABLE',

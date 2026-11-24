@@ -41,6 +41,10 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { QuoteProductsRepository, type VersionRow } from '../customer/quote-products.repository.js';
 import { customerDate, QuoteWorkflowService } from '../customer/quote-workflow.service.js';
 import { slaState } from '../customer/domain/quote-workflow.js';
+import { UnderwritingInspectionsRepository } from '../customer/underwriting-inspections.repository.js';
+import { UnderwritingInspectionsService, type InspectionAction } from '../customer/underwriting-inspections.service.js';
+import type { InspectionEvent } from '../inspections/domain/underwriting.js';
+import { toContract } from '../common/contract.js';
 import { QUOTE_PRODUCT_STATUSES, type QuoteProductStatus } from '../common/domain/enums.js';
 import type {
   AcknowledgeClaimDto,
@@ -84,6 +88,8 @@ export class InsurerPortalService {
     private readonly notifications: NotificationsService,
     private readonly versions: QuoteProductsRepository,
     private readonly workflow: QuoteWorkflowService,
+    private readonly inspectionRecords: UnderwritingInspectionsRepository,
+    private readonly underwriting: UnderwritingInspectionsService,
   ) {}
 
   /**
@@ -684,6 +690,56 @@ export class InsurerPortalService {
         sla: slaState(row, value.hoursBeforeDue, now),
       }))
       .filter((row) => !query.sla || row.sla === query.sla);
+  }
+
+  // ── Inspections ──────────────────────────────────────────────
+
+  /** Every inspection this insurer carries out, newest first, with the products each one serves. */
+  async listInspections(principal: Principal) {
+    const insurerId = this.insurerOf(principal);
+    const rows = await this.inspectionRecords.listForInsurer(insurerId);
+    const products = await this.inspectionRecords.productsOf(rows.map((row) => row.id));
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      statusLabel: toContract.inspectionStatus(row.status),
+      purpose: row.purpose,
+      method: row.method,
+      stage: row.stage,
+      quoteRequestId: row.quoteRequestId,
+      vehiclePlate: row.vehiclePlate,
+      vehicleLabel: row.vehicleLabel,
+      customer: row.customer,
+      scheduledDate: row.scheduledDate?.toISOString() ?? null,
+      location: row.location,
+      inspectorName: row.inspectorName,
+      inspectorPhone: row.inspectorPhone,
+      predecessorId: row.predecessorId,
+      result: row.result,
+      resultReason: row.resultReason,
+      decidedAt: row.decidedAt?.toISOString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+      products: products
+        .filter((product) => product.inspectionId === row.id)
+        .map(({ productVersionId, productName, passed }) => ({ productVersionId, productName, passed })),
+    }));
+  }
+
+  /** Books, staffs or decides one of this insurer's inspections; the products it serves move with it. */
+  async actOnInspection(principal: Principal, id: string, event: InspectionEvent, input: InspectionAction) {
+    const staff = this.staffOf(principal);
+    const result = await this.portal.transaction(async (tx) => {
+      const standing = await this.portal.insurerStanding(tx, staff.insurerId);
+      if (!standing) throw ApiException.notFound('Insurer', staff.insurerId);
+      if (!takesNewBusiness(standing, new Date())) {
+        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
+      }
+      return this.underwriting.act(tx, staff.insurerId, auditActor(principal), staff.id, id, event, input);
+    });
+    if (!result) {
+      throw await this.absent(principal, { type: 'INSPECTION', label: 'Inspection' }, id, await this.inspectionRecords.exists(id));
+    }
+    return { id: result.id, status: result.status, statusLabel: toContract.inspectionStatus(result.status), result: result.result };
   }
 
   /** The approved reasons an insurer may decline with, as the rule in force states them. */

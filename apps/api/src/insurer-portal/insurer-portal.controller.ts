@@ -3,7 +3,10 @@ import { InsurerPortalService } from './insurer-portal.service.js';
 import { InsurersService } from '../insurers/insurers.service.js';
 import {
   AcknowledgeClaimDto,
+  AssignInspectorDto,
   AssignProductDto,
+  InspectionReasonDto,
+  ScheduleInspectionDto,
   DeclineProductDto,
   ProductPriorityDto,
   QueueQueryDto,
@@ -207,6 +210,63 @@ export class InsurerPortalController {
     @CurrentUser() principal: Principal,
   ) {
     return this.portal.addNote(principal, id, productVersionId, dto);
+  }
+
+  // ── Inspections ─────────────────────────────────────────────────
+
+  @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:inspection:read')
+  @Get('inspections')
+  listInspections(@CurrentUser() principal: Principal) {
+    return this.portal.listInspections(principal);
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/schedule')
+  @HttpCode(HttpStatus.OK)
+  scheduleInspection(@Param('id') id: string, @Body() dto: ScheduleInspectionDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'SCHEDULE', {
+      scheduledDate: new Date(dto.scheduledDate),
+      location: dto.location?.trim() || undefined,
+    });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/inspector')
+  @HttpCode(HttpStatus.OK)
+  assignInspector(@Param('id') id: string, @Body() dto: AssignInspectorDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'ASSIGN', {
+      inspectorName: dto.inspectorName.trim(),
+      inspectorPhone: dto.inspectorPhone?.trim() || undefined,
+    });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  approveInspection(@Param('id') id: string, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'APPROVE', {});
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/fail')
+  @HttpCode(HttpStatus.OK)
+  failInspection(@Param('id') id: string, @Body() dto: InspectionReasonDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'FAIL', { reason: dto.reason.trim() });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/no-show')
+  @HttpCode(HttpStatus.OK)
+  inspectionNoShow(@Param('id') id: string, @Body() dto: InspectionReasonDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'NO_SHOW', { reason: dto.reason.trim() });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelInspection(@Param('id') id: string, @Body() dto: InspectionReasonDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'CANCEL', { reason: dto.reason.trim() });
   }
 
   // ── Paid policies ───────────────────────────────────────────────

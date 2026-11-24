@@ -7,6 +7,7 @@ import {
   Matches,
   ValidateNested,
   IsInt,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -147,6 +148,25 @@ export class QueueQueryDto {
 
   /** Part of a request reference or a number plate. */
   @IsOptional() @IsString() @MaxLength(60) search?: string;
+}
+
+export class ScheduleInspectionDto {
+  @IsISO8601({}, { message: 'Choose the date and time of the inspection.' })
+  scheduledDate!: string;
+
+  @IsOptional() @IsString() @MaxLength(300) location?: string;
+}
+
+export class AssignInspectorDto {
+  @IsString() @MinLength(2, { message: 'Name the inspector.' }) @MaxLength(120) inspectorName!: string;
+
+  /** Shown to the customer, so they can reach the inspector on the day. */
+  @IsOptional() @IsString() @MaxLength(40) inspectorPhone?: string;
+}
+
+export class InspectionReasonDto {
+  /** Shown to the customer as written. */
+  @IsString() @MinLength(3, { message: 'Say why.' }) @MaxLength(1000) reason!: string;
 }
 
 export class ExtendQuoteDto {

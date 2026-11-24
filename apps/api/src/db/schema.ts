@@ -35,6 +35,8 @@ import {
   EVIDENCE_KINDS,
   EVIDENCE_REVIEW_STATES,
   INSPECTION_METHODS,
+  INSPECTION_PURPOSES,
+  INSPECTION_RESULTS,
   INSPECTION_RULES,
   INSPECTION_STATUSES,
   INSPECTION_TIMINGS,
@@ -98,6 +100,8 @@ export const inspectionStatus = pgEnum('InspectionStatus', INSPECTION_STATUSES);
 export const inspectionRule = pgEnum('InspectionRule', INSPECTION_RULES);
 export const inspectionTiming = pgEnum('InspectionTiming', INSPECTION_TIMINGS);
 export const inspectionMethod = pgEnum('InspectionMethod', INSPECTION_METHODS);
+export const inspectionPurpose = pgEnum('InspectionPurpose', INSPECTION_PURPOSES);
+export const inspectionResult = pgEnum('InspectionResult', INSPECTION_RESULTS);
 export const staffRole = pgEnum('StaffRole', STAFF_ROLES);
 export const documentKind = pgEnum('DocumentKind', DOCUMENT_KINDS);
 export const documentScanStatus = pgEnum('DocumentScanStatus', DOCUMENT_SCAN_STATUSES);
@@ -547,6 +551,8 @@ export const insurerProductVersions = pgTable(
     inspectionRule: inspectionRule('inspectionRule').notNull(),
     inspectionTiming: inspectionTiming('inspectionTiming'),
     inspectionMethod: inspectionMethod('inspectionMethod'),
+    /** Batch 13: whether a failed inspection may be repeated instead of declining the product. */
+    reinspectionAllowed: boolean('reinspectionAllowed').notNull().default(false),
     /** Rate and visibility are reviewed with every immutable product version. */
     rateBps: integer('rateBps').notNull(),
     showEstimate: boolean('showEstimate').notNull().default(false),
@@ -1446,12 +1452,66 @@ export const inspections = pgTable(
     notes: text('notes'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // Batch 13: an inspection a chosen product needs before it is quoted or paid.
+    purpose: inspectionPurpose('purpose').notNull().default('GENERAL'),
+    quoteRequestId: text('quoteRequestId'),
+    method: inspectionMethod('method'),
+    stage: inspectionTiming('stage'),
+    /** The inspection this one repeats, after a fail, a missed appointment or a cancellation. */
+    predecessorId: text('predecessorId'),
+    result: inspectionResult('result'),
+    /** Why it failed or was cancelled; shown to the customer. */
+    resultReason: text('resultReason'),
+    decidedByStaffId: uuid('decidedByStaffId'),
+    decidedAt: timestamptz('decidedAt'),
   },
   (t) => [
     index('inspections_customerId_createdAt_idx').on(t.customerId, t.createdAt),
     index('inspections_status_idx').on(t.status),
+    index('inspections_insurerId_status_idx').on(t.insurerId, t.status),
+    index('inspections_quoteRequestId_idx').on(t.quoteRequestId),
     fk('inspections_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
     fk('inspections_insurerId_fkey', [t.insurerId], [insurers.id], 'set null'),
+    fk('inspections_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'set null'),
+    fk('inspections_predecessorId_fkey', [t.predecessorId], [t.id], 'set null'),
+    fk('inspections_decidedByStaffId_fkey', [t.decidedByStaffId], [staffUsers.id], 'set null'),
+    check(
+      'inspections_underwriting_check',
+      sql`${t.purpose} <> 'UNDERWRITING' OR (${t.quoteRequestId} IS NOT NULL AND ${t.method} IS NOT NULL AND ${t.stage} IS NOT NULL)`,
+    ),
+    check('inspections_result_check', sql`(${t.result} IS NULL) = (${t.decidedAt} IS NULL)`),
+  ],
+);
+
+/**
+ * The chosen products an underwriting inspection serves. A product has at
+ * most one open inspection per stage; every result is kept on the inspection.
+ */
+export const inspectionRequestProducts = pgTable(
+  'inspection_request_products',
+  {
+    id: id(),
+    inspectionId: text('inspectionId').notNull(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    stage: inspectionTiming('stage').notNull(),
+    isOpen: boolean('isOpen').notNull().default(true),
+    /** Set when an approved inspection satisfied this product's rule. */
+    passed: boolean('passed').notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex('inspection_request_products_inspection_version_key').on(t.inspectionId, t.productVersionId),
+    uniqueIndex('inspection_request_products_open_key')
+      .on(t.quoteRequestId, t.productVersionId, t.stage)
+      .where(sql`${t.isOpen}`),
+    index('inspection_request_products_selection_idx').on(t.quoteRequestId, t.productVersionId),
+    fk('inspection_request_products_inspectionId_fkey', [t.inspectionId], [inspections.id], 'cascade'),
+    foreignKey({
+      name: 'inspection_request_products_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+    check('inspection_request_products_passed_check', sql`NOT (${t.passed} AND ${t.isOpen})`),
   ],
 );
 

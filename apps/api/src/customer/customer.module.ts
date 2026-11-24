@@ -20,6 +20,8 @@ import { QuoteRequestDraftsService } from './quote-request-drafts.service.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
 import { QuoteWorkflowService, QUOTE_STAFF_EMAIL, QUOTE_WORKFLOW_SWEEP } from './quote-workflow.service.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { UnderwritingInspectionsRepository } from './underwriting-inspections.repository.js';
+import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 
 @Module({
   imports: [SettingsModule],
@@ -42,8 +44,16 @@ import { SettingsModule } from '../settings/settings.module.js';
     QuoteRequestDraftPurge,
     QuoteProductsRepository,
     QuoteWorkflowService,
+    UnderwritingInspectionsRepository,
+    UnderwritingInspectionsService,
   ],
-  exports: [QuoteAvailabilityService, QuoteProductsRepository, QuoteWorkflowService],
+  exports: [
+    QuoteAvailabilityService,
+    QuoteProductsRepository,
+    QuoteWorkflowService,
+    UnderwritingInspectionsRepository,
+    UnderwritingInspectionsService,
+  ],
 })
 export class CustomerModule implements OnModuleInit {
   constructor(

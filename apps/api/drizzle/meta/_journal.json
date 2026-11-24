@@ -253,6 +253,13 @@
       "when": 1795499095289,
       "tag": "0035_batch_13_quote_content",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795501794120,
+      "tag": "0036_batch_13_inspections",
+      "breakpoints": true
     }
   ]
 }

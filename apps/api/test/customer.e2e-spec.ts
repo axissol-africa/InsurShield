@@ -13,6 +13,8 @@ import {
   inspectionShots,
   integrationDeliveries,
   insurerEvidence,
+  inspectionRequestProducts,
+  inspections,
   insurerProductVersions,
   insurerProducts,
   insurers,
@@ -610,6 +612,47 @@ describe('customer', () => {
           expect.objectContaining({ productVersionId: second.version.id }),
         ]),
       );
+    });
+
+    it('opens one inspection per insurer for the products that need one before quotation or payment', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const insurer = await buildInsurer(testApp.db);
+      const other = await buildInsurer(testApp.db);
+      const physicalFirst = await productVersionForSelection(insurer, unique('INSPECT_A'), {
+        inspectionRule: 'REQUIRED', inspectionTiming: 'BEFORE_QUOTATION', inspectionMethod: 'PHYSICAL',
+      });
+      const photosBeforePaying = await productVersionForSelection(insurer, unique('INSPECT_B'), {
+        inspectionRule: 'REQUIRED', inspectionTiming: 'BEFORE_PAYMENT', inspectionMethod: 'SELF_CAPTURE',
+      });
+      const noInspection = await productVersionForSelection(other, unique('INSPECT_C'));
+
+      const submitted = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('I').toUpperCase(), {
+          selectedProductVersionIds: [physicalFirst.version.id, photosBeforePaying.version.id, noInspection.version.id],
+        }))
+        .expect(201);
+
+      const opened = await testApp.db.select().from(inspections).where(eq(inspections.quoteRequestId, submitted.body.id));
+      expect(opened).toEqual([
+        expect.objectContaining({
+          purpose: 'UNDERWRITING', status: 'REQUESTED', insurerId: insurer.insurer.id, method: 'PHYSICAL', stage: 'BEFORE_QUOTATION',
+        }),
+      ]);
+      const served = await testApp.db
+        .select({ productVersionId: inspectionRequestProducts.productVersionId })
+        .from(inspectionRequestProducts)
+        .where(eq(inspectionRequestProducts.inspectionId, opened[0].id));
+      expect(served.map((link) => link.productVersionId).sort()).toEqual([physicalFirst.version.id, photosBeforePaying.version.id].sort());
+      const statuses = Object.fromEntries(
+        (await selectedProductsOf(submitted.body.id)).map((selection) => [selection.productVersionId, selection.status]),
+      );
+      expect(statuses).toEqual({
+        [physicalFirst.version.id]: 'INSPECTION_REQUIRED',
+        [photosBeforePaying.version.id]: 'SUBMITTED',
+        [noInspection.version.id]: 'SUBMITTED',
+      });
     });
 
     it('validates insurer-configured requirements, shares identical answers safely, and stores them against each selected version', async () => {

@@ -9,6 +9,7 @@ import type { InspectionRule, InspectionTiming, QuoteProductStatus } from '../..
 export type QuoteProductEvent =
   | 'CLAIM'
   | 'WITHDRAW_QUOTE'
+  | 'INSPECTION_PASSED'
   | 'REQUEST_INFORMATION'
   | 'CUSTOMER_ANSWERED'
   | 'QUOTE'
@@ -41,6 +42,8 @@ const TRANSITIONS: Record<QuoteProductEvent, { from: readonly QuoteProductStatus
   CLAIM: { from: ['SUBMITTED'], to: 'INSURER_PROCESSING' },
   // The insurer took its quote back without a new one; the product is theirs to work on again.
   WITHDRAW_QUOTE: { from: ['QUOTED'], to: 'INSURER_PROCESSING' },
+  // An approved inspection lets a product waiting for it be quoted.
+  INSPECTION_PASSED: { from: ['INSPECTION_REQUIRED'], to: 'INSURER_PROCESSING' },
   REQUEST_INFORMATION: { from: ['SUBMITTED', 'INSURER_PROCESSING'], to: 'VERIFICATION_REQUIRED' },
   CUSTOMER_ANSWERED: { from: ['VERIFICATION_REQUIRED'], to: 'INSURER_PROCESSING' },
   QUOTE: { from: QUOTABLE_STATUSES, to: 'QUOTED' },

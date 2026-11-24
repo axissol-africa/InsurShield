@@ -139,8 +139,17 @@ export const INSPECTION_STATUSES = [
   'REPORT_READY',
   'APPROVED',
   'FAILED',
+  'CANCELLED',
+  'NO_SHOW',
 ] as const;
 export type InspectionStatus = (typeof INSPECTION_STATUSES)[number];
+
+/** A customer-requested appointment, or one an insurer's product needs before it quotes or is paid. */
+export const INSPECTION_PURPOSES = ['GENERAL', 'UNDERWRITING'] as const;
+export type InspectionPurpose = (typeof INSPECTION_PURPOSES)[number];
+
+export const INSPECTION_RESULTS = ['PASSED', 'FAILED'] as const;
+export type InspectionResult = (typeof INSPECTION_RESULTS)[number];
 
 export const INSPECTION_RULES = ['NOT_REQUIRED', 'OPTIONAL', 'REQUIRED'] as const;
 export type InspectionRule = (typeof INSPECTION_RULES)[number];

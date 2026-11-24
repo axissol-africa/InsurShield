@@ -1096,8 +1096,9 @@ describe('the final schema', () => {
     // version's state change, reply due date and pause, the information
     // request's four, and the internal note's creation; its second part adds
     // when a product was assigned and when its owner was warned, and then
-    // when a quote was withdrawn and when the customer chose one.
-    expect(timestampColumns).toHaveLength(143);
+    // when a quote was withdrawn and when the customer chose one, and
+    // finally when an inspection was decided.
+    expect(timestampColumns).toHaveLength(144);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

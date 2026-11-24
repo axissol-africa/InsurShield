@@ -129,6 +129,8 @@ export const PERMISSIONS = {
   'portal:note:read': READS_REQUESTS,
   'portal:note:write': QUOTING,
   'portal:queue:read': READS_REQUESTS,
+  'portal:inspection:read': READS_REQUESTS,
+  'portal:inspection:manage': QUOTING,
   // Claiming is taking the work for yourself. Assigning it to someone else, or
   // changing its priority, is the administrator's; the service enforces that.
   'portal:queue:claim': QUOTING,

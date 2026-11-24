@@ -16,6 +16,7 @@ import type { CustomerPrincipal } from './customer-principal.js';
 import { QuoteWorkflowService } from './quote-workflow.service.js';
 import { initialStatus, resumedReplyDueAt } from './domain/quote-workflow.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
+import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
@@ -72,6 +73,7 @@ export class QuoteRequestsService {
     private readonly integrations: IntegrationsService,
     private readonly workflow: QuoteWorkflowService,
     private readonly versions: QuoteProductsRepository,
+    private readonly underwriting: UnderwritingInspectionsService,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -333,6 +335,19 @@ export class QuoteRequestsService {
     await this.repository.insertShots(tx, created.id, shots);
     const row = await this.repository.findOwned(created.customerId, created.id, tx);
     if (!row) throw new Error(`Quote request ${created.id} is missing inside its own transaction`);
+    // Products whose terms need an inspection before quotation or payment get one now, one per insurer.
+    await this.underwriting.openForRequest(
+      tx,
+      {
+        id: created.id,
+        customerId: created.customerId,
+        vehiclePlate: row.vehicle.plateNumber,
+        vehicleLabel: `${row.vehicle.year} ${row.vehicle.make} ${row.vehicle.model}`.trim(),
+        submittedAt: created.submittedAt,
+      },
+      selectedVersions,
+      actor,
+    );
     if (selectedVersions.length > 0) {
       await this.queueSelectedProductDeliveries(tx, row, insurerIds, selectedVersions, productRequirements);
     }

@@ -561,6 +561,32 @@ Where part 2b differs from the plan above:
   and conditions for now.
 - Sorting is by price (the default, as disclosed) or excess, in the browser. There is no comparison endpoint yet.
 
-### Part 3: inspections
+### Part 3: inspections before quotation and before payment (delivered)
 
-B13.4 and its web part: the inspection model, inspections before quotation and before payment, and the payment gate.
+- Migration 0036: inspections gain a purpose (`GENERAL` for the existing customer appointments, `UNDERWRITING`), the
+  request, method and stage, the inspection they repeat, and the result with its reason and who decided it.
+  `InspectionStatus` gains `CANCELLED` and `NO_SHOW`. The new `inspection_request_products` table links an inspection
+  to the products it serves, with at most one open inspection per product and stage. Product versions gain
+  `reinspectionAllowed`, default off.
+- At submit, each insurer gets one inspection for its products whose rule needs one before quotation or payment:
+  physical if any product needs it, and before quotation if any product needs that.
+- The insurer books, staffs and decides it from `/insurer/inspections` (`portal:inspection:read` and
+  `portal:inspection:manage`). A physical inspection is decided only once booked; a self-capture one is decided from
+  the photos straight away. A pass lets the products waiting for it be quoted, with the reply clock started again.
+  A fail declines them with `INSPECTION_FAILED`, unless the product allows a second inspection, which is then booked.
+  A missed or cancelled appointment books a new one for the products still waiting. A suspended insurer's open
+  inspections are cancelled and none is booked again.
+- Payment of a quote whose product needs an inspection before payment is refused with `INSPECTION_PENDING` until one
+  has passed for that product. Another product of the same request is never held up.
+- The customer's inspection list includes these inspections with the products they serve, when they are needed, how
+  they are done, and the reason after a fail. The customer is told when one is booked, passed, failed or booked again.
+- Web: a new Inspections section in the insurer portal, and the customer's inspection detail shows the new facts.
+
+Where part 3 differs from the plan above:
+
+- Self-capture evidence is the request's own journey photos, which the insurer already sees with the request. A
+  separate photo upload per slot, the `INSPECTION_EVIDENCE_SLOTS` rule and the `INSPECTION_REPORT` document kind wait
+  for batch 16, which adds claim inspections and their reports.
+- The insurer cannot yet ask for an inspection on an `OPTIONAL` rule.
+- A fail does not decline a product that was already quoted (before-payment rules); its quote stays on record and
+  payment stays refused, because there is no pass.
