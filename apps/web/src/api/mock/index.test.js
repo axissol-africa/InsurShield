@@ -71,6 +71,57 @@ describe('mock api adapter', () => {
     expect(after.extendedAt).toBeTruthy();
   });
 
+  it('asks the customer a question, takes the answer, then declines with the customer wording only', async () => {
+    const { request, versionId } = await requestPrestigeProduct();
+    expect(request.selectedProducts[0]).toMatchObject({ status: 'SUBMITTED', informationRequests: [] });
+
+    asInsurer();
+    await mock.quotes.requestInformation(request.id, versionId, { message: 'Please send the odometer reading.', dueInDays: 3 });
+    await expect(mock.quotes.requestInformation(request.id, versionId, { message: 'And the licence.', dueInDays: 3 }))
+      .rejects.toThrow('already asked');
+    await mock.quotes.addNote(request.id, versionId, 'Customer called to say the photos are blurred.');
+
+    const asked = (await mock.quotes.get(request.id)).selectedProducts[0];
+    expect(asked).toMatchObject({ status: 'VERIFICATION_REQUIRED', statusLabel: 'The insurer needs more information' });
+
+    const answered = await mock.quotes.answerInformation(request.id, versionId, '84,200 km');
+    expect(answered.selectedProducts[0]).toMatchObject({
+      status: 'INSURER_PROCESSING',
+      informationRequests: [{ message: 'Please send the odometer reading.', answer: '84,200 km', open: false }],
+    });
+    await expect(mock.quotes.answerInformation(request.id, versionId, 'again')).rejects.toThrow('not waiting');
+
+    await expect(mock.quotes.decline(request.id, versionId, { reasonCode: 'MADE_UP' })).rejects.toThrow('listed reasons');
+    await mock.quotes.decline(request.id, versionId, { reasonCode: 'VEHICLE_NOT_ELIGIBLE', customerNote: 'Under 15 years only.', internalNote: 'Rebuilt chassis.' });
+    const declined = (await mock.quotes.get(request.id)).selectedProducts[0];
+    expect(declined).toMatchObject({ status: 'DECLINED', decline: { reason: "Your vehicle does not meet this product's eligibility rules.", note: 'Under 15 years only.' } });
+    expect(JSON.stringify(declined)).not.toContain('Rebuilt chassis');
+    expect((await mock.quotes.notes(request.id, versionId)).map((note) => note.body)).toEqual([
+      'Rebuilt chassis.',
+      'Customer called to say the photos are blurred.',
+    ]);
+  });
+
+  it('replaces and withdraws a quote, and needs required conditions accepted to choose one', async () => {
+    const { request, versionId } = await requestPrestigeProduct();
+    asInsurer();
+    await mock.quotes.reply(request.id, { premium: 10900, document: { name: 'q.pdf' }, productVersionId: versionId, conditions: [{ code: 'TRACKER', text: 'Fit a tracker.', purchaseCritical: true }] });
+    const replaced = await mock.quotes.replace(request.id, versionId, { premium: 10500, document: { name: 'q2.pdf' }, conditions: [{ code: 'TRACKER', text: 'Fit a tracker.', purchaseCritical: true }] });
+    expect(replaced.premium).toBe(10500);
+
+    await expect(mock.quotes.select(request.id, replaced.id, [])).rejects.toThrow('required');
+    const chosen = await mock.quotes.select(request.id, replaced.id, ['TRACKER']);
+    expect(chosen.selection).toMatchObject({ insurerQuoteId: replaced.id, acceptedConditionCodes: ['TRACKER'] });
+    asInsurer();
+    await expect(mock.quotes.withdraw(request.id, versionId, 'Too late.')).rejects.toThrow('chosen');
+
+    useStore.getState().setQuoteSelection(request.id, null);
+    await mock.quotes.withdraw(request.id, versionId, 'Rated on the wrong use.');
+    const after = await mock.quotes.get(request.id);
+    expect(after.productQuotes).toEqual([]);
+    expect(after.selectedProducts[0].status).toBe('INSURER_PROCESSING');
+  });
+
   it('refuses a request without chosen products, as the API does', async () => {
     await signIn();
     await expect(mock.quotes.submitRequest({ customer: useStore.getState().customer, policyDates: null }))

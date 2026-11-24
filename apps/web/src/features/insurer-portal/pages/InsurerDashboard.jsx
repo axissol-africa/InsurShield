@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { BadgePercent, BookOpen, CheckCheck, FileCheck2, FileText, LayoutDashboard, MessageSquareWarning, PlugZap, UsersRound } from 'lucide-react';
+import { BadgePercent, BookOpen, CheckCheck, ClipboardCheck, FileCheck2, FileText, LayoutDashboard, MessageSquareWarning, PlugZap, UsersRound } from 'lucide-react';
 import { toast } from 'sonner';
 import InsurerShell from '@/features/insurer-portal/components/InsurerShell';
 import { useStore } from '@/store';
@@ -9,10 +9,11 @@ import { hydrateInsurerPortal } from '@/api/sync';
 import { DEFAULT_QUOTE_VALIDITY_DAYS } from '@/domain/quoteValidity';
 import {
   AWAITING_CERTIFICATE, CLAIM_NOTIFIED, CLAIM_RECEIVED, EXTENSION_DAYS, PORTAL_CONTENT_ID,
-  coverTypeOf, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
+  QUEUE_VIEWS, awaitsInsurer, coverTypeOf, inQueueView, isOpenNcdApplication, policyPaidAt, portalPath, toPortalCases, waitingLongestFirst,
 } from '@/features/insurer-portal/portal';
 import { thenReloadPortal } from '@/features/insurer-portal/reload';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
+import { Button } from '@/components/ui/primitives/button';
 import { PageHeader, StatusBadge } from '@/features/insurer-portal/components/ui';
 import RequestQueue from '@/features/insurer-portal/components/RequestQueue';
 import QuoteRequestForm from '@/features/insurer-portal/components/QuoteRequestForm';
@@ -20,13 +21,14 @@ import ProductLibrary from '@/features/insurer-portal/components/ProductLibrary'
 import PaidPoliciesTab from '@/features/insurer-portal/components/PaidPoliciesTab';
 import PolicyIssuePanel from '@/features/insurer-portal/components/PolicyIssuePanel';
 import ClaimsTab from '@/features/insurer-portal/components/ClaimsTab';
+import InspectionsTab from '@/features/insurer-portal/components/InspectionsTab';
 import NcdTab from '@/features/insurer-portal/components/NcdTab';
 import StaffManagement from '@/features/admin/components/StaffManagement';
 import IntegrationDeliveryPanel from '@/features/integrations/components/IntegrationDeliveryPanel';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const SECTION_IDS = ['overview', 'guides', 'policies', 'claims', 'ncd', 'integrations', 'staff'];
+const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'ncd', 'integrations', 'staff'];
 const QUOTE_QUEUE_ID = 'quote-requests';
 /** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
 const NEXT_OFFER_MS = 20_000;
@@ -66,7 +68,10 @@ export default function InsurerDashboard() {
   const myPolicies = policies.filter((policy) => policy.insurer === insurerName && ['Active', AWAITING_CERTIFICATE].includes(policy.status)).sort(byNewest('receivedAt'));
   const myRequests = quoteRequests.filter((request) => request.insurers?.includes(insurerName)).sort(byNewest('submittedAt')).flatMap((request) => toPortalCases(request, insurerName));
 
-  const awaitingQuote = myRequests.filter((request) => !request.reply);
+  const awaitingQuote = myRequests.filter(awaitsInsurer);
+  // The view is in the address, so Back and a refresh keep it.
+  const queueView = QUEUE_VIEWS.some((view) => view.id === searchParams.get('queue')) ? searchParams.get('queue') : 'all';
+  const shownQueue = awaitingQuote.filter(inQueueView(queueView, staffSession?.id));
   const quoted = myRequests.filter((request) => request.reply);
   const newClaims = myClaims.filter((claim) => claim.status === CLAIM_NOTIFIED);
   const receivedClaims = myClaims.filter((claim) => claim.status === CLAIM_RECEIVED);
@@ -76,7 +81,11 @@ export default function InsurerDashboard() {
   // The quote and certificate screens are addressed by the record they act
   // on, so the browser's Back button and a refresh both keep the person's
   // place. An address for a record that is no longer waiting shows its section.
-  const quotingRequest = activeTab === 'overview' ? awaitingQuote.find((request) => request.caseKey === searchParams.get('quote')) : undefined;
+  const quotingRequest = activeTab === 'overview'
+    ? awaitingQuote.find((request) => request.caseKey === searchParams.get('quote'))
+      ?? quoted.find((request) => request.productVersionId && request.caseKey === searchParams.get('replace'))
+    : undefined;
+  const replacing = Boolean(quotingRequest?.reply);
   const issuingPolicy = activeTab === 'policies' ? awaitingCertificate.find((policy) => policy.policyNumber === searchParams.get('issue')) : undefined;
 
   // Each screen replaces the one before it; start it at the top on phones.
@@ -94,6 +103,7 @@ export default function InsurerDashboard() {
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard, badge: awaitingQuote.length },
+    { id: 'inspections', label: 'Inspections', icon: ClipboardCheck },
     { id: 'guides', label: 'Product terms', shortLabel: 'Terms', icon: BookOpen },
     { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: FileCheck2, badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: MessageSquareWarning, badge: newClaims.length },
@@ -164,10 +174,25 @@ export default function InsurerDashboard() {
         piaRatePercentage={piaConfig?.piaRatePercentage}
         defaultValidityDays={defaultValidityDays}
         onBack={backToSection}
+        workflowApi={api}
+        session={staffSession}
+        replacing={replacing}
+        onWorkflowChanged={async (change) => {
+          await hydrateInsurerPortal();
+          if (change === 'assigned') return;
+          if (change === 'declined') {
+            toast.success('Product declined', { description: `The customer has been told ${quotingRequest.productName || 'this product'} will not be quoted.` });
+            navigate(sectionPath, { replace: true });
+          } else {
+            toast.success('Question sent', { description: 'The customer has been asked. Your reply deadline is paused until they answer.' });
+          }
+        }}
         onSubmit={async (quote) => {
           // A chosen product is quoted on its own; a request from before product selection is quoted whole.
           const reply = quotingRequest.productVersionId ? { ...quote, productVersionId: quotingRequest.productVersionId } : quote;
-          await thenReloadPortal(() => api.quotes.reply(quotingRequest.id, reply));
+          await thenReloadPortal(() => (replacing
+            ? api.quotes.replace(quotingRequest.id, quotingRequest.productVersionId, quote)
+            : api.quotes.reply(quotingRequest.id, reply)));
           toast.success('Quote sent', {
             description: `The customer can now see your quotation for ${quotingRequest.vehicle}.`,
             ...(nextRequest && nextOffer(
@@ -216,10 +241,29 @@ export default function InsurerDashboard() {
         </section>
 
         <div id={QUOTE_QUEUE_ID} className="scroll-mt-20">
+          <div role="group" aria-label="Show quote requests" className="mb-3 flex flex-wrap gap-2">
+            {QUEUE_VIEWS.map((view) => (
+              <Button
+                key={view.id}
+                type="button"
+                size="sm"
+                variant={queueView === view.id ? 'default' : 'outline'}
+                aria-pressed={queueView === view.id}
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  if (view.id === 'all') next.delete('queue');
+                  else next.set('queue', view.id);
+                  navigate({ search: next.toString() ? `?${next}` : '' }, { replace: true });
+                }}
+              >
+                {view.label}
+              </Button>
+            ))}
+          </div>
           <RequestQueue
             title="Quote requests"
-            countLabel={`${awaitingQuote.length} awaiting a quote`}
-            requests={awaitingQuote}
+            countLabel={`${shownQueue.length} awaiting a quote`}
+            requests={shownQueue}
             emptyMessage="Every request has been quoted. Sent quotes are listed below."
             onQuote={(request) => navigate(portalPath.quote(request.caseKey))}
           />
@@ -231,9 +275,16 @@ export default function InsurerDashboard() {
           requests={quoted}
           emptyMessage="No quotes have been sent yet."
           onExtend={(request) => thenReloadPortal(() => api.quotes.extend(request.id, EXTENSION_DAYS, request.productVersionId))}
+          onReplace={(request) => navigate(portalPath.replace(request.caseKey))}
+          onWithdraw={async (request, reason) => {
+            await thenReloadPortal(() => api.quotes.withdraw(request.id, request.productVersionId, reason));
+            toast.success('Quote withdrawn', { description: 'The customer has been told. The product is back in your queue.' });
+          }}
         />
       </>
     );
+  } else if (activeTab === 'inspections') {
+    content = <InspectionsTab api={api} onChanged={hydrateInsurerPortal} />;
   } else if (activeTab === 'guides') {
     content = (
       <ProductLibrary

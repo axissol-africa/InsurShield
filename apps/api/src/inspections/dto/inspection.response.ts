@@ -7,7 +7,16 @@ export interface InspectionPhotoResponse {
   document: DocumentRecord;
 }
 
-export function toInspectionResponse(inspection: InspectionWithInsurer, photos: InspectionPhotoResponse[]) {
+export interface InspectedProductResponse {
+  productName: string;
+  passed: boolean;
+}
+
+export function toInspectionResponse(
+  inspection: InspectionWithInsurer,
+  photos: InspectionPhotoResponse[],
+  products: InspectedProductResponse[] = [],
+) {
   return {
     id: inspection.id,
     status: toContract.inspectionStatus(inspection.status),
@@ -24,5 +33,13 @@ export function toInspectionResponse(inspection: InspectionWithInsurer, photos: 
     notes: inspection.notes,
     createdAt: inspection.createdAt.toISOString(),
     photos,
+    // Batch 13: an inspection a chosen product needs, and what it decided.
+    purpose: inspection.purpose,
+    method: inspection.method,
+    stage: inspection.stage,
+    quoteRequestId: inspection.quoteRequestId,
+    result: inspection.result,
+    resultReason: inspection.resultReason,
+    products,
   };
 }

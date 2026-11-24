@@ -13,6 +13,8 @@ import {
   inspectionShots,
   integrationDeliveries,
   insurerEvidence,
+  inspectionRequestProducts,
+  inspections,
   insurerProductVersions,
   insurerProducts,
   insurers,
@@ -80,10 +82,13 @@ const QUOTE_REQUEST_KEYS = [
   'photosCapturedAt',
   'policyDates',
   'productQuotes',
+  'progress',
+  'progressLabel',
   'requotedAs',
   'requotedFromId',
   'rtsaAnniversaryFee',
   'selectedProducts',
+  'selection',
   'status',
   'submittedAt',
   'unavailableInsurers',
@@ -93,7 +98,11 @@ const QUOTE_REQUEST_KEYS = [
   'vehicleValue',
 ];
 const INSURER_QUOTE_KEYS = [
+  'addOns',
+  'components',
+  'conditions',
   'document',
+  'excess',
   'extendedAt',
   'id',
   'insurerReference',
@@ -416,6 +425,10 @@ describe('customer', () => {
             extendedAt: '2026-10-10T09:30:00.002Z',
             unavailableAt: null,
             document: await documentResponse(document),
+            components: [],
+            excess: null,
+            addOns: [],
+            conditions: [],
           },
         },
         productQuotes: [],
@@ -423,6 +436,10 @@ describe('customer', () => {
         photosCapturedAt: '2026-10-01T07:59:00.789Z',
         requotedFromId: null,
         requotedAs: again.id,
+        // A request from before product selection keeps its stored status only.
+        progress: null,
+        progressLabel: null,
+        selection: null,
       });
       expect(response.body[0]).toMatchObject({ requotedFromId: quoteRequest.id, requotedAs: null, policyDates: null });
     });
@@ -569,6 +586,16 @@ describe('customer', () => {
         ]),
       );
       expect(await storedRequest(submitted.body.id)).toMatchObject({ model: 'PRODUCT_SELECTION' });
+      // Each chosen product starts waiting for its insurer, due by the reply
+      // deadline rule's default of seven days.
+      const submittedAt = new Date(submitted.body.submittedAt).getTime();
+      for (const selection of await selectedProductsOf(submitted.body.id)) {
+        expect(selection).toMatchObject({ status: 'SUBMITTED', pausedAt: null });
+        expect(selection.replyDueAt!.getTime() - submittedAt).toBe(7 * 24 * 60 * 60 * 1000);
+      }
+      for (const product of submitted.body.selectedProducts) {
+        expect(product).toMatchObject({ status: 'SUBMITTED', statusLabel: 'Waiting for the insurer', decline: null, informationRequests: [] });
+      }
       const deliveries = await testApp.db
         .select()
         .from(integrationDeliveries)
@@ -585,6 +612,47 @@ describe('customer', () => {
           expect.objectContaining({ productVersionId: second.version.id }),
         ]),
       );
+    });
+
+    it('opens one optional inspection per insurer for the products that ask for one, without holding any product up', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const insurer = await buildInsurer(testApp.db);
+      const other = await buildInsurer(testApp.db);
+      const physicalFirst = await productVersionForSelection(insurer, unique('INSPECT_A'), {
+        inspectionRule: 'REQUIRED', inspectionTiming: 'BEFORE_QUOTATION', inspectionMethod: 'PHYSICAL',
+      });
+      const photosBeforePaying = await productVersionForSelection(insurer, unique('INSPECT_B'), {
+        inspectionRule: 'REQUIRED', inspectionTiming: 'BEFORE_PAYMENT', inspectionMethod: 'SELF_CAPTURE',
+      });
+      const noInspection = await productVersionForSelection(other, unique('INSPECT_C'));
+
+      const submitted = await testApp.http
+        .post('/api/v1/quote-requests')
+        .set(await asCustomer(customer))
+        .send(submission(unique('I').toUpperCase(), {
+          selectedProductVersionIds: [physicalFirst.version.id, photosBeforePaying.version.id, noInspection.version.id],
+        }))
+        .expect(201);
+
+      const opened = await testApp.db.select().from(inspections).where(eq(inspections.quoteRequestId, submitted.body.id));
+      expect(opened).toEqual([
+        expect.objectContaining({
+          purpose: 'UNDERWRITING', status: 'REQUESTED', insurerId: insurer.insurer.id, method: 'PHYSICAL', stage: 'BEFORE_QUOTATION',
+        }),
+      ]);
+      const served = await testApp.db
+        .select({ productVersionId: inspectionRequestProducts.productVersionId })
+        .from(inspectionRequestProducts)
+        .where(eq(inspectionRequestProducts.inspectionId, opened[0].id));
+      expect(served.map((link) => link.productVersionId).sort()).toEqual([physicalFirst.version.id, photosBeforePaying.version.id].sort());
+      const statuses = Object.fromEntries(
+        (await selectedProductsOf(submitted.body.id)).map((selection) => [selection.productVersionId, selection.status]),
+      );
+      expect(statuses).toEqual({
+        [physicalFirst.version.id]: 'SUBMITTED',
+        [photosBeforePaying.version.id]: 'SUBMITTED',
+        [noInspection.version.id]: 'SUBMITTED',
+      });
     });
 
     it('validates insurer-configured requirements, shares identical answers safely, and stores them against each selected version', async () => {

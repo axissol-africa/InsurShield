@@ -17,8 +17,14 @@ import { QuoteRequestDraftsController } from './quote-request-drafts.controller.
 import { QuoteRequestDraftPurge, QUOTE_REQUEST_DRAFT_PURGE } from './quote-request-draft-purge.js';
 import { QuoteRequestDraftsRepository } from './quote-request-drafts.repository.js';
 import { QuoteRequestDraftsService } from './quote-request-drafts.service.js';
+import { QuoteProductsRepository } from './quote-products.repository.js';
+import { QuoteWorkflowService, QUOTE_STAFF_EMAIL, QUOTE_WORKFLOW_SWEEP } from './quote-workflow.service.js';
+import { SettingsModule } from '../settings/settings.module.js';
+import { UnderwritingInspectionsRepository } from './underwriting-inspections.repository.js';
+import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 
 @Module({
+  imports: [SettingsModule],
   controllers: [CustomerController, QuoteRequestDraftsController],
   providers: [
     QuoteRequestsService,
@@ -36,17 +42,35 @@ import { QuoteRequestDraftsService } from './quote-request-drafts.service.js';
     QuoteRequestDraftsService,
     QuoteRequestDraftsRepository,
     QuoteRequestDraftPurge,
+    QuoteProductsRepository,
+    QuoteWorkflowService,
+    UnderwritingInspectionsRepository,
+    UnderwritingInspectionsService,
   ],
-  exports: [QuoteAvailabilityService],
+  exports: [
+    QuoteAvailabilityService,
+    QuoteProductsRepository,
+    QuoteWorkflowService,
+    UnderwritingInspectionsRepository,
+    UnderwritingInspectionsService,
+  ],
 })
 export class CustomerModule implements OnModuleInit {
   constructor(
     private readonly runner: JobRunner,
     private readonly draftPurge: QuoteRequestDraftPurge,
+    private readonly workflow: QuoteWorkflowService,
   ) {}
 
   onModuleInit(): void {
     this.runner.register(QUOTE_REQUEST_DRAFT_PURGE, () => this.draftPurge.run());
     this.runner.onStart(() => this.draftPurge.schedule(new Date()));
+    this.runner.register(QUOTE_WORKFLOW_SWEEP, async () => {
+      await this.workflow.sweep();
+    });
+    this.runner.onStart(() => this.workflow.schedule(new Date()));
+    this.runner.register(QUOTE_STAFF_EMAIL, (job) =>
+      this.workflow.sendStaffEmail(job.key, job.payload as { to: string; subject: string; body: string }),
+    );
   }
 }

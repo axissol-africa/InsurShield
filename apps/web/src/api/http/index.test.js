@@ -145,3 +145,65 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.post).toHaveBeenCalledWith('/insurer/quote-requests/QR-LEGACY/extend', { extraDays: 7 });
   });
 });
+
+describe('the quote workflow routes', () => {
+  it('addresses each chosen product under its request', () => {
+    quotes.declineReasons();
+    quotes.decline('QR-1', 'pv-1', { reasonCode: 'OTHER' });
+    quotes.requestInformation('QR-1', 'pv-1', { message: 'Odometer?', dueInDays: 3 });
+    quotes.notes('QR-1', 'pv-1');
+    quotes.addNote('QR-1', 'pv-1', 'Checked.');
+    quotes.answerInformation('QR-1', 'pv-1', '84,200 km');
+
+    expect(transport.get).toHaveBeenNthCalledWith(1, '/insurer/decline-reasons');
+    expect(transport.get).toHaveBeenNthCalledWith(2, '/insurer/quote-requests/QR-1/products/pv-1/notes');
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/decline', { reasonCode: 'OTHER' });
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/insurer/quote-requests/QR-1/products/pv-1/information-requests', { message: 'Odometer?', dueInDays: 3 });
+    expect(transport.post).toHaveBeenNthCalledWith(3, '/insurer/quote-requests/QR-1/products/pv-1/notes', { body: 'Checked.' });
+    expect(transport.post).toHaveBeenNthCalledWith(4, '/quote-requests/QR-1/products/pv-1/information', { answer: '84,200 km' });
+  });
+});
+
+describe('the quote queue routes', () => {
+  it('claims, assigns, sets priority and reads the queue', () => {
+    quotes.claim('QR-1', 'pv-1');
+    quotes.assign('QR-1', 'pv-1', null);
+    quotes.setPriority('QR-1', 'pv-1', 'HIGH');
+    quotes.queue({ owner: 'me' });
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/claim');
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/insurer/quote-requests/QR-1/products/pv-1/assign', { staffId: null });
+    expect(transport.post).toHaveBeenNthCalledWith(3, '/insurer/quote-requests/QR-1/products/pv-1/priority', { priority: 'HIGH' });
+    expect(transport.get).toHaveBeenCalledWith('/insurer/queue', { params: { owner: 'me' } });
+  });
+});
+
+describe('quote changes and the customer choice', () => {
+  it('withdraws, chooses and replaces with an uploaded quotation', async () => {
+    quotes.withdraw('QR-1', 'pv-1', 'Wrong use.');
+    quotes.select('QR-1', 'IQ-1', ['TRACKER']);
+    expect(transport.post).toHaveBeenNthCalledWith(1, '/insurer/quote-requests/QR-1/products/pv-1/quote/withdraw', { reason: 'Wrong use.' });
+    expect(transport.post).toHaveBeenNthCalledWith(2, '/quote-requests/QR-1/selection', { insurerQuoteId: 'IQ-1', acceptedConditionCodes: ['TRACKER'] });
+  });
+});
+
+describe('the insurer inspection routes', () => {
+  it('lists and moves the insurer\'s inspections', async () => {
+    const { inspections } = await import('./index');
+    inspections.listForInsurer();
+    inspections.schedule('INS-1', { scheduledDate: '2026-12-01T09:00:00.000Z' });
+    inspections.assignInspector('INS-1', { inspectorName: 'Bwalya' });
+    inspections.approve('INS-1');
+    inspections.fail('INS-1', 'Damage.');
+    inspections.noShow('INS-1', 'Absent.');
+    inspections.cancel('INS-1', 'Duplicate.');
+    expect(transport.get).toHaveBeenCalledWith('/insurer/inspections');
+    expect(transport.post.mock.calls.map(([path]) => path)).toEqual([
+      '/insurer/inspections/INS-1/schedule',
+      '/insurer/inspections/INS-1/inspector',
+      '/insurer/inspections/INS-1/approve',
+      '/insurer/inspections/INS-1/fail',
+      '/insurer/inspections/INS-1/no-show',
+      '/insurer/inspections/INS-1/cancel',
+    ]);
+  });
+});

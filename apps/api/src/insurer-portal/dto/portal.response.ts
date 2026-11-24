@@ -2,6 +2,12 @@ import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
 import type { InsurerPortalRepository } from '../insurer-portal.repository.js';
+import type { InformationRequestRow } from '../../customer/quote-products.repository.js';
+import type { QuoteAddOn, QuoteComponent, QuoteCondition } from '../../db/schema.js';
+import { slaState } from '../../customer/domain/quote-workflow.js';
+
+/** The approved wording for a decline code, as the rule in force states it. */
+export type DeclineReasonText = { customerText: string; internalText: string };
 
 type Rows<K extends keyof InsurerPortalRepository> = Awaited<ReturnType<InsurerPortalRepository[K]>>;
 type RequestRow = Rows<'listRequests'>[number];
@@ -30,6 +36,22 @@ export function toReply(reply: ReplyRow, document: DocumentRecord) {
     validUntil: reply.validUntil.toISOString(),
     extendedAt: iso(reply.extendedAt),
     document,
+    ...quoteContentResponse(reply),
+  };
+}
+
+/** A quote's content in kwacha, as both the insurer and the customer read it. */
+export function quoteContentResponse(quote: {
+  componentsMinor: QuoteComponent[];
+  excessMinor: number | null;
+  addOns: QuoteAddOn[];
+  conditions: QuoteCondition[];
+}) {
+  return {
+    components: quote.componentsMinor.map(({ code, label, amountMinor }) => ({ code, label, amount: ngweeToKwacha(amountMinor) })),
+    excess: quote.excessMinor === null ? null : ngweeToKwacha(quote.excessMinor),
+    addOns: quote.addOns.map(({ code, label, priceMinor, included, terms }) => ({ code, label, price: ngweeToKwacha(priceMinor), included, terms })),
+    conditions: quote.conditions.map(({ code, text, purchaseCritical }) => ({ code, text, purchaseCritical })),
   };
 }
 
@@ -39,6 +61,9 @@ export function toPortalRequest(
   replyDocument: DocumentRecord | null,
   whiteBook: DocumentRecord | null,
   selectedProducts: Array<{ selection: SelectedProductRow; replyDocument: DocumentRecord | null }> = [],
+  informationRequests: InformationRequestRow[] = [],
+  declineReasons: ReadonlyMap<string, DeclineReasonText> = new Map(),
+  sla: { hoursBeforeDue: number; now: Date } = { hoursBeforeDue: 24, now: new Date() },
 ) {
   return {
     id: request.id,
@@ -91,9 +116,40 @@ export function toPortalRequest(
             },
             unavailableAt: iso(selection.cancelledAt),
             reply: selection.reply && productReplyDocument ? toReply(selection.reply, productReplyDocument) : null,
+            workflow: {
+              status: selection.status,
+              replyDueAt: iso(selection.replyDueAt),
+              clockPausedAt: iso(selection.pausedAt),
+              priority: selection.priority,
+              owner: selection.owner?.id ? { id: selection.owner.id, name: selection.owner.fullName } : null,
+              sla: slaState(selection, sla.hoursBeforeDue, sla.now),
+              decline: selection.declineReasonCode
+                ? {
+                    reasonCode: selection.declineReasonCode,
+                    customerText: declineReasons.get(selection.declineReasonCode)?.customerText ?? null,
+                    internalText: declineReasons.get(selection.declineReasonCode)?.internalText ?? null,
+                    customerNote: selection.declineCustomerNote,
+                  }
+                : null,
+              informationRequests: informationRequests
+                .filter((asked) => asked.productVersionId === selection.productVersionId)
+                .map(toInformationRequest),
+            },
           })),
         }
       : {}),
+  };
+}
+
+export function toInformationRequest(asked: InformationRequestRow) {
+  return {
+    id: asked.id,
+    message: asked.message,
+    dueAt: asked.dueAt.toISOString(),
+    askedAt: asked.createdAt.toISOString(),
+    answeredAt: iso(asked.answeredAt),
+    answer: asked.answerText,
+    closedAt: iso(asked.closedAt),
   };
 }
 

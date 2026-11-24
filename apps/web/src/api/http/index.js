@@ -61,6 +61,9 @@ export const vehicles = {
   lookupPlate: (plate) => apiClient.get('/vehicles/lookup', { params: { plate } }),
 };
 
+const productPath = (id, productVersionId) =>
+  `/insurer/quote-requests/${encodeURIComponent(id)}/products/${encodeURIComponent(productVersionId)}`;
+
 export const quotes = {
   submitRequest: (request, idempotencyKey = newIdempotencyKey()) => apiClient.post('/quote-requests', request, { headers: { 'Idempotency-Key': idempotencyKey } }),
   listMine: () => apiClient.get('/quote-requests'),
@@ -75,6 +78,31 @@ export const quotes = {
   extend: (id, extraDays, productVersionId) => apiClient.post(
     `/insurer/quote-requests/${id}/extend`,
     productVersionId ? { extraDays, productVersionId } : { extraDays },
+  ),
+  // One chosen product's workflow: the insurer declines it, asks the customer
+  // something, or keeps internal notes; the customer answers the question.
+  declineReasons: () => apiClient.get('/insurer/decline-reasons'),
+  decline: (id, productVersionId, decision) => apiClient.post(`${productPath(id, productVersionId)}/decline`, decision),
+  requestInformation: (id, productVersionId, question) => apiClient.post(`${productPath(id, productVersionId)}/information-requests`, question),
+  notes: (id, productVersionId) => apiClient.get(`${productPath(id, productVersionId)}/notes`),
+  addNote: (id, productVersionId, body) => apiClient.post(`${productPath(id, productVersionId)}/notes`, { body }),
+  withdraw: (id, productVersionId, reason) => apiClient.post(`${productPath(id, productVersionId)}/quote/withdraw`, { reason }),
+  replace: async (id, productVersionId, { document, ...quote }) => apiClient.post(
+    `${productPath(id, productVersionId)}/quote/replace`,
+    { ...quote, documentId: await uploadedDocumentId(document, 'quotation', 'QUOTATION') },
+  ),
+  // The customer's choice of quote, with the conditions they accept.
+  select: (id, insurerQuoteId, acceptedConditionCodes = []) => apiClient.post(
+    `/quote-requests/${encodeURIComponent(id)}/selection`,
+    { insurerQuoteId, acceptedConditionCodes },
+  ),
+  claim: (id, productVersionId) => apiClient.post(`${productPath(id, productVersionId)}/claim`),
+  assign: (id, productVersionId, staffId) => apiClient.post(`${productPath(id, productVersionId)}/assign`, { staffId }),
+  setPriority: (id, productVersionId, priority) => apiClient.post(`${productPath(id, productVersionId)}/priority`, { priority }),
+  queue: (query = {}) => apiClient.get('/insurer/queue', { params: query }),
+  answerInformation: (id, productVersionId, answer) => apiClient.post(
+    `/quote-requests/${encodeURIComponent(id)}/products/${encodeURIComponent(productVersionId)}/information`,
+    { answer },
   ),
 };
 
@@ -185,6 +213,14 @@ export const inspections = {
   request: (inspection) => apiClient.post('/inspections', inspection),
   list: () => apiClient.get('/inspections'),
   update: (id, changes) => apiClient.patch(`/inspections/${id}`, changes),
+  // The insurer's side: the inspections it carries out, and each step it records.
+  listForInsurer: () => apiClient.get('/insurer/inspections'),
+  schedule: (id, booking) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/schedule`, booking),
+  assignInspector: (id, inspector) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/inspector`, inspector),
+  approve: (id) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/approve`),
+  fail: (id, reason) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/fail`, { reason }),
+  noShow: (id, reason) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/no-show`, { reason }),
+  cancel: (id, reason) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/cancel`, { reason }),
 };
 
 export const config = {

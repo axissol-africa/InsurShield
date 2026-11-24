@@ -18,9 +18,20 @@ import {
   quoteRequestProductRequirementDocuments,
   quoteRequestProductVersions,
   quoteRequests,
+  quoteSelections,
   vehicles,
+  type QuoteAddOn,
+  type QuoteComponent,
+  type QuoteCondition,
 } from '../db/schema.js';
-import type { CoverageDuration, InsuranceType, InspectionMethod, InspectionRule, InspectionTiming } from '../common/domain/enums.js';
+import type {
+  CoverageDuration,
+  InsuranceType,
+  InspectionMethod,
+  InspectionRule,
+  InspectionTiming,
+  QuoteProductStatus,
+} from '../common/domain/enums.js';
 import { ncdCodeIssuedTo } from './ncd-code-ownership.js';
 
 export type QuoteRequestRow = typeof quoteRequests.$inferSelect;
@@ -57,6 +68,17 @@ export interface QuoteRow {
   extendedAt: Date | null;
   documentId: string;
   unpayableAt: Date | null;
+  componentsMinor: QuoteComponent[];
+  excessMinor: number | null;
+  addOns: QuoteAddOn[];
+  conditions: QuoteCondition[];
+}
+
+export interface SelectionRow {
+  quoteRequestId: string;
+  insurerQuoteId: string;
+  acceptedConditionCodes: string[];
+  selectedAt: Date;
 }
 
 /** Immutable customer-facing product terms captured at selection time. */
@@ -74,9 +96,16 @@ export interface SelectedProductVersionRow {
   inspectionTiming: InspectionTiming | null;
   inspectionMethod: InspectionMethod | null;
   cancelledAt: Date | null;
+  status: QuoteProductStatus;
+  replyDueAt: Date | null;
+  declineReasonCode: string | null;
+  declineCustomerNote: string | null;
 }
 
-export type AvailableProductVersion = Omit<SelectedProductVersionRow, 'quoteRequestId' | 'cancelledAt'> & {
+export type AvailableProductVersion = Omit<
+  SelectedProductVersionRow,
+  'quoteRequestId' | 'cancelledAt' | 'status' | 'replyDueAt' | 'declineReasonCode' | 'declineCustomerNote'
+> & {
   productId: string;
   allowedDurations: CoverageDuration[];
 };
@@ -206,11 +235,72 @@ export class QuoteRequestsRepository {
         extendedAt: insurerQuotes.extendedAt,
         documentId: insurerQuotes.documentId,
         unpayableAt: insurerQuotes.unpayableAt,
+        componentsMinor: insurerQuotes.componentsMinor,
+        excessMinor: insurerQuotes.excessMinor,
+        addOns: insurerQuotes.addOns,
+        conditions: insurerQuotes.conditions,
       })
       .from(insurerQuotes)
       .innerJoin(insurers, eq(insurers.id, insurerQuotes.insurerId))
-      .where(inArray(insurerQuotes.quoteRequestId, quoteRequestIds))
+      // A withdrawn or replaced quote is history for the audit trail, not an offer.
+      .where(and(inArray(insurerQuotes.quoteRequestId, quoteRequestIds), eq(insurerQuotes.status, 'ACTIVE')))
       .orderBy(asc(insurers.name));
+  }
+
+  selectionsOf(quoteRequestIds: string[], tx?: Transaction): Promise<SelectionRow[]> {
+    if (quoteRequestIds.length === 0) return Promise.resolve([]);
+    return this.on(tx)
+      .select({
+        quoteRequestId: quoteSelections.quoteRequestId,
+        insurerQuoteId: quoteSelections.insurerQuoteId,
+        acceptedConditionCodes: quoteSelections.acceptedConditionCodes,
+        selectedAt: quoteSelections.selectedAt,
+      })
+      .from(quoteSelections)
+      .where(inArray(quoteSelections.quoteRequestId, quoteRequestIds));
+  }
+
+  /** Locks an offer this customer can still choose on this request, with its conditions. */
+  async lockSelectableQuote(tx: Transaction, quoteRequestId: string, insurerQuoteId: string) {
+    const [quote] = await tx
+      .select({
+        id: insurerQuotes.id,
+        status: insurerQuotes.status,
+        validUntil: insurerQuotes.validUntil,
+        unpayableAt: insurerQuotes.unpayableAt,
+        conditions: insurerQuotes.conditions,
+      })
+      .from(insurerQuotes)
+      .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.id, insurerQuoteId)))
+      .for('share');
+    return quote;
+  }
+
+  /** Records the customer's choice, replacing any earlier one for the request. */
+  async upsertSelection(tx: Transaction, selection: typeof quoteSelections.$inferInsert) {
+    const [saved] = await tx
+      .insert(quoteSelections)
+      .values(selection)
+      .onConflictDoUpdate({
+        target: quoteSelections.quoteRequestId,
+        set: {
+          insurerQuoteId: selection.insurerQuoteId,
+          acceptedConditionCodes: selection.acceptedConditionCodes,
+          selectedAt: selection.selectedAt,
+          customerId: selection.customerId,
+        },
+      })
+      .returning({ insurerQuoteId: quoteSelections.insurerQuoteId });
+    return saved;
+  }
+
+  async previousSelection(tx: Transaction, quoteRequestId: string) {
+    const [previous] = await tx
+      .select({ insurerQuoteId: quoteSelections.insurerQuoteId })
+      .from(quoteSelections)
+      .where(eq(quoteSelections.quoteRequestId, quoteRequestId))
+      .for('update');
+    return previous;
   }
 
   selectedProductVersionsOf(quoteRequestIds: string[], tx?: Transaction): Promise<SelectedProductVersionRow[]> {
@@ -230,6 +320,10 @@ export class QuoteRequestsRepository {
         inspectionTiming: quoteRequestProductVersions.inspectionTiming,
         inspectionMethod: quoteRequestProductVersions.inspectionMethod,
         cancelledAt: quoteRequestProductVersions.cancelledAt,
+        status: quoteRequestProductVersions.status,
+        replyDueAt: quoteRequestProductVersions.replyDueAt,
+        declineReasonCode: quoteRequestProductVersions.declineReasonCode,
+        declineCustomerNote: quoteRequestProductVersions.declineCustomerNote,
       })
       .from(quoteRequestProductVersions)
       .innerJoin(insurers, eq(insurers.id, quoteRequestProductVersions.insurerId))
@@ -343,10 +437,10 @@ export class QuoteRequestsRepository {
   async insertSelectedProductVersions(
     tx: Transaction,
     quoteRequestId: string,
-    selected: AvailableProductVersion[],
-  ): Promise<void> {
-    if (selected.length === 0) return;
-    await tx.insert(quoteRequestProductVersions).values(
+    selected: Array<AvailableProductVersion & Pick<typeof quoteRequestProductVersions.$inferInsert, 'status' | 'replyDueAt' | 'pausedAt'>>,
+  ) {
+    if (selected.length === 0) return [];
+    return tx.insert(quoteRequestProductVersions).values(
       selected.map((version) => ({
         quoteRequestId,
         productVersionId: version.productVersionId,
@@ -359,8 +453,15 @@ export class QuoteRequestsRepository {
         inspectionRule: version.inspectionRule,
         inspectionTiming: version.inspectionTiming,
         inspectionMethod: version.inspectionMethod,
+        status: version.status,
+        replyDueAt: version.replyDueAt,
+        pausedAt: version.pausedAt,
       })),
-    );
+    ).returning({
+      id: quoteRequestProductVersions.id,
+      productVersionId: quoteRequestProductVersions.productVersionId,
+      status: quoteRequestProductVersions.status,
+    });
   }
 
   productRequirementsForVersions(
@@ -447,15 +548,6 @@ export class QuoteRequestsRepository {
         ),
       )
       .returning({ quoteRequestId: quoteRequestRecipients.quoteRequestId });
-  }
-
-  /** Marks each selected version as unavailable while preserving its historic terms and replies. */
-  async cancelSelectedVersionsForSuspension(tx: Transaction, insurerId: string, cancelledAt: Date) {
-    return tx
-      .update(quoteRequestProductVersions)
-      .set({ cancelledAt, cancelledReason: 'INSURER_SUSPENDED' })
-      .where(and(eq(quoteRequestProductVersions.insurerId, insurerId), isNull(quoteRequestProductVersions.cancelledAt)))
-      .returning({ quoteRequestId: quoteRequestProductVersions.quoteRequestId });
   }
 
   /** Final quotes without a confirmed payment stay visible as history but may no longer be paid. */

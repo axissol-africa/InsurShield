@@ -1,3 +1,5 @@
+// The DTOs under test use class-transformer's @Type, which reads design metadata.
+import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { NcdDecisionDto } from '../insurer-portal/dto/portal.dto.js';

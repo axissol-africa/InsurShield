@@ -45,6 +45,8 @@ export const PERMISSIONS = {
   'consent:accept': ['customer'],
   'quote-request:read': ['customer'],
   'quote-request:submit': ['customer'],
+  'quote-request:answer': ['customer'],
+  'quote-request:select': ['customer'],
   'policy:read': ['customer'],
   'policy:renew': ['customer'],
   'claim:read': ['customer'],
@@ -120,6 +122,19 @@ export const PERMISSIONS = {
   'portal:request:read': READS_REQUESTS,
   'portal:quote:send': QUOTING,
   'portal:quote:extend': QUOTING,
+  'portal:quote:decline': QUOTING,
+  'portal:quote:withdraw': QUOTING,
+  'portal:quote:request-info': QUOTING,
+  // Notes are read by whoever reads the queue, and written by whoever works it.
+  'portal:note:read': READS_REQUESTS,
+  'portal:note:write': QUOTING,
+  'portal:queue:read': READS_REQUESTS,
+  'portal:inspection:read': READS_REQUESTS,
+  'portal:inspection:manage': QUOTING,
+  // Claiming is taking the work for yourself. Assigning it to someone else, or
+  // changing its priority, is the administrator's; the service enforces that.
+  'portal:queue:claim': QUOTING,
+  'portal:queue:assign': QUOTING,
   'portal:policy:read': ANY_INSURER,
   'portal:certificate:issue': ISSUING,
   'portal:claim:read': READS_CLAIMS,

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { Needs, Public } from '../common/auth/auth.guard.js';
 import { ApiException } from '../common/errors/api.exception.js';
@@ -7,7 +7,9 @@ import { AccountService } from './account.service.js';
 import { ClaimsService } from './claims.service.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 import {
+  AnswerInformationRequestDto,
   ApplyForNcdDto,
+  SelectQuoteDto,
   NotifyClaimDto,
   SubmitQuoteRequestDto,
   ValidateNcdCodeDto,
@@ -85,6 +87,29 @@ export class CustomerController {
   @HttpCode(HttpStatus.CREATED)
   requote(@Param('id') id: string, @CurrentUser() principal: Principal) {
     return this.quoteRequests.requote(this.scope(principal), id);
+  }
+
+  /** Answers the insurer's question about one chosen product; the insurer's reply clock starts again. */
+  @Needs('quote-request:answer')
+  @Post('quote-requests/:id/products/:productVersionId/information')
+  @HttpCode(HttpStatus.OK)
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  answerInformationRequest(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: AnswerInformationRequestDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.quoteRequests.answerInformationRequest(this.scope(principal), id, productVersionId, dto);
+  }
+
+  /** Chooses one quote and accepts its conditions, ready for payment. */
+  @Needs('quote-request:select')
+  @Post('quote-requests/:id/selection')
+  @HttpCode(HttpStatus.OK)
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  selectQuote(@Param('id') id: string, @Body() dto: SelectQuoteDto, @CurrentUser() principal: Principal) {
+    return this.quoteRequests.selectQuote(this.scope(principal), id, dto);
   }
 
   // ── Policies ────────────────────────────────────────────────────

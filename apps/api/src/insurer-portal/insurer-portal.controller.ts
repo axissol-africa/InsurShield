@@ -1,12 +1,22 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { InsurerPortalService } from './insurer-portal.service.js';
 import { InsurersService } from '../insurers/insurers.service.js';
 import {
   AcknowledgeClaimDto,
+  AssignInspectorDto,
+  AssignProductDto,
+  InspectionReasonDto,
+  ScheduleInspectionDto,
+  DeclineProductDto,
+  ProductPriorityDto,
+  QueueQueryDto,
   ExtendQuoteDto,
+  InternalNoteDto,
+  RequestInformationDto,
   IssueCertificateDto,
   NcdDecisionDto,
   SubmitQuoteDto,
+  WithdrawQuoteDto,
 } from './dto/portal.dto.js';
 import { Needs } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
@@ -79,6 +89,184 @@ export class InsurerPortalController {
     @CurrentUser() principal: Principal,
   ) {
     return this.portal.extendQuote(principal, id, dto);
+  }
+
+  // ── One chosen product ──────────────────────────────────────────
+
+  /** Open chosen products, one row each, most urgent first. */
+  @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:queue:read')
+  @Get('queue')
+  queue(@Query() query: QueueQueryDto, @CurrentUser() principal: Principal) {
+    return this.portal.queue(principal, query);
+  }
+
+  @Needs('portal:quote:withdraw')
+  @Post('quote-requests/:id/products/:productVersionId/quote/withdraw')
+  @HttpCode(HttpStatus.OK)
+  withdrawQuote(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: WithdrawQuoteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.withdrawQuote(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:quote:withdraw')
+  @Post('quote-requests/:id/products/:productVersionId/quote/replace')
+  @HttpCode(HttpStatus.CREATED)
+  replaceQuote(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: SubmitQuoteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.replaceQuote(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:queue:claim')
+  @Post('quote-requests/:id/products/:productVersionId/claim')
+  @HttpCode(HttpStatus.OK)
+  claimProduct(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.claimProduct(principal, id, productVersionId);
+  }
+
+  @Needs('portal:queue:assign')
+  @Post('quote-requests/:id/products/:productVersionId/assign')
+  @HttpCode(HttpStatus.OK)
+  assignProduct(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: AssignProductDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.assignProduct(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:queue:assign')
+  @Post('quote-requests/:id/products/:productVersionId/priority')
+  @HttpCode(HttpStatus.OK)
+  setProductPriority(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: ProductPriorityDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.setProductPriority(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:request:read')
+  @Get('decline-reasons')
+  declineReasons(@CurrentUser() principal: Principal) {
+    return this.portal.declineReasons(principal);
+  }
+
+  @Needs('portal:quote:decline')
+  @Post('quote-requests/:id/products/:productVersionId/decline')
+  @HttpCode(HttpStatus.OK)
+  declineProduct(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: DeclineProductDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.declineProduct(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:quote:request-info')
+  @Post('quote-requests/:id/products/:productVersionId/information-requests')
+  @HttpCode(HttpStatus.CREATED)
+  requestInformation(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: RequestInformationDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.requestInformation(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:note:read')
+  @Get('quote-requests/:id/products/:productVersionId/notes')
+  listNotes(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.listNotes(principal, id, productVersionId);
+  }
+
+  @Needs('portal:note:write')
+  @Post('quote-requests/:id/products/:productVersionId/notes')
+  @HttpCode(HttpStatus.CREATED)
+  addNote(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: InternalNoteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.addNote(principal, id, productVersionId, dto);
+  }
+
+  // ── Inspections ─────────────────────────────────────────────────
+
+  @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('portal:inspection:read')
+  @Get('inspections')
+  listInspections(@CurrentUser() principal: Principal) {
+    return this.portal.listInspections(principal);
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/schedule')
+  @HttpCode(HttpStatus.OK)
+  scheduleInspection(@Param('id') id: string, @Body() dto: ScheduleInspectionDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'SCHEDULE', {
+      scheduledDate: new Date(dto.scheduledDate),
+      location: dto.location?.trim() || undefined,
+    });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/inspector')
+  @HttpCode(HttpStatus.OK)
+  assignInspector(@Param('id') id: string, @Body() dto: AssignInspectorDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'ASSIGN', {
+      inspectorName: dto.inspectorName.trim(),
+      inspectorPhone: dto.inspectorPhone?.trim() || undefined,
+    });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  approveInspection(@Param('id') id: string, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'APPROVE', {});
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/fail')
+  @HttpCode(HttpStatus.OK)
+  failInspection(@Param('id') id: string, @Body() dto: InspectionReasonDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'FAIL', { reason: dto.reason.trim() });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/no-show')
+  @HttpCode(HttpStatus.OK)
+  inspectionNoShow(@Param('id') id: string, @Body() dto: InspectionReasonDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'NO_SHOW', { reason: dto.reason.trim() });
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelInspection(@Param('id') id: string, @Body() dto: InspectionReasonDto, @CurrentUser() principal: Principal) {
+    return this.portal.actOnInspection(principal, id, 'CANCEL', { reason: dto.reason.trim() });
   }
 
   // ── Paid policies ───────────────────────────────────────────────

@@ -107,4 +107,28 @@ describe('RequestQueue', () => {
       expect(within(card).getByRole('button', { name: 'Extend 7 days' })).toBeVisible();
     });
   });
+
+  it('withdraws a chosen product\'s quote only with a reason, and offers its replacement', async () => {
+    const user = userEvent.setup();
+    const onWithdraw = vi.fn().mockResolvedValue(undefined);
+    const onReplace = vi.fn();
+    const request = { ...quote(new Date(Date.now() + 7 * 86400000).toISOString()), productVersionId: 'pv-1', caseKey: 'REQ-2~pv-1' };
+    render(<RequestQueue title="Quotes sent" requests={[request]} onWithdraw={onWithdraw} onReplace={onReplace} />);
+
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+    expect(onReplace).toHaveBeenCalledExactlyOnceWith(request);
+
+    await user.click(screen.getByRole('button', { name: 'Withdraw' }));
+    const confirm = screen.getByRole('button', { name: 'Withdraw quote' });
+    expect(confirm).toBeDisabled();
+    await user.type(screen.getByLabelText('Why are you withdrawing it?'), 'Rated on the wrong use.');
+    await user.click(confirm);
+    expect(onWithdraw).toHaveBeenCalledExactlyOnceWith(request, 'Rated on the wrong use.');
+  });
+
+  it('offers no replacement or withdrawal for a request from before product selection', () => {
+    render(<RequestQueue title="Quotes sent" requests={[quote(new Date(Date.now() + 7 * 86400000).toISOString())]} onWithdraw={vi.fn()} onReplace={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Replace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Withdraw' })).not.toBeInTheDocument();
+  });
 });

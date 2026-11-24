@@ -50,7 +50,7 @@ type InternalVersion = {
   name: string;
   coverType: InsuranceType;
   coverGuide: CoverGuide;
-  inspection: { rule: InspectionRule; timing: InspectionTiming | null; method: InspectionMethod | null };
+  inspection: { rule: InspectionRule; timing: InspectionTiming | null; method: InspectionMethod | null; reinspectionAllowed: boolean };
   rateBps: number;
   showEstimate: boolean;
   allowedDurations: CoverageDuration[];
@@ -88,6 +88,7 @@ type VersionChanges = {
   inspectionRule?: InspectionRule;
   inspectionTiming?: InspectionTiming | null;
   inspectionMethod?: InspectionMethod | null;
+  reinspectionAllowed?: boolean;
   rateBps?: number;
   showEstimate?: boolean;
   allowedDurations?: CoverageDuration[];
@@ -102,6 +103,7 @@ type NormalisedVersion = {
   inspectionRule: InspectionRule | undefined;
   inspectionTiming: InspectionTiming | null;
   inspectionMethod: InspectionMethod | null;
+  reinspectionAllowed: boolean;
   rateBps: number | undefined;
   showEstimate: boolean;
   allowedDurations: CoverageDuration[] | undefined;
@@ -274,6 +276,7 @@ export class ProductsService {
         inspectionRule: source.version.inspectionRule,
         inspectionTiming: source.version.inspectionTiming,
         inspectionMethod: source.version.inspectionMethod,
+        reinspectionAllowed: source.version.reinspectionAllowed,
         rateBps: source.version.rateBps,
         showEstimate: source.version.showEstimate,
         allowedDurations: source.version.allowedDurations,
@@ -559,6 +562,7 @@ export class ProductsService {
       inspectionRule,
       inspectionTiming,
       inspectionMethod,
+      reinspectionAllowed: dto.reinspectionAllowed ?? existing?.reinspectionAllowed ?? false,
       rateBps: dto.rateBps ?? existing?.rateBps,
       showEstimate: dto.showEstimate ?? existing?.showEstimate ?? false,
       allowedDurations: dto.allowedDurations ?? existing?.allowedDurations,
@@ -629,7 +633,12 @@ export class ProductsService {
       name: version.name,
       coverType: version.coverType,
       coverGuide: checkCoverGuide(version.coverGuide, false).guide,
-      inspection: { rule: version.inspectionRule, timing: version.inspectionTiming, method: version.inspectionMethod },
+      inspection: {
+        rule: version.inspectionRule,
+        timing: version.inspectionTiming,
+        method: version.inspectionMethod,
+        reinspectionAllowed: version.reinspectionAllowed,
+      },
       rateBps: version.rateBps,
       showEstimate: version.showEstimate,
       allowedDurations: version.allowedDurations,

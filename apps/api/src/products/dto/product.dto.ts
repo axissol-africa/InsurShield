@@ -55,6 +55,8 @@ export class ProductVersionInputDto {
   @IsIn(INSPECTION_RULES) inspectionRule!: InspectionRule;
   @IsOptional() @IsIn(INSPECTION_TIMINGS) inspectionTiming?: InspectionTiming;
   @IsOptional() @IsIn(INSPECTION_METHODS) inspectionMethod?: InspectionMethod;
+  /** Whether a failed inspection may be repeated rather than declining the product. */
+  @IsOptional() @IsBoolean() reinspectionAllowed?: boolean;
   /** Percentage expressed as basis points; 450 means 4.50%. */
   @IsInt() @Min(MIN_RATE_BPS) @Max(MAX_RATE_BPS) rateBps!: number;
   @IsOptional() @IsBoolean() showEstimate?: boolean;
@@ -97,6 +99,7 @@ export class UpdateDraftProductVersionDto {
   @IsOptional() @IsIn(INSPECTION_RULES) inspectionRule?: InspectionRule;
   @IsOptional() @IsIn(INSPECTION_TIMINGS) inspectionTiming?: InspectionTiming | null;
   @IsOptional() @IsIn(INSPECTION_METHODS) inspectionMethod?: InspectionMethod | null;
+  @IsOptional() @IsBoolean() reinspectionAllowed?: boolean;
   @IsOptional() @IsInt() @Min(MIN_RATE_BPS) @Max(MAX_RATE_BPS) rateBps?: number;
   @IsOptional() @IsBoolean() showEstimate?: boolean;
   @IsOptional() @IsArray() @ArrayNotEmpty() @ArrayUnique() @IsIn(COVERAGE_DURATIONS, { each: true }) allowedDurations?: CoverageDuration[];

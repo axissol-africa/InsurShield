@@ -129,6 +129,8 @@ const INSPECTION_STATUS: Record<InspectionStatus, string> = {
   REPORT_READY: 'Report ready',
   APPROVED: 'Approved',
   FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+  NO_SHOW: 'Missed',
 };
 
 /** Database enum → the value the client expects. */

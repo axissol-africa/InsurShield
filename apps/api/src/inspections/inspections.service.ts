@@ -10,6 +10,7 @@ import { toInspectionResponse, type InspectionPhotoResponse } from './dto/inspec
 import { InspectionsRepository, type PhotoRow } from './inspections.repository.js';
 import type { CustomerPrincipal } from '../customer/customer-principal.js';
 import { AuditService } from '../common/audit/audit.service.js';
+import { UnderwritingInspectionsRepository } from '../customer/underwriting-inspections.repository.js';
 import { auditActor } from '../common/audit/audit.types.js';
 
 /**
@@ -27,16 +28,21 @@ export class InspectionsService {
     private readonly repository: InspectionsRepository,
     private readonly documents: DocumentsService,
     private readonly audit: AuditService,
+    private readonly underwriting: UnderwritingInspectionsRepository,
   ) {}
 
   async list(customerId: string) {
     const inspections = await this.repository.listForCustomer(customerId);
-    const photos = await this.repository.photosOf(inspections.map((inspection) => inspection.id));
+    const ids = inspections.map((inspection) => inspection.id);
+    const [photos, products] = await Promise.all([this.repository.photosOf(ids), this.underwriting.productsOf(ids)]);
     return Promise.all(
       inspections.map(async (inspection) =>
         toInspectionResponse(
           inspection,
           await this.photoRecords(photos.filter((photo) => photo.inspectionId === inspection.id)),
+          products
+            .filter((product) => product.inspectionId === inspection.id)
+            .map(({ productName, passed }) => ({ productName, passed })),
         ),
       ),
     );

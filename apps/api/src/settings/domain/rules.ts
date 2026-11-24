@@ -45,6 +45,21 @@ const documentRetention = z.object({
   }
 });
 
+const declineReason = z.object({
+  code: z.string().regex(QUESTION_CODE),
+  /** What the customer reads. */
+  customerText: z.string().trim().min(2).max(240),
+  /** What insurer staff and InsurShield operations read; never sent to a customer. */
+  internalText: z.string().trim().min(2).max(500),
+});
+
+const declineReasons = z.object({ reasons: z.array(declineReason).min(1).max(40) }).superRefine((value, context) => {
+  const codes = value.reasons.map((reason) => reason.code);
+  if (new Set(codes).size !== codes.length) {
+    context.addIssue({ code: 'custom', path: ['reasons'], message: 'Each decline reason must use a different code.' });
+  }
+});
+
 const schemas = {
   PIA_FLOOR: z.object({ rateBps: z.number().int().min(0).max(10_000) }),
   QUOTE_REPLY_DEADLINE: z.object({ days: z.number().int().min(1).max(90) }),
@@ -57,6 +72,8 @@ const schemas = {
     loadings: z.record(z.string().regex(QUESTION_CODE), z.number().int().min(1).max(100_000)),
   }),
   DOCUMENT_RETENTION: documentRetention,
+  QUOTE_DECLINE_REASONS: declineReasons,
+  QUOTE_SLA_WARNING: z.object({ hoursBeforeDue: z.number().int().min(1).max(240) }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
 export type RuleValue = {
@@ -101,6 +118,38 @@ const defaults = {
       COMPLIANCE_EVIDENCE: 2_555,
     } satisfies Record<DocumentRetentionClass, number>,
   },
+  // A provisional starter list. Compliance confirms the wording before release.
+  QUOTE_DECLINE_REASONS: {
+    reasons: [
+      {
+        code: 'OUTSIDE_APPETITE',
+        customerText: 'This insurer does not offer this cover for your vehicle at the moment.',
+        internalText: 'Risk is outside the insurer\'s underwriting appetite.',
+      },
+      {
+        code: 'VEHICLE_NOT_ELIGIBLE',
+        customerText: 'Your vehicle does not meet this product\'s eligibility rules.',
+        internalText: 'Vehicle fails the product eligibility rules (age, value, use or type).',
+      },
+      {
+        code: 'INFORMATION_NOT_PROVIDED',
+        customerText: 'The insurer could not quote without the information it asked for.',
+        internalText: 'Customer did not provide the requested information.',
+      },
+      {
+        code: 'INSPECTION_FAILED',
+        customerText: 'The vehicle did not pass the insurer\'s inspection.',
+        internalText: 'Vehicle failed the underwriting inspection.',
+      },
+      {
+        code: 'OTHER',
+        customerText: 'The insurer is unable to quote for this request.',
+        internalText: 'Other reason; see the internal note.',
+      },
+    ],
+  },
+  // How long before a product's reply due date its owner is warned.
+  QUOTE_SLA_WARNING: { hoursBeforeDue: 24 },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 
 /** Default values seed demonstrations only; a response always says whether its value is provisional. */

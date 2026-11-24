@@ -1,7 +1,13 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsIn,
+  Matches,
+  ValidateNested,
   IsInt,
+  IsISO8601,
   IsNumber,
   IsOptional,
   IsString,
@@ -13,6 +19,30 @@ import {
 } from 'class-validator';
 import { CONTRACT_VALUES, fromContract, type NcdDecisionStatus } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
+import { QUOTE_PRIORITIES, type QuotePriority } from '../../common/domain/enums.js';
+
+const CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
+const CODE_MESSAGE = 'Codes are capital letters, digits and underscores, starting with a letter.';
+
+export class QuoteComponentDto {
+  @Matches(CODE, { message: CODE_MESSAGE }) code!: string;
+  @IsString() @MinLength(2) @MaxLength(120) label!: string;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(-MAX_KWACHA) @Max(MAX_KWACHA) amount!: number;
+}
+
+export class QuoteAddOnDto {
+  @Matches(CODE, { message: CODE_MESSAGE }) code!: string;
+  @IsOptional() @IsString() @MaxLength(120) label?: string;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(MAX_KWACHA) price!: number;
+  @IsBoolean() included!: boolean;
+  @IsOptional() @IsString() @MaxLength(1000) terms?: string;
+}
+
+export class QuoteConditionDto {
+  @Matches(CODE, { message: CODE_MESSAGE }) code!: string;
+  @IsString() @MinLength(2) @MaxLength(1000) text!: string;
+  @IsBoolean() purchaseCritical!: boolean;
+}
 
 export class SubmitQuoteDto {
   /** Required when this request contains customer-selected product versions. */
@@ -36,6 +66,107 @@ export class SubmitQuoteDto {
   @IsOptional() @IsString() @MaxLength(120) insurerReference?: string;
 
   @IsOptional() @IsInt() @Min(1) @Max(30) validityDays?: number;
+
+  /** How the premium is made up; when given, the lines add up to the premium. */
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => QuoteComponentDto)
+  components?: QuoteComponentDto[];
+
+  /** The excess the customer pays on a claim, in kwacha. */
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(MAX_KWACHA) excess?: number;
+
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => QuoteAddOnDto)
+  addOns?: QuoteAddOnDto[];
+
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => QuoteConditionDto)
+  conditions?: QuoteConditionDto[];
+}
+
+export class WithdrawQuoteDto {
+  /** Kept on the quote and in the audit trail. */
+  @IsString()
+  @MinLength(3, { message: 'Say why you are withdrawing this quote.' })
+  @MaxLength(1000)
+  reason!: string;
+}
+
+export class DeclineProductDto {
+  /** A code from the approved QUOTE_DECLINE_REASONS list. */
+  @IsString({ message: 'Choose a reason for declining.' })
+  @MinLength(2, { message: 'Choose a reason for declining.' })
+  @MaxLength(80)
+  reasonCode!: string;
+
+  /** Shown to the customer under the reason's approved wording. */
+  @IsOptional() @IsString() @MaxLength(1000) customerNote?: string;
+
+  /** Kept as an internal note; never shown to the customer. */
+  @IsOptional() @IsString() @MaxLength(4000) internalNote?: string;
+}
+
+export class RequestInformationDto {
+  /** What the customer is asked, shown to them as written. */
+  @IsString()
+  @MinLength(5, { message: 'Write what you need from the customer.' })
+  @MaxLength(2000, { message: 'Keep the question under 2,000 characters.' })
+  message!: string;
+
+  /** How many days the customer has to answer. */
+  @IsInt()
+  @Min(1, { message: 'Give the customer at least one day to answer.' })
+  @Max(14, { message: 'Give the customer at most 14 days to answer.' })
+  dueInDays!: number;
+}
+
+export class InternalNoteDto {
+  @IsString()
+  @MinLength(1, { message: 'Write the note before saving it.' })
+  @MaxLength(4000, { message: 'Keep the note under 4,000 characters.' })
+  body!: string;
+}
+
+export class AssignProductDto {
+  /** The staff member who will own this product, or null to leave it unassigned. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Choose a member of your team.' })
+  staffId!: string | null;
+}
+
+export class ProductPriorityDto {
+  @IsIn(QUOTE_PRIORITIES, { message: 'Priority must be NORMAL or HIGH.' })
+  priority!: QuotePriority;
+}
+
+export class QueueQueryDto {
+  /** One state, or several separated by commas. */
+  @IsOptional() @IsString() @MaxLength(200) status?: string;
+
+  @IsOptional() @IsIn(['me', 'unassigned', 'any']) owner?: 'me' | 'unassigned' | 'any';
+
+  @IsOptional() @IsIn(QUOTE_PRIORITIES) priority?: QuotePriority;
+
+  @IsOptional() @IsIn(['ON_TRACK', 'DUE_SOON', 'BREACHED', 'PAUSED']) sla?: 'ON_TRACK' | 'DUE_SOON' | 'BREACHED' | 'PAUSED';
+
+  /** Part of a request reference or a number plate. */
+  @IsOptional() @IsString() @MaxLength(60) search?: string;
+}
+
+export class ScheduleInspectionDto {
+  @IsISO8601({}, { message: 'Choose the date and time of the inspection.' })
+  scheduledDate!: string;
+
+  @IsOptional() @IsString() @MaxLength(300) location?: string;
+}
+
+export class AssignInspectorDto {
+  @IsString() @MinLength(2, { message: 'Name the inspector.' }) @MaxLength(120) inspectorName!: string;
+
+  /** Shown to the customer, so they can reach the inspector on the day. */
+  @IsOptional() @IsString() @MaxLength(40) inspectorPhone?: string;
+}
+
+export class InspectionReasonDto {
+  /** Shown to the customer as written. */
+  @IsString() @MinLength(3, { message: 'Say why.' }) @MaxLength(1000) reason!: string;
 }
 
 export class ExtendQuoteDto {

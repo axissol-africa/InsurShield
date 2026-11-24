@@ -15,7 +15,9 @@ import {
   policies,
   quoteRequestProductVersions,
   quoteRequestRecipients,
+  quoteSelections,
   quoteRequests,
+  staffUsers,
   vehicles,
 } from '../db/schema.js';
 import type { NcdStatus } from '../common/domain/enums.js';
@@ -36,6 +38,10 @@ const replyColumns = {
   validUntil: insurerQuotes.validUntil,
   extendedAt: insurerQuotes.extendedAt,
   documentId: insurerQuotes.documentId,
+  componentsMinor: insurerQuotes.componentsMinor,
+  excessMinor: insurerQuotes.excessMinor,
+  addOns: insurerQuotes.addOns,
+  conditions: insurerQuotes.conditions,
 };
 
 const extensionColumns = {
@@ -113,6 +119,7 @@ export class InsurerPortalRepository {
           eq(insurerQuotes.quoteRequestId, quoteRequests.id),
           eq(insurerQuotes.insurerId, insurerId),
           isNull(insurerQuotes.productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
         ),
       )
       .where(eq(quoteRequestRecipients.insurerId, insurerId))
@@ -138,15 +145,24 @@ export class InsurerPortalRepository {
         inspectionTiming: quoteRequestProductVersions.inspectionTiming,
         inspectionMethod: quoteRequestProductVersions.inspectionMethod,
         cancelledAt: quoteRequestProductVersions.cancelledAt,
+        status: quoteRequestProductVersions.status,
+        replyDueAt: quoteRequestProductVersions.replyDueAt,
+        pausedAt: quoteRequestProductVersions.pausedAt,
+        declineReasonCode: quoteRequestProductVersions.declineReasonCode,
+        declineCustomerNote: quoteRequestProductVersions.declineCustomerNote,
+        priority: quoteRequestProductVersions.priority,
+        owner: { id: staffUsers.id, fullName: staffUsers.fullName },
         reply: replyColumns,
       })
       .from(quoteRequestProductVersions)
+      .leftJoin(staffUsers, eq(staffUsers.id, quoteRequestProductVersions.assignedStaffId))
       .leftJoin(
         insurerQuotes,
         and(
           eq(insurerQuotes.quoteRequestId, quoteRequestProductVersions.quoteRequestId),
           eq(insurerQuotes.productVersionId, quoteRequestProductVersions.productVersionId),
           eq(insurerQuotes.insurerId, insurerId),
+          eq(insurerQuotes.status, 'ACTIVE'),
         ),
       )
       .where(
@@ -201,30 +217,6 @@ export class InsurerPortalRepository {
       )
       .for('update', { of: quoteRequestRecipients });
     return delivery;
-  }
-
-  /** Locks and scopes a selected product version to this insurer's recipient row. */
-  async lockSelectedProductVersion(
-    tx: Transaction,
-    quoteRequestId: string,
-    insurerId: string,
-    productVersionId: string,
-  ) {
-    const [selection] = await tx
-      .select({
-        productVersionId: quoteRequestProductVersions.productVersionId,
-        cancelledAt: quoteRequestProductVersions.cancelledAt,
-      })
-      .from(quoteRequestProductVersions)
-      .where(
-        and(
-          eq(quoteRequestProductVersions.quoteRequestId, quoteRequestId),
-          eq(quoteRequestProductVersions.insurerId, insurerId),
-          eq(quoteRequestProductVersions.productVersionId, productVersionId),
-        ),
-      )
-      .for('update');
-    return selection;
   }
 
   /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */
@@ -288,6 +280,7 @@ export class InsurerPortalRepository {
           productVersionId === null
             ? isNull(insurerQuotes.productVersionId)
             : eq(insurerQuotes.productVersionId, productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
         ),
       );
     return quote !== undefined;
@@ -344,12 +337,66 @@ export class InsurerPortalRepository {
           productVersionId === null
             ? isNull(insurerQuotes.productVersionId)
             : eq(insurerQuotes.productVersionId, productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
           isNull(insurerQuotes.unpayableAt),
           gte(insurerQuotes.validUntil, now),
         ),
       )
       .returning(extensionColumns);
     return extended;
+  }
+
+  /**
+   * Locks this insurer's current quote for a chosen version, with whether it
+   * was chosen or paid for, so a withdrawal or replacement decides on facts
+   * that cannot change under it.
+   */
+  async lockActiveQuote(tx: Transaction, quoteRequestId: string, insurerId: string, productVersionId: string) {
+    const [quote] = await tx
+      .select({ ...replyColumns, unpayableAt: insurerQuotes.unpayableAt })
+      .from(insurerQuotes)
+      .where(
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequestId),
+          eq(insurerQuotes.insurerId, insurerId),
+          eq(insurerQuotes.productVersionId, productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
+        ),
+      )
+      .for('update');
+    if (!quote) return undefined;
+    const [selected] = await tx
+      .select({ id: quoteSelections.id })
+      .from(quoteSelections)
+      .where(eq(quoteSelections.insurerQuoteId, quote.id))
+      .for('share');
+    const [paid] = await tx
+      .select({ id: payments.id })
+      .from(payments)
+      .where(and(eq(payments.insurerQuoteId, quote.id), eq(payments.status, 'CONFIRMED')));
+    return { ...quote, selected: selected !== undefined, paid: paid !== undefined };
+  }
+
+  async withdrawQuote(tx: Transaction, quoteId: string, reason: string, at: Date): Promise<void> {
+    await tx
+      .update(insurerQuotes)
+      .set({ status: 'WITHDRAWN', withdrawnAt: at, withdrawnReason: reason })
+      .where(and(eq(insurerQuotes.id, quoteId), eq(insurerQuotes.status, 'ACTIVE')));
+  }
+
+  /**
+   * Marks the old quote replaced before the new one is inserted, so only one
+   * is ever current. It points at itself until `linkReplacement` names the new one.
+   */
+  async supersedeQuote(tx: Transaction, quoteId: string): Promise<void> {
+    await tx
+      .update(insurerQuotes)
+      .set({ status: 'SUPERSEDED', supersededById: quoteId })
+      .where(and(eq(insurerQuotes.id, quoteId), eq(insurerQuotes.status, 'ACTIVE')));
+  }
+
+  async linkReplacement(tx: Transaction, oldQuoteId: string, newQuoteId: string): Promise<void> {
+    await tx.update(insurerQuotes).set({ supersededById: newQuoteId }).where(eq(insurerQuotes.id, oldQuoteId));
   }
 
   async quoteAvailability(
@@ -368,6 +415,7 @@ export class InsurerPortalRepository {
           productVersionId === null
             ? isNull(insurerQuotes.productVersionId)
             : eq(insurerQuotes.productVersionId, productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
         ),
       );
     return quote;

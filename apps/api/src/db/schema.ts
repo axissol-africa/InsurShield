@@ -35,6 +35,8 @@ import {
   EVIDENCE_KINDS,
   EVIDENCE_REVIEW_STATES,
   INSPECTION_METHODS,
+  INSPECTION_PURPOSES,
+  INSPECTION_RESULTS,
   INSPECTION_RULES,
   INSPECTION_STATUSES,
   INSPECTION_TIMINGS,
@@ -53,6 +55,9 @@ import {
   COMPARISON_VALUE_TYPES,
   COMPARISON_DISPLAY_RULES,
   QUOTE_UNAVAILABILITY_REASONS,
+  QUOTE_PRODUCT_STATUSES,
+  QUOTE_PRIORITIES,
+  QUOTE_STATUSES,
   QUOTE_REQUEST_MODELS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
@@ -63,10 +68,17 @@ import {
 } from '../common/domain/enums.js';
 import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/domain/money-limits.js';
 
+export type QuoteComponent = { code: string; label: string; amountMinor: number };
+export type QuoteAddOn = { code: string; label: string; priceMinor: number; included: boolean; terms: string | null };
+export type QuoteCondition = { code: string; text: string; purchaseCritical: boolean };
+
 // Physical names are the ones Prisma created; only the money and rate columns were renamed.
 
 export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STATUSES);
 export const quoteRequestModel = pgEnum('QuoteRequestModel', QUOTE_REQUEST_MODELS);
+export const quoteProductStatus = pgEnum('QuoteProductStatus', QUOTE_PRODUCT_STATUSES);
+export const quotePriority = pgEnum('QuotePriority', QUOTE_PRIORITIES);
+export const quoteStatus = pgEnum('QuoteStatus', QUOTE_STATUSES);
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
@@ -88,6 +100,8 @@ export const inspectionStatus = pgEnum('InspectionStatus', INSPECTION_STATUSES);
 export const inspectionRule = pgEnum('InspectionRule', INSPECTION_RULES);
 export const inspectionTiming = pgEnum('InspectionTiming', INSPECTION_TIMINGS);
 export const inspectionMethod = pgEnum('InspectionMethod', INSPECTION_METHODS);
+export const inspectionPurpose = pgEnum('InspectionPurpose', INSPECTION_PURPOSES);
+export const inspectionResult = pgEnum('InspectionResult', INSPECTION_RESULTS);
 export const staffRole = pgEnum('StaffRole', STAFF_ROLES);
 export const documentKind = pgEnum('DocumentKind', DOCUMENT_KINDS);
 export const documentScanStatus = pgEnum('DocumentScanStatus', DOCUMENT_SCAN_STATUSES);
@@ -537,6 +551,8 @@ export const insurerProductVersions = pgTable(
     inspectionRule: inspectionRule('inspectionRule').notNull(),
     inspectionTiming: inspectionTiming('inspectionTiming'),
     inspectionMethod: inspectionMethod('inspectionMethod'),
+    /** Batch 13: whether a failed inspection may be repeated instead of declining the product. */
+    reinspectionAllowed: boolean('reinspectionAllowed').notNull().default(false),
     /** Rate and visibility are reviewed with every immutable product version. */
     rateBps: integer('rateBps').notNull(),
     showEstimate: boolean('showEstimate').notNull().default(false),
@@ -920,6 +936,24 @@ export const quoteRequestProductVersions = pgTable(
     // selection or to the delivery record's operational state.
     cancelledAt: timestamptz('cancelledAt'),
     cancelledReason: quoteUnavailabilityReason('cancelledReason'),
+    // Batch 13: where this version stands with its insurer. Only the
+    // transitions in customer/domain/quote-workflow.ts write it.
+    status: quoteProductStatus('status').notNull().default('SUBMITTED'),
+    statusChangedAt: createdAt('statusChangedAt'),
+    /** When the insurer must answer by. Waiting for the customer moves it on (see pausedAt). */
+    replyDueAt: timestamptz('replyDueAt'),
+    /** Set while the customer is being waited for, so the reply clock is stopped. */
+    pausedAt: timestamptz('pausedAt'),
+    /** A code from the QUOTE_DECLINE_REASONS rule in force when the insurer declined. */
+    declineReasonCode: varchar('declineReasonCode', { length: 80 }),
+    /** Shown to the customer under the reason's customer wording. */
+    declineCustomerNote: text('declineCustomerNote'),
+    // Batch 13 part 2: who at the insurer owns this product, and how urgent it is.
+    assignedStaffId: uuid('assignedStaffId'),
+    assignedAt: timestamptz('assignedAt'),
+    priority: quotePriority('priority').notNull().default('NORMAL'),
+    /** Set once the owner has been warned that the reply due date is near, so they are warned once. */
+    slaWarnedAt: timestamptz('slaWarnedAt'),
   },
   (t) => [
     // This is a referenced key, so it is a constraint rather than only a
@@ -945,6 +979,100 @@ export const quoteRequestProductVersions = pgTable(
       'quote_request_product_versions_cancellation_mark_check',
       sql`(${t.cancelledAt} IS NULL) = (${t.cancelledReason} IS NULL)`,
     ),
+    // The reply-deadline job reads open versions by due date.
+    index('quote_request_product_versions_status_replyDueAt_idx').on(t.status, t.replyDueAt),
+    index('quote_request_product_versions_assignedStaffId_idx').on(t.assignedStaffId),
+    fk('quote_request_product_versions_assignedStaffId_fkey', [t.assignedStaffId], [staffUsers.id], 'set null'),
+    check(
+      'quote_request_product_versions_assignment_check',
+      sql`(${t.assignedStaffId} IS NULL) = (${t.assignedAt} IS NULL)`,
+    ),
+    check(
+      'quote_request_product_versions_decline_check',
+      sql`(${t.status} = 'DECLINED') = (${t.declineReasonCode} IS NOT NULL)
+        AND (${t.declineCustomerNote} IS NULL OR ${t.declineReasonCode} IS NOT NULL)`,
+    ),
+    check(
+      'quote_request_product_versions_cancelled_check',
+      sql`${t.status} <> 'CANCELLED' OR ${t.cancelledAt} IS NOT NULL`,
+    ),
+    check(
+      'quote_request_product_versions_paused_check',
+      sql`${t.pausedAt} IS NULL OR ${t.status} IN ('VERIFICATION_REQUIRED', 'INSPECTION_REQUIRED')`,
+    ),
+  ],
+);
+
+/**
+ * An insurer's question to the customer about one chosen version. While it is
+ * open the version waits in VERIFICATION_REQUIRED with its reply clock
+ * stopped. It closes when the customer answers, or when the version moves on
+ * without an answer (quoted, declined, cancelled or timed out).
+ */
+export const quoteInformationRequests = pgTable(
+  'quote_information_requests',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    requestedByStaffId: uuid('requestedByStaffId'),
+    /** Shown to the customer as written. */
+    message: text('message').notNull(),
+    dueAt: timestamptz('dueAt').notNull(),
+    createdAt: createdAt(),
+    answeredAt: timestamptz('answeredAt'),
+    answerText: text('answerText'),
+    closedAt: timestamptz('closedAt'),
+  },
+  (t) => [
+    // At most one open question per chosen version.
+    uniqueIndex('quote_information_requests_open_key')
+      .on(t.quoteRequestId, t.productVersionId)
+      .where(sql`${t.closedAt} IS NULL`),
+    index('quote_information_requests_insurerId_createdAt_idx').on(t.insurerId, t.createdAt),
+    foreignKey({
+      name: 'quote_information_requests_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+    fk('quote_information_requests_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('quote_information_requests_requestedByStaffId_fkey', [t.requestedByStaffId], [staffUsers.id], 'set null'),
+    check(
+      'quote_information_requests_answer_check',
+      sql`(${t.answeredAt} IS NULL) = (${t.answerText} IS NULL)
+        AND (${t.answeredAt} IS NULL OR ${t.closedAt} IS NOT NULL)`,
+    ),
+    check('quote_information_requests_message_check', sql`char_length(${t.message}) BETWEEN 1 AND 2000`),
+  ],
+);
+
+/**
+ * The insurer's own notes on a chosen version. They are append-only (a
+ * trigger refuses UPDATE and DELETE, as for audit_logs) and never reach a
+ * customer response, a notification or an audit summary.
+ */
+export const quoteInternalNotes = pgTable(
+  'quote_internal_notes',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    authorStaffId: uuid('authorStaffId'),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('quote_internal_notes_selection_createdAt_idx').on(t.quoteRequestId, t.productVersionId, t.createdAt),
+    foreignKey({
+      name: 'quote_internal_notes_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('restrict'),
+    fk('quote_internal_notes_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('quote_internal_notes_authorStaffId_fkey', [t.authorStaffId], [staffUsers.id], 'set null'),
+    check('quote_internal_notes_body_check', sql`char_length(${t.body}) BETWEEN 1 AND 4000`),
   ],
 );
 
@@ -1044,6 +1172,18 @@ export const insurerQuotes = pgTable(
     // otherwise historical quote as no longer payable.
     unpayableAt: timestamptz('unpayableAt'),
     unpayableReason: quoteUnavailabilityReason('unpayableReason'),
+    // Batch 13: a quote is withdrawn or replaced, never edited.
+    status: quoteStatus('status').notNull().default('ACTIVE'),
+    withdrawnAt: timestamptz('withdrawnAt'),
+    withdrawnReason: text('withdrawnReason'),
+    supersededById: uuid('supersededById'),
+    /** How the premium is made up: `{ code, label, amountMinor }`, summing to the premium when given. */
+    componentsMinor: jsonb('componentsMinor').$type<QuoteComponent[]>().notNull().default(sql`'[]'::jsonb`),
+    excessMinor: ngwee('excessMinor'),
+    /** Add-ons the insurer offers with this quote: `{ code, label, priceMinor, included, terms }`. */
+    addOns: jsonb('addOns').$type<QuoteAddOn[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Conditions of the quote. A purchase-critical one must be accepted before payment. */
+    conditions: jsonb('conditions').$type<QuoteCondition[]>().notNull().default(sql`'[]'::jsonb`),
   },
   (t) => [
     uniqueIndex('insurer_quotes_documentId_key').on(t.documentId),
@@ -1056,9 +1196,14 @@ export const insurerQuotes = pgTable(
     uniqueIndex('insurer_quotes_legacy_request_insurer_key')
       .on(t.quoteRequestId, t.insurerId)
       .where(sql`${t.productVersionId} IS NULL`),
+    // One current quote per chosen version; withdrawn and replaced ones stay as history.
     uniqueIndex('insurer_quotes_request_product_version_key')
       .on(t.quoteRequestId, t.productVersionId)
-      .where(sql`${t.productVersionId} IS NOT NULL`),
+      .where(sql`${t.productVersionId} IS NOT NULL AND ${t.status} = 'ACTIVE'`),
+    fk('insurer_quotes_supersededById_fkey', [t.supersededById], [t.id], 'set null'),
+    check('insurer_quotes_withdrawn_check', sql`(${t.status} = 'WITHDRAWN') = (${t.withdrawnAt} IS NOT NULL)`),
+    check('insurer_quotes_superseded_check', sql`${t.status} <> 'SUPERSEDED' OR ${t.supersededById} IS NOT NULL`),
+    moneyCheck('insurer_quotes', t.excessMinor),
     // An insurer may deliberately use one reference while quoting several
     // selected products.  Retain the former rule only for legacy rows.
     uniqueIndex('insurer_quotes_quoteRequestId_insurerReference_key')
@@ -1089,6 +1234,31 @@ export const inspectionShots = pgTable(
     uniqueIndex('inspection_shots_quoteRequestId_shotKey_key').on(t.quoteRequestId, t.shotKey),
     fk('inspection_shots_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
     fk('inspection_shots_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+  ],
+);
+
+/**
+ * The quote a customer has chosen for a request, with the conditions they
+ * accepted. One per request: choosing again replaces it, and the audit trail
+ * keeps the history. Payment of a quote with purchase-critical conditions
+ * needs this row to name that quote.
+ */
+export const quoteSelections = pgTable(
+  'quote_selections',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    insurerQuoteId: uuid('insurerQuoteId').notNull(),
+    customerId: uuid('customerId').notNull(),
+    acceptedConditionCodes: text('acceptedConditionCodes').array().notNull().default(sql`'{}'::text[]`),
+    selectedAt: timestamptz('selectedAt').notNull(),
+  },
+  (t) => [
+    uniqueIndex('quote_selections_quoteRequestId_key').on(t.quoteRequestId),
+    index('quote_selections_insurerQuoteId_idx').on(t.insurerQuoteId),
+    fk('quote_selections_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
+    fk('quote_selections_insurerQuoteId_fkey', [t.insurerQuoteId], [insurerQuotes.id], 'restrict'),
+    fk('quote_selections_customerId_fkey', [t.customerId], [customers.id], 'cascade'),
   ],
 );
 
@@ -1282,12 +1452,66 @@ export const inspections = pgTable(
     notes: text('notes'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // Batch 13: an inspection a chosen product needs before it is quoted or paid.
+    purpose: inspectionPurpose('purpose').notNull().default('GENERAL'),
+    quoteRequestId: text('quoteRequestId'),
+    method: inspectionMethod('method'),
+    stage: inspectionTiming('stage'),
+    /** The inspection this one repeats, after a fail, a missed appointment or a cancellation. */
+    predecessorId: text('predecessorId'),
+    result: inspectionResult('result'),
+    /** Why it failed or was cancelled; shown to the customer. */
+    resultReason: text('resultReason'),
+    decidedByStaffId: uuid('decidedByStaffId'),
+    decidedAt: timestamptz('decidedAt'),
   },
   (t) => [
     index('inspections_customerId_createdAt_idx').on(t.customerId, t.createdAt),
     index('inspections_status_idx').on(t.status),
+    index('inspections_insurerId_status_idx').on(t.insurerId, t.status),
+    index('inspections_quoteRequestId_idx').on(t.quoteRequestId),
     fk('inspections_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
     fk('inspections_insurerId_fkey', [t.insurerId], [insurers.id], 'set null'),
+    fk('inspections_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'set null'),
+    fk('inspections_predecessorId_fkey', [t.predecessorId], [t.id], 'set null'),
+    fk('inspections_decidedByStaffId_fkey', [t.decidedByStaffId], [staffUsers.id], 'set null'),
+    check(
+      'inspections_underwriting_check',
+      sql`${t.purpose} <> 'UNDERWRITING' OR (${t.quoteRequestId} IS NOT NULL AND ${t.method} IS NOT NULL AND ${t.stage} IS NOT NULL)`,
+    ),
+    check('inspections_result_check', sql`(${t.result} IS NULL) = (${t.decidedAt} IS NULL)`),
+  ],
+);
+
+/**
+ * The chosen products an underwriting inspection serves. A product has at
+ * most one open inspection per stage; every result is kept on the inspection.
+ */
+export const inspectionRequestProducts = pgTable(
+  'inspection_request_products',
+  {
+    id: id(),
+    inspectionId: text('inspectionId').notNull(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    productVersionId: uuid('productVersionId').notNull(),
+    stage: inspectionTiming('stage').notNull(),
+    isOpen: boolean('isOpen').notNull().default(true),
+    /** Set when an approved inspection satisfied this product's rule. */
+    passed: boolean('passed').notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex('inspection_request_products_inspection_version_key').on(t.inspectionId, t.productVersionId),
+    uniqueIndex('inspection_request_products_open_key')
+      .on(t.quoteRequestId, t.productVersionId, t.stage)
+      .where(sql`${t.isOpen}`),
+    index('inspection_request_products_selection_idx').on(t.quoteRequestId, t.productVersionId),
+    fk('inspection_request_products_inspectionId_fkey', [t.inspectionId], [inspections.id], 'cascade'),
+    foreignKey({
+      name: 'inspection_request_products_selection_fkey',
+      columns: [t.quoteRequestId, t.productVersionId],
+      foreignColumns: [quoteRequestProductVersions.quoteRequestId, quoteRequestProductVersions.productVersionId],
+    }).onDelete('cascade'),
+    check('inspection_request_products_passed_check', sql`NOT (${t.passed} AND ${t.isOpen})`),
   ],
 );
 

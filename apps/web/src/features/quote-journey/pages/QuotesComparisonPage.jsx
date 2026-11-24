@@ -19,6 +19,11 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import { ChevronDown } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Checkbox } from '@/components/ui/primitives/checkbox';
+import { Textarea } from '@/components/ui/primitives/textarea';
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/primitives/field';
+import { Spinner } from '@/components/ui/primitives/spinner';
+import { api } from '@/api';
+import { endedWithoutQuote, openQuestion } from '@/domain/quoteWorkflow';
 
 const legacyMockQuoteId = (request, insurerName) =>
   env.apiMode === 'mock' && request?.id && insurerName
@@ -99,11 +104,19 @@ export default function QuotesComparisonPage() {
             expired: validity.expired,
             rating,
             ratingCount: reviews.length,
+            requestId: request.id,
+            workflowStatus: selection.status || null,
+            statusLabel: selection.statusLabel || null,
+            // Declined, or not answered in time: nothing to wait for any more.
+            closed: !reply && !unavailableAt && endedWithoutQuote(selection.status),
+            decline: selection.decline || null,
+            question: openQuestion(selection),
+            answered: (selection.informationRequests || []).filter((asked) => asked.answer),
           };
         })
         .sort(
           (a, b) =>
-            Number(a.unavailable) - Number(b.unavailable)
+            Number(a.unavailable || a.closed) - Number(b.unavailable || b.closed)
             || Number(a.expired) - Number(b.expired)
             || (a.premium ?? Number.POSITIVE_INFINITY) - (b.premium ?? Number.POSITIVE_INFINITY),
         );
@@ -175,9 +188,16 @@ export default function QuotesComparisonPage() {
     );
   }, [request, insurersList, insurerReviews, piaConfig?.piaRatePercentage]);
 
+  // The default order stays the disclosed one: price. Excess is a choice the customer makes.
+  const [sortBy, setSortBy] = useState('price');
+  const sortedQuotes = useMemo(() => (sortBy === 'excess'
+    ? [...quotes].sort((a, b) => Number(a.unavailable || a.closed) - Number(b.unavailable || b.closed)
+      || (a.reply?.excess ?? Number.POSITIVE_INFINITY) - (b.reply?.excess ?? Number.POSITIVE_INFINITY))
+    : quotes), [quotes, sortBy]);
   const repliedCount = quotes.filter((quote) => quote.isFinal && !quote.unavailable).length;
   const unavailableCount = quotes.filter((quote) => quote.unavailable).length;
-  const waitingCount = quotes.filter((quote) => !quote.isFinal && !quote.unavailable).length;
+  const closedCount = quotes.filter((quote) => quote.closed).length;
+  const waitingCount = quotes.filter((quote) => !quote.isFinal && !quote.unavailable && !quote.closed).length;
   const productRequest = Boolean(request?.selectedProducts?.length);
   const coverageType =
     request?.insuranceType === 'Third Party Only' ? 'ThirdParty' : request?.insuranceType || 'Comprehensive';
@@ -192,10 +212,13 @@ export default function QuotesComparisonPage() {
   const cover = coverPeriod(request?.policyDates);
   const requestExpired = status.status === 'expired';
 
-  const choose = (quote) => {
+  const choose = async (quote, acceptedConditionCodes = []) => {
     // Indicative estimates explain the market but are not an offer a customer
     // can buy. A documented insurer reply is required before payment.
     if (!quote.isFinal || quote.unavailable || quote.expired || requestExpired) return;
+    // A chosen product's quote is chosen on the server too, with the conditions
+    // accepted, because payment checks the required ones were.
+    if (quote.productVersionId) await api.quotes.select(request.id, quote.reply.id, acceptedConditionCodes);
     selectQuote(
       {
         ...quote,
@@ -258,7 +281,7 @@ export default function QuotesComparisonPage() {
               </p>
             )}
             <p role="status" aria-live="polite" className="text-sm">
-              {quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total: quotes.length, productRequest })}
+              {quoteProgressMessage({ repliedCount, unavailableCount, closedCount, waitingCount, total: quotes.length, productRequest })}
             </p>
           </CardContent>
         </Card>
@@ -300,14 +323,23 @@ export default function QuotesComparisonPage() {
           )
         )}
 
+        {productRequest && quotes.length > 1 && (
+          <div className="mt-6 flex items-center gap-2 text-sm">
+            <label htmlFor="quote-sort" className="text-muted-foreground">Sort by</label>
+            <select id="quote-sort" value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="rounded-lg border border-border bg-background px-2 py-1">
+              <option value="price">Lowest price first</option>
+              <option value="excess">Lowest excess first</option>
+            </select>
+          </div>
+        )}
         <ul aria-label="Insurer quotes" className="mt-6 grid items-start gap-6 md:grid-cols-2">
-          {quotes.map((quote) => (
+          {sortedQuotes.map((quote) => (
             <li key={quote.id} aria-labelledby={`quote-${quote.id}`} className="min-w-0">
               <QuoteCard
                 quote={quote}
                 coverageType={quote.coverType || coverageType}
                 disabled={requestExpired}
-                onChoose={() => choose(quote)}
+                onChoose={(accepted) => choose(quote, accepted)}
                 onRequote={requote}
                 selectionLabel={quotes.length === 1 ? 'Continue to payment' : `Choose ${quote.productName || quote.name}`}
               />
@@ -464,6 +496,15 @@ function PriceBlock({ quote }) {
     );
   }
 
+  if (quote.closed) {
+    return (
+      <div>
+        <p className="text-lg font-semibold leading-none tracking-tight text-foreground">No quote</p>
+        <p className="mt-1.5 text-[12px] text-ink-muted">{quote.statusLabel}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       {quote.premium === null ? (
@@ -476,7 +517,7 @@ function PriceBlock({ quote }) {
       ) : quote.isFinal ? (
         <p className="mt-1.5 text-[12px] text-ink-muted">
           Final quote from insurer
-          {quote.estimate !== quote.premium && (
+          {quote.estimate != null && quote.estimate !== quote.premium && (
             <>
               {' '}
               · estimate was <s>{formatZMW(quote.estimate)}</s>
@@ -485,7 +526,9 @@ function PriceBlock({ quote }) {
         </p>
       ) : (
         <p className="mt-1.5 text-[12px] text-ink-muted">
-          {quote.productVersionId ? 'Awaiting this product’s final quote from the insurer' : 'Indicative estimate · awaiting insurer’s final quote'}
+          {quote.productVersionId
+            ? quote.statusLabel || 'Awaiting this product’s final quote from the insurer'
+            : 'Indicative estimate · awaiting insurer’s final quote'}
         </p>
       )}
     </div>
@@ -521,6 +564,8 @@ function QuoteDocuments({ reply }) {
 
 function QuoteStatusBadge({ quote }) {
   if (quote.unavailable) return <Badge variant="destructive">Unavailable</Badge>;
+  if (quote.closed) return <Badge variant="secondary">{quote.workflowStatus === 'DECLINED' ? 'Declined' : 'No reply'}</Badge>;
+  if (quote.question) return <Badge variant="outline">Action needed</Badge>;
   if (quote.expired) return <Badge variant="secondary">Expired</Badge>;
   if (quote.isFinal)
     return (
@@ -557,7 +602,13 @@ function ValidityLine({ quote }) {
   );
 }
 
-function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
+function ChooseButton({ quote, disabled, blocked = false, onChoose, onRequote, label }) {
+  if (quote.closed)
+    return (
+      <Button type="button" variant="outline" onClick={onRequote} className="h-auto min-h-11 w-full whitespace-normal">
+        Request fresh quotes
+      </Button>
+    );
   if (quote.unavailable)
     return (
       <Button
@@ -583,13 +634,30 @@ function ChooseButton({ quote, disabled, onChoose, onRequote, label }) {
       </Button>
     );
   return (
-    <Button type="button" onClick={onChoose} className="h-auto min-h-11 w-full whitespace-normal">
+    <Button type="button" onClick={onChoose} disabled={blocked} className="h-auto min-h-11 w-full whitespace-normal">
       {label}
     </Button>
   );
 }
 
 function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selectionLabel }) {
+  const conditions = quote.reply?.conditions || [];
+  const required = conditions.filter((condition) => condition.purchaseCritical);
+  const [accepted, setAccepted] = useState([]);
+  const [choosing, setChoosing] = useState(false);
+  const [error, setError] = useState('');
+  const ready = required.every((condition) => accepted.includes(condition.code));
+  const choose = async () => {
+    if (!ready || choosing) return;
+    setChoosing(true);
+    setError('');
+    try {
+      await onChoose(accepted);
+    } catch (caught) {
+      setError(caught?.code && caught?.message ? caught.message : 'This quote could not be chosen. Please try again.');
+      setChoosing(false);
+    }
+  };
   return (
       <Card size="sm" className="gap-3">
         <CardHeader>
@@ -634,6 +702,40 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
               </div>
             </Alert>
           )}
+          {quote.decline && (
+            <div className="rounded-xl bg-muted p-3 text-sm">
+              <p><strong>Why:</strong> {quote.decline.reason || 'The insurer is unable to quote for this request.'}</p>
+              {quote.decline.note && <p className="mt-1"><strong>Insurer note:</strong> {quote.decline.note}</p>}
+            </div>
+          )}
+          {(quote.answered || []).map((asked) => (
+            <div key={asked.id} className="rounded-xl bg-muted p-3 text-sm">
+              <p className="text-ink-muted">The insurer asked: {asked.message}</p>
+              <p className="mt-1">You answered: {asked.answer}</p>
+            </div>
+          ))}
+          {quote.question && <AnswerQuestion quote={quote} />}
+          {quote.reply?.excess != null && (
+            <p className="text-sm"><span className="text-muted-foreground">Excess on each claim:</span> <strong>{formatZMW(quote.reply.excess)}</strong></p>
+          )}
+          {conditions.length > 0 && !quote.unavailable && !quote.expired && (
+            <fieldset className="space-y-2 rounded-xl border border-border p-3 text-sm">
+              <legend className="px-1 font-medium">Conditions of this quote</legend>
+              {conditions.map((condition) => (condition.purchaseCritical ? (
+                <label key={condition.code} className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={accepted.includes(condition.code)}
+                    onChange={(event) => setAccepted((current) => (event.target.checked ? [...current, condition.code] : current.filter((code) => code !== condition.code)))}
+                  />
+                  <span>{condition.text} <span className="text-ink-muted">(required to buy)</span></span>
+                </label>
+              ) : (
+                <p key={condition.code} className="flex items-start gap-2"><span aria-hidden="true">•</span><span>{condition.text}</span></p>
+              )))}
+            </fieldset>
+          )}
           {quote.reply?.notes && (
             <p className="rounded-xl bg-muted p-3 text-sm">
               <strong>Insurer note:</strong> {quote.reply.notes}
@@ -644,10 +746,15 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
           {(quote.reply?.document || quote.reply?.insurerReference) && (
             <QuoteDocuments reply={quote.reply} />
           )}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          {!ready && quote.isFinal && !quote.unavailable && !quote.expired && (
+            <p className="text-[12px] text-ink-muted">Accept the required conditions to choose this quote.</p>
+          )}
           <ChooseButton
             quote={quote}
             disabled={disabled}
-            onChoose={onChoose}
+            blocked={!ready || choosing}
+            onChoose={choose}
             onRequote={onRequote}
             label={selectionLabel}
           />
@@ -656,7 +763,48 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
   );
 }
 
-function quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, total, productRequest = false }) {
+/**
+ * The insurer's question about one product, answered right here. Answering
+ * starts the insurer's reply clock again.
+ */
+function AnswerQuestion({ quote }) {
+  const [answer, setAnswer] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const fieldId = `answer-${quote.productVersionId}`;
+
+  const send = async (event) => {
+    event.preventDefault();
+    if (!answer.trim() || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      await api.quotes.answerInformation(quote.requestId, quote.productVersionId, answer.trim());
+      setAnswer('');
+      await hydrateCustomer();
+    } catch (caught) {
+      setError(caught?.code && caught?.message ? caught.message : 'Your answer could not be sent. Please try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <form onSubmit={send} aria-label={`Answer ${quote.name}`} className="space-y-2 rounded-xl border border-primary/30 bg-primary/[0.04] p-3">
+      <Field>
+        <FieldLabel htmlFor={fieldId}>{quote.name} needs more information</FieldLabel>
+        <FieldDescription>“{quote.question.message}” Please answer by {formatDate(quote.question.dueAt)}.</FieldDescription>
+        <Textarea id={fieldId} rows={3} maxLength={4000} required value={answer} onChange={(event) => setAnswer(event.target.value)} />
+      </Field>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      <Button type="submit" disabled={sending || !answer.trim()} aria-busy={sending} className="w-full">
+        {sending && <Spinner aria-hidden="true" />} Send answer
+      </Button>
+    </form>
+  );
+}
+
+function quoteProgressMessage({ repliedCount, unavailableCount, closedCount = 0, waitingCount, total, productRequest = false }) {
   if (!productRequest) {
     if (!unavailableCount) {
       return repliedCount === total
@@ -670,7 +818,7 @@ function quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, to
   }
 
   const subject = 'selected products';
-  if (!unavailableCount) {
+  if (!unavailableCount && !closedCount) {
     return repliedCount === total
       ? `All ${subject} have final quotes.`
       : `${repliedCount} of ${total} ${subject} have final quotes. Only a final insurer quotation can be selected for payment.`;
@@ -679,6 +827,7 @@ function quoteProgressMessage({ repliedCount, unavailableCount, waitingCount, to
   const singular = 'product';
   const parts = [`${repliedCount} of ${total} ${subject} have an available final quote.`];
   if (unavailableCount) parts.push(`${unavailableCount} ${singular}${unavailableCount === 1 ? ' is' : 's are'} unavailable.`);
+  if (closedCount) parts.push(`${closedCount} ${singular}${closedCount === 1 ? ' was' : 's were'} not quoted.`);
   if (waitingCount) parts.push(`${waitingCount} ${singular}${waitingCount === 1 ? ' is' : 's are'} awaiting a reply.`);
   return parts.join(' ');
 }

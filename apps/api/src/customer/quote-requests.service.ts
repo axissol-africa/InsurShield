@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { DocumentsService } from '../documents/documents.service.js';
@@ -13,11 +13,18 @@ import type { Transaction } from '../db/database.module.js';
 import { newReference } from '../common/domain/reference.js';
 import type { CoverageDuration, DocumentKind, InsuranceType } from '../common/domain/enums.js';
 import type { CustomerPrincipal } from './customer-principal.js';
+import { QuoteWorkflowService } from './quote-workflow.service.js';
+import { resumedReplyDueAt } from './domain/quote-workflow.js';
+import { QuoteProductsRepository } from './quote-products.repository.js';
+import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
+import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
 import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
 import {
   CHOOSE_A_COVER_PERIOD,
   CHOOSE_A_COVER_TYPE,
+  type AnswerInformationRequestDto,
+  type SelectQuoteDto,
   type SubmitQuoteRequestDto,
   type VehicleDetailsDto,
 } from './dto/customer.dto.js';
@@ -64,6 +71,9 @@ export class QuoteRequestsService {
     private readonly config: ConfigService<Env, true>,
     private readonly audit: AuditService,
     private readonly integrations: IntegrationsService,
+    private readonly workflow: QuoteWorkflowService,
+    private readonly versions: QuoteProductsRepository,
+    private readonly underwriting: UnderwritingInspectionsService,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -198,6 +208,105 @@ export class QuoteRequestsService {
     });
   }
 
+  /**
+   * The customer answers the insurer's open question about one chosen
+   * product. The insurer's reply clock starts again, with the time it spent
+   * waiting added to its due date.
+   */
+  async answerInformationRequest(
+    customer: CustomerPrincipal,
+    id: string,
+    productVersionId: string,
+    dto: AnswerInformationRequestDto,
+  ): Promise<QuoteRequestResponse> {
+    const answer = dto.answer.trim();
+    if (!answer) {
+      throw new ApiException('VALIDATION_FAILED', 'Write your answer before sending it.', HttpStatus.BAD_REQUEST, {
+        answer: 'Empty.',
+      });
+    }
+    return this.repository.transaction(async (tx) => {
+      const version = await this.versions.lock(tx, id, productVersionId, { customerId: customer.id });
+      if (!version) throw ApiException.notFound('Quote request', id);
+      const open = await this.versions.lockOpenInformationRequest(tx, id, productVersionId);
+      if (version.status !== 'VERIFICATION_REQUIRED' || !open) throw this.workflow.refusal(version.status, 'CUSTOMER_ANSWERED');
+
+      const at = new Date();
+      await this.versions.answerInformationRequest(tx, open.id, answer, at);
+      await this.workflow.move(tx, version, 'CUSTOMER_ANSWERED', {
+        actor: auditActor(customer),
+        note: 'Customer answered the insurer\'s question.',
+        at,
+        patch: {
+          pausedAt: null,
+          replyDueAt: version.replyDueAt && version.pausedAt ? resumedReplyDueAt(version.replyDueAt, version.pausedAt, at) : version.replyDueAt,
+        },
+      });
+      const row = await this.repository.findOwned(customer.id, id, tx);
+      if (!row) throw ApiException.notFound('Quote request', id);
+      const [response] = await this.responses([row], tx);
+      return response;
+    });
+  }
+
+  /**
+   * The customer chooses one current quote and accepts its conditions. Every
+   * purchase-critical condition must be accepted, and only a quote that can
+   * still be paid can be chosen. Choosing again replaces the earlier choice.
+   */
+  async selectQuote(customer: CustomerPrincipal, id: string, dto: SelectQuoteDto): Promise<QuoteRequestResponse> {
+    const accepted = [...new Set(dto.acceptedConditionCodes ?? [])];
+    return this.repository.transaction(async (tx) => {
+      const request = await this.repository.lockOwned(tx, customer.id, id);
+      if (!request) throw ApiException.notFound('Quote request', id);
+      const quote = await this.repository.lockSelectableQuote(tx, id, dto.insurerQuoteId);
+      if (!quote) throw ApiException.notFound('Quote', dto.insurerQuoteId);
+      const now = new Date();
+      if (quote.status !== 'ACTIVE' || quote.unpayableAt) {
+        throw ApiException.conflict('QUOTE_UNAVAILABLE', 'This quote is no longer available. Reload your quotes.');
+      }
+      if (quote.validUntil <= now) {
+        throw ApiException.conflict('QUOTE_EXPIRED', 'This quote has expired. Request fresh quotes to continue.');
+      }
+      const unknown = accepted.filter((code) => !quote.conditions.some((condition) => condition.code === code));
+      if (unknown.length > 0) {
+        throw new ApiException('VALIDATION_FAILED', 'Accept only the conditions this quote lists.', HttpStatus.BAD_REQUEST, {
+          acceptedConditionCodes: unknown.join(', '),
+        });
+      }
+      const missing = unacceptedCriticalConditions(quote.conditions, accepted);
+      if (missing.length > 0) {
+        throw ApiException.conflict(
+          'CONDITIONS_NOT_ACCEPTED',
+          'Accept every condition marked as required before choosing this quote.',
+          { missing },
+        );
+      }
+      const previous = await this.repository.previousSelection(tx, id);
+      await this.repository.upsertSelection(tx, {
+        quoteRequestId: id,
+        insurerQuoteId: quote.id,
+        customerId: customer.id,
+        acceptedConditionCodes: accepted,
+        selectedAt: now,
+      });
+      await this.audit.write(tx, {
+        actor: auditActor(customer),
+        action: 'quote.selected',
+        entityType: 'QUOTE_REQUEST',
+        entityId: id,
+        before: previous ? { insurerQuoteId: previous.insurerQuoteId } : null,
+        after: { insurerQuoteId: quote.id, acceptedConditionCodes: accepted },
+        note: 'Customer chose a quote.',
+        correlationId: id,
+      });
+      const row = await this.repository.findOwned(customer.id, id, tx);
+      if (!row) throw ApiException.notFound('Quote request', id);
+      const [response] = await this.responses([row], tx);
+      return response;
+    });
+  }
+
   /** Writes a request with its recipients and photos in `tx` and reads it back for the response. */
   async distribute(
     tx: Transaction,
@@ -210,13 +319,33 @@ export class QuoteRequestsService {
   ): Promise<QuoteRequestResponse> {
     const created = await this.repository.insertRequest(tx, request);
     await this.repository.insertRecipients(tx, created.id, insurerIds);
-    await this.repository.insertSelectedProductVersions(tx, created.id, selectedVersions);
+    const replyDueAt = selectedVersions.length > 0 ? await this.workflow.replyDueAt(created.submittedAt, tx) : null;
+    const chosen = await this.repository.insertSelectedProductVersions(
+      tx,
+      created.id,
+      // Every product starts waiting for its insurer. An inspection a product's terms ask
+      // for is optional and never holds up the quote or the purchase; the live photos are enough.
+      selectedVersions.map((version) => ({ ...version, status: 'SUBMITTED' as const, replyDueAt, pausedAt: null })),
+    );
     await this.repository.insertProductRequirementAnswers(tx, created.id, productRequirements.answers);
     await this.repository.insertProductRequirementDeclarations(tx, created.id, productRequirements.declarations);
     await this.repository.insertProductRequirementDocuments(tx, created.id, productRequirements.documents);
     await this.repository.insertShots(tx, created.id, shots);
     const row = await this.repository.findOwned(created.customerId, created.id, tx);
     if (!row) throw new Error(`Quote request ${created.id} is missing inside its own transaction`);
+    // Products whose terms ask for an inspection get an optional one, one per insurer, for the insurer to use if it wants.
+    await this.underwriting.openForRequest(
+      tx,
+      {
+        id: created.id,
+        customerId: created.customerId,
+        vehiclePlate: row.vehicle.plateNumber,
+        vehicleLabel: `${row.vehicle.year} ${row.vehicle.make} ${row.vehicle.model}`.trim(),
+        submittedAt: created.submittedAt,
+      },
+      selectedVersions,
+      actor,
+    );
     if (selectedVersions.length > 0) {
       await this.queueSelectedProductDeliveries(tx, row, insurerIds, selectedVersions, productRequirements);
     }
@@ -256,6 +385,17 @@ export class QuoteRequestsService {
       note: 'Quote request submitted.',
       correlationId: created.id,
     });
+    for (const version of chosen) {
+      await this.audit.transition(tx, {
+        actor,
+        entityType: 'QUOTE_REQUEST_PRODUCT',
+        entityId: version.id,
+        fromStatus: null,
+        toStatus: version.status,
+        note: 'Product chosen.',
+        correlationId: created.id,
+      });
+    }
     return response;
   }
 
@@ -561,6 +701,11 @@ export class QuoteRequestsService {
     const quotes = await this.repository.quotesOf(ids, tx);
     const selectedProducts = await this.repository.selectedProductVersionsOf(ids, tx);
     const links = await this.repository.requoteLinksOf(ids, tx);
+    const informationRequests = await this.versions.informationRequestsFor(ids, undefined, tx);
+    const selections = await this.repository.selectionsOf(ids, tx);
+    const declineCustomerText = selectedProducts.some((selection) => selection.declineReasonCode)
+      ? new Map((await this.workflow.declineReasons(new Date(), tx)).map((reason) => [reason.code, reason.customerText]))
+      : new Map<string, string>();
 
     const responses: QuoteRequestResponse[] = [];
     for (const row of rows) {
@@ -576,6 +721,9 @@ export class QuoteRequestsService {
           selectedProducts.filter((selection) => selection.quoteRequestId === row.request.id),
           links.find((link) => link.requotedFromId === row.request.id)?.id ?? null,
           currentRtsaAnniversaryFeeMinor,
+          informationRequests.filter((asked) => asked.quoteRequestId === row.request.id),
+          declineCustomerText,
+          selections.find((selected) => selected.quoteRequestId === row.request.id) ?? null,
         ),
       );
     }

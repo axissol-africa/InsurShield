@@ -31,6 +31,10 @@ describe('who may use the portal', () => {
     always(0),
     audit as never,
     notifications as never,
+    untouchable('versions') as never,
+    untouchable('workflow') as never,
+    untouchable('inspectionRecords') as never,
+    untouchable('underwriting') as never,
   );
 
   const calls: [string, (principal: Principal) => Promise<unknown>][] = [
@@ -74,7 +78,7 @@ describe('final quotes', () => {
       hasQuote: async () => false,
     };
     const documents = untouchable('documents');
-    const service = new InsurerPortalService(repository as never, documents as never, untouchable('pia') as never, always(0), audit as never, notifications as never);
+    const service = new InsurerPortalService(repository as never, documents as never, untouchable('pia') as never, always(0), audit as never, notifications as never, untouchable('versions') as never, untouchable('workflow') as never, untouchable('inspectionRecords') as never, untouchable('underwriting') as never);
 
     await expect(service.submitQuote(INSURER_USER, 'r', { premium: 1, documentId: 'd' })).rejects.toMatchObject({
       status: 409,
@@ -116,6 +120,10 @@ describe('NCD approvals', () => {
       pick,
       audit as never,
       notifications as never,
+      untouchable('versions') as never,
+      untouchable('workflow') as never,
+    untouchable('inspectionRecords') as never,
+    untouchable('underwriting') as never,
     );
     return { service, inserted, linked };
   }

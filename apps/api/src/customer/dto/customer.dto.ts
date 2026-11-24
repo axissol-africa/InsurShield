@@ -218,3 +218,23 @@ export class UpdateInspectionDto {
   @IsOptional() @IsString() @MaxLength(200) preferredLocation?: string;
   @IsOptional() @IsString() @MaxLength(1000) notes?: string;
 }
+
+export class AnswerInformationRequestDto {
+  /** The customer's answer to the insurer's question, sent to that insurer only. */
+  @IsString()
+  @MinLength(1, { message: 'Write your answer before sending it.' })
+  @MaxLength(4000, { message: 'Keep your answer under 4,000 characters.' })
+  answer!: string;
+}
+
+export class SelectQuoteDto {
+  @IsUUID('4', { message: 'Choose the quote you want.' })
+  insurerQuoteId!: string;
+
+  /** The codes of the quote's conditions the customer accepts. Every purchase-critical one is needed to pay. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  acceptedConditionCodes?: string[];
+}

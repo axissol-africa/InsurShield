@@ -11,6 +11,7 @@ import { useStore, belongsToCustomer } from '@/store';
 import { demoCoverGuides } from '@/domain/insurers';
 import { wait } from '../shared';
 import { documentToRecord } from '@/lib/files';
+import { canAskCustomer, canDecline, CUSTOMER_STATUS_LABELS, openQuestion, PROTOTYPE_DECLINE_REASONS } from '@/domain/quoteWorkflow';
 
 const state = () => useStore.getState();
 const call = async (fn) => { await wait(env.mockLatencyMs); return fn(state()); };
@@ -184,6 +185,15 @@ const selectedProductSnapshot = (product) => ({
   coverGuide: product.version.coverGuide,
   inspection: product.version.inspection,
   unavailableAt: null,
+  status: product.version.inspection?.rule === 'REQUIRED' && product.version.inspection?.timing === 'BEFORE_QUOTATION'
+    ? 'INSPECTION_REQUIRED'
+    : 'SUBMITTED',
+  statusLabel: product.version.inspection?.rule === 'REQUIRED' && product.version.inspection?.timing === 'BEFORE_QUOTATION'
+    ? CUSTOMER_STATUS_LABELS.INSPECTION_REQUIRED
+    : CUSTOMER_STATUS_LABELS.SUBMITTED,
+  replyDueAt: null,
+  decline: null,
+  informationRequests: [],
 });
 const toProduct = (product) => ({ ...product, versions: [...(product.versions || [])].sort((a, b) => b.versionNumber - a.versionNumber) });
 const toAdminProduct = (s, product, version) => {
@@ -481,6 +491,126 @@ export const quotes = {
   listForInsurer: () => call((s) => s.quoteRequests.filter((r) => r.insurers?.includes(insurerName()))),
   reply: (id, quote) => call((s) => { s.addInsurerQuote(id, insurerName(), quote); return state().quoteRequests.find((r) => r.id === id); }),
   extend: (id, extraDays, productVersionId) => call((s) => { s.extendInsurerQuote(id, insurerName(), extraDays, productVersionId); return state().quoteRequests.find((r) => r.id === id); }),
+  declineReasons: () => call(() => PROTOTYPE_DECLINE_REASONS),
+  decline: (id, productVersionId, { reasonCode, customerNote, internalNote }) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    if (!canDecline(product.status)) throw new Error('This product can no longer be declined.');
+    const reason = PROTOTYPE_DECLINE_REASONS.find((candidate) => candidate.code === reasonCode);
+    if (!reason) throw new Error('Choose one of the listed reasons for declining.');
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      status: 'DECLINED',
+      statusLabel: CUSTOMER_STATUS_LABELS.DECLINED,
+      decline: { reason: reason.customerText, note: customerNote?.trim() || null },
+      informationRequests: (current.informationRequests || []).map((asked) => ({ ...asked, open: false })),
+    }));
+    if (internalNote?.trim()) addPrototypeNote(s, id, productVersionId, internalNote.trim());
+    return { productVersionId, status: 'DECLINED' };
+  }),
+  requestInformation: (id, productVersionId, { message, dueInDays }) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    if (product.status === 'VERIFICATION_REQUIRED') throw new Error('You have already asked the customer for information about this product. Wait for their answer.');
+    if (!canAskCustomer(product.status)) throw new Error('This product can no longer be asked about.');
+    const askedAt = new Date();
+    const asked = { id: newReference('INFO'), message: message.trim(), dueAt: new Date(askedAt.getTime() + dueInDays * 86_400_000).toISOString(), askedAt: askedAt.toISOString(), answeredAt: null, answer: null, open: true };
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      status: 'VERIFICATION_REQUIRED',
+      statusLabel: CUSTOMER_STATUS_LABELS.VERIFICATION_REQUIRED,
+      informationRequests: [...(current.informationRequests || []), asked],
+    }));
+    return { productVersionId, status: 'VERIFICATION_REQUIRED', informationRequest: asked };
+  }),
+  notes: (id, productVersionId) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    return [...(prototypeNotes.get(`${id}~${productVersionId}`) || [])].reverse();
+  }),
+  addNote: (id, productVersionId, body) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    if (!body?.trim()) throw new Error('Write the note before saving it.');
+    return addPrototypeNote(s, id, productVersionId, body.trim());
+  }),
+  withdraw: (id, productVersionId, reason) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    const request = s.quoteRequests.find((entry) => entry.id === id);
+    const quote = request.productQuotes?.find((entry) => entry.productVersionId === productVersionId);
+    if (!quote) throw new Error('There is no current quote for this product to change.');
+    if (request.selection?.insurerQuoteId === quote.id) throw new Error('The customer has chosen this quote. It can change only if they choose another.');
+    if (!reason?.trim()) throw new Error('Say why you are withdrawing this quote.');
+    s.removeProductQuote(id, productVersionId);
+    s.updateSelectedProduct(id, productVersionId, () => ({ status: 'INSURER_PROCESSING', statusLabel: CUSTOMER_STATUS_LABELS.INSURER_PROCESSING }));
+    return { productVersionId, status: product.status === 'QUOTED' ? 'INSURER_PROCESSING' : product.status };
+  }),
+  replace: (id, productVersionId, quote) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    const request = s.quoteRequests.find((entry) => entry.id === id);
+    const current = request.productQuotes?.find((entry) => entry.productVersionId === productVersionId);
+    if (!current) throw new Error('There is no current quote for this product to change.');
+    if (request.selection?.insurerQuoteId === current.id) throw new Error('The customer has chosen this quote. It can change only if they choose another.');
+    s.addInsurerQuote(id, insurerName(), { ...quote, productVersionId });
+    return state().quoteRequests.find((entry) => entry.id === id).productQuotes.find((entry) => entry.productVersionId === productVersionId);
+  }),
+  select: (id, insurerQuoteId, acceptedConditionCodes = []) => call((s) => {
+    const request = mine(s.quoteRequests).find((entry) => entry.id === id);
+    const quote = request?.productQuotes?.find((entry) => entry.id === insurerQuoteId);
+    if (!quote) throw new Error('This quote is no longer available. Reload your quotes.');
+    const missing = (quote.conditions || []).filter((condition) => condition.purchaseCritical && !acceptedConditionCodes.includes(condition.code));
+    if (missing.length) throw new Error('Accept every condition marked as required before choosing this quote.');
+    s.setQuoteSelection(id, { insurerQuoteId, acceptedConditionCodes, selectedAt: new Date().toISOString() });
+    return state().quoteRequests.find((entry) => entry.id === id);
+  }),
+  claim: (id, productVersionId) => call((s) => {
+    const product = ownSelectedProduct(s, id, productVersionId);
+    const me = { id: s.staffSession?.id || 'prototype-staff', name: s.staffSession?.name || 'You' };
+    if (product.owner && product.owner.id !== me.id) throw new Error('A colleague already owns this product. Ask your administrator to reassign it.');
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      owner: me,
+      ...(current.status === 'SUBMITTED' ? { status: 'INSURER_PROCESSING', statusLabel: CUSTOMER_STATUS_LABELS.INSURER_PROCESSING } : {}),
+    }));
+    return { productVersionId, ownerStaffId: me.id };
+  }),
+  assign: (id, productVersionId, staffId) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    const member = staffId ? s.staffUsers.find((user) => user.id === staffId) : null;
+    if (staffId && !member) throw new Error('Choose an active member of your quoting team.');
+    s.updateSelectedProduct(id, productVersionId, () => ({ owner: member ? { id: member.id, name: member.fullName } : null }));
+    return { productVersionId, ownerStaffId: staffId };
+  }),
+  setPriority: (id, productVersionId, priority) => call((s) => {
+    ownSelectedProduct(s, id, productVersionId);
+    s.updateSelectedProduct(id, productVersionId, () => ({ priority }));
+    return { productVersionId, priority };
+  }),
+  answerInformation: (id, productVersionId, answer) => call((s) => {
+    const request = mine(s.quoteRequests).find((entry) => entry.id === id);
+    const product = request?.selectedProducts?.find((entry) => entry.productVersionId === productVersionId);
+    if (!product) throw new Error('Quote request was not found.');
+    if (!openQuestion(product)) throw new Error('The insurer is not waiting for an answer about this product.');
+    if (!answer?.trim()) throw new Error('Write your answer before sending it.');
+    const answeredAt = new Date().toISOString();
+    s.updateSelectedProduct(id, productVersionId, (current) => ({
+      status: 'INSURER_PROCESSING',
+      statusLabel: CUSTOMER_STATUS_LABELS.INSURER_PROCESSING,
+      informationRequests: current.informationRequests.map((asked) => (asked.open ? { ...asked, open: false, answer: answer.trim(), answeredAt } : asked)),
+    }));
+    return state().quoteRequests.find((entry) => entry.id === id);
+  }),
+};
+
+/**
+ * Internal notes exist only for this browser session in the prototype; the
+ * API keeps them append-only and never shows them to a customer.
+ */
+const prototypeNotes = new Map();
+const addPrototypeNote = (s, id, productVersionId, body) => {
+  const key = `${id}~${productVersionId}`;
+  const note = { id: newReference('NOTE'), body, author: s.staffSession?.name || null, createdAt: new Date().toISOString() };
+  prototypeNotes.set(key, [...(prototypeNotes.get(key) || []), note]);
+  return note;
+};
+const ownSelectedProduct = (s, id, productVersionId) => {
+  const request = s.quoteRequests.find((entry) => entry.id === id && entry.insurers?.includes(insurerName()));
+  const product = request?.selectedProducts?.find((entry) => entry.productVersionId === productVersionId && entry.insurerName === insurerName());
+  if (!product) throw new Error('Quote request was not found.');
+  return product;
 };
 
 export const insurers = {
@@ -899,6 +1029,53 @@ export const inspections = {
   request: (inspection) => call((s) => { s.addInspection(inspection); return state().inspections[0]; }),
   list: () => call((s) => mine(s.inspections)),
   update: (id, changes) => call((s) => { s.updateInspectionStatus(id, 'Requested', changes); return state().inspections.find((i) => i.id === id); }),
+  listForInsurer: () => call((s) => s.inspections.filter((inspection) => inspection.insurer === insurerName()).map(toPortalInspection)),
+  schedule: (id, { scheduledDate, location }) => call((s) => prototypeInspectionStep(s, id, 'SCHEDULE', { scheduledDate, location: location || null })),
+  assignInspector: (id, { inspectorName, inspectorPhone }) => call((s) => prototypeInspectionStep(s, id, 'ASSIGN', { inspectorName, inspectorPhone: inspectorPhone || null })),
+  approve: (id) => call((s) => prototypeInspectionStep(s, id, 'APPROVE', { result: 'PASSED' })),
+  fail: (id, reason) => call((s) => prototypeInspectionStep(s, id, 'FAIL', { result: 'FAILED', resultReason: reason })),
+  noShow: (id, reason) => call((s) => prototypeInspectionStep(s, id, 'NO_SHOW', { resultReason: reason })),
+  cancel: (id, reason) => call((s) => prototypeInspectionStep(s, id, 'CANCEL', { resultReason: reason })),
+};
+
+/** The prototype keeps an inspection's status as its label; the portal reads the API's codes. */
+const INSPECTION_CODES = {
+  Requested: 'REQUESTED', Scheduled: 'SCHEDULED', 'Inspector assigned': 'INSPECTOR_ASSIGNED', 'In progress': 'IN_PROGRESS',
+  Completed: 'COMPLETED', 'Report ready': 'REPORT_READY', Approved: 'APPROVED', Failed: 'FAILED', Cancelled: 'CANCELLED', Missed: 'NO_SHOW',
+};
+const INSPECTION_LABELS = Object.fromEntries(Object.entries(INSPECTION_CODES).map(([label, code]) => [code, label]));
+const toPortalInspection = (inspection) => ({
+  purpose: 'GENERAL',
+  method: 'PHYSICAL',
+  stage: null,
+  products: [],
+  result: null,
+  resultReason: null,
+  ...inspection,
+  status: INSPECTION_CODES[inspection.status] || inspection.status,
+  statusLabel: INSPECTION_LABELS[INSPECTION_CODES[inspection.status]] || inspection.status,
+});
+const prototypeInspectionStep = (s, id, event, changes) => {
+  const inspection = s.inspections.find((entry) => entry.id === id && entry.insurer === insurerName());
+  if (!inspection) throw new Error('Inspection was not found.');
+  const current = toPortalInspection(inspection);
+  const next = nextPrototypeInspectionStatus(current.status, current.method, event);
+  if (!next) throw new Error('Book the inspection before recording that step.');
+  s.updateInspectionStatus(id, INSPECTION_LABELS[next], changes);
+  return toPortalInspection(state().inspections.find((entry) => entry.id === id));
+};
+const nextPrototypeInspectionStatus = (status, method, event) => {
+  if (['APPROVED', 'FAILED', 'CANCELLED', 'NO_SHOW'].includes(status)) return null;
+  const decidable = ['SCHEDULED', 'INSPECTOR_ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REPORT_READY'].includes(status)
+    || (method === 'SELF_CAPTURE' && status === 'REQUESTED');
+  return {
+    SCHEDULE: ['REQUESTED', 'SCHEDULED'].includes(status) ? 'SCHEDULED' : null,
+    ASSIGN: ['SCHEDULED', 'INSPECTOR_ASSIGNED'].includes(status) ? 'INSPECTOR_ASSIGNED' : null,
+    APPROVE: decidable ? 'APPROVED' : null,
+    FAIL: decidable ? 'FAILED' : null,
+    NO_SHOW: ['SCHEDULED', 'INSPECTOR_ASSIGNED'].includes(status) ? 'NO_SHOW' : null,
+    CANCEL: 'CANCELLED',
+  }[event];
 };
 
 export const config = {

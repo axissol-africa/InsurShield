@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AWAITING_CERTIFICATE, benefitsForCoverage, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
+import { AWAITING_CERTIFICATE, awaitsInsurer, inQueueView, benefitsForCoverage, quotableNow, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -168,5 +168,61 @@ describe('toPortalCases', () => {
 
   it('gives an insurer no work on a request whose products all belong to others', () => {
     expect(toPortalCases({ ...base, selectedProducts: [product('v-other', 'Other', { insurerName: 'Global Guard' })] }, INSURER)).toEqual([]);
+  });
+});
+
+describe('a chosen product\'s workflow in the portal', () => {
+  const INSURER = 'Prestige Assurance';
+  const request = (selected) => ({
+    id: 'QR-3', submittedAt: new Date().toISOString(), vehicle: '2019 Honda Fit', vehicleValue: 120000,
+    insuranceType: 'Comprehensive', coverageDurationId: '4q', insurers: [INSURER], insurerQuotes: {},
+    expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    selectedProducts: [{ productVersionId: 'pv-1', productName: 'Essential', insurerName: INSURER, unavailableAt: null, ...selected }],
+  });
+
+  it('reads the workflow the portal route nests under the product', () => {
+    const [portalCase] = toPortalCases(request({ workflow: { status: 'VERIFICATION_REQUIRED', clockPausedAt: '2026-11-20T10:00:00.000Z', informationRequests: [] } }), INSURER);
+    expect(portalCase.workflow.status).toBe('VERIFICATION_REQUIRED');
+    expect(replyDeadline(portalCase)).toEqual({ label: 'Clock stopped · waiting for the customer', urgent: false });
+    expect(awaitsInsurer(portalCase)).toBe(true);
+    expect(quotableNow(portalCase)).toBe(true);
+  });
+
+  it('reads the flat workflow the prototype keeps, and treats a product with none as new', () => {
+    const [declined] = toPortalCases(request({ status: 'DECLINED', decline: { reason: 'Not eligible.', note: null } }), INSURER);
+    expect(declined.workflow).toMatchObject({ status: 'DECLINED', decline: { customerText: 'Not eligible.' } });
+    expect(awaitsInsurer(declined)).toBe(false);
+
+    const [fresh] = toPortalCases(request({}), INSURER);
+    expect(fresh.workflow.status).toBe('SUBMITTED');
+    expect(awaitsInsurer(fresh)).toBe(true);
+  });
+
+  it('keeps a product waiting for an inspection in the queue but not quotable', () => {
+    const [waiting] = toPortalCases(request({ workflow: { status: 'INSPECTION_REQUIRED', informationRequests: [] } }), INSURER);
+    expect(awaitsInsurer(waiting)).toBe(true);
+    expect(quotableNow(waiting)).toBe(false);
+    const paused = toPortalCases(request({ workflow: { status: 'INSPECTION_REQUIRED', clockPausedAt: '2026-11-20T10:00:00.000Z', informationRequests: [] } }), INSURER)[0];
+    expect(replyDeadline(paused).label).toBe('Clock stopped · waiting for the inspection');
+  });
+
+  it('counts the reply deadline from the product\'s own due date', () => {
+    const due = new Date(Date.now() + 2 * 86_400_000 - 3_600_000).toISOString();
+    const [portalCase] = toPortalCases(request({ workflow: { status: 'SUBMITTED', replyDueAt: due, informationRequests: [] } }), INSURER);
+    expect(replyDeadline(portalCase).label).toMatch(/2 days left$/);
+  });
+});
+
+describe('queue views', () => {
+  const mine = { workflow: { owner: { id: 'me' } } };
+  const theirs = { workflow: { owner: { id: 'them' } } };
+  const unowned = { workflow: { owner: null } };
+  const legacy = {};
+
+  it('shows everything, my own work, or work nobody owns', () => {
+    const cases = [mine, theirs, unowned, legacy];
+    expect(cases.filter(inQueueView('all', 'me'))).toEqual(cases);
+    expect(cases.filter(inQueueView('mine', 'me'))).toEqual([mine]);
+    expect(cases.filter(inQueueView('unassigned', 'me'))).toEqual([unowned, legacy]);
   });
 });
