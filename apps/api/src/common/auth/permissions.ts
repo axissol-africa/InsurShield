@@ -86,6 +86,10 @@ export const PERMISSIONS = {
   'admin:audit-read': INSURSHIELD_ADMIN,
   'approval:read': INSURSHIELD_ADMIN,
   'approval:decide': INSURSHIELD_ADMIN,
+  // Money owed back to customers: InsurShield administrators only, every refund under a second approval.
+  'reconciliation:read': INSURSHIELD_ADMIN,
+  'reconciliation:manage': INSURSHIELD_ADMIN,
+  'refund:propose': INSURSHIELD_ADMIN,
   'pia:set-floor': INSURSHIELD_ADMIN,
   'insurer:read': INSURSHIELD_ADMIN,
   'insurer:create': INSURSHIELD_ADMIN,

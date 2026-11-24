@@ -3,7 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { ProviderRegistry } from '../common/providers/provider-registry.js';
 import type { Env } from '../config/env.js';
 import { JobRunner } from '../jobs/job-runner.service.js';
+import { ApprovalsModule } from '../approvals/approvals.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
+import { ReconciliationController } from './reconciliation.controller.js';
+import { ReconciliationService } from './reconciliation.service.js';
+import { RefundsRepository } from './refunds.repository.js';
+import { REFUND_SUBMIT, RefundsService } from './refunds.service.js';
 import { ISSUANCE_OVERDUE_CHECK, IssuanceJobs } from './issuance-jobs.js';
 import { PaymentEventsService } from './payment-events.service.js';
 import { PAYMENT_PROVIDER_CANCEL, PAYMENT_STATUS_CHECK, PaymentJobs } from './payment-jobs.js';
@@ -15,19 +20,22 @@ import { StandInPaymentController } from './provider/stand-in.controller.js';
 import { StandInPaymentProvider } from './provider/stand-in-payment-provider.js';
 
 @Module({
-  imports: [SettingsModule],
-  controllers: [PaymentsController, StandInPaymentController],
+  imports: [SettingsModule, ApprovalsModule],
+  controllers: [PaymentsController, StandInPaymentController, ReconciliationController],
   providers: [
     PaymentsService,
     PaymentsRepository,
     PaymentEventsService,
     PaymentJobs,
     IssuanceJobs,
+    RefundsRepository,
+    RefundsService,
+    ReconciliationService,
     StandInPaymentProvider,
     // Only the stand-in exists until DEC-008 names the providers; PAYMENT_PROVIDER selects among them.
     { provide: PAYMENT_PROVIDER, useExisting: StandInPaymentProvider },
   ],
-  exports: [PAYMENT_PROVIDER],
+  exports: [PAYMENT_PROVIDER, RefundsService],
 })
 export class PaymentsModule implements OnModuleInit {
   constructor(
@@ -36,6 +44,7 @@ export class PaymentsModule implements OnModuleInit {
     private readonly runner: JobRunner,
     private readonly jobs: PaymentJobs,
     private readonly issuance: IssuanceJobs,
+    private readonly refunds: RefundsService,
   ) {}
 
   onModuleInit(): void {
@@ -54,5 +63,6 @@ export class PaymentsModule implements OnModuleInit {
       await this.issuance.flagOverdue();
     });
     this.runner.onStart(() => this.issuance.schedule(new Date()));
+    this.runner.register(REFUND_SUBMIT, (job) => this.refunds.submit(job.key));
   }
 }

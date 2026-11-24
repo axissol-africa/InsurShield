@@ -66,6 +66,8 @@ export interface PaymentEvent {
   currency: string | null;
   /** The provider's receipt or reversal reference. */
   reference: string | null;
+  /** Refund events only: the provider's id for the refund. */
+  providerRefundId?: string | null;
   reason: string | null;
   occurredAt: Date;
 }
@@ -93,6 +95,8 @@ export interface PaymentProvider {
   /** Asks the provider to stop an attempt; the answer is the attempt's status afterwards. */
   cancel(ref: { providerPaymentId: string | null; paymentId: string }): Promise<StatusResult>;
   refund(instruction: RefundInstruction): Promise<RefundResult>;
+  /** Where a refund stands, for one whose callback has not come. */
+  refundStatus(ref: { providerRefundId: string }): Promise<{ status: 'SUBMITTED' | 'COMPLETED' | 'FAILED' | 'NOT_FOUND'; reason: string | null }>;
   /** Checks the signature on the raw body before reading anything in it; throws when it does not verify. */
   verifyCallback(rawBody: Buffer, headers: Readonly<Record<string, string | undefined>>, now?: Date): PaymentEvent;
 }

@@ -46,6 +46,8 @@ import {
   NCD_STATUSES,
   PAYMENT_METHODS,
   PAYMENT_PROVIDER_NAMES,
+  REFUND_REASONS,
+  REFUND_STATUSES,
   PAYMENT_STATUSES,
   RECONCILIATION_KINDS,
   RECONCILIATION_OUTCOMES,
@@ -1456,6 +1458,48 @@ export const reconciliationItems = pgTable(
       'reconciliation_items_resolution_check',
       sql`(${t.status} = 'RESOLVED') = (${t.resolvedAt} IS NOT NULL AND ${t.outcome} IS NOT NULL)`,
     ),
+  ],
+);
+
+export const refundStatus = pgEnum('RefundStatus', REFUND_STATUSES);
+export const refundReason = pgEnum('RefundReason', REFUND_REASONS);
+
+/**
+ * Money going back to a customer. Proposed by one administrator, approved by
+ * another, then sent to the provider. A payment has at most one refund that
+ * can still move money, so two can never together exceed what was paid.
+ */
+export const paymentRefunds = pgTable(
+  'payment_refunds',
+  {
+    id: id(),
+    paymentId: uuid('paymentId').notNull(),
+    amountMinor: ngwee('amountMinor').notNull(),
+    reasonCode: refundReason('reasonCode').notNull(),
+    reason: text('reason').notNull(),
+    status: refundStatus('status').notNull().default('PROPOSED'),
+    approvalRequestId: uuid('approvalRequestId'),
+    reconciliationItemId: uuid('reconciliationItemId'),
+    provider: paymentProviderName('provider').notNull(),
+    providerRefundId: varchar('providerRefundId', { length: 200 }),
+    proposedByStaffId: uuid('proposedByStaffId').notNull(),
+    approvedAt: timestamptz('approvedAt'),
+    submittedAt: timestamptz('submittedAt'),
+    completedAt: timestamptz('completedAt'),
+    failureReason: text('failureReason'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('payment_refunds_paymentId_open_key')
+      .on(t.paymentId)
+      .where(sql`${t.status} IN ('PROPOSED', 'APPROVED', 'SUBMITTED')`),
+    uniqueIndex('payment_refunds_provider_providerRefundId_key').on(t.provider, t.providerRefundId),
+    index('payment_refunds_status_idx').on(t.status, t.updatedAt),
+    fk('payment_refunds_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('payment_refunds_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
+    fk('payment_refunds_proposedByStaffId_fkey', [t.proposedByStaffId], [staffUsers.id], 'restrict'),
+    check('payment_refunds_amount_check', sql`${t.amountMinor} > 0`),
   ],
 );
 

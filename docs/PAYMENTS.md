@@ -1,7 +1,7 @@
 # Payments
 
 How InsurShield takes a payment for an accepted quote, and how the insurer then issues the policy. Batch 14 builds
-this in parts; this page covers parts 1 and 2 and grows with part 3 (refunds, reconciliation and settlement).
+this in parts; this page covers parts 1, 2 and 3a, and grows with part 3b (statements, adjustments and settlement).
 
 ## The rules
 
@@ -91,6 +91,48 @@ policy is issued, its overdue item is resolved as `ISSUED`.
 Both the portal and the customer's policy show `issuance`: `dueAt`, `acceptedAt`, `overdue`, `failedAt` and
 `failureReason`. The customer's policy also shows the product bought, from the quoted version.
 
+## Refunds
+
+Only an InsurShield administrator can propose a refund, and a different one must approve it (decision 15). No money
+moves until then.
+
+1. `POST /api/v1/admin/payments/:transactionId/refunds` with `amount` (kwacha), `reasonCode`, `reason` (at least 10
+   characters, the approver reads it) and, optionally, the `reconciliationItemId` it settles. The payment must be
+   `CONFIRMED`, and the amount at most what is left after completed refunds. The refund is `PROPOSED` and a
+   `PAYMENT_REFUND` request appears in the approvals inbox with the payment, the amounts and the reason.
+2. The second administrator approves it at `POST /api/v1/admin/approvals/:id/approve`. With the payment locked, the
+   amount is checked again, the refund becomes `APPROVED` and a job sends it to the provider with the refund id as the
+   idempotency key, so a retried job cannot pay out twice. Rejecting the request makes the refund `REJECTED`.
+3. The provider accepts it (`SUBMITTED`), then completes it (`COMPLETED`) or refuses it (`FAILED`) by callback. The
+   status job asks about any refund still submitted after its grace, and resends an approved one whose job was lost.
+4. When the payment has been refunded in full, a policy that was never issued becomes `CANCELLED`, and the items
+   waiting for the money (`REFUND_REQUIRED`, `ISSUANCE_FAILED`, `AMOUNT_MISMATCH`, `DUPLICATE`) resolve as
+   `REFUNDED`. A partial refund resolves only the item it was proposed for and leaves the policy alone. The customer
+   is told each time (`payment.refunded`).
+
+A payment has at most one refund in progress (`PROPOSED`, `APPROVED` or `SUBMITTED`), enforced by the database, so two
+refunds can never together pass what was paid. A refund that is rejected, fails, or whose approval expires stops
+blocking a new proposal.
+
+Reason codes: `ISSUANCE_FAILED`, `INSURER_UNAVAILABLE`, `DUPLICATE_PAYMENT`, `AMOUNT_MISMATCH`, `CUSTOMER_REQUEST`,
+`OTHER`.
+
+A payment taken before batch 14 never went through a provider, so it has nothing to refund against: proposing a refund
+for one is refused with `REFUND_NOT_POSSIBLE`. Refund it outside InsurShield, then resolve its item as `REFUNDED`.
+The queue marks such payments with `refundable: false`.
+
+## The reconciliation queue
+
+`GET /api/v1/admin/reconciliation/items` lists items oldest first, filtered by `status`, `kind`, `insurerId` and
+`owner` (`me` for your own), 50 to a page with a `next` cursor. Each item shows its amount, reason, age, owner,
+insurer, policy, the payment with what has been refunded, and its refunds.
+
+- `POST .../items/:id/assign` with `staffId` (an active InsurShield administrator, or null) takes or releases it.
+- `POST .../items/:id/resolve` with an `outcome` (`REFUNDED`, `ISSUED`, `ADJUSTED`, `NO_ACTION`, `WRITTEN_OFF`) and a
+  `note` of at least 10 characters. `REFUNDED` needs a completed refund. Resolving never moves money.
+
+All of it is for InsurShield administrators only (`reconciliation:read`, `reconciliation:manage`, `refund:propose`).
+
 ## The provider port and the stand-in
 
 The port is `src/payments/provider/payment-provider.ts`: `initiate`, `status`, `cancel`, `refund` and
@@ -108,8 +150,9 @@ The stand-in decides by the last four digits of the wallet:
 
 A card payment is sent to the stand-in's checkout page at `/api/v1/dev/payment-provider/checkout/:id`, where the
 tester confirms or declines it and is sent back to `returnUrl`. In development and test,
-`POST /api/v1/dev/payment-provider/events` with `providerPaymentId` and `type` makes the stand-in send a signed
-callback through the real callback route. Every `dev` route answers as absent in production.
+`POST /api/v1/dev/payment-provider/events` with `providerPaymentId` and `type` (and `providerRefundId` for a refund
+event) makes the stand-in send a signed callback through the real callback route. Its refunds are accepted at once and
+complete when asked about, or when a `refund.completed` event is sent. Every `dev` route answers as absent in production.
 
 Callbacks are signed with HMAC SHA-256 over the timestamp and the raw body, and refused when older than five minutes.
 `PAYMENT_CALLBACK_SECRET` signs and verifies; `PAYMENT_CALLBACK_SECRET_PREVIOUS` is still accepted during a rotation.

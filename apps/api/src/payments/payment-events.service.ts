@@ -11,6 +11,7 @@ import type { Transaction } from '../db/database.module.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { eventFit, isOpenPayment, isQuoteExpired } from './domain/payment.js';
+import { RefundsService } from './refunds.service.js';
 import { PaymentsRepository, type PaymentRow } from './payments.repository.js';
 import { PAYMENT_PROVIDER, type PaymentEvent, type PaymentProvider, type StatusResult } from './provider/payment-provider.js';
 
@@ -21,6 +22,8 @@ const HOUR_MS = 60 * 60_000;
 /** What applying an event did, kept with the callback so a replay answers the same. */
 export type EventOutcome =
   | 'POLICY_CREATED'
+  | 'REFUNDED'
+  | 'REFUND_FAILED'
   | 'REFUND_REQUIRED'
   | 'AMOUNT_MISMATCH'
   | 'FAILED'
@@ -53,6 +56,7 @@ export class PaymentEventsService {
     private readonly notifications: NotificationsService,
     private readonly settings: SettingsService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
+    private readonly refunds: RefundsService,
   ) {}
 
   /**
@@ -118,10 +122,22 @@ export class PaymentEventsService {
 
   /** Applies one event to a locked payment. */
   async apply(tx: Transaction, payment: PaymentRow, event: PaymentEvent, at: Date, callbackId: string | null): Promise<EventOutcome> {
+    if (event.type === 'refund.completed' || event.type === 'refund.failed') {
+      const applied = await this.refunds.applyEvent(tx, payment, event, at);
+      if (applied !== 'UNMATCHED') return applied;
+      await this.openItem(tx, {
+        kind: 'UNMATCHED_PROVIDER_EVENT',
+        paymentId: payment.id,
+        paymentCallbackId: callbackId,
+        amountMinor: event.amountMinor,
+        insurerId: await this.insurerOf(tx, payment),
+        reason: `The provider sent ${event.type} for a refund InsurShield has no matching record of. Nothing was changed.`,
+      });
+      return 'UNMATCHED';
+    }
     const fit = eventFit(event.type, payment.status);
     if (fit === 'already-applied') return 'ALREADY_APPLIED';
     if (fit !== 'apply') {
-      // Refund events have no refund record to land on until refunds exist; either way a person looks at it.
       await this.openItem(tx, {
         kind: fit === 'unhandled' ? 'UNMATCHED_PROVIDER_EVENT' : 'STATE_CONFLICT',
         paymentId: payment.id,

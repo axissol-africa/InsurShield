@@ -153,6 +153,15 @@ export type ReconciliationStatus = (typeof RECONCILIATION_STATUSES)[number];
 export const RECONCILIATION_OUTCOMES = ['REFUNDED', 'ADJUSTED', 'ISSUED', 'NO_ACTION', 'WRITTEN_OFF'] as const;
 export type ReconciliationOutcome = (typeof RECONCILIATION_OUTCOMES)[number];
 
+/** A refund is proposed by one administrator and approved by another before any money moves. */
+export const REFUND_STATUSES = ['PROPOSED', 'APPROVED', 'SUBMITTED', 'COMPLETED', 'REJECTED', 'EXPIRED', 'FAILED'] as const;
+export type RefundStatus = (typeof REFUND_STATUSES)[number];
+/** Still able to move money; at most one per payment at a time. */
+export const OPEN_REFUND_STATUSES = ['PROPOSED', 'APPROVED', 'SUBMITTED'] as const satisfies readonly RefundStatus[];
+
+export const REFUND_REASONS = ['ISSUANCE_FAILED', 'INSURER_UNAVAILABLE', 'DUPLICATE_PAYMENT', 'AMOUNT_MISMATCH', 'CUSTOMER_REQUEST', 'OTHER'] as const;
+export type RefundReason = (typeof REFUND_REASONS)[number];
+
 export const PAYMENT_METHODS = ['MOBILE_MONEY', 'CARD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
@@ -206,6 +215,7 @@ export const APPROVAL_ACTIONS = [
   'INSURER_SUSPEND',
   'INSURER_DELETE',
   'INSURER_RESTORE',
+  'PAYMENT_REFUND',
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

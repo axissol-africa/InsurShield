@@ -15,6 +15,8 @@ export class StandInEventDto {
   @IsIn(PAYMENT_EVENT_TYPES) type!: PaymentEventType;
   /** Defaults to what the stand-in charged; set it to test a mismatch. */
   @IsOptional() @IsInt() @Min(0) amountMinor?: number;
+  /** Refund events: which refund. */
+  @IsOptional() @IsString() @MaxLength(200) providerRefundId?: string;
 }
 
 export class StandInCheckoutDto {
@@ -48,10 +50,10 @@ export class StandInPaymentController {
   @Post('events')
   @HttpCode(HttpStatus.OK)
   emit(@Body() dto: StandInEventDto) {
-    return this.send(dto.providerPaymentId, dto.type, dto.amountMinor);
+    return this.send(dto.providerPaymentId, dto.type, dto.amountMinor, dto.providerRefundId);
   }
 
-  private send(providerPaymentId: string, type: PaymentEventType, amountMinor?: number) {
+  private send(providerPaymentId: string, type: PaymentEventType, amountMinor?: number, providerRefundId?: string) {
     const standIn = this.standIn();
     const signed = standIn.sign({
       eventId: `SIE-${randomUUID()}`,
@@ -61,7 +63,8 @@ export class StandInPaymentController {
       amountMinor: amountMinor ?? standIn.chargedAmount(providerPaymentId),
       currency: 'ZMW',
       reference: type === 'payment.confirmed' ? `SIR-${providerPaymentId.slice(-12)}` : null,
-      reason: type === 'payment.failed' ? 'Declined on the stand-in checkout.' : null,
+      reason: type === 'payment.failed' ? 'Declined on the stand-in checkout.' : type === 'refund.failed' ? 'The stand-in refused the refund.' : null,
+      providerRefundId: providerRefundId ?? null,
       occurredAt: new Date(),
     });
     return this.events.receiveCallback(standIn.route, signed.rawBody, signed.headers);

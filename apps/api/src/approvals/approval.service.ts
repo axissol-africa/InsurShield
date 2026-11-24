@@ -18,35 +18,38 @@ export class ApprovalService {
   ) {}
 
   async request(input: Omit<ApprovalRequestInput, 'requestedByStaffId'>, principal: StaffPrincipal) {
+    const created = await this.approvals.transaction((tx) => this.requestIn(tx, input, principal));
+    return toApprovalResponse(created);
+  }
+
+  /** The same request, inside the caller's transaction, so the proposal it guards is written with it or not at all. */
+  async requestIn(tx: Transaction, input: Omit<ApprovalRequestInput, 'requestedByStaffId'>, principal: StaffPrincipal) {
     const requestedReason = input.requestedReason.trim();
     if (!requestedReason) {
       throw new ApiException('APPROVAL_REASON_REQUIRED', 'Explain why this high-risk action is needed.');
     }
-    const created = await this.approvals.transaction(async (tx) => {
-      const now = new Date();
-      await this.approvals.expirePending(tx, now);
-      const [existing] = await this.approvals.pendingFor(tx, input.action, input.targetType, input.targetId);
-      if (existing) {
-        throw ApiException.conflict('APPROVAL_ALREADY_PENDING', 'An approval for this action is already waiting for review.');
-      }
-      const request = await this.approvals.create(tx, {
-        ...input,
-        requestedByStaffId: principal.id,
-        requestedReason,
-        expiresAt: new Date(now.getTime() + REQUEST_TTL_MS),
-      });
-      await this.audit.write(tx, {
-        actor: auditActor(principal),
-        action: 'approval.requested',
-        entityType: 'APPROVAL_REQUEST',
-        entityId: request.id,
-        after: { action: request.action, targetType: request.targetType, targetId: request.targetId, status: request.status },
-        note: request.requestedReason,
-        correlationId: request.id,
-      });
-      return request;
+    const now = new Date();
+    await this.approvals.expirePending(tx, now);
+    const [existing] = await this.approvals.pendingFor(tx, input.action, input.targetType, input.targetId);
+    if (existing) {
+      throw ApiException.conflict('APPROVAL_ALREADY_PENDING', 'An approval for this action is already waiting for review.');
+    }
+    const request = await this.approvals.create(tx, {
+      ...input,
+      requestedByStaffId: principal.id,
+      requestedReason,
+      expiresAt: new Date(now.getTime() + REQUEST_TTL_MS),
     });
-    return toApprovalResponse(created);
+    await this.audit.write(tx, {
+      actor: auditActor(principal),
+      action: 'approval.requested',
+      entityType: 'APPROVAL_REQUEST',
+      entityId: request.id,
+      after: { action: request.action, targetType: request.targetType, targetId: request.targetId, status: request.status },
+      note: request.requestedReason,
+      correlationId: request.id,
+    });
+    return request;
   }
 
   async list() {
@@ -91,7 +94,12 @@ export class ApprovalService {
     return toApprovalResponse(approved);
   }
 
-  async reject(id: string, principal: StaffPrincipal, reason: string | undefined) {
+  async reject(
+    id: string,
+    principal: StaffPrincipal,
+    reason: string | undefined,
+    onRejected?: (tx: Transaction, request: ApprovalRequestRow) => Promise<void>,
+  ) {
     const rejected = await this.approvals.transaction(async (tx) => {
       const now = new Date();
       await this.approvals.expirePending(tx, now);
@@ -100,6 +108,7 @@ export class ApprovalService {
       this.assertPendingAndIndependent(request, principal, now);
       const result = await this.approvals.markRejected(tx, id, principal.id, reason?.trim() || null, now);
       if (!result) throw ApiException.conflict('APPROVAL_ALREADY_DECIDED', 'This approval request is no longer pending.');
+      await onRejected?.(tx, request);
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'approval.rejected',
@@ -163,6 +172,14 @@ function safeProposal(action: ApprovalRequestRow['action'], payload: Record<stri
       };
     case 'INSURER_SUSPEND':
       return { reason: typeof payload.reason === 'string' ? payload.reason : null };
+    case 'PAYMENT_REFUND':
+      return {
+        transactionId: typeof payload.transactionId === 'string' ? payload.transactionId : null,
+        amount: typeof payload.amount === 'number' ? payload.amount : null,
+        paidAmount: typeof payload.paidAmount === 'number' ? payload.paidAmount : null,
+        reasonCode: typeof payload.reasonCode === 'string' ? payload.reasonCode : null,
+        reason: typeof payload.reason === 'string' ? payload.reason : null,
+      };
     default:
       return {};
   }

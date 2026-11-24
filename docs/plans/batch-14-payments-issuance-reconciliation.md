@@ -458,8 +458,22 @@ As batch 13 did, this batch is delivered in parts on one branch, `feat/batch-14-
   - When a late policy is issued, its `ISSUANCE_OVERDUE` item is resolved as `ISSUED`, so nothing is left open.
   - The insurer API path (`POLICY_ISSUED` callback with a certificate uploaded through the API) waits for an API
     document upload route for insurers. Until then the portal is the only way to issue, as it is the standard path.
-- **Part 3**: B14.5 to B14.7 (refunds and adjustments under two-person approval, reconciliation, settlement) with the
-  admin console screens.
+- **Part 3a** (delivered): refunds under two-person approval (B14.5 items 1 to 3 and 5) and the reconciliation queue
+  (B14.6 items 1, 3 and 4), with the admin console's Reconciliation section and refund approvals in the inbox. Where
+  it differs from the plan:
+  - Migration 0040 adds `payment_refunds`, the `PAYMENT_REFUND` approval action and the `payment.refunded`
+    template. A partial unique index allows one refund in progress per payment, which is what stops two refunds
+    together passing the amount paid, also when approved at the same moment.
+  - The approved refund is sent by a job keyed by the refund (not an integration delivery), and the status job checks
+    submitted refunds and resends lost ones.
+  - A rejected approval rejects its refund through a hook on the approval service; an expired one is set `EXPIRED`
+    when the next refund is proposed for the payment.
+  - The customer's account shows a policy cancelled after a full refund as "Refunded".
+  - Found while testing in the browser: the API never started its job runner, so no background job ran in a served
+    app (status checks, refunds, emails, deliveries, sweeps), only in tests that drive the runner. `main.ts` now
+    starts it once the provider gate has passed and the port is open, and it stops on shutdown.
+- **Part 3b**: money adjustments (B14.5 item 4), provider statement import and its item kinds (B14.6 item 2), and
+  settlement (B14.7), with their admin screens and the insurer's settlement view.
 
 Until part 3 lands, every case that needs a refund opens its reconciliation item so nothing is lost, and the branch
 stays unmerged.

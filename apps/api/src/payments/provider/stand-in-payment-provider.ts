@@ -18,6 +18,7 @@ import {
 const CALLBACK_MAX_AGE_MS = 5 * 60_000;
 export const STAND_IN_TIMESTAMP_HEADER = 'x-stand-in-timestamp';
 export const STAND_IN_SIGNATURE_HEADER = 'x-stand-in-signature';
+const STAND_IN_REFUND_PREFIX = 'SIRF-';
 
 /**
  * How the stand-in behaves, chosen by the last four digits of the wallet. Any
@@ -105,8 +106,15 @@ export class StandInPaymentProvider implements PaymentProvider {
     return current.status === 'PENDING' ? { ...current, status: 'CANCELLED' } : current;
   }
 
+  /** A refund is accepted at once and completes when asked about, or when a refund event is emitted for it. */
   async refund(instruction: RefundInstruction): Promise<RefundResult> {
-    return { providerRefundId: `SIR-${instruction.refundId}`, status: 'SUBMITTED' };
+    return { providerRefundId: `${STAND_IN_REFUND_PREFIX}${instruction.refundId}`, status: 'SUBMITTED' };
+  }
+
+  async refundStatus(ref: { providerRefundId: string }) {
+    return ref.providerRefundId.startsWith(STAND_IN_REFUND_PREFIX)
+      ? { status: 'COMPLETED' as const, reason: null }
+      : { status: 'NOT_FOUND' as const, reason: null };
   }
 
   verifyCallback(rawBody: Buffer, headers: Readonly<Record<string, string | undefined>>, now = new Date()): PaymentEvent {
@@ -135,6 +143,7 @@ export class StandInPaymentProvider implements PaymentProvider {
           currency: event.currency,
           reference: event.reference,
           reason: event.reason,
+          providerRefundId: event.providerRefundId ?? null,
         },
       }),
     );
@@ -194,6 +203,7 @@ function toEvent(rawBody: Buffer): PaymentEvent {
     currency: typeof data.currency === 'string' ? data.currency.slice(0, 3) : null,
     reference: typeof data.reference === 'string' ? data.reference.slice(0, 200) : null,
     reason: typeof data.reason === 'string' ? data.reason.slice(0, 300) : null,
+    providerRefundId: typeof data.providerRefundId === 'string' ? data.providerRefundId.slice(0, 200) : null,
     occurredAt: occurred,
   };
 }

@@ -3,6 +3,8 @@ import { JobsRepository } from '../jobs/jobs.repository.js';
 import { isOpenPayment } from './domain/payment.js';
 import { PaymentEventsService } from './payment-events.service.js';
 import { PaymentsRepository } from './payments.repository.js';
+import { RefundsRepository } from './refunds.repository.js';
+import { RefundsService } from './refunds.service.js';
 import { PAYMENT_PROVIDER, type PaymentProvider } from './provider/payment-provider.js';
 
 export const PAYMENT_STATUS_CHECK = 'payments.status-check';
@@ -34,6 +36,8 @@ export class PaymentJobs {
     private readonly payments: PaymentsRepository,
     private readonly events: PaymentEventsService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
+    private readonly refundRecords: RefundsRepository,
+    private readonly refunds: RefundsService,
   ) {}
 
   async schedule(at: Date): Promise<void> {
@@ -53,7 +57,16 @@ export class PaymentJobs {
         this.logger.error(`Status check failed for payment ${id}: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     }
-    if (due.length === BATCH) await this.schedule(now);
+    // Refunds whose provider answer has not come, and approved ones whose send job was lost.
+    const refunds = await this.refundRecords.dueForProvider(new Date(now.getTime() - GRACE_MS), BATCH);
+    for (const { id } of refunds) {
+      try {
+        await this.refunds.refresh(id);
+      } catch (error) {
+        this.logger.error(`Refund check failed for refund ${id}: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+    }
+    if (due.length === BATCH || refunds.length === BATCH) await this.schedule(now);
     return due.length;
   }
 
