@@ -258,4 +258,10 @@ export const admin = {
   findCustomer: (query) => apiClient.get('/admin/customers/find', { params: { query } }),
   requestCustomerPasswordReset: (request) => apiClient.post('/admin/customers/password-reset', request),
   auditLogs: (query = {}) => apiClient.get('/admin/audit-logs', { params: query }),
+  reconciliation: {
+    list: (query = {}) => apiClient.get('/admin/reconciliation/items', { params: query }),
+    assign: (id, staffId) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/assign`, { staffId }),
+    resolve: (id, outcome, note) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/resolve`, { outcome, note }),
+    proposeRefund: (transactionId, refund) => apiClient.post(`/admin/payments/${encodeURIComponent(transactionId)}/refunds`, refund),
+  },
 };

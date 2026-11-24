@@ -1236,7 +1236,16 @@ export const integrations = {
  * It keeps prototype mode useful while HTTP mode always reads these figures
  * from the API rather than reusing persisted demo records.
  */
+/** Reconciliation needs real payments, so the browser prototype has none to show. */
+const NEEDS_API = 'Reconciliation and refunds need the InsurShield API. Run the app against it to use them.';
+
 export const admin = {
+  reconciliation: {
+    list: () => call(() => ({ items: [], next: null })),
+    assign: () => call(() => { throw new Error(NEEDS_API); }),
+    resolve: () => call(() => { throw new Error(NEEDS_API); }),
+    proposeRefund: () => call(() => { throw new Error(NEEDS_API); }),
+  },
   approvals: {
     list: () => call((s) => { approvalActor(s); return approvalRecords().map(approvalResponse); }),
     approve: (id, decision = {}) => call((s) => decideApproval(s, id, decision, true)),

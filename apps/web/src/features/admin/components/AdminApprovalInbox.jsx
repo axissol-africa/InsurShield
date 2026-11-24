@@ -10,7 +10,9 @@ const ACTIONS = {
   PIA_FLOOR_CHANGE: 'Change PIA minimum rate', INSURER_ACTIVATE: 'Activate insurer',
   INSURER_DEACTIVATE: 'Deactivate insurer', INSURER_SUSPEND: 'Suspend insurer',
   INSURER_DELETE: 'Delete insurer', INSURER_RESTORE: 'Restore insurer',
+  PAYMENT_REFUND: 'Refund a payment',
 };
+const kwacha = (value) => Number.isFinite(value) ? `ZMW ${value.toLocaleString('en-ZM', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '';
 const STATUSES = { PENDING: 'Pending review', EXECUTED: 'Approved and executed', REJECTED: 'Rejected', EXPIRED: 'Expired' };
 const text = (value) => typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 const date = (value) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : 'Not recorded';
@@ -126,6 +128,7 @@ function ApprovalCard({ record, identity, superAdmin, disabled, pending, onDecis
           {record.action === 'PIA_FLOOR_CHANGE' && Number.isFinite(proposal.piaRatePercentage) && <Fact label="Proposed minimum rate" value={`${proposal.piaRatePercentage}%`} />}
           {record.action === 'INSURER_ACTIVATE' && <><Fact label="Effective from" value={proposal.effectiveFrom} /><Fact label="Renewal date" value={proposal.renewalDate} /><Fact label="Conditions" value={proposal.conditions} /></>}
           {record.action === 'INSURER_SUSPEND' && <Fact label="Suspension reason" value={proposal.reason} />}
+          {record.action === 'PAYMENT_REFUND' && <><Fact label="Payment" value={proposal.transactionId} /><Fact label="Refund" value={kwacha(proposal.amount)} /><Fact label="Paid" value={kwacha(proposal.paidAmount)} /><Fact label="Reason" value={proposal.reason} /></>}
         </dl>
         {(record.decidedAt || record.decisionReason || record.executedAt) && <div className="border-t pt-3"><h3 className="mb-2 text-sm font-medium">Decision history</h3><dl className="grid gap-3 text-sm sm:grid-cols-2"><Fact label="Decided by" value={record.decidedByStaffId} /><Fact label="Decided at" value={date(record.decidedAt)} /><Fact label="Decision reason" value={record.decisionReason} />{record.executedAt && <Fact label="Executed at" value={date(record.executedAt)} />}</dl></div>}
         {own && record.status === 'PENDING' && <p className="text-sm text-muted-foreground">A different administrator must review your request.</p>}
