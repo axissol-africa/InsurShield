@@ -194,6 +194,11 @@ export const policies = {
       ? { ...issuance, certificateDocumentId: await uploadedDocumentId(certificateDocument, 'certificate', 'CERTIFICATE') }
       : issuance,
   ),
+  acceptIssuance: (policyNumber, insurerPolicyNumber) => apiClient.post(
+    `/insurer/policies/${policyNumber}/accept`,
+    insurerPolicyNumber ? { insurerPolicyNumber } : {},
+  ),
+  reportIssuanceFailure: (policyNumber, failure) => apiClient.post(`/insurer/policies/${policyNumber}/issuance-failure`, failure),
 };
 
 export const claims = {

@@ -1075,8 +1075,41 @@ export const policies = {
   get: (policyNumber) => call((s) => s.policies.find((p) => p.policyNumber === policyNumber) || null),
   renew: (policyNumber) => call((s) => ({ ok: s.renewFromPolicy(policyNumber) })),
   listForInsurer: () => call((s) => s.policies.filter((p) => p.insurer === insurerName())),
-  issueCertificate: (policyNumber, issuance) => call((s) => { s.issuePolicyCertificate(policyNumber, issuance); return state().policies.find((p) => p.policyNumber === policyNumber); }),
+  issueCertificate: (policyNumber, issuance) => call((s) => {
+    const policy = ownIssuingPolicy(s, policyNumber);
+    if (policy.status === 'Issuance failed') throw new Error('This policy could not be issued and is being refunded, so it cannot be issued now.');
+    s.issuePolicyCertificate(policyNumber, issuance);
+    return state().policies.find((p) => p.policyNumber === policyNumber);
+  }),
+  acceptIssuance: (policyNumber, insurerPolicyNumber) => call((s) => {
+    const policy = ownIssuingPolicy(s, policyNumber);
+    if (policy.status !== 'Awaiting insurer certificate') throw new Error('This policy is no longer waiting to be issued.');
+    const acceptedAt = policy.issuance?.acceptedAt || new Date().toISOString();
+    s.updatePolicy(policyNumber, (current) => ({
+      insurerPolicyNumber: insurerPolicyNumber || current.insurerPolicyNumber || null,
+      issuance: { ...current.issuance, acceptedAt },
+    }));
+    return { policyNumber, issuanceAcceptedAt: acceptedAt, insurerPolicyNumber: insurerPolicyNumber || policy.insurerPolicyNumber || null };
+  }),
+  reportIssuanceFailure: (policyNumber, { reasonCode, customerMessage }) => call((s) => {
+    const policy = ownIssuingPolicy(s, policyNumber);
+    if (policy.status !== 'Awaiting insurer certificate') throw new Error('This policy is no longer waiting to be issued.');
+    if (!reasonCode || (customerMessage || '').trim().length < 10) throw new Error('Tell the customer why, in at least 10 characters.');
+    const failedAt = new Date().toISOString();
+    s.updatePolicy(policyNumber, (current) => ({
+      status: 'Issuance failed',
+      issuance: { ...current.issuance, overdue: false, failedAt, failureReason: customerMessage.trim() },
+    }));
+    return { policyNumber, status: 'Issuance failed', issuanceFailedAt: failedAt, reason: customerMessage.trim() };
+  }),
 };
+
+/** The signed-in insurer's own policy, as the API scopes it. */
+function ownIssuingPolicy(s, policyNumber) {
+  const policy = s.policies.find((entry) => entry.policyNumber === policyNumber);
+  if (!policy || policy.insurer !== insurerName()) throw new Error('Policy was not found.');
+  return policy;
+}
 
 export const claims = {
   // The backend issues the claim number; in mock mode it is minted here so a

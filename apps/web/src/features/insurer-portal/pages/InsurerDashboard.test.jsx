@@ -13,7 +13,7 @@ import { TooltipProvider } from '@/components/ui/primitives/tooltip';
 vi.mock('@/api', () => ({
   api: {
     quotes: { reply: vi.fn(), extend: vi.fn() },
-    policies: { issueCertificate: vi.fn() },
+    policies: { issueCertificate: vi.fn(), acceptIssuance: vi.fn(), reportIssuanceFailure: vi.fn() },
     insurers: { update: vi.fn() },
     integrations: { listForInsurer: vi.fn().mockResolvedValue([]) },
   },
@@ -35,9 +35,10 @@ vi.mock('@/features/insurer-portal/components/QuoteRequestForm', () => ({
   ),
 }));
 vi.mock('@/features/insurer-portal/components/PolicyIssuePanel', () => ({
-  default: ({ policy, onIssued, onBack }) => (
+  default: ({ policy, onIssued, onBack, onFail }) => (
     <div>
       <p>Issue panel for {policy.policyNumber}</p>
+      <button type="button" onClick={() => onFail(policy.policyNumber, { reasonCode: 'OTHER', customerMessage: 'We cannot cover it.' }).catch(() => {})}>Fail</button>
       <input aria-label="Draft policy number" />
       <button type="button" onClick={() => onIssued(policy.policyNumber, { insurerPolicyNumber: 'PA-1' }).catch(() => {})}>Issue</button>
       <button type="button" onClick={onBack}>Leave issue</button>
@@ -84,6 +85,7 @@ beforeEach(() => {
     policies: [
       { policyNumber: 'PA-WAITING', insurer: INSURER, status: AWAITING_CERTIFICATE, receivedAt: '2026-10-11T10:00:00Z' },
       { policyNumber: 'PA-ACTIVE', insurer: INSURER, status: 'Active', receivedAt: '2026-10-09T10:00:00Z' },
+      { policyNumber: 'PA-FAILED', insurer: INSURER, status: 'Issuance failed', receivedAt: '2026-10-08T10:00:00Z', issuance: { failureReason: 'Not ours.' } },
       { policyNumber: 'PA-OTHER', insurer: 'Global Guard Insurance', status: AWAITING_CERTIFICATE, receivedAt: '2026-10-08T10:00:00Z' },
     ],
     claims: [],
@@ -171,7 +173,17 @@ describe('certificate screen', () => {
     expect(address()).toBe('/insurer?view=policies&issue=PA-WAITING');
   });
 
-  it.each(['PA-ACTIVE', 'PA-UNKNOWN', 'PA-OTHER'])('shows the paid policies list for %s, which is not this insurer’s certificate to issue', (policyNumber) => {
+  it('reports a policy as not issued and returns to paid policies, where it is listed apart', async () => {
+    const user = userEvent.setup();
+    api.policies.reportIssuanceFailure.mockResolvedValue(undefined);
+    open('/insurer?view=policies&issue=PA-WAITING');
+    await user.click(screen.getByRole('button', { name: 'Fail' }));
+    await waitFor(() => expect(address()).toBe('/insurer?view=policies'));
+    expect(api.policies.reportIssuanceFailure).toHaveBeenCalledExactlyOnceWith('PA-WAITING', { reasonCode: 'OTHER', customerMessage: 'We cannot cover it.' });
+    expect(screen.getByRole('tab', { name: /Not issued/ })).toBeVisible();
+  });
+
+  it.each(['PA-ACTIVE', 'PA-FAILED', 'PA-UNKNOWN', 'PA-OTHER'])('shows the paid policies list for %s, which is not this insurer’s certificate to issue', (policyNumber) => {
     open(`/insurer?view=policies&issue=${policyNumber}`);
     expect(screen.queryByText(/Issue panel for/)).not.toBeInTheDocument();
   });

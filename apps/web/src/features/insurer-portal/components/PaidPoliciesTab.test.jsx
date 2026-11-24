@@ -105,4 +105,17 @@ describe('PaidPoliciesTab', () => {
       expect(within(issued).getByRole('button', { name: 'View certificate' })).toBeVisible();
     });
   });
+
+  it('marks overdue policies and keeps the ones not issued apart, with the reason', async () => {
+    const late = { ...waiting, issuance: { overdue: true, dueAt: '2026-01-01T00:00:00.000Z' } };
+    const failed = { ...waiting, policyNumber: 'PA-2026-000009', status: 'Issuance failed', customerName: 'Mutale Zulu', issuance: { failureReason: 'The vehicle is already covered.' } };
+    render(<PaidPoliciesTab policies={[late, failed, active]} onIssue={vi.fn()} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('1 overdue.');
+    expect(within(screen.getByRole('table', { name: 'Policies awaiting a certificate' })).getByText('Overdue')).toBeVisible();
+    expect(screen.queryByRole('row', { name: /PA-2026-000009/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: /Not issued/ }));
+    const row = within(screen.getByRole('table', { name: 'Policies not issued' })).getByRole('row', { name: /PA-2026-000009/ });
+    expect(within(row).getByText('The vehicle is already covered.')).toBeVisible();
+  });
 });

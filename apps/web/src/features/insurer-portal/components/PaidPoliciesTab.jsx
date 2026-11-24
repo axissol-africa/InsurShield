@@ -68,10 +68,13 @@ const policyColumns = [
       <div className="min-w-28 whitespace-normal">
         <p className="font-medium tabular-nums">{formatZMW(row.original.premium || 0)}</p>
         <Detail>{lastEvent(row.original)}</Detail>
+        {row.original.issuance?.overdue && <Detail><span className="font-medium text-foreground">Overdue</span></Detail>}
       </div>
     ),
   },
 ];
+
+const ISSUANCE_FAILED = 'Issuance failed';
 
 /** One policy on a phone: the same facts as a table row, stacked, with its action full width underneath. */
 function PolicyCard({ policy, status = false, children }) {
@@ -103,7 +106,10 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
   // A customer who has paid has no cover document until the certificate is
   // uploaded, so whoever paid first is served first.
   const awaiting = policies.filter((policy) => policy.status === AWAITING_CERTIFICATE).sort(waitingLongestFirst(policyPaidAt));
-  const issued = policies.filter((policy) => policy.status !== AWAITING_CERTIFICATE);
+  const issued = policies.filter((policy) => ![AWAITING_CERTIFICATE, ISSUANCE_FAILED].includes(policy.status));
+  // Not issued: the customer is being refunded, so they are kept apart from live cover.
+  const failed = policies.filter((policy) => policy.status === ISSUANCE_FAILED);
+  const overdue = awaiting.filter((policy) => policy.issuance?.overdue);
   const [list, setList] = useWorkList('awaiting', 'issued', awaiting.length > 0);
 
   const issueAction = (policy, className) => (
@@ -127,6 +133,14 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
       id: 'issue',
       header: 'Certificate',
       cell: ({ row }) => issueAction(row.original),
+    },
+  ];
+  const failedColumns = [
+    ...policyColumns,
+    {
+      id: 'reason',
+      header: 'Why not issued',
+      cell: ({ row }) => <div className="min-w-44 max-w-72 whitespace-normal text-sm">{row.original.issuance?.failureReason || 'No reason recorded'}</div>,
     },
   ];
   const issuedColumns = [
@@ -154,7 +168,11 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
           <TabsList>
             <TabsTrigger value="awaiting">Awaiting certificate <Badge variant="secondary">{awaiting.length}</Badge></TabsTrigger>
             <TabsTrigger value="issued">Issued <Badge variant="secondary">{issued.length}</Badge></TabsTrigger>
+            {failed.length > 0 && <TabsTrigger value="failed">Not issued <Badge variant="secondary">{failed.length}</Badge></TabsTrigger>}
           </TabsList>
+          {overdue.length > 0 && list === 'awaiting' && (
+            <p role="status" className="text-sm"><span className="font-medium">{overdue.length} overdue.</span> These customers have waited longer than the issuing deadline.</p>
+          )}
           <TabsContent value="awaiting">
             <Card className="min-w-0 gap-0 py-0">
               <DataTable
@@ -165,6 +183,19 @@ export default function PaidPoliciesTab({ policies, onIssue }) {
                 pageSize={PAGE_SIZE}
                 getRowId={policyId}
                 renderCard={(policy) => <PolicyCard policy={policy}>{issueAction(policy, 'w-full')}</PolicyCard>}
+              />
+            </Card>
+          </TabsContent>
+          <TabsContent value="failed">
+            <Card className="min-w-0 gap-0 py-0">
+              <DataTable
+                columns={failedColumns}
+                data={failed}
+                label="Policies not issued"
+                emptyMessage="Every paid policy was issued."
+                pageSize={PAGE_SIZE}
+                getRowId={policyId}
+                renderCard={(policy) => <PolicyCard policy={policy} status><Detail>{policy.issuance?.failureReason}</Detail></PolicyCard>}
               />
             </Card>
           </TabsContent>

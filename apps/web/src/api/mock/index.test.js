@@ -175,6 +175,17 @@ describe('mock api adapter', () => {
     expect((await mock.policies.listMine()).map((policy) => policy.policyNumber)).toEqual(['POL-1']);
   });
 
+  it('lets the insurer accept a paid policy or report that it cannot be issued, and then not issue it', async () => {
+    useStore.getState().addPolicy({ policyNumber: 'POL-A', insurer: 'Prestige Assurance', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, status: 'Awaiting insurer certificate' });
+    useStore.getState().addPolicy({ policyNumber: 'POL-B', insurer: 'Global Guard Insurance', customerEmail: 'other@example.com', status: 'Awaiting insurer certificate' });
+    asInsurer();
+    expect(await mock.policies.acceptIssuance('POL-A', 'PA-7')).toMatchObject({ insurerPolicyNumber: 'PA-7', issuanceAcceptedAt: expect.any(String) });
+    await expect(mock.policies.acceptIssuance('POL-B')).rejects.toThrow('Policy was not found.');
+    await expect(mock.policies.reportIssuanceFailure('POL-A', { reasonCode: 'OTHER', customerMessage: 'No.' })).rejects.toThrow('at least 10');
+    expect(await mock.policies.reportIssuanceFailure('POL-A', { reasonCode: 'OTHER', customerMessage: 'We cannot cover this vehicle.' })).toMatchObject({ status: 'Issuance failed' });
+    await expect(mock.policies.issueCertificate('POL-A', { certificateDocument: { name: 'c.pdf' } })).rejects.toThrow('being refunded');
+  });
+
   it('records a claim notification and lets the insurer mark it received', async () => {
     const claim = await mock.claims.notify({ claimNumber: 'CLM-1', insurer: 'Prestige Assurance', phone: DEMO_CUSTOMER_ACCOUNT.phone });
     expect(claim.status).toBe('Notified');

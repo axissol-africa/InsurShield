@@ -65,7 +65,7 @@ export default function InsurerDashboard() {
 
   const myClaims = claims.filter((claim) => claim.insurer === insurerName);
   const myNcd = ncdApplications.filter((application) => application.insurer === insurerName);
-  const myPolicies = policies.filter((policy) => policy.insurer === insurerName && ['Active', AWAITING_CERTIFICATE].includes(policy.status)).sort(byNewest('receivedAt'));
+  const myPolicies = policies.filter((policy) => policy.insurer === insurerName && ['Active', AWAITING_CERTIFICATE, 'Issuance failed'].includes(policy.status)).sort(byNewest('receivedAt'));
   const myRequests = quoteRequests.filter((request) => request.insurers?.includes(insurerName)).sort(byNewest('submittedAt')).flatMap((request) => toPortalCases(request, insurerName));
 
   const awaitingQuote = myRequests.filter(awaitsInsurer);
@@ -149,6 +149,15 @@ export default function InsurerDashboard() {
         key={issuingPolicy.policyNumber}
         policy={issuingPolicy}
         onBack={backToSection}
+        onAccept={async (policyNumber, insurerPolicyNumber) => {
+          await thenReloadPortal(() => api.policies.acceptIssuance(policyNumber, insurerPolicyNumber));
+          toast.success('Policy accepted for issuing', { description: `The customer has been told ${policyNumber} is being issued.` });
+        }}
+        onFail={async (policyNumber, failure) => {
+          await thenReloadPortal(() => api.policies.reportIssuanceFailure(policyNumber, failure));
+          toast.success('Reported as not issued', { description: `The customer has been told, and ${policyNumber} goes to InsurShield for a refund.` });
+          navigate(sectionPath, { replace: true });
+        }}
         onIssued={async (policyNumber, issuance) => {
           await thenReloadPortal(() => api.policies.issueCertificate(policyNumber, issuance));
           toast.success('Official policy issued', {
