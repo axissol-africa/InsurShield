@@ -45,7 +45,11 @@ import {
   INSURER_STATUSES,
   NCD_STATUSES,
   PAYMENT_METHODS,
+  PAYMENT_PROVIDER_NAMES,
   PAYMENT_STATUSES,
+  RECONCILIATION_KINDS,
+  RECONCILIATION_OUTCOMES,
+  RECONCILIATION_STATUSES,
   POLICY_STATUSES,
   PRODUCT_VERSION_STATUSES,
   RULE_SETTING_KEYS,
@@ -71,6 +75,8 @@ import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/doma
 export type QuoteComponent = { code: string; label: string; amountMinor: number };
 export type QuoteAddOn = { code: string; label: string; priceMinor: number; included: boolean; terms: string | null };
 export type QuoteCondition = { code: string; text: string; purchaseCritical: boolean };
+/** One line of what a customer pays: the premium, a chosen add-on, or an approved charge. */
+export type PaymentLine = { kind: 'PREMIUM' | 'ADD_ON' | 'CHARGE'; code: string; label: string; amountMinor: number };
 
 // Physical names are the ones Prisma created; only the money and rate columns were renamed.
 
@@ -94,6 +100,10 @@ export const comparisonValueType = pgEnum('ComparisonValueType', COMPARISON_VALU
 export const comparisonDisplayRule = pgEnum('ComparisonDisplayRule', COMPARISON_DISPLAY_RULES);
 export const paymentStatus = pgEnum('PaymentStatus', PAYMENT_STATUSES);
 export const paymentMethod = pgEnum('PaymentMethod', PAYMENT_METHODS);
+export const paymentProviderName = pgEnum('PaymentProviderName', PAYMENT_PROVIDER_NAMES);
+export const reconciliationKind = pgEnum('ReconciliationKind', RECONCILIATION_KINDS);
+export const reconciliationStatus = pgEnum('ReconciliationStatus', RECONCILIATION_STATUSES);
+export const reconciliationOutcome = pgEnum('ReconciliationOutcome', RECONCILIATION_OUTCOMES);
 export const claimStatus = pgEnum('ClaimStatus', CLAIM_STATUSES);
 export const ncdStatus = pgEnum('NcdStatus', NCD_STATUSES);
 export const inspectionStatus = pgEnum('InspectionStatus', INSPECTION_STATUSES);
@@ -1251,6 +1261,8 @@ export const quoteSelections = pgTable(
     insurerQuoteId: uuid('insurerQuoteId').notNull(),
     customerId: uuid('customerId').notNull(),
     acceptedConditionCodes: text('acceptedConditionCodes').array().notNull().default(sql`'{}'::text[]`),
+    /** Optional add-ons the customer chose; included ones need no choice. */
+    selectedAddOnCodes: text('selectedAddOnCodes').array().notNull().default(sql`'{}'::text[]`),
     selectedAt: timestamptz('selectedAt').notNull(),
   },
   (t) => [
@@ -1279,12 +1291,36 @@ export const payments = pgTable(
     customerId: uuid('customerId').notNull(),
     quoteRequestId: text('quoteRequestId').notNull(),
     insurerQuoteId: uuid('insurerQuoteId').notNull(),
+    provider: paymentProviderName('provider').notNull().default('STAND_IN'),
+    /** The provider's own id, known once it accepted the instruction. */
+    providerPaymentId: varchar('providerPaymentId', { length: 200 }),
+    /** Card checkout only. Short-lived, and never written to a log or an audit entry. */
+    checkoutUrl: text('checkoutUrl'),
+    payerMsisdnMasked: varchar('payerMsisdnMasked', { length: 24 }),
+    amountBreakdown: jsonb('amountBreakdown').$type<PaymentLine[]>().notNull().default(sql`'[]'::jsonb`),
+    selectionId: uuid('selectionId'),
+    initiatedAt: timestamptz('initiatedAt'),
+    /** The price is held until then; a confirmation after it is not honoured. */
+    pendingUntil: timestamptz('pendingUntil'),
+    failureCode: varchar('failureCode', { length: 60 }),
+    reversedAt: timestamptz('reversedAt'),
+    reversalReference: varchar('reversalReference', { length: 200 }),
+    lastStatusCheckAt: timestamptz('lastStatusCheckAt'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex('payments_transactionId_key').on(t.transactionId),
     uniqueIndex('payments_idempotencyKey_key').on(t.idempotencyKey),
+    uniqueIndex('payments_provider_providerPaymentId_key').on(t.provider, t.providerPaymentId),
+    uniqueIndex('payments_quoteRequestId_open_key')
+      .on(t.quoteRequestId)
+      .where(sql`${t.status} IN ('INITIATED', 'PENDING')`),
+    uniqueIndex('payments_quoteRequestId_confirmed_key')
+      .on(t.quoteRequestId)
+      .where(sql`${t.status} = 'CONFIRMED'`),
+    index('payments_selectionId_idx').on(t.selectionId),
+    fk('payments_selectionId_fkey', [t.selectionId], [quoteSelections.id], 'set null'),
     index('payments_customerId_createdAt_idx').on(t.customerId, t.createdAt),
     index('payments_status_idx').on(t.status),
     fk('payments_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
@@ -1317,10 +1353,19 @@ export const policies = pgTable(
     paymentId: uuid('paymentId').notNull(),
     receivedAt: createdAt('receivedAt'),
     issuedAt: timestamptz('issuedAt'),
+    /** The product version quoted; null for policies from before product selection. */
+    productVersionId: uuid('productVersionId'),
+    issuanceDueAt: timestamptz('issuanceDueAt'),
+    issuanceAcceptedAt: timestamptz('issuanceAcceptedAt'),
+    issuanceFailedAt: timestamptz('issuanceFailedAt'),
+    issuanceFailureReason: text('issuanceFailureReason'),
+    cancelledAt: timestamptz('cancelledAt'),
     updatedAt: updatedAt(),
   },
   (t): PgTableExtraConfigValue[] => [
     uniqueIndex('policies_paymentId_key').on(t.paymentId),
+    index('policies_status_issuanceDueAt_idx').on(t.status, t.issuanceDueAt),
+    fk('policies_productVersionId_fkey', [t.productVersionId], [insurerProductVersions.id], 'restrict'),
     index('policies_customerId_receivedAt_idx').on(t.customerId, t.receivedAt),
     index('policies_insurerId_status_idx').on(t.insurerId, t.status),
     uniqueIndex('policies_quoteRequestId_insurerPolicyNumber_key').on(
@@ -1336,6 +1381,81 @@ export const policies = pgTable(
     fk('policies_certificateDocumentId_fkey', [t.certificateDocumentId], [documents.id], 'set null'),
     fk('policies_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
     moneyCheck('policies', t.premiumMinor),
+  ],
+);
+
+/**
+ * Each provider event once. The pair (provider, eventId) is the replay key; the
+ * envelope hash tells a true replay from the same id reused for other content.
+ * The body itself is not kept.
+ */
+export const paymentCallbacks = pgTable(
+  'payment_callbacks',
+  {
+    id: id(),
+    provider: paymentProviderName('provider').notNull(),
+    eventId: varchar('eventId', { length: 200 }).notNull(),
+    eventType: varchar('eventType', { length: 60 }).notNull(),
+    envelopeHash: varchar('envelopeHash', { length: 64 }).notNull(),
+    paymentId: uuid('paymentId'),
+    receivedAt: createdAt('receivedAt'),
+    processedAt: timestamptz('processedAt'),
+    /** What applying it did, so a replay answers the same. */
+    outcome: varchar('outcome', { length: 60 }),
+  },
+  (t) => [
+    uniqueIndex('payment_callbacks_provider_eventId_key').on(t.provider, t.eventId),
+    index('payment_callbacks_paymentId_idx').on(t.paymentId),
+    fk('payment_callbacks_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+  ],
+);
+
+/**
+ * Money that needs a person: a refund owed, an amount that did not match, a
+ * reversal, an event nobody could place. Opened by the system, closed by an
+ * InsurShield administrator; nothing here moves money by itself.
+ */
+export const reconciliationItems = pgTable(
+  'reconciliation_items',
+  {
+    id: id(),
+    kind: reconciliationKind('kind').notNull(),
+    status: reconciliationStatus('status').notNull().default('OPEN'),
+    outcome: reconciliationOutcome('outcome'),
+    paymentId: uuid('paymentId'),
+    paymentCallbackId: uuid('paymentCallbackId'),
+    policyNumber: text('policyNumber'),
+    insurerId: uuid('insurerId'),
+    amountMinor: ngwee('amountMinor'),
+    ownerStaffId: uuid('ownerStaffId'),
+    reason: text('reason').notNull(),
+    evidenceDocumentIds: uuid('evidenceDocumentIds').array().notNull().default(sql`'{}'::uuid[]`),
+    resolutionNote: text('resolutionNote'),
+    openedAt: createdAt('openedAt'),
+    resolvedAt: timestamptz('resolvedAt'),
+    resolvedByStaffId: uuid('resolvedByStaffId'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // One open item of a kind per payment: a repeated trigger finds the item already there.
+    uniqueIndex('reconciliation_items_kind_paymentId_open_key')
+      .on(t.kind, t.paymentId)
+      .where(sql`${t.paymentId} IS NOT NULL AND ${t.status} <> 'RESOLVED'`),
+    uniqueIndex('reconciliation_items_kind_paymentCallbackId_key')
+      .on(t.kind, t.paymentCallbackId)
+      .where(sql`${t.paymentCallbackId} IS NOT NULL`),
+    index('reconciliation_items_status_openedAt_idx').on(t.status, t.openedAt),
+    index('reconciliation_items_insurerId_idx').on(t.insurerId),
+    fk('reconciliation_items_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('reconciliation_items_paymentCallbackId_fkey', [t.paymentCallbackId], [paymentCallbacks.id], 'restrict'),
+    fk('reconciliation_items_policyNumber_fkey', [t.policyNumber], [policies.policyNumber], 'restrict'),
+    fk('reconciliation_items_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('reconciliation_items_ownerStaffId_fkey', [t.ownerStaffId], [staffUsers.id], 'set null'),
+    fk('reconciliation_items_resolvedByStaffId_fkey', [t.resolvedByStaffId], [staffUsers.id], 'restrict'),
+    check(
+      'reconciliation_items_resolution_check',
+      sql`(${t.status} = 'RESOLVED') = (${t.resolvedAt} IS NOT NULL AND ${t.outcome} IS NOT NULL)`,
+    ),
   ],
 );
 

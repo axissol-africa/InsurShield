@@ -256,9 +256,19 @@ export class QuoteRequestsService {
    */
   async selectQuote(customer: CustomerPrincipal, id: string, dto: SelectQuoteDto): Promise<QuoteRequestResponse> {
     const accepted = [...new Set(dto.acceptedConditionCodes ?? [])];
+    const addOnCodes = [...new Set(dto.addOnCodes ?? [])];
     return this.repository.transaction(async (tx) => {
       const request = await this.repository.lockOwned(tx, customer.id, id);
       if (!request) throw ApiException.notFound('Quote request', id);
+      // A payment under way or taken was priced from the current choice, so the choice stays as it is.
+      const purchase = await this.repository.lockedPurchase(tx, id);
+      if (purchase) {
+        throw purchase.status === 'CONFIRMED'
+          ? ApiException.conflict('ALREADY_PAID', 'This request is already paid for, so its quote can no longer change.')
+          : ApiException.conflict('PAYMENT_IN_PROGRESS', 'A payment for this request is under way. Wait for it to finish or cancel it first.', {
+              transactionId: purchase.transactionId,
+            });
+      }
       const quote = await this.repository.lockSelectableQuote(tx, id, dto.insurerQuoteId);
       if (!quote) throw ApiException.notFound('Quote', dto.insurerQuoteId);
       const now = new Date();
@@ -272,6 +282,13 @@ export class QuoteRequestsService {
       if (unknown.length > 0) {
         throw new ApiException('VALIDATION_FAILED', 'Accept only the conditions this quote lists.', HttpStatus.BAD_REQUEST, {
           acceptedConditionCodes: unknown.join(', '),
+        });
+      }
+      const optional = new Set(quote.addOns.filter((addOn) => !addOn.included).map((addOn) => addOn.code));
+      const notOffered = addOnCodes.filter((code) => !optional.has(code));
+      if (notOffered.length > 0) {
+        throw new ApiException('VALIDATION_FAILED', 'Choose only optional add-ons this quote offers.', HttpStatus.BAD_REQUEST, {
+          addOnCodes: notOffered.join(', '),
         });
       }
       const missing = unacceptedCriticalConditions(quote.conditions, accepted);
@@ -288,6 +305,7 @@ export class QuoteRequestsService {
         insurerQuoteId: quote.id,
         customerId: customer.id,
         acceptedConditionCodes: accepted,
+        selectedAddOnCodes: addOnCodes,
         selectedAt: now,
       });
       await this.audit.write(tx, {
@@ -296,7 +314,7 @@ export class QuoteRequestsService {
         entityType: 'QUOTE_REQUEST',
         entityId: id,
         before: previous ? { insurerQuoteId: previous.insurerQuoteId } : null,
-        after: { insurerQuoteId: quote.id, acceptedConditionCodes: accepted },
+        after: { insurerQuoteId: quote.id, acceptedConditionCodes: accepted, selectedAddOnCodes: addOnCodes },
         note: 'Customer chose a quote.',
         correlationId: id,
       });
@@ -703,6 +721,7 @@ export class QuoteRequestsService {
     const links = await this.repository.requoteLinksOf(ids, tx);
     const informationRequests = await this.versions.informationRequestsFor(ids, undefined, tx);
     const selections = await this.repository.selectionsOf(ids, tx);
+    const purchases = await this.repository.purchasesOf(ids, tx);
     const declineCustomerText = selectedProducts.some((selection) => selection.declineReasonCode)
       ? new Map((await this.workflow.declineReasons(new Date(), tx)).map((reason) => [reason.code, reason.customerText]))
       : new Map<string, string>();
@@ -724,6 +743,7 @@ export class QuoteRequestsService {
           informationRequests.filter((asked) => asked.quoteRequestId === row.request.id),
           declineCustomerText,
           selections.find((selected) => selected.quoteRequestId === row.request.id) ?? null,
+          purchases.find((purchase) => purchase.quoteRequestId === row.request.id) ?? null,
         ),
       );
     }

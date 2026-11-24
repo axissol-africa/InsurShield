@@ -49,6 +49,8 @@ const COVERAGE_DURATION: Record<CoverageDuration, string> = {
 const POLICY_STATUS: Record<PolicyStatus, string> = {
   AWAITING_INSURER_CERTIFICATE: 'Awaiting insurer certificate',
   ACTIVE: 'Active',
+  ISSUANCE_FAILED: 'Issuance failed',
+  CANCELLED: 'Cancelled',
 };
 
 const CLAIM_STATUS: Record<ClaimStatus, string> = {
@@ -113,6 +115,10 @@ const PAYMENT_STATUS: Record<PaymentStatus, string> = {
   PENDING: 'Pending',
   CONFIRMED: 'Confirmed',
   FAILED: 'Failed',
+  INITIATED: 'Initiated',
+  CANCELLED: 'Cancelled',
+  EXPIRED: 'Expired',
+  REVERSED: 'Reversed',
 };
 
 const PAYMENT_METHOD: Record<PaymentMethod, string> = {

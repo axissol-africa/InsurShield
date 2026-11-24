@@ -74,7 +74,7 @@ export async function startApp(options: StartOptions = {}): Promise<TestApp> {
   if (options.override) builder = options.override(builder);
   const moduleRef = await builder.compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication({ rawBody: true });
   if (options.logger) app.useLogger(options.logger);
   configureApp(app, { ...appSettings(app.get(ConfigService<Env, true>)), ...options.settings });
   await app.listen(0, '127.0.0.1');

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, ne, notInArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, notInArray, or } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimNotifications,
@@ -15,7 +15,7 @@ import {
   staffUsers,
 } from '../db/schema.js';
 import { takesNewBusinessWhere } from '../common/insurer-standing.js';
-import type { EvidenceReviewState, InsurerStatus } from '../common/domain/enums.js';
+import { OPEN_PAYMENT_STATUSES, type EvidenceReviewState, type InsurerStatus } from '../common/domain/enums.js';
 
 export type NewInsurer = Omit<typeof insurers.$inferInsert, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'status'>;
 export type InsurerChanges = Partial<NewInsurer>;
@@ -306,7 +306,14 @@ export class InsurersRepository {
         .select({ id: payments.id })
         .from(payments)
         .innerJoin(insurerQuotes, eq(insurerQuotes.id, payments.insurerQuoteId))
-        .where(and(eq(insurerQuotes.insurerId, insurerId), eq(payments.status, 'PENDING')))
+        .leftJoin(policies, eq(policies.paymentId, payments.id))
+        .where(
+          and(
+            eq(insurerQuotes.insurerId, insurerId),
+            // Money still with the provider, or taken without a policy and so still owed back.
+            or(inArray(payments.status, [...OPEN_PAYMENT_STATUSES]), and(eq(payments.status, 'CONFIRMED'), isNull(policies.policyNumber))),
+          ),
+        )
         .limit(1),
     ]);
     return [

@@ -69,6 +69,9 @@ export const RULE_SETTING_KEYS = [
   'DOCUMENT_RETENTION',
   'QUOTE_DECLINE_REASONS',
   'QUOTE_SLA_WARNING',
+  'PAYMENT_CHARGES',
+  'PAYMENT_PENDING_TIMEOUT',
+  'ISSUANCE_DEADLINE',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
@@ -109,11 +112,46 @@ export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 export const EVIDENCE_REVIEW_STATES = ['PENDING', 'APPROVED', 'REJECTED'] as const;
 export type EvidenceReviewState = (typeof EVIDENCE_REVIEW_STATES)[number];
 
-export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'] as const;
+/** Payment alone never makes a policy active (DEC-019); only the insurer's certificate does. */
+export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE', 'ISSUANCE_FAILED', 'CANCELLED'] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
 
-export const PAYMENT_STATUSES = ['PENDING', 'CONFIRMED', 'FAILED'] as const;
+/**
+ * INITIATED is written before the provider is called, PENDING once it has the
+ * instruction. Only a verified provider callback or status check moves an
+ * attempt on from there.
+ */
+export const PAYMENT_STATUSES = ['PENDING', 'CONFIRMED', 'FAILED', 'INITIATED', 'CANCELLED', 'EXPIRED', 'REVERSED'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/** The attempts still waiting on the provider. */
+export const OPEN_PAYMENT_STATUSES = ['INITIATED', 'PENDING'] as const satisfies readonly PaymentStatus[];
+
+/** Real provider names arrive with their adapters once DEC-008 names them. */
+export const PAYMENT_PROVIDER_NAMES = ['STAND_IN'] as const;
+export type PaymentProviderName = (typeof PAYMENT_PROVIDER_NAMES)[number];
+
+/** Something about money that a person has to look at and close. */
+export const RECONCILIATION_KINDS = [
+  'REFUND_REQUIRED',
+  'AMOUNT_MISMATCH',
+  'REVERSAL',
+  'UNMATCHED_PROVIDER_EVENT',
+  'STATE_CONFLICT',
+  'ISSUANCE_FAILED',
+  'ISSUANCE_OVERDUE',
+  'PENDING_TOO_LONG',
+  'STATEMENT_UNMATCHED',
+  'MISSING_FROM_STATEMENT',
+  'DUPLICATE',
+] as const;
+export type ReconciliationKind = (typeof RECONCILIATION_KINDS)[number];
+
+export const RECONCILIATION_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED'] as const;
+export type ReconciliationStatus = (typeof RECONCILIATION_STATUSES)[number];
+
+export const RECONCILIATION_OUTCOMES = ['REFUNDED', 'ADJUSTED', 'ISSUED', 'NO_ACTION', 'WRITTEN_OFF'] as const;
+export type ReconciliationOutcome = (typeof RECONCILIATION_OUTCOMES)[number];
 
 export const PAYMENT_METHODS = ['MOBILE_MONEY', 'CARD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];

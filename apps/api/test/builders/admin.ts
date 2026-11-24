@@ -54,13 +54,18 @@ export async function buildPaymentTarget(db: Db, parties: Parties = {}) {
     quoteRequestId: quoteRequest.id,
     insurerQuoteId: quote.id,
     insurerId: insurer.insurer.id,
+    staffId: insurer.staff.id,
     vehicleId: quoteRequest.vehicleId,
   };
 }
 
 export type PaymentTarget = Awaited<ReturnType<typeof buildPaymentTarget>>;
 
-/** Confirmed payments of these amounts in ngwee, all confirmed at one instant. */
+/**
+ * Confirmed payments of these amounts in ngwee, all confirmed at one instant,
+ * for the target's customer and insurer. A request is paid once at most, so
+ * each payment pays its own request.
+ */
 export async function buildConfirmedPayments(
   db: Db,
   target: PaymentTarget,
@@ -69,10 +74,16 @@ export async function buildConfirmedPayments(
 ) {
   const built: Row<typeof payments>[] = [];
   for (const amountMinor of amountsMinor) {
+    const { quoteRequest } = await buildQuoteRequest(
+      db,
+      { customerId: target.customerId, insurerIds: [target.insurerId], vehicleId: target.vehicleId },
+      { status: 'QUOTED' },
+    );
+    const { quote } = await buildInsurerQuote(db, { quoteRequestId: quoteRequest.id, insurerId: target.insurerId, staffId: target.staffId });
     built.push(
       await buildPayment(
         db,
-        { customerId: target.customerId, quoteRequestId: target.quoteRequestId, insurerQuoteId: target.insurerQuoteId },
+        { customerId: target.customerId, quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id },
         { status: 'CONFIRMED', amountMinor, confirmedAt },
       ),
     );
@@ -87,7 +98,11 @@ export async function buildSoldPolicy(
   overrides: Partial<Omit<Insert<typeof policies>, 'insurerId' | 'customerId' | 'vehicleId' | 'paymentId'>> = {},
 ) {
   const target = await buildPaymentTarget(db, parties);
-  const [payment] = await buildConfirmedPayments(db, target, [123_456], new Date());
+  const payment = await buildPayment(
+    db,
+    { customerId: target.customerId, quoteRequestId: target.quoteRequestId, insurerQuoteId: target.insurerQuoteId },
+    { status: 'CONFIRMED', amountMinor: 123_456, confirmedAt: new Date() },
+  );
   const policy = await buildPolicy(
     db,
     { insurerId: target.insurerId, customerId: target.customerId, vehicleId: target.vehicleId, paymentId: payment.id },

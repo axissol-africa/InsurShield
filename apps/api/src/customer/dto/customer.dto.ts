@@ -237,4 +237,11 @@ export class SelectQuoteDto {
   @ArrayMaxSize(20)
   @IsString({ each: true })
   acceptedConditionCodes?: string[];
+
+  /** The optional add-ons the customer wants paid for with this quote. Included ones need no choice. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  addOnCodes?: string[];
 }

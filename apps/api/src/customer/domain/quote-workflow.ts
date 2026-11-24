@@ -1,4 +1,4 @@
-import type { QuoteProductStatus } from '../../common/domain/enums.js';
+import type { PaymentStatus, PolicyStatus, QuoteProductStatus } from '../../common/domain/enums.js';
 
 /**
  * The life of one chosen product version, from the customer's submit to a
@@ -127,14 +127,42 @@ export type RequestProgress =
   | 'QUOTES_READY'
   | 'QUOTE_SELECTED'
   | 'NO_QUOTES'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  | 'PAYMENT_PENDING'
+  | 'PAYMENT_FAILED'
+  | 'PAYMENT_REVIEW'
+  | 'POLICY_ISSUING'
+  | 'POLICY_ACTIVE'
+  | 'ISSUANCE_FAILED';
+
+/** The request's latest payment attempt and the policy it led to, if any. */
+export interface Purchase {
+  paymentStatus: PaymentStatus;
+  policyStatus: PolicyStatus | null;
+}
+
+/** Once money is involved, the payment and the policy say where the request stands. */
+function purchaseProgress({ paymentStatus, policyStatus }: Purchase): RequestProgress {
+  if (policyStatus === 'ACTIVE') return 'POLICY_ACTIVE';
+  if (policyStatus === 'AWAITING_INSURER_CERTIFICATE') return 'POLICY_ISSUING';
+  if (policyStatus === 'ISSUANCE_FAILED' || policyStatus === 'CANCELLED') return 'ISSUANCE_FAILED';
+  if (paymentStatus === 'INITIATED' || paymentStatus === 'PENDING') return 'PAYMENT_PENDING';
+  // Money was taken but could not become a policy, or the provider took it back: a person looks at it.
+  if (paymentStatus === 'CONFIRMED' || paymentStatus === 'REVERSED') return 'PAYMENT_REVIEW';
+  return 'PAYMENT_FAILED';
+}
 
 /**
  * One rule, so the customer list, the comparison page and the insurer never
  * disagree about a request. Null for a request from before product selection,
  * which keeps its stored status.
  */
-export function requestProgress(statuses: readonly QuoteProductStatus[], selected: boolean): RequestProgress | null {
+export function requestProgress(
+  statuses: readonly QuoteProductStatus[],
+  selected: boolean,
+  purchase: Purchase | null = null,
+): RequestProgress | null {
+  if (purchase) return purchaseProgress(purchase);
   if (statuses.length === 0) return null;
   if (selected) return 'QUOTE_SELECTED';
   if (statuses.every((status) => status === 'CANCELLED')) return 'CANCELLED';
@@ -153,4 +181,10 @@ export const REQUEST_PROGRESS_LABELS: Record<RequestProgress, string> = {
   QUOTE_SELECTED: 'Quote chosen',
   NO_QUOTES: 'No quotes available',
   CANCELLED: 'Cancelled',
+  PAYMENT_PENDING: 'Waiting for your payment to go through',
+  PAYMENT_FAILED: 'Payment not completed',
+  PAYMENT_REVIEW: 'Payment received, being reviewed',
+  POLICY_ISSUING: 'Policy issuing',
+  POLICY_ACTIVE: 'Policy active',
+  ISSUANCE_FAILED: 'The insurer could not issue the policy',
 };

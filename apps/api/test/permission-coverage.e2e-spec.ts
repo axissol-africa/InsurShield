@@ -20,9 +20,11 @@ import { startApp, type TestApp } from './helpers.js';
 /**
  * Reached with no session at all, and so with no permission: two health probes,
  * the directory, approved product catalogue and PIA floor a visitor compares,
- * customer account-start routes, and the signed insurer callback endpoint.
+ * customer account-start routes, the signed insurer callback endpoint, the
+ * signed payment provider callback, and the stand-in provider's three
+ * development routes (absent in production, which refuses the stand-in).
  */
-const PUBLIC_ROUTES = 8;
+const PUBLIC_ROUTES = 12;
 /**
  * Served to guests too, but a signed-in caller is still held to a permission,
  * because the guard returns early only when there is no session.

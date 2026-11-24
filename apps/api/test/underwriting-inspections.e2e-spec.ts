@@ -194,6 +194,11 @@ describe('underwriting inspections', () => {
     const { customer, request, versions } = await requestNeedingInspection(insurer, [{ timing: 'BEFORE_PAYMENT', method: 'SELF_CAPTURE' }]);
     expect((await quote(insurer, request.id, versions[0].id)).status).toBe(201);
     const [sent] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, request.id));
+    await testApp.http
+      .post(`/api/v1/quote-requests/${request.id}/selection`)
+      .set(await signIn(testApp.http, customer))
+      .send({ insurerQuoteId: sent.id })
+      .expect(200);
     const paid = await testApp.http
       .post('/api/v1/payments')
       .set(await signIn(testApp.http, customer))

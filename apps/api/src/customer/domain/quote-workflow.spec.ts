@@ -120,4 +120,23 @@ describe('requestProgress', () => {
   ] as const)('%o, selected %s, is %s', (statuses, selected, expected) => {
     expect(requestProgress(statuses, selected)).toBe(expected);
   });
+
+  it.each([
+    ['PENDING', null, 'PAYMENT_PENDING'],
+    ['INITIATED', null, 'PAYMENT_PENDING'],
+    ['FAILED', null, 'PAYMENT_FAILED'],
+    ['CANCELLED', null, 'PAYMENT_FAILED'],
+    ['EXPIRED', null, 'PAYMENT_FAILED'],
+    ['CONFIRMED', null, 'PAYMENT_REVIEW'],
+    ['REVERSED', null, 'PAYMENT_REVIEW'],
+    ['CONFIRMED', 'AWAITING_INSURER_CERTIFICATE', 'POLICY_ISSUING'],
+    ['CONFIRMED', 'ACTIVE', 'POLICY_ACTIVE'],
+    ['REVERSED', 'ACTIVE', 'POLICY_ACTIVE'],
+    ['CONFIRMED', 'ISSUANCE_FAILED', 'ISSUANCE_FAILED'],
+    ['CONFIRMED', 'CANCELLED', 'ISSUANCE_FAILED'],
+  ] as const)('follows a %s payment with a %s policy: %s', (paymentStatus, policyStatus, expected) => {
+    expect(requestProgress(['QUOTED'], true, { paymentStatus, policyStatus })).toBe(expected);
+    // A request from before product selection follows its payment too.
+    expect(requestProgress([], false, { paymentStatus, policyStatus })).toBe(expected);
+  });
 });

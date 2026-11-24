@@ -30,6 +30,9 @@ export class PayDto {
   @IsIn(CONTRACT_VALUES.paymentMethod, { message: CHOOSE_A_PAYMENT_METHOD })
   method!: string;
 
-  /** Mobile-money wallet, when that is the method. */
+  /** Mobile-money wallet, when that is the method. Only its last three digits are kept. */
   @IsOptional() @IsString() @MaxLength(24) mobileNumber?: string;
+
+  /** Card only: the InsurShield page the provider's checkout sends the customer back to. */
+  @IsOptional() @IsString() @MaxLength(500) returnUrl?: string;
 }

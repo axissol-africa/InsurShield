@@ -117,6 +117,19 @@ export const envSchema = z.object({
   AUTH_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
   /** Address-based limits for public lookups, uploads and high-impact writes. */
   API_RATE_LIMIT: z.enum(['on', 'off']).default('on'),
+  /**
+   * Which payment adapter takes money. 'stand-in' simulates a provider and is
+   * refused in production by the provider gate; the live adapters arrive once
+   * DEC-008 names the providers.
+   */
+  PAYMENT_PROVIDER: z.enum(['stand-in']).default('stand-in'),
+  /**
+   * Signs and verifies the payment provider's callbacks. The previous value is
+   * still accepted while a new one is rolled out. Unset outside production, the
+   * stand-in makes one up for each start.
+   */
+  PAYMENT_CALLBACK_SECRET: z.string().min(32, 'must be at least 32 characters').optional(),
+  PAYMENT_CALLBACK_SECRET_PREVIOUS: z.string().min(32, 'must be at least 32 characters').optional(),
   /** Server-controlled RTSA fee added only to a quote that aligns to the RTSA anniversary. */
   RTSA_ANNIVERSARY_FEE_NGWEE: wholeNumber(0, Number(MAX_NGWEE)),
 

@@ -7,7 +7,8 @@ import { ProviderRegistry } from './common/providers/provider-registry.js';
 import type { Env } from './config/env.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // The raw body is kept so a payment provider's signature is checked over exactly the bytes it signed.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
   const config = app.get(ConfigService<Env, true>);
   configureApp(app, appSettings(config));
   // Closes the database pool and lets in-flight requests finish on SIGTERM,
