@@ -80,10 +80,13 @@ const QUOTE_REQUEST_KEYS = [
   'photosCapturedAt',
   'policyDates',
   'productQuotes',
+  'progress',
+  'progressLabel',
   'requotedAs',
   'requotedFromId',
   'rtsaAnniversaryFee',
   'selectedProducts',
+  'selection',
   'status',
   'submittedAt',
   'unavailableInsurers',
@@ -93,7 +96,11 @@ const QUOTE_REQUEST_KEYS = [
   'vehicleValue',
 ];
 const INSURER_QUOTE_KEYS = [
+  'addOns',
+  'components',
+  'conditions',
   'document',
+  'excess',
   'extendedAt',
   'id',
   'insurerReference',
@@ -416,6 +423,10 @@ describe('customer', () => {
             extendedAt: '2026-10-10T09:30:00.002Z',
             unavailableAt: null,
             document: await documentResponse(document),
+            components: [],
+            excess: null,
+            addOns: [],
+            conditions: [],
           },
         },
         productQuotes: [],
@@ -423,6 +434,10 @@ describe('customer', () => {
         photosCapturedAt: '2026-10-01T07:59:00.789Z',
         requotedFromId: null,
         requotedAs: again.id,
+        // A request from before product selection keeps its stored status only.
+        progress: null,
+        progressLabel: null,
+        selection: null,
       });
       expect(response.body[0]).toMatchObject({ requotedFromId: quoteRequest.id, requotedAs: null, policyDates: null });
     });

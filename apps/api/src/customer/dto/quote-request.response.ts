@@ -1,9 +1,10 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
-import type { QuoteRow, RecipientRow, RequestWithParties, SelectedProductVersionRow } from '../quote-requests.repository.js';
+import type { QuoteRow, RecipientRow, RequestWithParties, SelectedProductVersionRow, SelectionRow } from '../quote-requests.repository.js';
+import { quoteContentResponse } from '../../insurer-portal/dto/portal.response.js';
 import type { InformationRequestRow } from '../quote-products.repository.js';
-import { CUSTOMER_STATUS_LABELS } from '../domain/quote-workflow.js';
+import { CUSTOMER_STATUS_LABELS, REQUEST_PROGRESS_LABELS, requestProgress } from '../domain/quote-workflow.js';
 
 export type QuoteWithDocument = QuoteRow & { document: DocumentRecord };
 
@@ -20,6 +21,10 @@ export interface InsurerQuoteResponse {
   /** The quote remains viewable for the customer's records but cannot be paid. */
   unavailableAt: string | null;
   document: DocumentRecord;
+  components: Array<{ code: string; label: string; amount: number }>;
+  excess: number | null;
+  addOns: Array<{ code: string; label: string; price: number; included: boolean; terms: string | null }>;
+  conditions: Array<{ code: string; text: string; purchaseCritical: boolean }>;
 }
 
 /** A final reply is identified by its immutable quote id, never by insurer name. */
@@ -94,6 +99,11 @@ export interface QuoteRequestResponse {
   photosCapturedAt: string | null;
   requotedFromId: string | null;
   requotedAs: string | null;
+  /** Where the request stands across its chosen products; null for a request from before product selection. */
+  progress: string | null;
+  progressLabel: string | null;
+  /** The quote the customer has chosen, and the conditions they accepted. */
+  selection: { insurerQuoteId: string; acceptedConditionCodes: string[]; selectedAt: string } | null;
 }
 
 /**
@@ -109,6 +119,7 @@ export function toQuoteRequestResponse(
   currentRtsaAnniversaryFeeMinor: number,
   informationRequests: InformationRequestRow[] = [],
   declineCustomerText: ReadonlyMap<string, string> = new Map(),
+  selection: SelectionRow | null = null,
 ): QuoteRequestResponse {
   const insurerQuotes: Record<string, InsurerQuoteResponse> = {};
   const productQuotes: ProductQuoteResponse[] = [];
@@ -125,6 +136,7 @@ export function toQuoteRequestResponse(
       extendedAt: quote.extendedAt?.toISOString() ?? null,
       unavailableAt: quote.unpayableAt?.toISOString() ?? null,
       document: quote.document,
+      ...quoteContentResponse(quote),
     };
     // Existing browser clients still read their historical replies by insurer
     // name. New selected-product replies are intentionally separate because a
@@ -213,5 +225,18 @@ export function toQuoteRequestResponse(
     photosCapturedAt: request.photosCapturedAt?.toISOString() ?? null,
     requotedFromId: request.requotedFromId,
     requotedAs,
+    ...progressOf(selectedProducts, selection),
+    selection: selection
+      ? {
+          insurerQuoteId: selection.insurerQuoteId,
+          acceptedConditionCodes: selection.acceptedConditionCodes,
+          selectedAt: selection.selectedAt.toISOString(),
+        }
+      : null,
   };
+}
+
+function progressOf(selectedProducts: SelectedProductVersionRow[], selection: SelectionRow | null) {
+  const progress = requestProgress(selectedProducts.map((selected) => selected.status), selection !== null);
+  return { progress, progressLabel: progress ? REQUEST_PROGRESS_LABELS[progress] : null };
 }

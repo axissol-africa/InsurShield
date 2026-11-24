@@ -35,6 +35,8 @@ import {
   toReply,
 } from './dto/portal.response.js';
 import { coverTermLabel, premiumFloorMinor } from './domain/premium-floor.js';
+import { quoteContent } from './domain/quote-content.js';
+import type { CoverageDuration } from '../common/domain/enums.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { QuoteProductsRepository, type VersionRow } from '../customer/quote-products.repository.js';
 import { customerDate, QuoteWorkflowService } from '../customer/quote-workflow.service.js';
@@ -52,6 +54,7 @@ import type {
   IssueCertificateDto,
   NcdDecisionDto,
   SubmitQuoteDto,
+  WithdrawQuoteDto,
 } from './dto/portal.dto.js';
 
 /** Chooses one of `n` characters for a new NCD code; `crypto.randomInt` outside tests. */
@@ -226,33 +229,10 @@ export class InsurerPortalService {
         throw requestExpired();
       }
 
-      const minimumPremiumMinor = premiumFloorMinor(
-        delivery.vehicleValueMinor,
-        await this.pia.currentRateBps(tx),
-        delivery.coverageDuration,
+      const quote = await this.portal.insertQuote(
+        tx,
+        await this.newQuote(tx, principal, { requestId, insurerId, productVersionId, delivery, dto, premiumMinor, sentAt }),
       );
-      if (premiumMinor < minimumPremiumMinor) {
-        throw ApiException.conflict(
-          'PREMIUM_BELOW_PIA_FLOOR',
-          `The minimum PIA premium for this ${coverTermLabel(delivery.coverageDuration)} cover is ZMW ${ngweeToKwacha(minimumPremiumMinor).toFixed(2)}.`,
-        );
-      }
-
-      await this.documents.assertAttachable(tx, principal, [dto.documentId], 'QUOTATION');
-
-      const validityDays = dto.validityDays ?? delivery.quoteValidityDays;
-      const quote = await this.portal.insertQuote(tx, {
-        quoteRequestId: requestId,
-        insurerId,
-        productVersionId,
-        premiumMinor,
-        notes: dto.notes ?? null,
-        insurerReference: dto.insurerReference ?? null,
-        documentId: dto.documentId,
-        validityDays,
-        sentAt,
-        validUntil: addDays(sentAt, validityDays),
-      });
       // The request is "Quoted" as soon as one insurer replies; others may still reply afterwards.
       if (!(await this.portal.markQuoted(tx, requestId, insurerId, sentAt))) throw requestExpired();
       if (version) {
@@ -304,6 +284,144 @@ export class InsurerPortalService {
 
     this.logger.log(`Quote sent for ${requestId} by insurer ${insurerId}`);
     return reply;
+  }
+
+  /**
+   * Everything a new final quote must pass before it is stored, shared by a
+   * first quote and a replacement: the PIA floor, the content against its
+   * premium and the add-on catalogue, and the quotation document.
+   */
+  private async newQuote(
+    tx: Transaction,
+    principal: Principal,
+    input: {
+      requestId: string;
+      insurerId: string;
+      productVersionId: string | null;
+      delivery: { vehicleValueMinor: number; coverageDuration: CoverageDuration; quoteValidityDays: number };
+      dto: SubmitQuoteDto;
+      premiumMinor: number;
+      sentAt: Date;
+    },
+  ) {
+    const { delivery, dto, premiumMinor, sentAt } = input;
+    const minimumPremiumMinor = premiumFloorMinor(
+      delivery.vehicleValueMinor,
+      await this.pia.currentRateBps(tx),
+      delivery.coverageDuration,
+    );
+    if (premiumMinor < minimumPremiumMinor) {
+      throw ApiException.conflict(
+        'PREMIUM_BELOW_PIA_FLOOR',
+        `The minimum PIA premium for this ${coverTermLabel(delivery.coverageDuration)} cover is ZMW ${ngweeToKwacha(minimumPremiumMinor).toFixed(2)}.`,
+      );
+    }
+    const content = quoteContent(premiumMinor, dto, await this.workflow.addOnCatalogue(sentAt, tx));
+    if ('errors' in content) {
+      throw new ApiException('VALIDATION_FAILED', Object.values(content.errors)[0], HttpStatus.BAD_REQUEST, content.errors);
+    }
+
+    await this.documents.assertAttachable(tx, principal, [dto.documentId], 'QUOTATION');
+
+    const validityDays = dto.validityDays ?? delivery.quoteValidityDays;
+    return {
+      quoteRequestId: input.requestId,
+      insurerId: input.insurerId,
+      productVersionId: input.productVersionId,
+      premiumMinor,
+      notes: dto.notes ?? null,
+      insurerReference: dto.insurerReference ?? null,
+      documentId: dto.documentId,
+      validityDays,
+      sentAt,
+      validUntil: addDays(sentAt, validityDays),
+      ...content.value,
+    };
+  }
+
+  /**
+   * Withdraws this insurer's current quote for a chosen product. Refused once
+   * the customer has chosen it, paid for it, or it has expired: a quote the
+   * customer is acting on is never pulled from under them.
+   */
+  async withdrawQuote(principal: Principal, requestId: string, productVersionId: string, dto: WithdrawQuoteDto) {
+    const reason = dto.reason.trim();
+    return this.portal.transaction(async (tx) => {
+      const { version, insurerId } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      const at = new Date();
+      const quote = await this.changeableQuote(tx, requestId, insurerId, productVersionId, at);
+      await this.portal.withdrawQuote(tx, quote.id, reason, at);
+      const status = await this.workflow.move(tx, version, 'WITHDRAW_QUOTE', {
+        actor: auditActor(principal),
+        note: 'Insurer withdrew its quote.',
+        at,
+      });
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'insurer_quote.withdrawn',
+        entityType: 'INSURER_QUOTE',
+        entityId: quote.id,
+        after: { status: 'WITHDRAWN', reason },
+        note: 'Insurer withdrew a final quote.',
+        correlationId: requestId,
+      });
+      await this.notifications.notify(tx, {
+        customerId: version.customerId,
+        key: 'quote.withdrawn',
+        entity: { type: 'QUOTE_REQUEST', id: requestId },
+        values: { insurer: version.insurerName, product: version.productName, quoteRequestId: requestId },
+      });
+      return { productVersionId, status };
+    });
+  }
+
+  /** Replaces this insurer's current quote for a chosen product with a new one, under the same refusals as a withdrawal. */
+  async replaceQuote(principal: Principal, requestId: string, productVersionId: string, dto: SubmitQuoteDto) {
+    const premiumMinor = kwachaToNgwee(dto.premium);
+    return this.portal.transaction(async (tx) => {
+      const { version, insurerId } = await this.ownVersion(tx, principal, requestId, productVersionId);
+      const delivery = await this.portal.lockDelivery(tx, requestId, insurerId);
+      if (!delivery || delivery.cancelledAt) {
+        throw ApiException.conflict('REQUEST_UNAVAILABLE', 'This request is no longer available to quote.');
+      }
+      const sentAt = new Date();
+      const old = await this.changeableQuote(tx, requestId, insurerId, productVersionId, sentAt);
+      await this.portal.supersedeQuote(tx, old.id);
+      const quote = await this.portal.insertQuote(
+        tx,
+        await this.newQuote(tx, principal, { requestId, insurerId, productVersionId, delivery, dto, premiumMinor, sentAt }),
+      );
+      await this.portal.linkReplacement(tx, old.id, quote.id);
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'insurer_quote.replaced',
+        entityType: 'INSURER_QUOTE',
+        entityId: quote.id,
+        before: { quoteId: old.id, premiumMinor: old.premiumMinor },
+        after: { quoteId: quote.id, premiumMinor: quote.premiumMinor, validityDays: quote.validityDays },
+        note: 'Insurer replaced a final quote.',
+        correlationId: requestId,
+      });
+      await this.notifications.notify(tx, {
+        customerId: version.customerId,
+        key: 'quote.replaced',
+        entity: { type: 'QUOTE_REQUEST', id: requestId },
+        values: { insurer: version.insurerName, product: version.productName, quoteRequestId: requestId },
+      });
+      return toReply(quote, await this.documents.record(quote.documentId, tx));
+    });
+  }
+
+  private async changeableQuote(tx: Transaction, requestId: string, insurerId: string, productVersionId: string, at: Date) {
+    const quote = await this.portal.lockActiveQuote(tx, requestId, insurerId, productVersionId);
+    if (!quote) throw ApiException.conflict('NO_CURRENT_QUOTE', 'There is no current quote for this product to change.');
+    if (quote.paid) throw ApiException.conflict('ALREADY_PAID', 'The customer has paid for this quote, so it can no longer change.');
+    if (quote.selected) {
+      throw ApiException.conflict('QUOTE_SELECTED', 'The customer has chosen this quote. It can change only if they choose another.');
+    }
+    if (quote.unpayableAt) throw ApiException.conflict('QUOTE_UNAVAILABLE', 'This quote is no longer available.');
+    if (quote.validUntil <= at) throw ApiException.conflict('QUOTE_EXPIRED', 'This quote has expired and can no longer change.');
+    return quote;
   }
 
   /** Keeps an open quote available for longer. An expired quote cannot be revived. */

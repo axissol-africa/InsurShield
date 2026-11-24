@@ -59,6 +59,11 @@ export class QuoteWorkflowService {
     return this.settings.effective('QUOTE_SLA_WARNING', now, tx);
   }
 
+  /** The add-ons a quote may offer, from the catalogue in force. */
+  async addOnCatalogue(now = new Date(), tx?: Transaction) {
+    return (await this.settings.effective('ADD_ON_CATALOGUE', now, tx)).value.addOns;
+  }
+
   /** The approved decline reasons in force now. */
   async declineReasons(now = new Date(), tx?: Transaction) {
     const { value } = await this.settings.effective('QUOTE_DECLINE_REASONS', now, tx);

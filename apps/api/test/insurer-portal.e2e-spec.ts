@@ -72,7 +72,10 @@ const REQUEST_KEYS = [
   'vehicleValue',
   'whiteBook',
 ];
-const REPLY_KEYS = ['document', 'extendedAt', 'insurerReference', 'notes', 'premium', 'sentAt', 'validUntil', 'validityDays'];
+const REPLY_KEYS = [
+  'addOns', 'components', 'conditions', 'document', 'excess', 'extendedAt', 'insurerReference', 'notes', 'premium', 'sentAt',
+  'validUntil', 'validityDays',
+];
 const POLICY_KEYS = [
   'certificateDocument',
   'coverage',
@@ -356,6 +359,10 @@ describe('insurer portal', () => {
             size: document.sizeBytes,
             url: expect.stringContaining(`${FAKE_STORAGE_ORIGIN}/`),
           },
+          components: [],
+          excess: null,
+          addOns: [],
+          conditions: [],
         },
       });
       expect(sorted(older.reply)).toEqual(REPLY_KEYS);

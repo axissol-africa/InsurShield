@@ -9,6 +9,7 @@ import type { CustomerPrincipal } from './customer-principal.js';
 import {
   AnswerInformationRequestDto,
   ApplyForNcdDto,
+  SelectQuoteDto,
   NotifyClaimDto,
   SubmitQuoteRequestDto,
   ValidateNcdCodeDto,
@@ -100,6 +101,15 @@ export class CustomerController {
     @CurrentUser() principal: Principal,
   ) {
     return this.quoteRequests.answerInformationRequest(this.scope(principal), id, productVersionId, dto);
+  }
+
+  /** Chooses one quote and accepts its conditions, ready for payment. */
+  @Needs('quote-request:select')
+  @Post('quote-requests/:id/selection')
+  @HttpCode(HttpStatus.OK)
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  selectQuote(@Param('id') id: string, @Body() dto: SelectQuoteDto, @CurrentUser() principal: Principal) {
+    return this.quoteRequests.selectQuote(this.scope(principal), id, dto);
   }
 
   // ── Policies ────────────────────────────────────────────────────

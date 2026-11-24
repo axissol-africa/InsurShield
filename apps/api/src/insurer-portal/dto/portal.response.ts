@@ -3,6 +3,7 @@ import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
 import type { InsurerPortalRepository } from '../insurer-portal.repository.js';
 import type { InformationRequestRow } from '../../customer/quote-products.repository.js';
+import type { QuoteAddOn, QuoteComponent, QuoteCondition } from '../../db/schema.js';
 import { slaState } from '../../customer/domain/quote-workflow.js';
 
 /** The approved wording for a decline code, as the rule in force states it. */
@@ -35,6 +36,22 @@ export function toReply(reply: ReplyRow, document: DocumentRecord) {
     validUntil: reply.validUntil.toISOString(),
     extendedAt: iso(reply.extendedAt),
     document,
+    ...quoteContentResponse(reply),
+  };
+}
+
+/** A quote's content in kwacha, as both the insurer and the customer read it. */
+export function quoteContentResponse(quote: {
+  componentsMinor: QuoteComponent[];
+  excessMinor: number | null;
+  addOns: QuoteAddOn[];
+  conditions: QuoteCondition[];
+}) {
+  return {
+    components: quote.componentsMinor.map(({ code, label, amountMinor }) => ({ code, label, amount: ngweeToKwacha(amountMinor) })),
+    excess: quote.excessMinor === null ? null : ngweeToKwacha(quote.excessMinor),
+    addOns: quote.addOns.map(({ code, label, priceMinor, included, terms }) => ({ code, label, price: ngweeToKwacha(priceMinor), included, terms })),
+    conditions: quote.conditions.map(({ code, text, purchaseCritical }) => ({ code, text, purchaseCritical })),
   };
 }
 

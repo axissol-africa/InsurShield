@@ -226,3 +226,15 @@ export class AnswerInformationRequestDto {
   @MaxLength(4000, { message: 'Keep your answer under 4,000 characters.' })
   answer!: string;
 }
+
+export class SelectQuoteDto {
+  @IsUUID('4', { message: 'Choose the quote you want.' })
+  insurerQuoteId!: string;
+
+  /** The codes of the quote's conditions the customer accepts. Every purchase-critical one is needed to pay. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  acceptedConditionCodes?: string[];
+}

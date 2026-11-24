@@ -8,6 +8,7 @@ import type { InspectionRule, InspectionTiming, QuoteProductStatus } from '../..
  */
 export type QuoteProductEvent =
   | 'CLAIM'
+  | 'WITHDRAW_QUOTE'
   | 'REQUEST_INFORMATION'
   | 'CUSTOMER_ANSWERED'
   | 'QUOTE'
@@ -38,6 +39,8 @@ export const PAUSED_STATUSES = ['VERIFICATION_REQUIRED', 'INSPECTION_REQUIRED'] 
 const TRANSITIONS: Record<QuoteProductEvent, { from: readonly QuoteProductStatus[]; to: QuoteProductStatus }> = {
   // An officer picks the product up, by claiming it or by the first thing they do with it.
   CLAIM: { from: ['SUBMITTED'], to: 'INSURER_PROCESSING' },
+  // The insurer took its quote back without a new one; the product is theirs to work on again.
+  WITHDRAW_QUOTE: { from: ['QUOTED'], to: 'INSURER_PROCESSING' },
   REQUEST_INFORMATION: { from: ['SUBMITTED', 'INSURER_PROCESSING'], to: 'VERIFICATION_REQUIRED' },
   CUSTOMER_ANSWERED: { from: ['VERIFICATION_REQUIRED'], to: 'INSURER_PROCESSING' },
   QUOTE: { from: QUOTABLE_STATUSES, to: 'QUOTED' },
@@ -119,4 +122,40 @@ export const CUSTOMER_STATUS_LABELS: Record<QuoteProductStatus, string> = {
   EXPIRED: 'Quote expired',
   CANCELLED: 'Cancelled',
   MANUAL_REVIEW: 'Under review',
+};
+
+/** Where a whole request stands, worked out from its chosen products. */
+export type RequestProgress =
+  | 'SUBMITTED'
+  | 'INSURER_PROCESSING'
+  | 'PARTIALLY_READY'
+  | 'QUOTES_READY'
+  | 'QUOTE_SELECTED'
+  | 'NO_QUOTES'
+  | 'CANCELLED';
+
+/**
+ * One rule, so the customer list, the comparison page and the insurer never
+ * disagree about a request. Null for a request from before product selection,
+ * which keeps its stored status.
+ */
+export function requestProgress(statuses: readonly QuoteProductStatus[], selected: boolean): RequestProgress | null {
+  if (statuses.length === 0) return null;
+  if (selected) return 'QUOTE_SELECTED';
+  if (statuses.every((status) => status === 'CANCELLED')) return 'CANCELLED';
+  const quoted = statuses.some((status) => status === 'QUOTED');
+  const open = statuses.some(isOpenStatus);
+  if (quoted) return open ? 'PARTIALLY_READY' : 'QUOTES_READY';
+  if (open) return statuses.every((status) => status === 'SUBMITTED' || !isOpenStatus(status)) ? 'SUBMITTED' : 'INSURER_PROCESSING';
+  return 'NO_QUOTES';
+}
+
+export const REQUEST_PROGRESS_LABELS: Record<RequestProgress, string> = {
+  SUBMITTED: 'Sent to insurers',
+  INSURER_PROCESSING: 'Insurers are working on it',
+  PARTIALLY_READY: 'Some quotes are ready',
+  QUOTES_READY: 'Quotes are ready',
+  QUOTE_SELECTED: 'Quote chosen',
+  NO_QUOTES: 'No quotes available',
+  CANCELLED: 'Cancelled',
 };

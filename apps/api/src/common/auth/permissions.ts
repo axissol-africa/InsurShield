@@ -46,6 +46,7 @@ export const PERMISSIONS = {
   'quote-request:read': ['customer'],
   'quote-request:submit': ['customer'],
   'quote-request:answer': ['customer'],
+  'quote-request:select': ['customer'],
   'policy:read': ['customer'],
   'policy:renew': ['customer'],
   'claim:read': ['customer'],
@@ -122,6 +123,7 @@ export const PERMISSIONS = {
   'portal:quote:send': QUOTING,
   'portal:quote:extend': QUOTING,
   'portal:quote:decline': QUOTING,
+  'portal:quote:withdraw': QUOTING,
   'portal:quote:request-info': QUOTING,
   // Notes are read by whoever reads the queue, and written by whoever works it.
   'portal:note:read': READS_REQUESTS,

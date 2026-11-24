@@ -13,6 +13,7 @@ import {
   IssueCertificateDto,
   NcdDecisionDto,
   SubmitQuoteDto,
+  WithdrawQuoteDto,
 } from './dto/portal.dto.js';
 import { Needs } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
@@ -95,6 +96,30 @@ export class InsurerPortalController {
   @Get('queue')
   queue(@Query() query: QueueQueryDto, @CurrentUser() principal: Principal) {
     return this.portal.queue(principal, query);
+  }
+
+  @Needs('portal:quote:withdraw')
+  @Post('quote-requests/:id/products/:productVersionId/quote/withdraw')
+  @HttpCode(HttpStatus.OK)
+  withdrawQuote(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: WithdrawQuoteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.withdrawQuote(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:quote:withdraw')
+  @Post('quote-requests/:id/products/:productVersionId/quote/replace')
+  @HttpCode(HttpStatus.CREATED)
+  replaceQuote(
+    @Param('id') id: string,
+    @Param('productVersionId', ParseUUIDPipe) productVersionId: string,
+    @Body() dto: SubmitQuoteDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.portal.replaceQuote(principal, id, productVersionId, dto);
   }
 
   @Needs('portal:queue:claim')

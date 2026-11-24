@@ -9,6 +9,7 @@ import {
   payments,
   policies,
   quoteRequests,
+  quoteSelections,
 } from '../db/schema.js';
 import { ncdCodeIssuedTo } from '../customer/ncd-code-ownership.js';
 
@@ -97,6 +98,8 @@ export class PaymentsRepository {
         validUntil: insurerQuotes.validUntil,
         insurerReference: insurerQuotes.insurerReference,
         documentId: insurerQuotes.documentId,
+        status: insurerQuotes.status,
+        conditions: insurerQuotes.conditions,
         insurerId: insurers.id,
         insurerName: insurers.name,
       })
@@ -104,6 +107,16 @@ export class PaymentsRepository {
       .innerJoin(insurers, eq(insurers.id, insurerQuotes.insurerId))
       .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.id, insurerQuoteId)));
     return quote;
+  }
+
+  /** The conditions the customer accepted when choosing this quote, or undefined when they chose another or none. */
+  async acceptedConditions(tx: Transaction, quoteRequestId: string, insurerQuoteId: string): Promise<string[] | undefined> {
+    const [selection] = await tx
+      .select({ accepted: quoteSelections.acceptedConditionCodes })
+      .from(quoteSelections)
+      .where(and(eq(quoteSelections.quoteRequestId, quoteRequestId), eq(quoteSelections.insurerQuoteId, insurerQuoteId)))
+      .for('share');
+    return selection?.accepted;
   }
 
   /** Held shared until `tx` ends, so the insurer's standing cannot change under the write. */
@@ -119,7 +132,7 @@ export class PaymentsRepository {
   /** Locked inside the payment transaction, so a suspension mark is never checked only on a stale outer read. */
   async lockQuote(tx: Transaction, quoteRequestId: string, quoteId: string) {
     const [quote] = await tx
-      .select({ id: insurerQuotes.id, unpayableAt: insurerQuotes.unpayableAt })
+      .select({ id: insurerQuotes.id, unpayableAt: insurerQuotes.unpayableAt, status: insurerQuotes.status })
       .from(insurerQuotes)
       .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.id, quoteId)))
       .for('share');

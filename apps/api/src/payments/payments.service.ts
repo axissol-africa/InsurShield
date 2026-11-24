@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
 import { ACCOUNT_CLOSED } from '../common/auth/messages.js';
+import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../common/insurer-standing.js';
 import { fromContract, toContract } from '../common/contract.js';
@@ -102,6 +103,26 @@ export class PaymentsService {
         if (!lockedRequest) throw ApiException.notFound('Quote request', dto.quoteRequestId);
         const lockedQuote = await this.payments.lockQuote(tx, request.id, quote.id);
         if (!lockedQuote) throw ApiException.notFound('Quote', dto.insurerQuoteId);
+        if (lockedQuote.status !== 'ACTIVE') {
+          throw ApiException.conflict(
+            'QUOTE_UNAVAILABLE',
+            `${quote.insurerName} withdrew or replaced this quote. Reload your quotes and choose again.`,
+          );
+        }
+        // A condition the insurer marked as purchase-critical has to be accepted
+        // by choosing this quote before it can be paid.
+        const critical = quote.conditions.filter((condition) => condition.purchaseCritical);
+        if (critical.length > 0) {
+          const accepted = (await this.payments.acceptedConditions(tx, request.id, quote.id)) ?? [];
+          const missing = unacceptedCriticalConditions(critical, accepted);
+          if (missing.length > 0) {
+            throw ApiException.conflict(
+              'CONDITIONS_NOT_ACCEPTED',
+              'Choose this quote and accept its required conditions before paying.',
+              { missing },
+            );
+          }
+        }
         if (lockedQuote.unpayableAt) {
           throw ApiException.conflict(
             'QUOTE_UNAVAILABLE',

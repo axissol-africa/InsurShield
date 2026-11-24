@@ -1,6 +1,11 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
   IsIn,
+  Matches,
+  ValidateNested,
   IsInt,
   IsNumber,
   IsOptional,
@@ -14,6 +19,29 @@ import {
 import { CONTRACT_VALUES, fromContract, type NcdDecisionStatus } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
 import { QUOTE_PRIORITIES, type QuotePriority } from '../../common/domain/enums.js';
+
+const CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
+const CODE_MESSAGE = 'Codes are capital letters, digits and underscores, starting with a letter.';
+
+export class QuoteComponentDto {
+  @Matches(CODE, { message: CODE_MESSAGE }) code!: string;
+  @IsString() @MinLength(2) @MaxLength(120) label!: string;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(-MAX_KWACHA) @Max(MAX_KWACHA) amount!: number;
+}
+
+export class QuoteAddOnDto {
+  @Matches(CODE, { message: CODE_MESSAGE }) code!: string;
+  @IsOptional() @IsString() @MaxLength(120) label?: string;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(MAX_KWACHA) price!: number;
+  @IsBoolean() included!: boolean;
+  @IsOptional() @IsString() @MaxLength(1000) terms?: string;
+}
+
+export class QuoteConditionDto {
+  @Matches(CODE, { message: CODE_MESSAGE }) code!: string;
+  @IsString() @MinLength(2) @MaxLength(1000) text!: string;
+  @IsBoolean() purchaseCritical!: boolean;
+}
 
 export class SubmitQuoteDto {
   /** Required when this request contains customer-selected product versions. */
@@ -37,6 +65,27 @@ export class SubmitQuoteDto {
   @IsOptional() @IsString() @MaxLength(120) insurerReference?: string;
 
   @IsOptional() @IsInt() @Min(1) @Max(30) validityDays?: number;
+
+  /** How the premium is made up; when given, the lines add up to the premium. */
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => QuoteComponentDto)
+  components?: QuoteComponentDto[];
+
+  /** The excess the customer pays on a claim, in kwacha. */
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(MAX_KWACHA) excess?: number;
+
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => QuoteAddOnDto)
+  addOns?: QuoteAddOnDto[];
+
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => QuoteConditionDto)
+  conditions?: QuoteConditionDto[];
+}
+
+export class WithdrawQuoteDto {
+  /** Kept on the quote and in the audit trail. */
+  @IsString()
+  @MinLength(3, { message: 'Say why you are withdrawing this quote.' })
+  @MaxLength(1000)
+  reason!: string;
 }
 
 export class DeclineProductDto {

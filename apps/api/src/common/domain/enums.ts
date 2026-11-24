@@ -30,6 +30,13 @@ export const QUOTE_PRODUCT_STATUSES = [
 ] as const;
 export type QuoteProductStatus = (typeof QUOTE_PRODUCT_STATUSES)[number];
 
+/**
+ * A final quote stays on record whatever happens to it. Only an ACTIVE one can
+ * be chosen or paid; a withdrawn or replaced one is kept as history.
+ */
+export const QUOTE_STATUSES = ['ACTIVE', 'WITHDRAWN', 'SUPERSEDED'] as const;
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
 /** How urgently an insurer's team should work on a chosen product. */
 export const QUOTE_PRIORITIES = ['NORMAL', 'HIGH'] as const;
 export type QuotePriority = (typeof QUOTE_PRIORITIES)[number];

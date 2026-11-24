@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { QuoteWorkflowService } from '../src/customer/quote-workflow.service.js';
 import { QuoteAvailabilityService } from '../src/customer/quote-availability.service.js';
@@ -10,6 +11,8 @@ import {
   quoteInformationRequests,
   quoteRequestProductVersions,
   quoteRequests,
+  insurerQuotes,
+  platformRuleVersions,
   stateHistory,
 } from '../src/db/schema.js';
 import {
@@ -602,6 +605,170 @@ describe('the quote workflow of a chosen product', () => {
       expect(await sent(relaxed.row.id)).toEqual([]);
       expect((await versionRow(owned.row.id)).slaWarnedAt).not.toBeNull();
       expect((await versionRow(relaxed.row.id)).slaWarnedAt).toBeNull();
+    });
+  });
+
+  describe('quote content, withdrawal, replacement and the customer choice', () => {
+    const product = (request: { id: string }, productVersion: { id: string }) =>
+      `quote-requests/${request.id}/products/${productVersion.id}`;
+    const quoteWith = async (insurer: BuiltInsurer, requestId: string, productVersionId: string, extra: Record<string, unknown> = {}) =>
+      insurerPost(insurer, `quote-requests/${requestId}/quote`, {
+        productVersionId,
+        premium: 500,
+        documentId: (await buildDocument(testApp.db, { staffId: insurer.staff.id }, { kind: 'QUOTATION' })).id,
+        ...extra,
+      });
+    const asCustomer = (customer: { email: string }) => signIn(testApp.http, customer);
+    const pay = async (customer: { email: string }, requestId: string, insurerQuoteId: string) =>
+      testApp.http
+        .post('/api/v1/payments')
+        .set(await asCustomer(customer))
+        .set('Idempotency-Key', randomUUID())
+        .send({ quoteRequestId: requestId, insurerQuoteId, amount: 500, method: 'Card' });
+
+    it('checks the breakdown adds up and that add-ons are in the catalogue, then shows the content to the customer', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const { customer, request, productVersion } = await chosen(insurer);
+
+      const wrongSum = await quoteWith(insurer, request.id, productVersion.id, {
+        components: [{ code: 'BASE', label: 'Base premium', amount: 400 }],
+      });
+      expect(wrongSum.status).toBe(400);
+      expect(wrongSum.body.details).toHaveProperty('components');
+
+      const unknownAddOn = await quoteWith(insurer, request.id, productVersion.id, {
+        addOns: [{ code: 'JETPACK', price: 10, included: false }],
+      });
+      expect(unknownAddOn.status).toBe(400);
+      expect(unknownAddOn.body.details).toHaveProperty('addOns');
+
+      const sent = await quoteWith(insurer, request.id, productVersion.id, {
+        components: [
+          { code: 'BASE', label: 'Base premium', amount: 450 },
+          { code: 'LEVY', label: 'Insurance levy', amount: 50 },
+        ],
+        excess: 2500,
+        conditions: [
+          { code: 'TRACKER', text: 'Fit a tracker within 14 days.', purchaseCritical: true },
+          { code: 'GARAGE', text: 'Park in a locked garage at night.', purchaseCritical: false },
+        ],
+      });
+      expect(sent.status).toBe(201);
+      expect(sent.body).toMatchObject({ excess: 2500, components: [{ code: 'BASE', amount: 450 }, { code: 'LEVY', amount: 50 }] });
+
+      const view = await customerView(customer, request.id);
+      expect(view.body.productQuotes[0]).toMatchObject({
+        premium: 500,
+        excess: 2500,
+        conditions: [
+          { code: 'TRACKER', purchaseCritical: true },
+          { code: 'GARAGE', purchaseCritical: false },
+        ],
+      });
+      expect(view.body).toMatchObject({ progress: 'QUOTES_READY', progressLabel: 'Quotes are ready', selection: null });
+    });
+
+    it('needs the purchase-critical conditions accepted, by choosing the quote, before it can be paid', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const { customer, request, productVersion } = await chosen(insurer);
+      const sent = await quoteWith(insurer, request.id, productVersion.id, {
+        conditions: [{ code: 'TRACKER', text: 'Fit a tracker within 14 days.', purchaseCritical: true }],
+      });
+      const [quote] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, request.id));
+      expect(sent.status).toBe(201);
+
+      const unpaid = await pay(customer, request.id, quote.id);
+      expect(unpaid.body).toMatchObject({ code: 'CONDITIONS_NOT_ACCEPTED', details: { missing: ['TRACKER'] } });
+
+      const select = async (body: Record<string, unknown>) =>
+        testApp.http.post(`/api/v1/quote-requests/${request.id}/selection`).set(await asCustomer(customer)).send(body);
+      expect((await select({ insurerQuoteId: quote.id })).body.code).toBe('CONDITIONS_NOT_ACCEPTED');
+      expect((await select({ insurerQuoteId: quote.id, acceptedConditionCodes: ['TRACKER', 'MADE_UP'] })).status).toBe(400);
+      const chosenQuote = await select({ insurerQuoteId: quote.id, acceptedConditionCodes: ['TRACKER'] });
+      expect(chosenQuote.status).toBe(200);
+      expect(chosenQuote.body).toMatchObject({
+        progress: 'QUOTE_SELECTED',
+        selection: { insurerQuoteId: quote.id, acceptedConditionCodes: ['TRACKER'] },
+      });
+
+      // A chosen quote cannot be pulled from under the customer.
+      const withdraw = await insurerPost(insurer, `${product(request, productVersion)}/quote/withdraw`, { reason: 'Mistake.' });
+      expect(withdraw.body.code).toBe('QUOTE_SELECTED');
+
+      expect((await pay(customer, request.id, quote.id)).status).toBe(201);
+    });
+
+    it('withdraws a quote back to work, after which the product can be quoted again', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const { customer, request, productVersion, row } = await chosen(insurer);
+      await quoteWith(insurer, request.id, productVersion.id);
+      const [first] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, request.id));
+
+      const withdrawn = await insurerPost(insurer, `${product(request, productVersion)}/quote/withdraw`, { reason: 'Rated on the wrong use.' });
+      expect(withdrawn.status).toBe(200);
+      expect(await versionRow(row.id)).toMatchObject({ status: 'INSURER_PROCESSING' });
+      expect((await customerView(customer, request.id)).body.productQuotes).toEqual([]);
+      expect(await sentTo(customer.id, 'quote.withdrawn')).toHaveLength(2);
+      expect((await pay(customer, request.id, first.id)).body.code).toBe('QUOTE_UNAVAILABLE');
+
+      const again = await quoteWith(insurer, request.id, productVersion.id, { premium: 520 });
+      expect(again.status).toBe(201);
+      const statuses = await testApp.db
+        .select({ status: insurerQuotes.status, premiumMinor: insurerQuotes.premiumMinor, withdrawnReason: insurerQuotes.withdrawnReason })
+        .from(insurerQuotes)
+        .where(eq(insurerQuotes.quoteRequestId, request.id))
+        .orderBy(asc(insurerQuotes.sentAt));
+      expect(statuses).toEqual([
+        { status: 'WITHDRAWN', premiumMinor: 50_000, withdrawnReason: 'Rated on the wrong use.' },
+        { status: 'ACTIVE', premiumMinor: 52_000, withdrawnReason: null },
+      ]);
+    });
+
+    it('replaces a quote, keeping the old one as superseded history', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const { customer, request, productVersion, row } = await chosen(insurer);
+      await quoteWith(insurer, request.id, productVersion.id);
+
+      const replaced = await insurerPost(insurer, `${product(request, productVersion)}/quote/replace`, {
+        premium: 480,
+        excess: 1000,
+        documentId: (await buildDocument(testApp.db, { staffId: insurer.staff.id }, { kind: 'QUOTATION' })).id,
+      });
+      expect(replaced.status).toBe(201);
+      expect(replaced.body).toMatchObject({ premium: 480, excess: 1000 });
+      expect((await versionRow(row.id)).status).toBe('QUOTED');
+
+      const quotes = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, request.id));
+      const current = quotes.find((quote) => quote.status === 'ACTIVE')!;
+      const old = quotes.find((quote) => quote.status === 'SUPERSEDED')!;
+      expect(old.supersededById).toBe(current.id);
+      const view = await customerView(customer, request.id);
+      expect(view.body.productQuotes.map((quote: { id: string; premium: number }) => [quote.id, quote.premium])).toEqual([[current.id, 480]]);
+      expect(await sentTo(customer.id, 'quote.replaced')).toHaveLength(2);
+
+      const noQuote = await insurerPost(insurer, `quote-requests/${request.id}/products/${randomUUID()}/quote/withdraw`, { reason: 'No.' });
+      expect(noQuote.status).toBe(404);
+    });
+
+    it('offers only add-ons in the catalogue in force', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const { request, productVersion } = await chosen(insurer);
+      const admin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      await testApp.db.insert(platformRuleVersions).values({
+        key: 'ADD_ON_CATALOGUE',
+        versionNumber: 9_000 + Math.floor(Math.random() * 1_000),
+        state: 'CONFIRMED',
+        value: { addOns: [{ code: 'ROADSIDE', label: 'Roadside assistance' }] },
+        effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+        createdByStaffId: admin.id,
+        confirmedByStaffId: admin.id,
+        confirmedAt: new Date(),
+      });
+      const sent = await quoteWith(insurer, request.id, productVersion.id, {
+        addOns: [{ code: 'ROADSIDE', price: 0, included: true }],
+      });
+      expect(sent.status).toBe(201);
+      expect(sent.body.addOns).toEqual([{ code: 'ROADSIDE', label: 'Roadside assistance', price: 0, included: true, terms: null }]);
     });
   });
 });

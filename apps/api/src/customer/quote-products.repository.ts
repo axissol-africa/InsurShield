@@ -284,6 +284,7 @@ export class QuoteProductsRepository {
         and(
           eq(insurerQuotes.quoteRequestId, quoteRequestProductVersions.quoteRequestId),
           eq(insurerQuotes.productVersionId, quoteRequestProductVersions.productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
         ),
       )
       .where(
@@ -311,6 +312,7 @@ export class QuoteProductsRepository {
         and(
           eq(insurerQuotes.quoteRequestId, quoteRequestProductVersions.quoteRequestId),
           eq(insurerQuotes.productVersionId, quoteRequestProductVersions.productVersionId),
+          eq(insurerQuotes.status, 'ACTIVE'),
         ),
       )
       .where(and(eq(quoteRequestProductVersions.id, versionId), lte(insurerQuotes.validUntil, now), sql`NOT EXISTS (${confirmed})`));

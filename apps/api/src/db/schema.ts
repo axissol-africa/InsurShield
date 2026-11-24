@@ -55,6 +55,7 @@ import {
   QUOTE_UNAVAILABILITY_REASONS,
   QUOTE_PRODUCT_STATUSES,
   QUOTE_PRIORITIES,
+  QUOTE_STATUSES,
   QUOTE_REQUEST_MODELS,
   QUOTE_REQUEST_STATUSES,
   STAFF_ROLES,
@@ -65,12 +66,17 @@ import {
 } from '../common/domain/enums.js';
 import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/domain/money-limits.js';
 
+export type QuoteComponent = { code: string; label: string; amountMinor: number };
+export type QuoteAddOn = { code: string; label: string; priceMinor: number; included: boolean; terms: string | null };
+export type QuoteCondition = { code: string; text: string; purchaseCritical: boolean };
+
 // Physical names are the ones Prisma created; only the money and rate columns were renamed.
 
 export const quoteRequestStatus = pgEnum('QuoteRequestStatus', QUOTE_REQUEST_STATUSES);
 export const quoteRequestModel = pgEnum('QuoteRequestModel', QUOTE_REQUEST_MODELS);
 export const quoteProductStatus = pgEnum('QuoteProductStatus', QUOTE_PRODUCT_STATUSES);
 export const quotePriority = pgEnum('QuotePriority', QUOTE_PRIORITIES);
+export const quoteStatus = pgEnum('QuoteStatus', QUOTE_STATUSES);
 export const insuranceType = pgEnum('InsuranceType', INSURANCE_TYPES);
 export const coverageDuration = pgEnum('CoverageDuration', COVERAGE_DURATIONS);
 export const insurerStatus = pgEnum('InsurerStatus', INSURER_STATUSES);
@@ -1160,6 +1166,18 @@ export const insurerQuotes = pgTable(
     // otherwise historical quote as no longer payable.
     unpayableAt: timestamptz('unpayableAt'),
     unpayableReason: quoteUnavailabilityReason('unpayableReason'),
+    // Batch 13: a quote is withdrawn or replaced, never edited.
+    status: quoteStatus('status').notNull().default('ACTIVE'),
+    withdrawnAt: timestamptz('withdrawnAt'),
+    withdrawnReason: text('withdrawnReason'),
+    supersededById: uuid('supersededById'),
+    /** How the premium is made up: `{ code, label, amountMinor }`, summing to the premium when given. */
+    componentsMinor: jsonb('componentsMinor').$type<QuoteComponent[]>().notNull().default(sql`'[]'::jsonb`),
+    excessMinor: ngwee('excessMinor'),
+    /** Add-ons the insurer offers with this quote: `{ code, label, priceMinor, included, terms }`. */
+    addOns: jsonb('addOns').$type<QuoteAddOn[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Conditions of the quote. A purchase-critical one must be accepted before payment. */
+    conditions: jsonb('conditions').$type<QuoteCondition[]>().notNull().default(sql`'[]'::jsonb`),
   },
   (t) => [
     uniqueIndex('insurer_quotes_documentId_key').on(t.documentId),
@@ -1172,9 +1190,14 @@ export const insurerQuotes = pgTable(
     uniqueIndex('insurer_quotes_legacy_request_insurer_key')
       .on(t.quoteRequestId, t.insurerId)
       .where(sql`${t.productVersionId} IS NULL`),
+    // One current quote per chosen version; withdrawn and replaced ones stay as history.
     uniqueIndex('insurer_quotes_request_product_version_key')
       .on(t.quoteRequestId, t.productVersionId)
-      .where(sql`${t.productVersionId} IS NOT NULL`),
+      .where(sql`${t.productVersionId} IS NOT NULL AND ${t.status} = 'ACTIVE'`),
+    fk('insurer_quotes_supersededById_fkey', [t.supersededById], [t.id], 'set null'),
+    check('insurer_quotes_withdrawn_check', sql`(${t.status} = 'WITHDRAWN') = (${t.withdrawnAt} IS NOT NULL)`),
+    check('insurer_quotes_superseded_check', sql`${t.status} <> 'SUPERSEDED' OR ${t.supersededById} IS NOT NULL`),
+    moneyCheck('insurer_quotes', t.excessMinor),
     // An insurer may deliberately use one reference while quoting several
     // selected products.  Retain the former rule only for legacy rows.
     uniqueIndex('insurer_quotes_quoteRequestId_insurerReference_key')
@@ -1205,6 +1228,31 @@ export const inspectionShots = pgTable(
     uniqueIndex('inspection_shots_quoteRequestId_shotKey_key').on(t.quoteRequestId, t.shotKey),
     fk('inspection_shots_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
     fk('inspection_shots_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+  ],
+);
+
+/**
+ * The quote a customer has chosen for a request, with the conditions they
+ * accepted. One per request: choosing again replaces it, and the audit trail
+ * keeps the history. Payment of a quote with purchase-critical conditions
+ * needs this row to name that quote.
+ */
+export const quoteSelections = pgTable(
+  'quote_selections',
+  {
+    id: id(),
+    quoteRequestId: text('quoteRequestId').notNull(),
+    insurerQuoteId: uuid('insurerQuoteId').notNull(),
+    customerId: uuid('customerId').notNull(),
+    acceptedConditionCodes: text('acceptedConditionCodes').array().notNull().default(sql`'{}'::text[]`),
+    selectedAt: timestamptz('selectedAt').notNull(),
+  },
+  (t) => [
+    uniqueIndex('quote_selections_quoteRequestId_key').on(t.quoteRequestId),
+    index('quote_selections_insurerQuoteId_idx').on(t.insurerQuoteId),
+    fk('quote_selections_quoteRequestId_fkey', [t.quoteRequestId], [quoteRequests.id], 'cascade'),
+    fk('quote_selections_insurerQuoteId_fkey', [t.insurerQuoteId], [insurerQuotes.id], 'restrict'),
+    fk('quote_selections_customerId_fkey', [t.customerId], [customers.id], 'cascade'),
   ],
 );
 

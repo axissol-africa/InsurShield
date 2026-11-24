@@ -532,10 +532,34 @@ Where part 1 differs from the plan above, on purpose:
 - Web: owner, urgency and deadline on each queue row; All, Mine and Unassigned views; take, assign and priority
   controls on the product panel.
 
-### Part 2b: quote content and comparison
+### Part 2b: quote content, changes and the customer's choice (delivered)
 
-B13.2 items 4 and 5 (full quote content, withdraw and replace), B13.5 (selection with purchase-critical conditions,
-comparison and sorting) and the derived request status.
+- `insurer_quotes` gains `status` (`ACTIVE | WITHDRAWN | SUPERSEDED`), the withdrawal time and reason, the quote that
+  replaced it, a premium breakdown, an excess, add-ons and conditions (migration 0035). Only one quote per chosen
+  version is current; withdrawn and replaced ones stay as history and never reach the customer as offers.
+- A quote's breakdown, when given, must add up to the premium. An add-on must be in the `ADD_ON_CATALOGUE` rule in
+  force. Each condition says whether it is purchase-critical.
+- `POST .../quote/withdraw` (with a reason) takes a quote back and returns the product to `INSURER_PROCESSING`.
+  `POST .../quote/replace` stores a new quote and marks the old one superseded. Both are refused once the customer has
+  chosen or paid for the quote, or it has expired, and the customer is told either way (`quote.withdrawn`,
+  `quote.replaced`). Extending, the expiry sweep and payment only ever see the current quote.
+- `POST /quote-requests/:id/selection` records the quote the customer chooses and the conditions they accept, in the
+  new `quote_selections` table. Every purchase-critical condition must be accepted, and payment of a quote with one
+  is refused until a selection of that quote accepted it.
+- Each request response carries `progress` (`SUBMITTED, INSURER_PROCESSING, PARTIALLY_READY, QUOTES_READY,
+  QUOTE_SELECTED, NO_QUOTES, CANCELLED`), worked out from its products by one pure function, and the selection.
+- Web: the quote form takes an excess and conditions and can replace a sent quote; sent quotes can be withdrawn with a
+  reason. The customer sees the excess and conditions, ticks the required ones to choose a quote, and can sort by
+  price or excess.
+
+Where part 2b differs from the plan above:
+
+- `progress` is computed in the response, not stored, so it can never fall out of step with the products. The stored
+  request status keeps its three values for older requests.
+- Add-ons are shown with their prices, but choosing optional add-ons and paying for them waits for batch 14, which
+  owns the payment total. The premium breakdown and add-ons are taken by the API; the web form sends only the excess
+  and conditions for now.
+- Sorting is by price (the default, as disclosed) or excess, in the browser. There is no comparison endpoint yet.
 
 ### Part 3: inspections
 

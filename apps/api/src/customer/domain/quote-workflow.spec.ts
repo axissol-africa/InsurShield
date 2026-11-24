@@ -7,11 +7,13 @@ import {
   nextStatus,
   resumedReplyDueAt,
   slaState,
+  requestProgress,
   type QuoteProductEvent,
 } from './quote-workflow.js';
 
 const allowed: Record<QuoteProductEvent, Partial<Record<QuoteProductStatus, QuoteProductStatus>>> = {
   CLAIM: { SUBMITTED: 'INSURER_PROCESSING' },
+  WITHDRAW_QUOTE: { QUOTED: 'INSURER_PROCESSING' },
   REQUEST_INFORMATION: { SUBMITTED: 'VERIFICATION_REQUIRED', INSURER_PROCESSING: 'VERIFICATION_REQUIRED' },
   CUSTOMER_ANSWERED: { VERIFICATION_REQUIRED: 'INSURER_PROCESSING' },
   QUOTE: { SUBMITTED: 'QUOTED', INSURER_PROCESSING: 'QUOTED', VERIFICATION_REQUIRED: 'QUOTED' },
@@ -115,5 +117,22 @@ describe('slaState', () => {
     [{ status: 'DECLINED', replyDueAt: due(1), pausedAt: null }, null],
   ] as const)('%o is %s', (version, expected) => {
     expect(slaState(version, 24, now)).toBe(expected);
+  });
+});
+
+describe('requestProgress', () => {
+  it.each([
+    [[], false, null],
+    [['SUBMITTED', 'SUBMITTED'], false, 'SUBMITTED'],
+    [['SUBMITTED', 'DECLINED'], false, 'SUBMITTED'],
+    [['SUBMITTED', 'VERIFICATION_REQUIRED'], false, 'INSURER_PROCESSING'],
+    [['QUOTED', 'INSURER_PROCESSING'], false, 'PARTIALLY_READY'],
+    [['QUOTED', 'DECLINED'], false, 'QUOTES_READY'],
+    [['QUOTED', 'SUBMITTED'], true, 'QUOTE_SELECTED'],
+    [['DECLINED', 'TIMED_OUT'], false, 'NO_QUOTES'],
+    [['EXPIRED'], false, 'NO_QUOTES'],
+    [['CANCELLED', 'CANCELLED'], false, 'CANCELLED'],
+  ] as const)('%o, selected %s, is %s', (statuses, selected, expected) => {
+    expect(requestProgress(statuses, selected)).toBe(expected);
   });
 });
