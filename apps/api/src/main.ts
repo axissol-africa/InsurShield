@@ -5,6 +5,7 @@ import { AppModule } from './app.module.js';
 import { appSettings, configureApp } from './app.setup.js';
 import { ProviderRegistry } from './common/providers/provider-registry.js';
 import type { Env } from './config/env.js';
+import { startServing } from './serve.js';
 
 async function bootstrap() {
   // The raw body is kept so a payment provider's signature is checked over exactly the bytes it signed.
@@ -33,6 +34,7 @@ async function bootstrap() {
   const port = config.get('PORT', { infer: true });
   await app.listen(port, '0.0.0.0');
   new Logger('Bootstrap').log(`API listening on http://localhost:${port}`);
+  startServing(app);
 }
 
 await bootstrap();
