@@ -11,9 +11,11 @@ import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
 import { coverPeriod } from '@/domain/coverPeriod';
 import { canAskAbout } from '@/domain/serviceRequests';
+import { REQUEST_FILTERS, policyMatches, requestInFilter, requestMatches } from '@/domain/portfolio';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocuments';
 import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
+import PrivacyCard from '@/features/account/components/PrivacyCard';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
 import ContactPreferences from '../components/ContactPreferences';
@@ -87,7 +89,19 @@ export default function CustomerAccountPage() {
   const myPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Active');
   // Paid policies without a certificate: still being issued, or not issued and being refunded.
   const pendingPolicies = policies.filter((policy) => mine(policy) && ([AWAITING_CERTIFICATE, ISSUANCE_FAILED].includes(policy.status) || refundedAfterFailure(policy)));
-  const myRequests = quoteRequests.filter(mine).sort((first, second) => requestDate(second) - requestDate(first));
+  const allRequests = quoteRequests.filter(mine).sort((first, second) => requestDate(second) - requestDate(first));
+  // Search and filter live in the address, so a filtered list survives a reload and the back button.
+  const search = searchParams.get('q') || '';
+  const requestFilter = REQUEST_FILTERS.some((entry) => entry.id === searchParams.get('filter')) ? searchParams.get('filter') : 'all';
+  const shownPolicies = myPolicies.filter((policy) => policyMatches(policy, search));
+  const myRequests = allRequests.filter((request) => requestMatches(request, search) && requestInFilter(request, requestFilter));
+  const setListParam = (key, value) => {
+    const next = new URLSearchParams(searchParams);
+    if (value && value !== 'all') next.set(key, value);
+    else next.delete(key);
+    next.delete('page');
+    setSearchParams(next, { replace: true });
+  };
   const myClaims = claims.filter(mine);
   const requestPageCount = Math.max(1, Math.ceil(myRequests.length / QUOTE_REQUESTS_PER_PAGE));
   const requestedPage = Number.parseInt(searchParams.get('page') || '1', 10);
@@ -99,7 +113,13 @@ export default function CustomerAccountPage() {
   const displayedRequests = myRequests.slice(firstRequestIndex, firstRequestIndex + QUOTE_REQUESTS_PER_PAGE);
   const requestPages = visiblePages(requestPageCount, currentRequestPage);
 
-  const requestPageHref = (page) => page > 1 ? `/account?section=quotes&page=${page}` : '/account?section=quotes';
+  const requestPageHref = (page) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('section', 'quotes');
+    if (page > 1) next.set('page', String(page));
+    else next.delete('page');
+    return `/account?${next.toString()}`;
+  };
   const goToRequestPage = (event, page) => {
     event.preventDefault();
     if (page < 1 || page > requestPageCount || page === currentRequestPage) return;
@@ -137,7 +157,7 @@ export default function CustomerAccountPage() {
 
   const summary = [
     ['Active policies', myPolicies.length, 'verified_user'],
-    ['Quote requests', myRequests.length, 'send'],
+    ['Quote requests', allRequests.length, 'send'],
     ['Claims', myClaims.length, 'report_problem'],
   ];
 
@@ -147,7 +167,7 @@ export default function CustomerAccountPage() {
         <div className="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8">
           <AccountSidebar
             customer={customer}
-            counts={{ policies: myPolicies.length, quotes: myRequests.length, certificates: pendingPolicies.length, claims: myClaims.length }}
+            counts={{ policies: myPolicies.length, quotes: allRequests.length, certificates: pendingPolicies.length, claims: myClaims.length }}
             activeSection={activeSection}
             onNewQuote={resetJourney}
           />
@@ -204,7 +224,7 @@ export default function CustomerAccountPage() {
                     <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><FileText className="size-4" aria-hidden="true" /></span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium">Quote activity</span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">{myRequests.length ? `${myRequests.length} request${myRequests.length === 1 ? '' : 's'} to review, compare or follow up.` : 'Start a quote to compare cover from active insurers.'}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{allRequests.length ? `${allRequests.length} request${allRequests.length === 1 ? '' : 's'} to review, compare or follow up.` : 'Start a quote to compare cover from active insurers.'}</span>
                     </span>
                     <span className="text-sm font-medium text-primary">View</span>
                   </Link>
@@ -229,7 +249,7 @@ export default function CustomerAccountPage() {
                 {[
                   ['Active cover', myPolicies.length],
                   ['Certificates pending', pendingPolicies.length],
-                  ['Quote requests', myRequests.length],
+                  ['Quote requests', allRequests.length],
                   ['Claims', myClaims.length],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-xl border border-primary/15 bg-primary/[0.035] p-3">
@@ -310,10 +330,18 @@ export default function CustomerAccountPage() {
               )}
             </CardHeader>
 
-            {myPolicies.length ? (
+            {myPolicies.length > 0 && (
+              <CardContent className="border-b pt-5 pb-5">
+                <PortfolioSearch value={search} onChange={(value) => setListParam('q', value)} label="Search your policies" placeholder="Policy number, insurer, vehicle or plate" />
+              </CardContent>
+            )}
+            {myPolicies.length > 0 && shownPolicies.length === 0 && (
+              <CardContent className="pt-5"><Empty text="No policy matches that search." action={<button type="button" className="font-medium text-primary underline" onClick={() => setListParam('q', '')}>Clear the search</button>} /></CardContent>
+            )}
+            {shownPolicies.length ? (
               <CardContent className="pt-5">
               <ul className="overflow-hidden rounded-xl border border-border">
-                {myPolicies.map((policy, index) => (
+                {shownPolicies.map((policy, index) => (
                   <li key={policy.policyNumber} className={`p-4 sm:p-5 ${index === 0 ? '' : 'border-t border-border'}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -380,7 +408,7 @@ export default function CustomerAccountPage() {
                 ))}
               </ul>
               </CardContent>
-            ) : (
+            ) : myPolicies.length === 0 && (
               <CardContent><Empty text="Policies you buy through InsurShield will appear here." /></CardContent>
             )}
           </Card>}
@@ -391,6 +419,21 @@ export default function CustomerAccountPage() {
               <p className="mt-1 text-sm text-muted-foreground">Your latest requests, guide choices and insurer quotations.</p>
             </CardHeader>
 
+            {allRequests.length > 0 && (
+              <CardContent className="space-y-3 border-b pt-5 pb-5">
+                <PortfolioSearch value={search} onChange={(value) => setListParam('q', value)} label="Search your quote requests" placeholder="Request reference, insurer, product or vehicle" />
+                <div role="group" aria-label="Show requests" className="flex flex-wrap gap-2">
+                  {REQUEST_FILTERS.map((entry) => (
+                    <Button key={entry.id} type="button" size="sm" variant={requestFilter === entry.id ? 'default' : 'outline'} aria-pressed={requestFilter === entry.id} onClick={() => setListParam('filter', entry.id)}>
+                      {entry.label}
+                    </Button>
+                  ))}
+                </div>
+              </CardContent>
+            )}
+            {allRequests.length > 0 && myRequests.length === 0 && (
+              <CardContent className="pt-5"><Empty text="No request matches that search or filter." action={<button type="button" className="font-medium text-primary underline" onClick={() => setSearchParams(new URLSearchParams({ section: 'quotes' }), { replace: true })}>Show all requests</button>} /></CardContent>
+            )}
             {myRequests.length ? (
               <CardContent className="pt-5">
               <ul className="overflow-hidden rounded-xl border border-border">
@@ -448,7 +491,7 @@ export default function CustomerAccountPage() {
                 })}
               </ul>
               </CardContent>
-            ) : (
+            ) : allRequests.length === 0 && (
               <CardContent><Empty
                 text="Complete your vehicle details to compare cover guides, then request final quotes from the insurers you choose."
                 action={<Link to="/insurance-type" className="text-primary underline-offset-4 hover:underline">Start a quote</Link>}
@@ -518,6 +561,7 @@ export default function CustomerAccountPage() {
             {accountError && <CardContent className="pt-0"><p role="alert" className="text-sm text-primary">{accountError}</p></CardContent>}
           </Card>
         )}
+        {activeSection === 'overview' && !isDemoAccount && <PrivacyCard api={api} />}
           </div>
         </div>
       </div>
@@ -536,9 +580,10 @@ export default function CustomerAccountPage() {
         title="Close your account?"
         description="You will be signed out and will need to register again to use InsurShield."
         consequences={[
-          { text: 'You lose access to your quote requests and documents.' },
-          { text: 'Your policies, claims and payment records are kept for regulatory retention.', kept: true },
-          { text: 'An account holding cover in force cannot be closed until that cover ends.', kept: true },
+          { text: 'You lose access to your quote requests and documents. Download your data first if you want a copy.' },
+          { text: 'Requests still waiting for quotes end, and drafts are deleted.' },
+          { text: 'Your policies, claims and payment records are kept for regulatory retention; seven years after closing your name and contact details are removed from them.', kept: true },
+          { text: 'An account with cover in force, or a service request, payment or refund in progress, cannot be closed until it is finished.', kept: true },
         ]}
         confirmLabel="Close account"
         cancelLabel="Keep my account"
@@ -549,6 +594,34 @@ export default function CustomerAccountPage() {
   );
 }
 
+
+function PortfolioSearch({ value, onChange, label, placeholder }) {
+  // Typed text is kept here and written to the address a moment later, so typing stays smooth.
+  const [text, setText] = useState(value);
+  const [shown, setShown] = useState(value);
+  // A search cleared or changed from elsewhere (a "clear" link, the back button) replaces what is typed.
+  if (value !== shown) {
+    setShown(value);
+    setText(value);
+  }
+  useEffect(() => {
+    if (text === value) return undefined;
+    const timer = setTimeout(() => onChange(text), 250);
+    return () => clearTimeout(timer);
+  }, [text, value, onChange]);
+  return (
+    <label className="block">
+      <span className="sr-only">{label}</span>
+      <input
+        type="search"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder={placeholder}
+        className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      />
+    </label>
+  );
+}
 
 function Empty({ text, action }) {
   return (

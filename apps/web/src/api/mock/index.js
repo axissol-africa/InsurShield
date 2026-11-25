@@ -441,6 +441,16 @@ export const contactPreferences = {
 
 export const account = {
   close: () => call((s) => { s.deleteCurrentAccount(); return { ok: true }; }),
+  // The browser lane holds only what this browser saw, so that is all it can hand back.
+  exportData: () => call((s) => ({
+    exportedAt: new Date().toISOString(),
+    about: 'Everything this demonstration holds about you in this browser.',
+    profile: s.customer ? { fullName: s.customer.fullName, email: s.customer.email, phone: s.customer.phone } : null,
+    quoteRequests: mine(s.quoteRequests),
+    policies: mine(s.policies),
+    claims: mine(s.claims),
+    serviceRequests: s.serviceRequests.filter((entry) => entry.customerEmail === s.customer?.email).map(srToCustomer),
+  })),
 };
 
 /**

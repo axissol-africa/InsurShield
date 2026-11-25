@@ -23,6 +23,8 @@ export const auth = {
 
 export const account = {
   close: () => apiClient.delete('/account'),
+  /** Everything InsurShield holds about the signed-in customer, as one document. */
+  exportData: () => apiClient.get('/account/export'),
 };
 
 /**

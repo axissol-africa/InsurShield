@@ -89,3 +89,29 @@ it('tells the customer where issuing stands: delayed, or not issued and being re
   expect(screen.getByText('Refunded')).toBeInTheDocument();
   expect(screen.getByText(/your payment has been refunded in full/)).toBeInTheDocument();
 });
+
+it('searches policies and filters quote requests from the address', async () => {
+  useStore.setState({
+    quoteRequests: [
+      { id: 'QR-OPEN', customerEmail: 'mwiza@example.com', status: 'Submitted', vehicle: 'Hilux', submittedAt: '2026-11-20T10:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', insurers: ['Prestige Assurance'], insurerQuotes: {} },
+      { id: 'QR-OLD', customerEmail: 'mwiza@example.com', status: 'Expired', vehicle: 'Corolla', submittedAt: '2026-10-01T10:00:00.000Z', expiresAt: '2026-10-08T00:00:00.000Z', insurers: ['Madison General'], insurerQuotes: {} },
+    ],
+  });
+  const { unmount } = render(
+    <MemoryRouter initialEntries={['/account?section=policies&q=nothing-like-this']}>
+      <CustomerAccountPage />
+    </MemoryRouter>,
+  );
+  expect(screen.getByText('No policy matches that search.')).toBeInTheDocument();
+  unmount();
+
+  render(
+    <MemoryRouter initialEntries={['/account?section=quotes&filter=expired']}>
+      <CustomerAccountPage />
+    </MemoryRouter>,
+  );
+  expect(screen.getByText('QR-OLD')).toBeInTheDocument();
+  expect(screen.queryByText('QR-OPEN')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'All' }));
+  expect(await screen.findByText('QR-OPEN')).toBeInTheDocument();
+});
