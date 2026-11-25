@@ -166,7 +166,7 @@ with backfills for existing rows. Backup before migrating.
 11. **Settings** (batch 10 rule versions, provisional defaults, listed in the release gate): `PAYMENT_CHARGES`
     (approved fee and tax lines: code, label, basis `FIXED` or `PERCENT_OF_PREMIUM`, amount or basis points, cover
     types it applies to; default contains only the RTSA anniversary fee as today), `PAYMENT_PENDING_TIMEOUT`
-    (`{ minutes }`, default 15), `ISSUANCE_DEADLINE` (`{ hours }`, default 48), `COMMISSION_RULE`
+    (`{ minutes }`, default 15), `ISSUANCE_DEADLINE` (`{ hours }`, default 12, set by the user on 25 Nov 2026), `COMMISSION_RULE`
     (`{ basisPoints }`, default 0, provisional until DEC-008), `SETTLEMENT_PERIOD` (`{ kind: 'MONTHLY' }`).
     The RTSA anniversary fee moves from `RTSA_ANNIVERSARY_FEE_NGWEE` into `PAYMENT_CHARGES`; keep reading the
     environment variable as the fallback until the setting is confirmed, then remove it in batch 20.
@@ -421,7 +421,7 @@ migration.
 3. **Commercial model.** Does InsurShield collect the premium and settle net of commission to the insurer, or does the
    provider split at source? What is the commission and the settlement period? Default: InsurShield collects, monthly
    settlement, commission 0 bps provisional.
-4. **Pending window and issuance deadline.** Default: 15 minutes for a pending payment, 48 hours for issuance.
+4. **Pending window and issuance deadline.** Default: 15 minutes for a pending payment, 12 hours for issuance (decided 25 Nov 2026).
 5. **Finance role.** Should InsurShield have its own finance role for reconciliation and settlements, separate from
    `ADMIN`? Default: no; admins only, with two-person approval on every money movement.
 6. **Refund on issuance failure.** Always a full refund, or can an admin propose a partial one (for example to keep a

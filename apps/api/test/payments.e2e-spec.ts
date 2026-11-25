@@ -265,7 +265,7 @@ describe('payments', () => {
         certificateDocumentId: null,
       });
       expect(policy.policyStartDate).toEqual(quoteRequest.policyStartDate);
-      expect(policy.issuanceDueAt!.getTime() - policy.receivedAt.getTime()).toBe(48 * 60 * 60_000);
+      expect(policy.issuanceDueAt!.getTime() - policy.receivedAt.getTime()).toBe(12 * 60 * 60_000);
 
       const told = await testApp.db
         .select({ key: notifications.templateKey })

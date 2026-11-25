@@ -39,7 +39,7 @@ describe('issuing a paid policy', () => {
     const built = await buildPurchasedPolicy(testApp.db, { insurer });
     await testApp.db
       .update(policies)
-      .set({ issuanceDueAt: overrides.issuanceDueAt ?? new Date(Date.now() + 48 * HOUR_MS) })
+      .set({ issuanceDueAt: overrides.issuanceDueAt ?? new Date(Date.now() + 12 * HOUR_MS) })
       .where(eq(policies.policyNumber, built.policy.policyNumber));
     return built;
   }

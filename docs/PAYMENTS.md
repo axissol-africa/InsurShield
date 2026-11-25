@@ -229,7 +229,7 @@ Left unset outside production, the stand-in makes up a secret at each start.
 | --- | --- | --- |
 | `PAYMENT_CHARGES` | the RTSA anniversary fee only | Approved charges added to the premium. Until a version is approved, the fee keeps the amount in `RTSA_ANNIVERSARY_FEE_NGWEE`. |
 | `PAYMENT_PENDING_TIMEOUT` | 15 minutes | How long an attempt may stay open, and how long the price is held. |
-| `ISSUANCE_DEADLINE` | 48 hours | When a paid policy is due from the insurer. |
+| `ISSUANCE_DEADLINE` | 12 hours | When a paid policy is due from the insurer. |
 | `COMMISSION_RULE` | 0 basis points | InsurShield's commission on gross premium in a settlement. |
 | `SETTLEMENT_PERIOD` | monthly | The period a settlement covers. Only monthly for now. |
 

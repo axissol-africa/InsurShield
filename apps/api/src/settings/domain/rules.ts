@@ -192,7 +192,7 @@ const defaults = {
     ],
   },
   PAYMENT_PENDING_TIMEOUT: { minutes: 15 },
-  ISSUANCE_DEADLINE: { hours: 48 },
+  ISSUANCE_DEADLINE: { hours: 12 },
   // Provisional until DEC-008 settles the commercial model.
   COMMISSION_RULE: { basisPoints: 0 },
   SETTLEMENT_PERIOD: { kind: 'MONTHLY' },
