@@ -81,3 +81,20 @@ describe('ReconciliationQueue', () => {
     expect(await screen.findByText('Nothing here. Every payment is accounted for.')).toBeInTheDocument();
   });
 });
+
+describe('adjusting an insurer settlement from an item', () => {
+  it('proposes taking a reversed payment back from the insurer', async () => {
+    const client = api([item({ kind: 'REVERSAL', insurerId: 'insurer-1', amount: 500 })]);
+    client.admin.reconciliation.proposeAdjustment = vi.fn().mockResolvedValue({});
+    render(<ReconciliationQueue api={client} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Propose an adjustment' }));
+    const form = screen.getByRole('form', { name: 'Propose an adjustment' });
+    expect(within(form).getByLabelText('Amount (ZMW) *')).toHaveValue(-500);
+    expect(within(form).getByLabelText('Kind *')).toHaveValue('REVERSAL_RECOVERY');
+    await userEvent.type(within(form).getByLabelText('Why, for the approver *'), 'Chargeback after it was settled.');
+    await userEvent.click(within(form).getByRole('button', { name: 'Send for approval' }));
+    expect(client.admin.reconciliation.proposeAdjustment).toHaveBeenCalledWith({
+      amount: -500, kind: 'REVERSAL_RECOVERY', reason: 'Chargeback after it was settled.', insurerId: 'insurer-1', reconciliationItemId: item().id,
+    });
+  });
+});

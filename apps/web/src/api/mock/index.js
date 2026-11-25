@@ -1236,8 +1236,14 @@ export const integrations = {
  * It keeps prototype mode useful while HTTP mode always reads these figures
  * from the API rather than reusing persisted demo records.
  */
-/** Reconciliation needs real payments, so the browser prototype has none to show. */
-const NEEDS_API = 'Reconciliation and refunds need the InsurShield API. Run the app against it to use them.';
+/** Reconciliation, refunds and settlements need real payments, so the browser prototype has none to show. */
+const NEEDS_API = 'Reconciliation, refunds and settlements need the InsurShield API. Run the app against it to use them.';
+
+export const settlements = {
+  listForInsurer: () => call(() => []),
+  getForInsurer: () => call(() => { throw new Error(NEEDS_API); }),
+  exportCsv: () => call(() => { throw new Error(NEEDS_API); }),
+};
 
 export const admin = {
   reconciliation: {
@@ -1245,6 +1251,14 @@ export const admin = {
     assign: () => call(() => { throw new Error(NEEDS_API); }),
     resolve: () => call(() => { throw new Error(NEEDS_API); }),
     proposeRefund: () => call(() => { throw new Error(NEEDS_API); }),
+    proposeAdjustment: () => call(() => { throw new Error(NEEDS_API); }),
+  },
+  settlements: {
+    list: () => call(() => []),
+    draft: () => call(() => { throw new Error(NEEDS_API); }),
+    get: () => call(() => { throw new Error(NEEDS_API); }),
+    finalise: () => call(() => { throw new Error(NEEDS_API); }),
+    exportCsv: () => call(() => { throw new Error(NEEDS_API); }),
   },
   approvals: {
     list: () => call((s) => { approvalActor(s); return approvalRecords().map(approvalResponse); }),

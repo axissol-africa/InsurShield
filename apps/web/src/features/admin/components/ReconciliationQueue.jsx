@@ -169,6 +169,7 @@ function ItemCard({ item, me, api, onChanged }) {
               <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => act(() => api.admin.reconciliation.assign(item.id, me), 'The item could not be taken.')}>Take it</Button>
             )}
             {canRefund && <Button type="button" size="sm" onClick={() => setStep('refund')}>Propose a refund</Button>}
+            {item.insurerId && <Button type="button" size="sm" variant="outline" onClick={() => setStep('adjust')}>Propose an adjustment</Button>}
             <Button type="button" size="sm" variant="outline" onClick={() => setStep('resolve')}>Resolve</Button>
           </div>
         )}
@@ -179,6 +180,14 @@ function ItemCard({ item, me, api, onChanged }) {
             pending={pending}
             onCancel={() => setStep(null)}
             onSubmit={(refund) => act(() => api.admin.reconciliation.proposeRefund(item.payment.transactionId, { ...refund, reconciliationItemId: item.id }), 'The refund could not be proposed.')}
+          />
+        )}
+        {step === 'adjust' && (
+          <AdjustForm
+            item={item}
+            pending={pending}
+            onCancel={() => setStep(null)}
+            onSubmit={(adjustment) => act(() => api.admin.reconciliation.proposeAdjustment({ ...adjustment, insurerId: item.insurerId, reconciliationItemId: item.id }), 'The adjustment could not be proposed.')}
           />
         )}
         {step === 'resolve' && (
@@ -222,6 +231,47 @@ function RefundForm({ item, remaining, pending, onSubmit, onCancel }) {
       </div>
       <div className="space-y-1">
         <label htmlFor={`${id}-reason`} className="block text-xs font-medium">What happened, for the approver *</label>
+        <Textarea id={`${id}-reason`} rows={2} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} />
+      </div>
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={!ready || pending} aria-busy={pending}>Send for approval</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={pending}>Back</Button>
+      </div>
+    </form>
+  );
+}
+
+/** Money moved in the insurer's next settlement; the item resolves as adjusted once a second administrator approves it. */
+function AdjustForm({ item, pending, onSubmit, onCancel }) {
+  const id = useId();
+  const [amount, setAmount] = useState(item.amount ? String(-item.amount) : '');
+  const [kind, setKind] = useState(item.kind === 'REVERSAL' ? 'REVERSAL_RECOVERY' : 'SETTLEMENT_CORRECTION');
+  const [reason, setReason] = useState('');
+  const value = Number(amount);
+  const ready = amount !== '' && Number.isFinite(value) && value !== 0 && reason.trim().length >= 10;
+  return (
+    <form
+      aria-label="Propose an adjustment"
+      className="space-y-3 rounded-xl border border-border p-3"
+      onSubmit={(event) => { event.preventDefault(); if (ready) void onSubmit({ amount: value, kind, reason: reason.trim() }); }}
+    >
+      <p className="font-medium">Propose an adjustment to {item.insurer}</p>
+      <p className="text-muted-foreground">Negative takes money back in its next settlement; positive pays it more. A different administrator approves it.</p>
+      <div className="space-y-1">
+        <label htmlFor={`${id}-amount`} className="block text-xs font-medium">Amount (ZMW) *</label>
+        <Input id={`${id}-amount`} type="number" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className="sm:max-w-48" />
+      </div>
+      <div className="space-y-1">
+        <label htmlFor={`${id}-kind`} className="block text-xs font-medium">Kind *</label>
+        <NativeSelect id={`${id}-kind`} value={kind} onChange={(event) => setKind(event.target.value)} className="w-full">
+          <option value="SETTLEMENT_CORRECTION">Correct an earlier settlement</option>
+          <option value="REVERSAL_RECOVERY">Recover a reversed payment</option>
+          <option value="FEE_CORRECTION">Correct a charge</option>
+          <option value="OTHER">Another reason</option>
+        </NativeSelect>
+      </div>
+      <div className="space-y-1">
+        <label htmlFor={`${id}-reason`} className="block text-xs font-medium">Why, for the approver *</label>
         <Textarea id={`${id}-reason`} rows={2} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} />
       </div>
       <div className="flex gap-2">

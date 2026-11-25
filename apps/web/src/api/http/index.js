@@ -263,5 +263,20 @@ export const admin = {
     assign: (id, staffId) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/assign`, { staffId }),
     resolve: (id, outcome, note) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/resolve`, { outcome, note }),
     proposeRefund: (transactionId, refund) => apiClient.post(`/admin/payments/${encodeURIComponent(transactionId)}/refunds`, refund),
+    proposeAdjustment: (adjustment) => apiClient.post('/admin/money-adjustments', adjustment),
   },
+  settlements: {
+    list: (insurerId) => apiClient.get('/admin/settlements', { params: insurerId ? { insurerId } : {} }),
+    draft: (insurerId, period) => apiClient.post('/admin/settlements', { insurerId, period }),
+    get: (id) => apiClient.get(`/admin/settlements/${encodeURIComponent(id)}`),
+    finalise: (id, reason) => apiClient.post(`/admin/settlements/${encodeURIComponent(id)}/finalise`, { reason }),
+    exportCsv: (id) => apiClient.get(`/admin/settlements/${encodeURIComponent(id)}/export`, { responseType: 'text' }),
+  },
+};
+
+/** What an insurer is paid: its own finalised settlements. */
+export const settlements = {
+  listForInsurer: () => apiClient.get('/insurer/settlements'),
+  getForInsurer: (id) => apiClient.get(`/insurer/settlements/${encodeURIComponent(id)}`),
+  exportCsv: (id) => apiClient.get(`/insurer/settlements/${encodeURIComponent(id)}/export`, { responseType: 'text' }),
 };
