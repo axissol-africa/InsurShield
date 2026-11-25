@@ -4,6 +4,8 @@ import type { Principal } from '../common/auth/auth.types.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
+  serviceRequestUpdates,
+  serviceRequests,
   claimNotifications,
   documents,
   inspectionPhotos,
@@ -19,6 +21,9 @@ export type NewDocument = typeof documents.$inferInsert;
 export type DocumentRow = typeof documents.$inferSelect;
 
 const ONE = { one: sql`1` };
+
+/** The document is attached to an entry on a service request. */
+const onServiceRequest = (): SQL => sql`${documents.id} = ANY(${serviceRequestUpdates.documentIds})`;
 
 @Injectable()
 export class DocumentsRepository {
@@ -98,6 +103,7 @@ export class DocumentsRepository {
             exists(tx.select(ONE).from(quoteRequests).where(eq(quoteRequests.whiteBookDocumentId, documents.id))),
             exists(tx.select(ONE).from(inspectionPhotos).where(eq(inspectionPhotos.documentId, documents.id))),
             exists(tx.select(ONE).from(claimAttachments).where(eq(claimAttachments.documentId, documents.id))),
+            exists(tx.select(ONE).from(serviceRequestUpdates).where(onServiceRequest())),
           ),
         ),
       );
@@ -164,6 +170,14 @@ export class DocumentsRepository {
           .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
           .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.customerId, customerId))),
       ),
+      // What the insurer sent the customer on their request; an internal attachment stays the insurer's.
+      exists(
+        db
+          .select(ONE)
+          .from(serviceRequestUpdates)
+          .innerJoin(serviceRequests, eq(serviceRequests.reference, serviceRequestUpdates.reference))
+          .where(and(onServiceRequest(), eq(serviceRequestUpdates.visibleToCustomer, true), eq(serviceRequests.customerId, customerId))),
+      ),
     ];
   }
 
@@ -221,6 +235,13 @@ export class DocumentsRepository {
           .from(inspectionPhotos)
           .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
           .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.insurerId, insurerId))),
+      ),
+      exists(
+        db
+          .select(ONE)
+          .from(serviceRequestUpdates)
+          .innerJoin(serviceRequests, eq(serviceRequests.reference, serviceRequestUpdates.reference))
+          .where(and(onServiceRequest(), eq(serviceRequests.insurerId, insurerId))),
       ),
     ];
   }

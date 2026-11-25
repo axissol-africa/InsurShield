@@ -134,6 +134,32 @@ export const OPEN_PAYMENT_STATUSES = ['INITIATED', 'PENDING'] as const satisfies
 export const PAYMENT_PROVIDER_NAMES = ['STAND_IN'] as const;
 export type PaymentProviderName = (typeof PAYMENT_PROVIDER_NAMES)[number];
 
+/**
+ * A customer's request to an insurer about a policy they hold. APPROVED is the
+ * insurer's recorded decision; COMPLETED is when the change is done.
+ */
+export const SERVICE_REQUEST_STATUSES = [
+  'SUBMITTED',
+  'IN_REVIEW',
+  'INFORMATION_REQUIRED',
+  'APPROVED',
+  'COMPLETED',
+  'DECLINED',
+  'WITHDRAWN',
+] as const;
+export type ServiceRequestStatus = (typeof SERVICE_REQUEST_STATUSES)[number];
+
+export const FINAL_SERVICE_REQUEST_STATUSES = ['COMPLETED', 'DECLINED', 'WITHDRAWN'] as const satisfies readonly ServiceRequestStatus[];
+export const OPEN_SERVICE_REQUEST_STATUSES = ['SUBMITTED', 'IN_REVIEW', 'INFORMATION_REQUIRED', 'APPROVED'] as const satisfies readonly ServiceRequestStatus[];
+
+/** Only a cancellation changes the policy, and only when it is completed. */
+export const SERVICE_REQUEST_TYPES = ['DETAILS_CHANGE', 'DOCUMENT_REPLACEMENT', 'CANCELLATION', 'ASSISTANCE'] as const;
+export type ServiceRequestType = (typeof SERVICE_REQUEST_TYPES)[number];
+
+/** Who wrote an entry on a service request. Staff identities stay with InsurShield and the insurer. */
+export const SERVICE_REQUEST_AUTHORS = ['CUSTOMER', 'INSURER', 'SYSTEM'] as const;
+export type ServiceRequestAuthor = (typeof SERVICE_REQUEST_AUTHORS)[number];
+
 /** Something about money that a person has to look at and close. */
 export const RECONCILIATION_KINDS = [
   'REFUND_REQUIRED',
@@ -285,6 +311,7 @@ export const DOCUMENT_KINDS = [
   'INSURER_LOGO',
   'NCD_EVIDENCE',
   'INSURER_EVIDENCE',
+  'SERVICE_REQUEST_DOCUMENT',
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 

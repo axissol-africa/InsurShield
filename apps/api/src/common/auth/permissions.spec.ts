@@ -102,13 +102,14 @@ describe('the permission table', () => {
         'portal:profile:read',
         'portal:queue:read',
         'portal:request:read',
+        'portal:service-request:read',
         'session:read',
         'vehicle:lookup',
       ].sort(),
     );
   });
 
-  it('gives support the operational queues to read and nothing to decide', () => {
+  it('gives support the operational queues to read, and only customer service requests to work', () => {
     expect(heldBy('SUPPORT').sort()).toEqual(
       [
         'document:read',
@@ -121,6 +122,8 @@ describe('the permission table', () => {
         'portal:profile:read',
         'portal:queue:read',
         'portal:request:read',
+        'portal:service-request:manage',
+        'portal:service-request:read',
         'session:read',
         'vehicle:lookup',
       ].sort(),

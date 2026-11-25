@@ -14,6 +14,8 @@ import { CustomerModule } from './customer/customer.module.js';
 import { VehiclesModule } from './vehicles/vehicles.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
 import { SettlementsModule } from './settlements/settlements.module.js';
+import { ServiceRequestsModule } from './service-requests/service-requests.module.js';
+import { SupportModule } from './support/support.module.js';
 import { InspectionsModule } from './inspections/inspections.module.js';
 import { AuthGuard } from './common/auth/auth.guard.js';
 import { ApiRateLimitGuard } from './common/rate-limit/api-rate-limit.guard.js';
@@ -54,6 +56,8 @@ import { IntegrationsModule } from './integrations/integrations.module.js';
     VehiclesModule,
     PaymentsModule,
     SettlementsModule,
+    ServiceRequestsModule,
+    SupportModule,
     InspectionsModule,
     SettingsModule,
     ProductsModule,

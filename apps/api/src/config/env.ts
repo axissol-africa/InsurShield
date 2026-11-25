@@ -191,6 +191,13 @@ export const envSchema = z.object({
   MAIL_FROM: z.string().email().optional(),
   /** A provider that does not answer in time holds a job's lease; bound the wait. */
   MAIL_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(10_000),
+  /**
+   * The external help desk (decision 13), shown to customers as given. Unset,
+   * the support page says the contact details are not set up yet.
+   */
+  HELP_DESK_EMAIL: z.string().email().optional(),
+  HELP_DESK_PHONE: z.string().min(5).max(40).optional(),
+  HELP_DESK_HOURS: z.string().min(3).max(120).optional(),
 }).superRefine((env, context) => {
   if (env.MAIL_SENDER === 'http') {
     // Named one by one: a message saying only "mail is misconfigured" makes a
