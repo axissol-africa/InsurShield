@@ -282,4 +282,27 @@ describe('mock api adapter', () => {
     expect(await mock.insurers.list({ status: 'deleted' })).toEqual([]);
     expect((await mock.insurers.directory()).map((insurer) => insurer.id)).not.toContain('4');
   });
+
+  it('works a cancellation from request to a cancelled policy, keeping internal notes from the customer', async () => {
+    await signIn();
+    useStore.setState({ policies: [{ policyNumber: 'POL-SR1', status: 'Active', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, insurer: 'Prestige Assurance', policyDates: { endDate: '2099-12-31' } }] });
+    const sent = await mock.serviceRequests.submit({ policyNumber: 'POL-SR1', type: 'CANCELLATION', reason: 'I sold the vehicle.', requestedEffectiveDate: '2000-01-01' }).catch((error) => error);
+    expect(sent.message).toMatch(/today or a later day/);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lusaka' }).format(new Date());
+    const created = await mock.serviceRequests.submit({ policyNumber: 'POL-SR1', type: 'CANCELLATION', reason: 'I sold the vehicle.', requestedEffectiveDate: today });
+
+    asInsurer();
+    const reference = created.reference;
+    await mock.serviceRequests.insurer.postUpdate(reference, { message: 'Check the sale date.', visibleToCustomer: false });
+    await expect(mock.serviceRequests.insurer.complete(reference, { note: 'Done.' })).rejects.toThrow(/Approve the cancellation/);
+    await mock.serviceRequests.insurer.approve(reference, { note: 'Pro rata.', refundAmount: 100, effectiveDate: today });
+    const done = await mock.serviceRequests.insurer.complete(reference, { note: 'Your cover has ended.' });
+    expect(done.status).toBe('COMPLETED');
+    expect(useStore.getState().policies[0].status).toBe('Cancelled');
+
+    const mine = await mock.serviceRequests.get(reference);
+    expect(mine.updates.map((update) => update.message)).not.toContain('Check the sale date.');
+    expect(mine.updates.at(-1)).toMatchObject({ statusFrom: 'APPROVED', statusTo: 'COMPLETED' });
+    expect(mine.decision).toMatchObject({ outcome: 'APPROVED', refundAmount: 100 });
+  });
 });

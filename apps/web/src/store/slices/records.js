@@ -41,6 +41,12 @@ export const createRecordsSlice = (set) => ({
   setNcdApplications: (ncdApplications) => applyUnlessLeaving(set, () => ({ ncdApplications })),
   setInspections: (inspections) => applyUnlessLeaving(set, () => ({ inspections })),
 
+  // ─── Service requests (mock lane only) ──────────────────
+  // With a backend the pages read requests straight from the API; this list
+  // is what the browser adapter serves when there is none.
+  serviceRequests: [],
+  setServiceRequests: (serviceRequests) => applyUnlessLeaving(set, () => ({ serviceRequests })),
+
   // ─── Quote requests and insurer replies ─────────────────
   quoteRequests: seed(SEED_QUOTE_REQUESTS),
 

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/primitives/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { useStore } from '@/store';
 import { hydrateDirectory } from '@/api/sync';
+import HelpDeskCard from '../components/HelpDeskCard';
 
 // The directory is derived from the live insurer list so onboarding, edits and removals show immediately.
 const toContact = (insurer) => ({ id: insurer.id, name: insurer.tradingName || insurer.name, logo: insurer.icon, logoUrl: insurer.logoUrl, contactPerson: '', role: '', phone: '', mobile: '', whatsapp: '', email: '', address: '', hours: '', tagline: '', ...insurer.contact });
@@ -181,6 +182,7 @@ export default function SupportPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const insurersList = useStore((state) => state.insurersList);
+  const signedIn = useStore((state) => state.isAuthenticated && Boolean(state.customer));
 
   // The directory is the public insurer list; load it when the page opens.
   useEffect(() => { void hydrateDirectory(); }, []);
@@ -217,6 +219,8 @@ export default function SupportPage() {
           </div>
         </CardContent>
       </Card>
+
+      <HelpDeskCard signedIn={signedIn} />
 
       <section className="mt-6">
         <Card className="gap-0 border-border shadow-none">

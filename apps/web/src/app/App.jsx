@@ -17,6 +17,9 @@ import NotificationCentrePage from '@/features/notifications/pages/NotificationC
 import RenewalPage from '@/features/policies/pages/RenewalPage';
 import ClaimsPage from '@/features/claims/pages/ClaimsPage';
 import SupportPage from '@/features/support/pages/SupportPage';
+import ServiceRequestsPage from '@/features/service-requests/pages/ServiceRequestsPage';
+import NewServiceRequestPage from '@/features/service-requests/pages/NewServiceRequestPage';
+import ServiceRequestPage from '@/features/service-requests/pages/ServiceRequestPage';
 import InspectionWorkflowPage from '@/features/inspections/pages/InspectionWorkflowPage';
 import CapturePage from '@/features/quote-journey/pages/CapturePage';
 import AdminLogin from '@/features/auth/pages/StaffLoginPage';
@@ -52,6 +55,9 @@ export default function App() {
           <Route path="renewal" element={customerOnly(<RenewalPage />)} />
           <Route path="claims" element={customerOnly(<ClaimsPage />)} />
           <Route path="inspections" element={customerOnly(<InspectionWorkflowPage />)} />
+          <Route path="service-requests" element={customerOnly(<ServiceRequestsPage />)} />
+          <Route path="service-requests/new" element={customerOnly(<NewServiceRequestPage />)} />
+          <Route path="service-requests/:reference" element={customerOnly(<ServiceRequestPage />)} />
 
           {/* Staff and insurer portals */}
           <Route path="admin-login" element={<AdminLogin />} />

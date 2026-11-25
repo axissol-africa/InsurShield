@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { BadgePercent, FileCheck2, FileText, HeartPulse, LayoutDashboard, LifeBuoy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { BadgePercent, FileCheck2, FileText, HeartPulse, LayoutDashboard, LifeBuoy, MessageSquareText, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '@/store';
 import { hydrateCustomer } from '@/api/sync';
 import { api } from '@/api';
@@ -10,6 +10,7 @@ import { requestIdentityTransition } from '@/app/identity';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
 import { coverPeriod } from '@/domain/coverPeriod';
+import { canAskAbout } from '@/domain/serviceRequests';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocuments';
 import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
@@ -368,6 +369,12 @@ export default function CustomerAccountPage() {
                           Quotation
                         </button>
                       )}
+                      {canAskAbout(policy) && (
+                        <Link to={`/service-requests/new?policy=${encodeURIComponent(policy.policyNumber)}`} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">edit_document</span>
+                          Request a change
+                        </Link>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -619,6 +626,9 @@ function AccountSidebar({ customer, counts, activeSection, onNewQuote }) {
             <Link to="/claims?action=ncd" className="flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               <BadgePercent className="size-4" aria-hidden="true" /> Apply for NCD
             </Link>
+            <Link to="/service-requests" className="flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+              <MessageSquareText className="size-4" aria-hidden="true" /> Service requests
+            </Link>
           </div>
         </div>
         <div className="mt-auto border-t border-border p-3">
@@ -653,6 +663,7 @@ function MobileAccountNavigation({ activeSection }) {
     ['policies', 'Policies'],
     ['quotes', 'Quotes'],
     ['claims', 'Claims & NCD', '/claims'],
+    ['service-requests', 'Service requests', '/service-requests'],
   ];
 
   return (

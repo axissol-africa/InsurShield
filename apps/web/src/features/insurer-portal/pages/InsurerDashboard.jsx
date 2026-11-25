@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { BadgePercent, BookOpen, CheckCheck, ClipboardCheck, FileCheck2, FileText, Landmark, LayoutDashboard, MessageSquareWarning, PlugZap, UsersRound } from 'lucide-react';
+import { BadgePercent, BookOpen, CheckCheck, ClipboardCheck, FileCheck2, FileText, Landmark, LayoutDashboard, MessageSquareText, MessageSquareWarning, PlugZap, UsersRound } from 'lucide-react';
 import { toast } from 'sonner';
 import InsurerShell from '@/features/insurer-portal/components/InsurerShell';
 import { useStore } from '@/store';
@@ -26,10 +26,12 @@ import NcdTab from '@/features/insurer-portal/components/NcdTab';
 import StaffManagement from '@/features/admin/components/StaffManagement';
 import IntegrationDeliveryPanel from '@/features/integrations/components/IntegrationDeliveryPanel';
 import SettlementsTab from '@/features/insurer-portal/components/SettlementsTab';
+import ServiceRequestsTab from '@/features/insurer-portal/components/ServiceRequestsTab';
+import { SERVICE_REQUEST_HANDLER_ROLES } from '@/domain/serviceRequests';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'ncd', 'settlements', 'integrations', 'staff'];
+const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'service-requests', 'ncd', 'settlements', 'integrations', 'staff'];
 const QUOTE_QUEUE_ID = 'quote-requests';
 /** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
 const NEXT_OFFER_MS = 20_000;
@@ -65,6 +67,8 @@ export default function InsurerDashboard() {
   const canManageStaff = staffSession?.staffRole === 'INSURER_ADMIN';
   // What the insurer is paid: its administrator and its finance team.
   const canReadSettlements = ['INSURER_ADMIN', 'FINANCE'].includes(staffSession?.staffRole);
+  // A session from before staff roles is the legacy insurer user, who works requests.
+  const canManageServiceRequests = !staffSession?.staffRole || SERVICE_REQUEST_HANDLER_ROLES.includes(staffSession.staffRole);
 
   const myClaims = claims.filter((claim) => claim.insurer === insurerName);
   const myNcd = ncdApplications.filter((application) => application.insurer === insurerName);
@@ -110,6 +114,7 @@ export default function InsurerDashboard() {
     { id: 'guides', label: 'Product terms', shortLabel: 'Terms', icon: BookOpen },
     { id: 'policies', label: 'Paid policies', shortLabel: 'Policies', icon: FileCheck2, badge: awaitingCertificate.length },
     { id: 'claims', label: 'Claims', icon: MessageSquareWarning, badge: newClaims.length },
+    { id: 'service-requests', label: 'Service requests', shortLabel: 'Requests', icon: MessageSquareText },
     { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: BadgePercent, badge: openNcd.length },
     ...(canReadSettlements ? [{ id: 'settlements', label: 'Settlements', icon: Landmark }] : []),
     ...(canManageStaff ? [{ id: 'integrations', label: 'Integration activity', shortLabel: 'Integrations', icon: PlugZap }] : []),
@@ -309,6 +314,8 @@ export default function InsurerDashboard() {
     content = <PaidPoliciesTab policies={myPolicies} onIssue={(policy) => navigate(portalPath.issue(policy.policyNumber))} />;
   } else if (activeTab === 'claims') {
     content = <ClaimsTab claims={myClaims} />;
+  } else if (activeTab === 'service-requests') {
+    content = <ServiceRequestsTab api={api} canManage={canManageServiceRequests} />;
   } else if (activeTab === 'settlements' && canReadSettlements) {
     content = <SettlementsTab api={api} />;
   } else if (activeTab === 'integrations' && canManageStaff) {

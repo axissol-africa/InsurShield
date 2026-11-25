@@ -24,7 +24,16 @@ const ACTION = {
   RENEW: { to: '/renewal', label: 'Renew' },
 };
 
-const linkFor = (item) => ACTION[item.action] ?? (DESTINATION[item.entityType] ? { to: DESTINATION[item.entityType], label: 'Open' } : null);
+/** Records with a page of their own, reached by their reference. */
+const RECORD_PAGE = {
+  SERVICE_REQUEST: (id) => `/service-requests/${encodeURIComponent(id)}`,
+};
+
+const linkFor = (item) => {
+  if (ACTION[item.action]) return ACTION[item.action];
+  if (RECORD_PAGE[item.entityType]) return { to: RECORD_PAGE[item.entityType](item.entityId), label: 'Open' };
+  return DESTINATION[item.entityType] ? { to: DESTINATION[item.entityType], label: 'Open' } : null;
+};
 
 export default function NotificationCentrePage() {
   const [items, setItems] = useState([]);

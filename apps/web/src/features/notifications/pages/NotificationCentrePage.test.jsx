@@ -107,3 +107,14 @@ it('takes a renewal reminder to the renewal page rather than the policy', async 
   expect(await screen.findByRole('link', { name: 'Renew' })).toHaveAttribute('href', '/renewal');
   expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
 });
+
+it('opens a service request notice on that request', async () => {
+  api.notifications.list.mockResolvedValue({
+    items: [message({ subject: 'An update on your request', category: 'POLICY', entityType: 'SERVICE_REQUEST', entityId: 'SR-ABC123', action: null })],
+    nextCursor: null,
+    unread: 1,
+  });
+  show();
+
+  expect(await screen.findByRole('link', { name: 'Open' })).toHaveAttribute('href', '/service-requests/SR-ABC123');
+});
