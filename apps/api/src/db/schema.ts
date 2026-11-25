@@ -1674,6 +1674,23 @@ export const providerStatementLines = pgTable(
   ],
 );
 
+/** Each renewal reminder a policy was sent, so a job that runs twice sends it once. */
+export const renewalReminders = pgTable(
+  'renewal_reminders',
+  {
+    id: id(),
+    policyNumber: text('policyNumber').notNull(),
+    kind: varchar('kind', { length: 10 }).$type<'DUE' | 'LAPSED'>().notNull(),
+    daysBefore: integer('daysBefore').notNull(),
+    sentAt: createdAt('sentAt'),
+  },
+  (t) => [
+    uniqueIndex('renewal_reminders_policyNumber_kind_daysBefore_key').on(t.policyNumber, t.kind, t.daysBefore),
+    fk('renewal_reminders_policyNumber_fkey', [t.policyNumber], [policies.policyNumber], 'cascade'),
+    check('renewal_reminders_kind_check', sql`${t.kind} IN ('DUE', 'LAPSED')`),
+  ],
+);
+
 export const claimNotifications = pgTable(
   'claim_notifications',
   {

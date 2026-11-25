@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, exists, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
@@ -70,6 +71,10 @@ const decisionColumns = {
 };
 
 /** Every query takes the insurer the caller acts for and reaches only that insurer's rows. */
+/** The policy a renewal request renews, and who insured it. */
+const previousPolicies = alias(policies, 'previous_policies');
+const previousInsurers = alias(insurers, 'previous_insurers');
+
 @Injectable()
 export class InsurerPortalRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
@@ -109,11 +114,14 @@ export class InsurerPortalRepository {
           chassisNumber: vehicles.chassisNumber,
         },
         reply: replyColumns,
+        renewalOf: { policyNumber: previousPolicies.policyNumber, endDate: previousPolicies.policyEndDate, insurerName: previousInsurers.name },
       })
       .from(quoteRequestRecipients)
       .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestRecipients.quoteRequestId))
       .innerJoin(customers, eq(customers.id, quoteRequests.customerId))
       .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
+      .leftJoin(previousPolicies, eq(previousPolicies.policyNumber, quoteRequests.renewalOfPolicyNumber))
+      .leftJoin(previousInsurers, eq(previousInsurers.id, previousPolicies.insurerId))
       .leftJoin(
         insurerQuotes,
         and(

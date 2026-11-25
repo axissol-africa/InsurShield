@@ -36,6 +36,16 @@ export class PreferenceDto {
 }
 
 /**
+ * What the reader can do about a notice, where it is more than opening the
+ * record it is about. A renewal reminder is about a policy, but the useful
+ * step is renewing it.
+ */
+const ACTIONS: Readonly<Record<string, 'RENEW'>> = {
+  'policy.renewal_due': 'RENEW',
+  'policy.lapsed': 'RENEW',
+};
+
+/**
  * Mapped field by field, never spread. The row carries the template key and
  * version, which are the platform's business rather than the reader's.
  */
@@ -47,6 +57,7 @@ export function toNotification(row: NotificationRow) {
     category: row.category,
     entityType: row.entityType,
     entityId: row.entityId,
+    action: ACTIONS[row.templateKey] ?? null,
     read: row.readAt !== null,
     createdAt: row.createdAt.toISOString(),
   };

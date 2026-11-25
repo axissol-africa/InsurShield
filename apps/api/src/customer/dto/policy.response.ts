@@ -18,6 +18,9 @@ export interface PolicyResponse {
   premium: number;
   rtsaAnniversaryFee: number;
   vehicle: string;
+  /** The value and use the cover was quoted on, carried into a renewal. */
+  vehicleValue: number | null;
+  vehicleUsage: string | null;
   vehicleDetails: {
     plateNumber: string;
     make: string;
@@ -50,13 +53,20 @@ export interface PolicyResponse {
   issuance: ReturnType<typeof issuanceOf>;
   /** The product bought, from the quoted version; null for policies from before product selection. */
   product: { name: string; versionNumber: number } | null;
+  /** What a renewal starts from: the current version of the product bought, or why there is none. */
+  renewalProduct: RenewalProduct | null;
 }
 
+export type RenewalProduct =
+  | { available: true; productVersionId: string; name: string; versionNumber: number; termsChanged: boolean }
+  | { available: false; reason: string };
+
 export function toPolicyResponse(
-  { policy, customer, insurerName, vehicle, payment, product }: PolicyWithParties,
+  { policy, customer, insurerName, vehicle, payment, product, quoted }: PolicyWithParties,
   renewal: RenewalState,
   quoteDocument: DocumentRecord | null,
   certificateDocument: DocumentRecord | null,
+  renewalProduct: RenewalProduct | null = null,
 ): PolicyResponse {
   return {
     policyNumber: policy.policyNumber,
@@ -71,6 +81,8 @@ export function toPolicyResponse(
     premium: ngweeToKwacha(policy.premiumMinor),
     rtsaAnniversaryFee: ngweeToKwacha(payment.rtsaAnniversaryFeeMinor),
     vehicle: `${vehicle.year} ${vehicle.make} ${vehicle.model}`.trim(),
+    vehicleValue: quoted ? ngweeToKwacha(quoted.vehicleValueMinor) : null,
+    vehicleUsage: quoted?.vehicleUsage ?? null,
     // The whole vehicle, not just the plate: a renewal carries these forward
     // into the new quote request without asking for them again.
     vehicleDetails: {
@@ -107,5 +119,6 @@ export function toPolicyResponse(
     issuedAt: policy.issuedAt?.toISOString() ?? null,
     issuance: issuanceOf(policy, new Date()),
     product: product?.name ? { name: product.name, versionNumber: product.versionNumber } : null,
+    renewalProduct,
   };
 }

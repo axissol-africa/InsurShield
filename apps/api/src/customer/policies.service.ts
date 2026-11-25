@@ -4,6 +4,8 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { openRenewal, renewalState } from './domain/renewal.js';
 import { toPolicyResponse, type PolicyResponse } from './dto/policy.response.js';
 import { PoliciesRepository, type PolicyWithParties } from './policies.repository.js';
+import { SettingsService } from '../settings/settings.service.js';
+import type { RenewalProduct } from './dto/policy.response.js';
 import type { CustomerPrincipal } from './customer-principal.js';
 
 @Injectable()
@@ -11,6 +13,7 @@ export class PoliciesService {
   constructor(
     private readonly repository: PoliciesRepository,
     private readonly documents: DocumentsService,
+    private readonly settings: SettingsService,
   ) {}
 
   async list(customerId: string): Promise<PolicyResponse[]> {
@@ -51,6 +54,9 @@ export class PoliciesService {
   private async responses(rows: PolicyWithParties[]): Promise<PolicyResponse[]> {
     const renewals = await this.repository.renewalsOf(rows.map((row) => row.policy.policyNumber));
     const now = new Date();
+    const { value: renewal } = await this.settings.effective('RENEWAL_POLICY', now);
+    const bought = [...new Set(rows.flatMap((row) => (row.policy.productVersionId ? [row.policy.productVersionId] : [])))];
+    const current = await this.repository.currentVersionsFor(bought, now);
 
     const responses: PolicyResponse[] = [];
     for (const row of rows) {
@@ -60,14 +66,31 @@ export class PoliciesService {
           row,
           renewalState(
             policy.policyEndDate,
-            renewals.filter((renewal) => renewal.renewalOfPolicyNumber === policy.policyNumber),
+            renewals.filter((entry) => entry.renewalOfPolicyNumber === policy.policyNumber),
             now,
+            renewal.windowDays,
           ),
           policy.quoteDocumentId ? await this.documents.record(policy.quoteDocumentId) : null,
           policy.certificateDocumentId ? await this.documents.record(policy.certificateDocumentId) : null,
+          renewalProductOf(policy.productVersionId, current),
         ),
       );
     }
     return responses;
   }
+}
+
+/**
+ * The product a renewal starts from (quote-flow step 12): the newest version
+ * of the product bought that a customer may buy today. A policy from before
+ * product selection has none to carry over.
+ */
+function renewalProductOf(
+  productVersionId: string | null,
+  current: ReadonlyMap<string, { id: string; name: string; versionNumber: number }>,
+): RenewalProduct | null {
+  if (!productVersionId) return null;
+  const version = current.get(productVersionId);
+  if (!version) return { available: false, reason: 'This product is no longer offered. Compare current products to renew.' };
+  return { available: true, productVersionId: version.id, name: version.name, versionNumber: version.versionNumber, termsChanged: version.id !== productVersionId };
 }

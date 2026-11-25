@@ -1,5 +1,5 @@
 import { isRequestOpen } from '../../common/domain/quote-request.js';
-import { daysUntil, renewalState, renewalWindow } from './renewal.js';
+import { daysUntil, reminderDue, renewalState, renewalWindow } from './renewal.js';
 
 const DAY_MS = 86_400_000;
 const now = new Date('2026-10-24T10:00:00.000Z');
@@ -74,5 +74,38 @@ describe('renewal', () => {
     const earlyTomorrow = new Date(lateTonight.getTime() + 2 * 60_000);
 
     expect(daysUntil(earlyTomorrow, lateTonight)).toBe(1);
+  });
+});
+
+describe('renewalWindow with a configured window', () => {
+  it('opens when the setting says', () => {
+    expect(renewalWindow(45, 30)).toBe('NOT_DUE');
+    expect(renewalWindow(30, 30)).toBe('DUE');
+  });
+});
+
+describe('reminderDue', () => {
+  const days = [30, 14, 3];
+
+  it('sends the closest reminder day not yet passed', () => {
+    expect(reminderDue(30, days, [])).toEqual({ kind: 'DUE', daysBefore: 30 });
+    expect(reminderDue(20, days, [{ kind: 'DUE', daysBefore: 30 }])).toBeNull();
+    expect(reminderDue(14, days, [{ kind: 'DUE', daysBefore: 30 }])).toEqual({ kind: 'DUE', daysBefore: 14 });
+  });
+
+  it('skips a stale reminder after a missed run, and never repeats one', () => {
+    expect(reminderDue(2, days, [])).toEqual({ kind: 'DUE', daysBefore: 3 });
+    expect(reminderDue(2, days, [{ kind: 'DUE', daysBefore: 3 }])).toBeNull();
+    expect(reminderDue(25, days, [{ kind: 'DUE', daysBefore: 14 }])).toBeNull();
+  });
+
+  it('sends nothing before the first reminder day', () => {
+    expect(reminderDue(31, days, [])).toBeNull();
+  });
+
+  it('tells a lapsed policy once, within a month of its end', () => {
+    expect(reminderDue(-1, days, [])).toEqual({ kind: 'LAPSED', daysBefore: 0 });
+    expect(reminderDue(-5, days, [{ kind: 'LAPSED', daysBefore: 0 }])).toBeNull();
+    expect(reminderDue(-31, days, [])).toBeNull();
   });
 });

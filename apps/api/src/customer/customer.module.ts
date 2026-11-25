@@ -1,3 +1,4 @@
+import { RENEWAL_REMINDERS, RenewalReminders } from './renewal-reminders.js';
 import { Module, type OnModuleInit } from '@nestjs/common';
 import { AccountRepository } from './account.repository.js';
 import { AccountService } from './account.service.js';
@@ -32,6 +33,7 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
     QuoteAvailabilityService,
     PoliciesService,
     PoliciesRepository,
+    RenewalReminders,
     ClaimsService,
     ClaimsRepository,
     NcdService,
@@ -53,6 +55,7 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
     QuoteWorkflowService,
     UnderwritingInspectionsRepository,
     UnderwritingInspectionsService,
+    RenewalReminders,
   ],
 })
 export class CustomerModule implements OnModuleInit {
@@ -60,6 +63,7 @@ export class CustomerModule implements OnModuleInit {
     private readonly runner: JobRunner,
     private readonly draftPurge: QuoteRequestDraftPurge,
     private readonly workflow: QuoteWorkflowService,
+    private readonly reminders: RenewalReminders,
   ) {}
 
   onModuleInit(): void {
@@ -69,6 +73,10 @@ export class CustomerModule implements OnModuleInit {
       await this.workflow.sweep();
     });
     this.runner.onStart(() => this.workflow.schedule(new Date()));
+    this.runner.register(RENEWAL_REMINDERS, async () => {
+      await this.reminders.run();
+    });
+    this.runner.onStart(() => this.reminders.schedule(new Date()));
     this.runner.register(QUOTE_STAFF_EMAIL, (job) =>
       this.workflow.sendStaffEmail(job.key, job.payload as { to: string; subject: string; body: string }),
     );

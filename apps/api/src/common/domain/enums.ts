@@ -74,6 +74,7 @@ export const RULE_SETTING_KEYS = [
   'ISSUANCE_DEADLINE',
   'COMMISSION_RULE',
   'SETTLEMENT_PERIOD',
+  'RENEWAL_POLICY',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 

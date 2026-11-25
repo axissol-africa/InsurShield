@@ -99,6 +99,10 @@ export function toPortalRequest(
     inspectionShots: shotKeys,
     whiteBook,
     photosCapturedAt: iso(request.photosCapturedAt),
+    // A renewal: the insurer sees what it renews, to requote it on current terms (US-VEN-007).
+    renewalOf: request.renewalOf?.policyNumber
+      ? { policyNumber: request.renewalOf.policyNumber, endDate: iso(request.renewalOf.endDate), insurer: request.renewalOf.insurerName }
+      : null,
     reply: request.reply && replyDocument ? toReply(request.reply, replyDocument) : null,
     ...(request.model === 'PRODUCT_SELECTION'
       ? {

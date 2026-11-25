@@ -135,10 +135,13 @@ const POLICY_KEYS = [
   'quoteRequestId',
   'receivedAt',
   'renewal',
+  'renewalProduct',
   'rtsaAnniversaryFee',
   'status',
   'vehicle',
   'vehicleDetails',
+  'vehicleUsage',
+  'vehicleValue',
 ];
 const CLAIM_LIST_KEYS = [
   'claimNumber',
@@ -1332,6 +1335,8 @@ describe('customer', () => {
         premium: 1234.56,
         rtsaAnniversaryFee: 500,
         vehicle: '2020 Toyota Hilux',
+        vehicleValue: 10_000,
+        vehicleUsage: 'PRIVATE',
         vehicleDetails: {
           plateNumber: 'BAZ 9901',
           make: 'Toyota',
@@ -1362,6 +1367,7 @@ describe('customer', () => {
         issuedAt: null,
         issuance: { dueAt: null, acceptedAt: null, overdue: false, failedAt: null, failureReason: null },
         product: null,
+        renewalProduct: null,
       });
     });
 
