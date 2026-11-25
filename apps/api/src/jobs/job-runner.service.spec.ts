@@ -10,12 +10,12 @@ describe('job runner startup', () => {
   let poll: MockInstance<JobRunner['runOnce']>;
 
   beforeEach(async () => {
-    vi.useFakeTimers();
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const module = await Test.createTestingModule({
       providers: [JobRunner, { provide: JobsRepository, useValue: {} }, { provide: DATABASE, useValue: {} }],
     }).compile();
     runner = module.get(JobRunner);
+    vi.useFakeTimers();
     poll = vi.spyOn(runner, 'runOnce').mockResolvedValue(0);
   });
 

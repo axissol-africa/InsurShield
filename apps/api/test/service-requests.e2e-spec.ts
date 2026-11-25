@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm';
-import { auditLogs, jobs, notifications, policies, reconciliationItems, serviceRequestUpdates, serviceRequests } from '../src/db/schema.js';
+import { auditLogs, jobs, notifications, paymentRefunds, policies, quoteRequests, reconciliationItems, serviceRequestUpdates, serviceRequests } from '../src/db/schema.js';
 import { lusakaDay } from '../src/common/domain/lusaka.js';
-import { buildCustomer, buildDocument, buildInsurer, buildPurchasedPolicy, buildStaffUser, type BuiltInsurer } from './builders.js';
+import { ServiceRequestsService } from '../src/service-requests/service-requests.service.js';
+import { buildCustomer, buildDocument, buildInsurer, buildPurchasedPolicy, buildQuoteRequest, buildStaffUser, type BuiltInsurer } from './builders.js';
 import { openTestDatabase, startApp, type TestApp } from './helpers.js';
 import { signIn } from './sessions.js';
 
@@ -58,14 +59,20 @@ describe('service requests', () => {
       const finance = await buildStaffUser(testApp.db, { role: 'FINANCE', insurerId: insurer.insurer.id });
       const evidence = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'SERVICE_REQUEST_DOCUMENT' });
 
-      const sent = await (await as(customer)).post('service-requests', {
+      const client = await as(customer);
+      const body = {
         policyNumber: policy.policyNumber,
         type: 'DETAILS_CHANGE',
         reason: 'My phone number on the policy is wrong; it should be 0977 000 111.',
         documentIds: [evidence.id],
-      });
+      };
+      const sent = await client.post('service-requests', body).set('Idempotency-Key', 'same-service-request');
+      const replay = await client.post('service-requests', body).set('Idempotency-Key', 'same-service-request');
 
       expect(sent.status).toBe(201);
+      expect(replay.status).toBe(201);
+      expect(replay.body.reference).toBe(sent.body.reference);
+      expect(await testApp.db.select().from(serviceRequests).where(eq(serviceRequests.policyNumber, policy.policyNumber))).toHaveLength(1);
       expect(sent.body).toMatchObject({
         reference: expect.stringMatching(/^SR-/),
         policyNumber: policy.policyNumber,
@@ -128,7 +135,14 @@ describe('service requests', () => {
         reason: 'I will sell the vehicle next year.',
         requestedEffectiveDate: lusakaDay(new Date(Date.now() + 400 * DAY_MS)),
       });
-      expect([short.status, noDate.status, past.status, late.status]).toEqual([400, 400, 400, 400]);
+      const impossible = await client.post('service-requests', {
+        policyNumber: policy.policyNumber,
+        type: 'CANCELLATION',
+        reason: 'I will sell the vehicle next year.',
+        requestedEffectiveDate: '2099-02-30',
+      });
+      expect([short.status, noDate.status, past.status, late.status, impossible.status]).toEqual([400, 400, 400, 400, 400]);
+      expect(impossible.body.message).toContain('valid date');
       expect(await testApp.db.select().from(serviceRequests).where(eq(serviceRequests.policyNumber, policy.policyNumber))).toEqual([]);
     });
 
@@ -267,9 +281,18 @@ describe('service requests', () => {
     const itemsOf = (policyNumber: string) => testApp.db.select().from(reconciliationItems).where(eq(reconciliationItems.policyNumber, policyNumber));
 
     it('needs the refund and the end date, and no more than is left of the payment', async () => {
-      const { reference, insurerClient, payment } = await cancellation();
+      const { reference, insurerClient, payment, insurer } = await cancellation();
       expect((await insurerClient.post(`insurer/service-requests/${reference}/approve`, { note: 'Approved.' })).status).toBe(400);
       expect((await insurerClient.post(`insurer/service-requests/${reference}/complete`, { note: 'Cancelled.' })).body.code).toBe('APPROVE_FIRST');
+      const older = await insurerClient.post(`insurer/service-requests/${reference}/approve`, {
+        note: 'Approved.', refundAmount: 10, effectiveDate: lusakaDay(new Date(Date.now() - DAY_MS)),
+      });
+      expect([older.status, older.body.code]).toEqual([400, 'VALIDATION_FAILED']);
+      const finance = await buildStaffUser(testApp.db, { role: 'FINANCE', insurerId: insurer.insurer.id });
+      const service = testApp.app.get(ServiceRequestsService);
+      await expect(service.approve({
+        kind: 'staff', id: finance.id, email: finance.email, role: finance.role, insurerId: finance.insurerId,
+      }, reference, { note: 'Approved.', refundAmount: 10, effectiveDate: today() })).rejects.toMatchObject({ status: 403 });
       const tooMuch = await insurerClient.post(`insurer/service-requests/${reference}/approve`, {
         note: 'Approved.',
         refundAmount: payment.amountMinor / 100 + 1,
@@ -306,6 +329,24 @@ describe('service requests', () => {
       await insurerClient.post(`insurer/service-requests/${reference}/approve`, { note: 'Nothing is refundable this late.', refundAmount: 0, effectiveDate: today() });
       await insurerClient.post(`insurer/service-requests/${reference}/complete`, { note: 'Your cover has ended.' });
       expect(await policyStatus(policy.policyNumber)).toBe('CANCELLED');
+      expect(await itemsOf(policy.policyNumber)).toEqual([]);
+    });
+
+    it('leaves the policy in force if a later refund has reduced the balance below the approved amount', async () => {
+      const { reference, insurerClient, payment, policy } = await cancellation();
+      const approved = await insurerClient.post(`insurer/service-requests/${reference}/approve`, {
+        note: 'Refund approved.', refundAmount: 100, effectiveDate: today(),
+      });
+      expect(approved.body.status).toBe('APPROVED');
+      const admin = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+      await testApp.db.insert(paymentRefunds).values({
+        paymentId: payment.id, amountMinor: payment.amountMinor - 5000, status: 'COMPLETED',
+        reasonCode: 'OTHER', reason: 'Separate refund completed after cancellation approval.',
+        provider: 'STAND_IN', proposedByStaffId: admin.id, completedAt: new Date(),
+      });
+      const done = await insurerClient.post(`insurer/service-requests/${reference}/complete`, { note: 'Cover has ended.' });
+      expect([done.status, done.body.code]).toEqual([409, 'REFUND_TOO_LARGE']);
+      expect(await policyStatus(policy.policyNumber)).toBe('ACTIVE');
       expect(await itemsOf(policy.policyNumber)).toEqual([]);
     });
 
@@ -347,11 +388,18 @@ describe('service requests', () => {
       const bought = await activePolicy();
       const customer = await as(bought.customer);
       const sent = await customer.post('service-requests', { policyNumber: bought.policy.policyNumber, type: 'ASSISTANCE', reason: 'Please explain my excess.' });
+      const owned = { customerId: bought.customer.id, insurerIds: [bought.insurer.insurer.id] };
+      const live = await buildQuoteRequest(testApp.db, owned, { expiresAt: new Date(Date.now() + DAY_MS) });
+      const expired = await buildQuoteRequest(testApp.db, owned, { expiresAt: new Date(Date.now() - DAY_MS) });
+      await testApp.db.update(quoteRequests).set({ status: 'QUOTED', expiresAt: new Date(Date.now() + DAY_MS) })
+        .where(eq(quoteRequests.id, bought.quoteRequest.id));
       const contact = await customer.get('support/contact');
       expect(contact.status).toBe(200);
       expect(Object.keys(contact.body.helpDesk).sort()).toEqual(['email', 'hours', 'phone']);
       const references = contact.body.references.map((entry: { reference: string }) => entry.reference);
-      expect(references).toEqual(expect.arrayContaining([sent.body.reference, bought.policy.policyNumber]));
+      expect(references).toEqual(expect.arrayContaining([sent.body.reference, bought.policy.policyNumber, live.quoteRequest.id]));
+      expect(references).not.toContain(expired.quoteRequest.id);
+      expect(references).not.toContain(bought.quoteRequest.id);
     });
 
     it('finds a record by its reference for an administrator, and audits who looked and why', async () => {

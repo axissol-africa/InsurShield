@@ -27,6 +27,7 @@ export const IS_PUBLIC = 'isPublic';
 export const IS_OPTIONAL_AUTH = 'isOptionalAuth';
 export const REQUIRED_PERMISSION = 'requiredPermission';
 export const ALLOWS_UNVERIFIED = 'allowsUnverified';
+const RECENT_SIGN_IN = 'recentSignIn';
 
 /** Marks an endpoint as reachable without signing in. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -58,6 +59,9 @@ export const AllowUnverified = () => SetMetadata(ALLOWS_UNVERIFIED, true);
  * walks the router so that stays true.
  */
 export const Needs = (permission: Permission) => SetMetadata(REQUIRED_PERMISSION, permission);
+
+/** A sensitive read may require a newer login than the session's normal lifetime. */
+export const RecentSignIn = (maxAgeMs: number) => SetMetadata(RECENT_SIGN_IN, maxAgeMs);
 
 export function identityChanged(): ApiException {
   return new ApiException(IDENTITY_CHANGED, IDENTITY_CHANGED_MESSAGE, HttpStatus.CONFLICT);
@@ -159,6 +163,13 @@ export class AuthGuard implements CanActivate {
     if (!needed || !holds(identity.principal, needed)) {
       await this.recordRefusal(identity.principal, needed, request);
       throw ApiException.forbidden();
+    }
+    const maxAgeMs = this.reflector.getAllAndOverride<number>(RECENT_SIGN_IN, targets);
+    if (maxAgeMs !== undefined) {
+      const age = Date.now() - new Date(session.session.createdAt).getTime();
+      if (!Number.isFinite(age) || age < 0 || age >= maxAgeMs) {
+        throw new ApiException('REAUTHENTICATION_REQUIRED', 'Sign in again to download your account data.', HttpStatus.FORBIDDEN);
+      }
     }
     return true;
   }

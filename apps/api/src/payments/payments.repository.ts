@@ -1,8 +1,8 @@
+import { lockOpenCustomer } from '../db/customer-lock.js';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
-  customers,
   insurerQuotes,
   insurers,
   ncdCodes,
@@ -281,12 +281,7 @@ export class PaymentsRepository {
 
   /** False once the account is closed. Taken first, so a closure under way is waited for and then seen. */
   async lockOpenCustomer(tx: Transaction, customerId: string): Promise<boolean> {
-    const [customer] = await tx
-      .select({ id: customers.id })
-      .from(customers)
-      .where(and(eq(customers.id, customerId), isNull(customers.deletedAt)))
-      .for('key share');
-    return customer !== undefined;
+    return lockOpenCustomer(tx, customerId);
   }
 
   /** False when the code is not this insurer's, was not issued on this customer's application, or was already redeemed. */

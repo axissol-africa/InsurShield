@@ -55,7 +55,9 @@ export function policyProblem(type: ServiceRequestType, status: PolicyStatus): '
 }
 
 /** A cancellation date must be today or later, and no later than the cover's own last day. Dates are Lusaka days. */
-export function cancellationDateProblem(requested: string, today: string, coverEnds: string | null): 'DATE_IN_PAST' | 'DATE_AFTER_COVER' | null {
+export function cancellationDateProblem(requested: string, today: string, coverEnds: string | null): 'INVALID_DATE' | 'DATE_IN_PAST' | 'DATE_AFTER_COVER' | null {
+  const parsed = new Date(`${requested}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== requested) return 'INVALID_DATE';
   if (requested < today) return 'DATE_IN_PAST';
   if (coverEnds !== null && requested > coverEnds) return 'DATE_AFTER_COVER';
   return null;

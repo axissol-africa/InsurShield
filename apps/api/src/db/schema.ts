@@ -315,7 +315,6 @@ export const customers = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: timestamptz('deletedAt'),
-    /** When a closed account's identity was replaced, after ACCOUNT_RETENTION. */
     anonymisedAt: timestamptz('anonymisedAt'),
     userId: uuid('userId'),
   },
@@ -324,9 +323,8 @@ export const customers = pgTable(
     uniqueIndex('customers_phone_key').on(t.phone),
     uniqueIndex('customers_userId_key').on(t.userId),
     index('customers_deletedAt_idx').on(t.deletedAt),
-    // Only a closed account is ever anonymised.
-    check('customers_anonymised_check', sql`${t.anonymisedAt} IS NULL OR ${t.deletedAt} IS NOT NULL`),
     fk('customers_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
+    check('customers_anonymised_check', sql`${t.anonymisedAt} IS NULL OR ${t.deletedAt} IS NOT NULL`),
   ],
 );
 
@@ -760,20 +758,18 @@ export const documents = pgTable(
     scannerName: text('scannerName'),
     retentionClass: documentRetentionClass('retentionClass').notNull(),
     uploadedAt: createdAt('uploadedAt'),
+    deletionStartedAt: timestamptz('deletionStartedAt'),
+    deletedAt: timestamptz('deletedAt'),
     uploadedByCustomerId: uuid('uploadedByCustomerId'),
     uploadedByStaffId: uuid('uploadedByStaffId'),
-    /**
-     * When the stored file was deleted under its retention class. The row
-     * stays, with its kind, class and dates, so a reference to it still
-     * explains what was there; it never gives a link again.
-     */
-    deletedAt: timestamptz('deletedAt'),
   },
   (t) => [
     uniqueIndex('documents_storageKey_key').on(t.storageKey),
-    index('documents_retentionClass_uploadedAt_idx').on(t.retentionClass, t.uploadedAt).where(sql`${t.deletedAt} IS NULL`),
     index('documents_kind_idx').on(t.kind),
     index('documents_scanStatus_idx').on(t.scanStatus),
+    index('documents_retentionClass_uploadedAt_idx').on(t.retentionClass, t.uploadedAt).where(sql`${t.deletedAt} IS NULL`),
+    index('documents_pending_deletion_idx').on(t.uploadedByCustomerId, t.id)
+      .where(sql`${t.deletionStartedAt} IS NOT NULL AND ${t.deletedAt} IS NULL`),
     fk('documents_uploadedByCustomerId_fkey', [t.uploadedByCustomerId], [customers.id], 'set null'),
     fk('documents_uploadedByStaffId_fkey', [t.uploadedByStaffId], [staffUsers.id], 'set null'),
   ],

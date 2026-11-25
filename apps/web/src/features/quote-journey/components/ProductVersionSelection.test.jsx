@@ -49,3 +49,15 @@ it('preserves a preselection and reports failure when its availability cannot be
   expect(onSelectionChange).not.toHaveBeenCalled();
   expect(onLoadStateChange).toHaveBeenLastCalledWith('error');
 });
+
+it('keeps the loaded product list visible when selecting another listed product', async () => {
+  const offered = [product('one'), product('two')];
+  api.products.directory.mockResolvedValue(offered);
+  const onSelectionChange = vi.fn();
+  const { rerender } = render(<ProductVersionSelection selectedProductVersionIds={[]} onSelectionChange={onSelectionChange} />);
+  expect(await screen.findByLabelText('Select Cover one from Insurer')).toBeVisible();
+  rerender(<ProductVersionSelection selectedProductVersionIds={['one']} selectedProductVersions={[offered[0]]} onSelectionChange={onSelectionChange} />);
+  expect(screen.getByLabelText('Select Cover one from Insurer')).toBeChecked();
+  expect(screen.getByLabelText('Select Cover two from Insurer')).toBeVisible();
+  expect(api.products.directory).toHaveBeenCalledTimes(1);
+});

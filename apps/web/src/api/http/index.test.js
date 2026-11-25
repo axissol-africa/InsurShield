@@ -9,11 +9,36 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers, integrations, payments, policies, products, quotes, settings } from './index';
+import { account, admin, auth, insurers, integrations, payments, policies, products, quotes, serviceRequests, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
 describe('Better Auth HTTP adapter', () => {
+  it('sends the renewal reference and leaves customer identity to the session', () => {
+    quotes.submitRequest({ customer: { email: 'browser@example.com' }, renewalOfPolicyNumber: 'POL-EXAMPLE' }, 'renewal-key');
+    expect(transport.post).toHaveBeenCalledWith('/quote-requests', {
+      renewalOfPolicyNumber: 'POL-EXAMPLE',
+    }, { headers: { 'Idempotency-Key': 'renewal-key' } });
+  });
+
+  it('retries a service request with the original key and already uploaded evidence', async () => {
+    transport.post.mockResolvedValueOnce({ id: 'document-one' })
+      .mockRejectedValueOnce(new Error('Connection lost after upload'))
+      .mockResolvedValueOnce({ reference: 'SR-1' });
+    const proof = new File(['%PDF-1.4'], 'proof.pdf', { type: 'application/pdf' });
+    const request = { policyNumber: 'POL-1', type: 'ASSISTANCE', reason: 'Please help with the attached document.', files: [proof] };
+    const attempt = { key: 'service-key', uploaded: new WeakMap() };
+
+    await expect(serviceRequests.submit(request, attempt)).rejects.toThrow('Connection lost');
+    await expect(serviceRequests.submit(request, attempt)).resolves.toEqual({ reference: 'SR-1' });
+    expect(transport.post.mock.calls.filter(([path]) => path === '/documents')).toHaveLength(1);
+    const submissions = transport.post.mock.calls.filter(([path]) => path === '/service-requests');
+    expect(submissions).toHaveLength(2);
+    expect(submissions[0]).toEqual(submissions[1]);
+    expect(submissions[0][1].documentIds).toEqual(['document-one']);
+    expect(submissions[0][2].headers['Idempotency-Key']).toBe('service-key');
+  });
+
   it('uses identity routes for registration, sign-in, staff email codes and sign-out', () => {
     auth.register({ email: 'customer@example.com' });
     auth.signIn('customer@example.com', 'Password1!');
@@ -78,6 +103,13 @@ describe('Better Auth HTTP adapter', () => {
     expect(transport.post).toHaveBeenCalledWith('/admin/products/product-1/versions/version-1/approve', { comment: 'Reviewed.' });
     expect(transport.get).toHaveBeenCalledWith('/products/directory', { params: { coverType: 'COMPREHENSIVE', limit: 5 } });
     expect(transport.get).toHaveBeenCalledWith('/products/product-1/versions/version-1/estimate', { params: { vehicleValue: 100000, vehicleUsage: 'Individual', coverageDuration: 'Q1' } });
+  });
+
+  it('passes the selected version and cover type to the public availability lookup', () => {
+    products.directory({ coverType: 'COMPREHENSIVE', productVersionId: 'version-101', limit: 1 });
+    expect(transport.get).toHaveBeenCalledWith('/products/directory', {
+      params: { coverType: 'COMPREHENSIVE', productVersionId: 'version-101', limit: 1 },
+    });
   });
 
   it('uses versioned rules and comparison taxonomy endpoints', () => {
@@ -217,4 +249,12 @@ describe('payments', () => {
     expect(transport.get).toHaveBeenCalledWith('/payments/TXN-1');
     expect(transport.post).toHaveBeenNthCalledWith(2, '/payments/TXN-1/cancel');
   });
+});
+
+it('reads account JSON export and document metadata through the authenticated client', async () => {
+  transport.get.mockResolvedValueOnce({ profile: { fullName: 'Mine' } }).mockResolvedValueOnce([]);
+  await expect(account.export()).resolves.toEqual({ profile: { fullName: 'Mine' } });
+  await expect(account.documents()).resolves.toEqual([]);
+  expect(transport.get).toHaveBeenNthCalledWith(1, '/account/export');
+  expect(transport.get).toHaveBeenNthCalledWith(2, '/account/documents');
 });

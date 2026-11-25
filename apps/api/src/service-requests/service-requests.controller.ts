@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
 import { Needs } from '../common/auth/auth.guard.js';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import type { Principal } from '../common/auth/auth.types.js';
@@ -33,8 +33,8 @@ export class CustomerServiceRequestsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiRateLimit(API_LIMITS.customerWrite)
-  submit(@Body() dto: SubmitServiceRequestDto, @CurrentUser() principal: Principal) {
-    return this.requests.submit(customerOf(principal), dto);
+  submit(@Body() dto: SubmitServiceRequestDto, @CurrentUser() principal: Principal, @Headers('idempotency-key') key?: string) {
+    return this.requests.submit(customerOf(principal), dto, key);
   }
 
   @Needs('service-request:read')

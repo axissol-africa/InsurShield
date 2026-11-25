@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
+import { lusakaDay } from '../common/domain/lusaka.js';
 import {
   claimNotifications,
   customers,
@@ -36,19 +37,29 @@ export class SupportRepository {
   }
 
   /** The customer's records still in progress, newest first per kind. */
-  async openRecordsOf(customerId: string): Promise<FoundRecord[]> {
+  async openRecordsOf(customerId: string, now = new Date()): Promise<FoundRecord[]> {
     const db = this.db;
+    const today = new Date(`${lusakaDay(now)}T00:00:00+02:00`);
     const [requests, held, paying, asked, claims, ncd] = await Promise.all([
       db
         .select({ reference: quoteRequests.id, status: quoteRequests.status, createdAt: quoteRequests.createdAt })
         .from(quoteRequests)
-        .where(and(eq(quoteRequests.customerId, customerId), inArray(quoteRequests.status, ['SUBMITTED', 'QUOTED'])))
+        .where(and(
+          eq(quoteRequests.customerId, customerId),
+          inArray(quoteRequests.status, ['SUBMITTED', 'QUOTED']),
+          gt(quoteRequests.expiresAt, now),
+          notExists(db.select({ one: sql`1` }).from(payments)
+            .where(and(eq(payments.quoteRequestId, quoteRequests.id), eq(payments.status, 'CONFIRMED')))),
+        ))
         .orderBy(desc(quoteRequests.createdAt))
         .limit(PER_KIND),
       db
         .select({ reference: policies.policyNumber, status: policies.status, insurerId: policies.insurerId, createdAt: policies.receivedAt })
         .from(policies)
-        .where(and(eq(policies.customerId, customerId), inArray(policies.status, ['ACTIVE', 'AWAITING_INSURER_CERTIFICATE', 'ISSUANCE_FAILED'])))
+        .where(and(eq(policies.customerId, customerId), or(
+          inArray(policies.status, ['AWAITING_INSURER_CERTIFICATE', 'ISSUANCE_FAILED']),
+          and(eq(policies.status, 'ACTIVE'), or(isNull(policies.policyEndDate), gte(policies.policyEndDate, today))),
+        )))
         .orderBy(desc(policies.receivedAt))
         .limit(PER_KIND),
       db

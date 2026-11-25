@@ -20,8 +20,13 @@ import {
   insurers,
   ncdApplications,
   payments,
+  paymentRefunds,
+  reconciliationItems,
+  serviceRequests,
+  insurerQuotes,
   policies,
   quoteRequestRecipients,
+  quoteRequestDrafts,
   quoteRequestProductRequirementAnswers,
   quoteRequestProductRequirementDeclarations,
   quoteRequestProductRequirementDocuments,
@@ -39,12 +44,15 @@ import {
   buildInsurerQuote,
   buildNcdCode,
   buildPurchasedPolicy,
+  buildPayment,
   buildQuoteRequest,
   buildStaffUser,
   buildVehicle,
   unique,
   type Row,
 } from './builders.js';
+import { buildPayableQuote } from './builders/payments.js';
+import { lusakaDay } from '../src/common/domain/lusaka.js';
 import { buildApprovedNcdCode, buildNcdApplication, buildRenewalRequest } from './builders/customer.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
 import {
@@ -1348,8 +1356,7 @@ describe('customer', () => {
           engineNumber: null,
           rtsaAnniversaryDate: '2027-03-01T00:00:00.456Z',
         },
-        // Still being issued: there is nothing to renew until the insurer issues it.
-        renewal: { window: 'NOT_DUE', daysRemaining: 65, endDate: endDate.toISOString(), renewable: false, renewalRequestId: null },
+        renewal: { window: 'NOT_DUE', daysRemaining: 65, endDate: endDate.toISOString(), renewable: true, renewalRequestId: null },
         policyDates: { startDate: '2026-01-01T00:00:00.000Z', endDate: endDate.toISOString() },
         quoteRequestId: purchase.quoteRequest.id,
         insurerQuoteReference: purchase.quote.insurerReference,
@@ -1383,7 +1390,7 @@ describe('customer', () => {
       const expected: Record<string, { window: string; daysRemaining: number }> = {};
       for (const [days, window] of cases) {
         const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
-        await testApp.db.update(policies).set({ status: 'ACTIVE', policyEndDate: inDays(days) }).where(eq(policies.policyNumber, policy.policyNumber));
+        await testApp.db.update(policies).set({ policyEndDate: inDays(days) }).where(eq(policies.policyNumber, policy.policyNumber));
         expected[policy.policyNumber] = { window, daysRemaining: days };
       }
 
@@ -1398,7 +1405,6 @@ describe('customer', () => {
       const customer = await buildCustomer(testApp.db);
       const insurer = await buildInsurer(testApp.db);
       const { policy, quoteRequest } = await buildPurchasedPolicy(testApp.db, { customer, insurer });
-      await testApp.db.update(policies).set({ status: 'ACTIVE' }).where(eq(policies.policyNumber, policy.policyNumber));
       const { quoteRequest: open } = await buildRenewalRequest(testApp.db, {
         customerId: customer.id,
         vehicleId: quoteRequest.vehicleId,
@@ -1977,6 +1983,147 @@ describe('customer', () => {
         expect(response.body.code).toBe('ACTIVE_POLICY_EXISTS');
         expect(await isOpen(customer)).toBe(true);
       });
+    });
+
+    it.each(['INITIATED', 'PENDING'] as const)('refuses an %s payment without a policy', async (status) => {
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      await buildPayment(testApp.db, { customerId: customer.id, quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id }, { status });
+      const response = await closeAccount(customer);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('PAYMENT_IN_PROGRESS');
+      expect(await isOpen(customer)).toBe(true);
+    });
+
+    it('waits for an originating payment, then refuses closure without withdrawing its quote', async () => {
+      const { customer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const held = await holdLocks(side.pool, (db) => buildPayment(db, {
+        customerId: customer.id, quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id,
+      }, { status: 'INITIATED' }));
+      const [response] = await queueBehind(held, LOCKING_THE_CUSTOMER, 1, [() => closeAccount(customer)]);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('PAYMENT_IN_PROGRESS');
+      const [retained] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.id, quote.id));
+      expect(retained.status).toBe('ACTIVE');
+      expect(await isOpen(customer)).toBe(true);
+    });
+
+    it('refuses a stale service-request submission queued behind the closure customer lock', async () => {
+      const { customer, policy } = await buildPurchasedPolicy(testApp.db);
+      await testApp.db.update(policies).set({ status: 'ACTIVE', policyEndDate: inDays(-2) })
+        .where(eq(policies.policyNumber, policy.policyNumber));
+      const session = await asCustomer(customer);
+      const held = await holdLocks(side.pool, async (db) => {
+        await db.select().from(customers).where(eq(customers.id, customer.id)).for('update');
+        await db.update(customers).set({ deletedAt: new Date() }).where(eq(customers.id, customer.id));
+      });
+      const [response] = await queueBehind(held, 'select % from "customers" % for key share', 1, [
+        async () => testApp.http.post('/api/v1/service-requests').set(session).set('Idempotency-Key', unique('closure-race'))
+          .send({ policyNumber: policy.policyNumber, type: 'ASSISTANCE', reason: 'Please help with my policy documents.' }),
+      ]);
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('FORBIDDEN');
+      expect(await testApp.db.select().from(serviceRequests).where(eq(serviceRequests.customerId, customer.id))).toEqual([]);
+    });
+
+    it('refuses an open service request after cover has ended', async () => {
+      const { customer, policy } = await buildPurchasedPolicy(testApp.db);
+      await testApp.http.post('/api/v1/service-requests').set(await asCustomer(customer)).send({
+        policyNumber: policy.policyNumber, type: 'ASSISTANCE', reason: 'Please help me with the policy documents.',
+      }).expect(201);
+      await testApp.db.update(policies).set({ status: 'CANCELLED' }).where(eq(policies.policyNumber, policy.policyNumber));
+      const response = await closeAccount(customer);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('OPEN_SERVICE_REQUEST_EXISTS');
+      expect(await isOpen(customer)).toBe(true);
+    });
+
+    it.each(['PROPOSED', 'APPROVED', 'SUBMITTED'] as const)('refuses a %s refund after cover has ended', async (status) => {
+      const { customer, policy, payment } = await buildPurchasedPolicy(testApp.db);
+      const staff = await buildStaffUser(testApp.db, { role: 'ADMIN' });
+      await testApp.db.update(policies).set({ status: 'CANCELLED' }).where(eq(policies.policyNumber, policy.policyNumber));
+      await testApp.db.insert(paymentRefunds).values({
+        paymentId: payment.id, amountMinor: payment.amountMinor, reasonCode: 'CUSTOMER_REQUEST',
+        reason: 'Refund after cancellation.', status, provider: payment.provider, proposedByStaffId: staff.id,
+      });
+      const response = await closeAccount(customer);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('REFUND_IN_PROGRESS');
+      expect(await isOpen(customer)).toBe(true);
+    });
+
+    it('refuses an owed refund even before finance has proposed it', async () => {
+      const { customer, policy, payment } = await buildPurchasedPolicy(testApp.db);
+      await testApp.db.update(policies).set({ status: 'CANCELLED' }).where(eq(policies.policyNumber, policy.policyNumber));
+      await testApp.db.insert(reconciliationItems).values({
+        kind: 'REFUND_REQUIRED', paymentId: payment.id, policyNumber: policy.policyNumber,
+        amountMinor: payment.amountMinor, reason: 'Cancellation refund owed.',
+      });
+      const response = await closeAccount(customer);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('REFUND_IN_PROGRESS');
+      expect(await isOpen(customer)).toBe(true);
+    });
+
+    it('rolls closure back retryably when an insurer is changing an unpaid quote', async () => {
+      const { customer, quote } = await buildPayableQuote(testApp.db);
+      const held = await holdLocks(side.pool, async (db) => {
+        await db.select().from(insurerQuotes).where(eq(insurerQuotes.id, quote.id)).for('update');
+      });
+      try {
+        const response = await closeAccount(customer);
+        expect(response.status).toBe(503);
+        expect(response.body.code).toBe('TRY_AGAIN');
+        expect(await isOpen(customer)).toBe(true);
+      } finally {
+        await held.release();
+      }
+      expect((await closeAccount(customer)).status).toBe(200);
+    });
+
+    it('still blocks a paid policy awaiting its official certificate when its stored end day is past', async () => {
+      const { customer, policy } = await buildPurchasedPolicy(testApp.db);
+      await testApp.db.update(policies).set({ policyEndDate: inDays(-2) }).where(eq(policies.policyNumber, policy.policyNumber));
+      const response = await closeAccount(customer);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('ACTIVE_POLICY_EXISTS');
+      expect(await isOpen(customer)).toBe(true);
+    });
+
+    it('keeps cover through today in Lusaka, but permits closure after its end day without changing paid quotes', async () => {
+      const { customer, policy, quote } = await buildPurchasedPolicy(testApp.db);
+      await testApp.db.update(policies).set({ status: 'ACTIVE', policyEndDate: new Date(`${lusakaDay(new Date())}T00:00:00Z`) })
+        .where(eq(policies.policyNumber, policy.policyNumber));
+      expect((await closeAccount(customer)).body.code).toBe('ACTIVE_POLICY_EXISTS');
+      await testApp.db.update(policies).set({ policyEndDate: inDays(-2) }).where(eq(policies.policyNumber, policy.policyNumber));
+      expect((await closeAccount(customer)).status).toBe(200);
+      const [retained] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.id, quote.id));
+      expect(retained.status).toBe('ACTIVE');
+    });
+
+    it('withdraws unpaid offers and expires their requests without affecting another customer', async () => {
+      const owned = await buildPayableQuote(testApp.db);
+      const other = await buildPayableQuote(testApp.db);
+      expect((await closeAccount(owned.customer)).status).toBe(200);
+      const [withdrawn] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.id, owned.quote.id));
+      const [untouched] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.id, other.quote.id));
+      expect(withdrawn).toMatchObject({
+        status: 'WITHDRAWN', withdrawnAt: expect.any(Date), withdrawnReason: 'Customer closed their account.',
+      });
+      expect((await storedRequest(owned.quoteRequest.id)).status).toBe('EXPIRED');
+      expect(untouched.status).toBe('ACTIVE');
+      expect(await isOpen(other.customer)).toBe(true);
+    });
+
+    it('expires saved drafts while retaining their answers for the retention workflow', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const session = await asCustomer(customer);
+      const saved = await testApp.http.post('/api/v1/quote-request-drafts').set(session)
+        .send({ commonAnswers: { vehicleUsage: 'Private' } }).expect(201);
+      const response = await testApp.http.delete('/api/v1/account').set(session).expect(200);
+      const [draft] = await testApp.db.select().from(quoteRequestDrafts).where(eq(quoteRequestDrafts.id, saved.body.id));
+      expect(draft.expiresAt.toISOString()).toBe(response.body.closedAt);
+      expect(draft.commonAnswers).toEqual({ vehicleUsage: 'Private' });
+      await testApp.http.get('/api/v1/quote-request-drafts').set(session).expect(401);
     });
 
     it('closes an account without policies and refuses its session afterwards', async () => {

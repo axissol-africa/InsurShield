@@ -1,12 +1,15 @@
+import { assertOpenCustomer } from '../db/customer-lock.js';
 import { Injectable } from '@nestjs/common';
 import { randomInt } from 'node:crypto';
 import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor, type AuditActor } from '../common/audit/audit.types.js';
 import type { Principal } from '../common/auth/auth.types.js';
+import { holds } from '../common/auth/permissions.js';
 import { isInsurerRole, type ServiceRequestStatus } from '../common/domain/enums.js';
 import { lusakaDay } from '../common/domain/lusaka.js';
 import { newReference } from '../common/domain/reference.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import { IdempotencyService, idempotencyKey } from '../common/idempotency/idempotency.service.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { QUOTE_STAFF_EMAIL, customerDate } from '../customer/quote-workflow.service.js';
 import type { CustomerPrincipal } from '../customer/customer-principal.js';
@@ -59,6 +62,7 @@ const POLICY_PROBLEMS = {
   POLICY_NOT_ACTIVE: 'Only cover that is in force can be cancelled. While the insurer is still issuing it, ask for help instead.',
 } as const;
 const DATE_PROBLEMS = {
+  INVALID_DATE: 'Choose a valid date for the cover to end.',
   DATE_IN_PAST: 'Choose today or a later day for the cover to end.',
   DATE_AFTER_COVER: 'Choose a day on or before the day your cover ends anyway.',
 } as const;
@@ -83,14 +87,16 @@ export class ServiceRequestsService {
     private readonly notifications: NotificationsService,
     private readonly jobs: JobsRepository,
     private readonly refunds: RefundsRepository,
+    private readonly idempotency: IdempotencyService,
   ) {}
 
   // ── The customer ───────────────────────────────────────────────
 
-  async submit(customer: CustomerPrincipal, dto: SubmitServiceRequestDto): Promise<CustomerServiceRequest> {
+  async submit(customer: CustomerPrincipal, dto: SubmitServiceRequestDto, key?: string): Promise<CustomerServiceRequest> {
     const now = new Date();
     const documentIds = dto.documentIds ?? [];
-    const reference = await this.requests.transaction(async (tx) => {
+    const { value: reference } = await this.idempotency.execute(customer.id, 'POST /service-requests', idempotencyKey(key), dto, async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const policy = await this.requests.lockOwnedPolicy(tx, customer.id, dto.policyNumber.trim());
       if (!policy) throw ApiException.notFound('Policy', dto.policyNumber);
       const problem = policyProblem(dto.type, policy.status);
@@ -338,17 +344,17 @@ export class ServiceRequestsService {
     return toCustomerServiceRequest(found, await this.updatesWithDocuments(reference, { customerOnly: true }));
   }
 
-  private async staffView(found: ServiceRequestWithParties): Promise<StaffServiceRequest> {
-    return toStaffServiceRequest(found, await this.updatesWithDocuments(found.request.reference, { customerOnly: false }));
+  private async staffView(found: ServiceRequestWithParties, tx?: Transaction): Promise<StaffServiceRequest> {
+    return toStaffServiceRequest(found, await this.updatesWithDocuments(found.request.reference, { customerOnly: false, tx }));
   }
 
   /** Signs links only for entries the reader will see, so an internal attachment is never linked for the customer. */
-  private async updatesWithDocuments(reference: string, { customerOnly }: { customerOnly: boolean }): Promise<UpdateWithDocuments[]> {
-    const rows = (await this.requests.updatesOf([reference])).filter(({ update }) => !customerOnly || update.visibleToCustomer);
+  private async updatesWithDocuments(reference: string, { customerOnly, tx }: { customerOnly: boolean; tx?: Transaction }): Promise<UpdateWithDocuments[]> {
+    const rows = (await this.requests.updatesOf([reference], tx)).filter(({ update }) => !customerOnly || update.visibleToCustomer);
     const entries: UpdateWithDocuments[] = [];
     for (const row of rows) {
       const documents: DocumentRecord[] = [];
-      for (const id of row.update.documentIds) documents.push(await this.documents.record(id));
+      for (const id of row.update.documentIds) documents.push(await this.documents.record(id, tx));
       entries.push({ ...row, documents });
     }
     return entries;
@@ -388,19 +394,21 @@ export class ServiceRequestsService {
     reference: string,
     work: (tx: Transaction, staff: InsurerStaff, found: ServiceRequestWithParties) => Promise<void>,
   ): Promise<StaffServiceRequest> {
+    if (!holds(principal, 'portal:service-request:manage')) throw ApiException.forbidden();
     const staff = this.insurerStaff(principal);
-    const reached = { allowed: true, exists: true };
-    await this.requests.transaction(async (tx) => {
+    const result = await this.requests.transaction(async (tx) => {
       const found = await this.requests.lock(tx, reference);
       if (!found || found.request.insurerId !== staff.insurerId) {
-        Object.assign(reached, { allowed: false, exists: Boolean(found) });
-        return;
+        return { response: null, exists: Boolean(found) };
       }
       await work(tx, staff, found);
+      const updated = await this.requests.find(reference, tx);
+      if (!updated) throw ApiException.notFound('Service request', reference);
+      return { response: await this.staffView(updated, tx), exists: true };
     });
     // Audited outside the transaction that found nothing, so the refusal row is kept.
-    if (!reached.allowed) throw await this.absent(staff, reference, reached.exists);
-    return this.getForInsurer(staff, reference);
+    if (!result.response) throw await this.absent(staff, reference, result.exists);
+    return result.response;
   }
 
   private assertCan(action: ServiceRequestAction, status: ServiceRequestStatus): void {
@@ -469,23 +477,32 @@ export class ServiceRequestsService {
       }
       return null;
     }
-    if (dto.refundAmount === undefined || dto.effectiveDate === undefined) {
+    if (typeof dto.refundAmount !== 'number' || typeof dto.effectiveDate !== 'string') {
       throw new ApiException('VALIDATION_FAILED', 'State the refund, zero if none is due, and the day the cover ends.', 400);
     }
     const cover = await this.requests.coverOf(tx, request.policyNumber);
+    const dateProblem = cancellationDateProblem(dto.effectiveDate, lusakaDay(new Date()), cover.endDate ? lusakaDay(cover.endDate) : null);
+    if (dateProblem) throw new ApiException('VALIDATION_FAILED', DATE_PROBLEMS[dateProblem], 400, { field: 'effectiveDate' });
     if (cover.startDate && dto.effectiveDate < lusakaDay(cover.startDate)) {
       throw new ApiException('VALIDATION_FAILED', 'The cover cannot end before it started.', 400, { field: 'effectiveDate' });
     }
-    if (cover.endDate && dto.effectiveDate > lusakaDay(cover.endDate)) {
-      throw new ApiException('VALIDATION_FAILED', 'Choose a day on or before the day the cover ends anyway.', 400, { field: 'effectiveDate' });
-    }
     const amountMinor = kwachaToNgwee(dto.refundAmount);
-    const payment = await this.requests.paymentOf(tx, request.policyNumber);
+    await this.cancellationFunding(tx, request.policyNumber, amountMinor);
+    return { refundAmountMinor: amountMinor, effectiveDate: dto.effectiveDate };
+  }
+
+  private async cancellationFunding(tx: Transaction, policyNumber: string, amountMinor: number) {
+    const { id } = await this.requests.paymentOf(tx, policyNumber);
+    // Refunds lock the payment before changing money or a policy. Keep the same order.
+    const payment = await this.refunds.lockPayment(tx, id);
+    if (!payment || payment.status !== 'CONFIRMED') {
+      throw ApiException.conflict('PAYMENT_NOT_REFUNDABLE', 'The payment is no longer confirmed. Ask InsurShield to review it.');
+    }
     const refunded = await this.refunds.refundedMinor(tx, payment.id);
     if (refundTooLarge(amountMinor, payment.amountMinor, refunded)) {
       throw ApiException.conflict('REFUND_TOO_LARGE', `At most ${zmw(Math.max(0, payment.amountMinor - refunded))} is left to refund on this policy.`);
     }
-    return { refundAmountMinor: amountMinor, effectiveDate: dto.effectiveDate };
+    return payment;
   }
 
   /** Ends the cover and, when money is due back, opens the item a refund is made from. */
@@ -494,6 +511,8 @@ export class ServiceRequestsService {
     if (request.effectiveDate && lusakaDay(at) < request.effectiveDate) {
       throw ApiException.conflict('CANCELLATION_NOT_DUE', `The cover ends on ${request.effectiveDate}. Complete the cancellation on or after that day.`);
     }
+    const amountMinor = request.refundAmountMinor ?? 0;
+    const payment = amountMinor > 0 ? await this.cancellationFunding(tx, request.policyNumber, amountMinor) : null;
     const cancelled = await this.requests.cancelPolicy(tx, request.policyNumber, at);
     if (!cancelled) throw ApiException.conflict('POLICY_NOT_ACTIVE', 'The policy is no longer in force, so it cannot be cancelled.');
     await this.audit.transition(tx, {
@@ -505,9 +524,7 @@ export class ServiceRequestsService {
       note: `Cancelled on service request ${request.reference}.`,
       correlationId: request.reference,
     });
-    const amountMinor = request.refundAmountMinor ?? 0;
-    if (amountMinor === 0) return null;
-    const payment = await this.requests.paymentOf(tx, request.policyNumber);
+    if (!payment) return null;
     const item = await this.requests.openRefundItem(tx, {
       kind: 'REFUND_REQUIRED',
       paymentId: payment.id,

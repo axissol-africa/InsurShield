@@ -102,6 +102,11 @@ Every setting comes from environment variables. `.env` files are local and git-i
 documents its variables with `CHANGE_ME` placeholders, and the API and the seed refuse to run while one is left.
 Error messages name a variable but never print its value.
 
+Retention periods are versioned administrative rules: `DOCUMENT_RETENTION` supplies days per document class,
+and `ACCOUNT_RETENTION` supplies `{ daysAfterClosure: 2555 }`. Both defaults are provisional and require
+compliance confirmation before the batch 20 release gate. The daily job retains legal holds, records deletion
+intent before removing object bytes, preserves document tombstones, and anonymises eligible closed accounts.
+
 ### API (`apps/api/.env`, validated in [`apps/api/src/config/env.ts`](apps/api/src/config/env.ts))
 
 | Variable | Required | Meaning |

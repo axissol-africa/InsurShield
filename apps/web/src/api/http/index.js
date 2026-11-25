@@ -22,9 +22,9 @@ export const auth = {
 };
 
 export const account = {
+  export: () => apiClient.get('/account/export'),
+  documents: () => apiClient.get('/account/documents'),
   close: () => apiClient.delete('/account'),
-  /** Everything InsurShield holds about the signed-in customer, as one document. */
-  exportData: () => apiClient.get('/account/export'),
 };
 
 /**
@@ -67,7 +67,6 @@ const productPath = (id, productVersionId) =>
   `/insurer/quote-requests/${encodeURIComponent(id)}/products/${encodeURIComponent(productVersionId)}`;
 
 export const quotes = {
-  // The customer's own details are the server's to fill in from the session; the API refuses them in the body.
   submitRequest: (request, idempotencyKey = newIdempotencyKey()) => {
     const body = { ...request };
     delete body.customer;
@@ -295,16 +294,24 @@ export const settlements = {
  * Service requests about a policy the customer holds. Files are uploaded first
  * and attached by id, like every other document.
  */
-const attach = async (files = []) => {
+const attach = async (files = [], uploaded) => {
   const ids = [];
-  for (const file of files) ids.push(await uploadedDocumentId(file, 'document', 'SERVICE_REQUEST_DOCUMENT'));
+  for (const file of files) {
+    let id = uploaded?.get(file);
+    if (!id) {
+      id = await uploadedDocumentId(file, 'document', 'SERVICE_REQUEST_DOCUMENT');
+      uploaded?.set(file, id);
+    }
+    ids.push(id);
+  }
   return ids;
 };
 const serviceRequestPath = (reference) => `/service-requests/${encodeURIComponent(reference)}`;
 const insurerServiceRequestPath = (reference) => `/insurer/service-requests/${encodeURIComponent(reference)}`;
 
 export const serviceRequests = {
-  submit: async ({ files, ...request }) => apiClient.post('/service-requests', { ...request, documentIds: await attach(files) }),
+  submit: async ({ files, ...request }, { key = newIdempotencyKey(), uploaded } = {}) =>
+    apiClient.post('/service-requests', { ...request, documentIds: await attach(files, uploaded) }, { headers: { 'Idempotency-Key': key } }),
   listMine: () => apiClient.get('/service-requests'),
   get: (reference) => apiClient.get(serviceRequestPath(reference)),
   reply: async (reference, { message, files }) => apiClient.post(`${serviceRequestPath(reference)}/reply`, { message, documentIds: await attach(files) }),

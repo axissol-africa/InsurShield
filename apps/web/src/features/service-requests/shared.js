@@ -20,15 +20,19 @@ export function filesProblem(files) {
 /**
  * Opens a document attached to a request. A download link from the API
  * expires within minutes, so a fresh one is asked for at the moment of the
- * click rather than reusing the one the page loaded with.
+ * click rather than reusing the one the page loaded with. Returns a link for
+ * explicit opening when the popup is blocked; never navigates the app away.
  */
 export async function openAttachment(document) {
-  const opened = window.open('', '_blank', 'noopener');
+  const opened = window.open('', '_blank');
   try {
+    // Keep the handle for navigation, but sever opener access before any await.
+    if (opened) opened.opener = null;
     const fresh = await api.documents.get(document.id);
     if (!fresh?.url) throw new Error('This document is not available for download.');
-    if (opened) opened.location.href = fresh.url;
-    else window.location.assign(fresh.url);
+    if (!opened || opened.closed) return fresh.url;
+    opened.location.href = fresh.url;
+    return null;
   } catch (caught) {
     opened?.close();
     throw caught;

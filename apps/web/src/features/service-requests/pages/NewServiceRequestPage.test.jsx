@@ -62,7 +62,7 @@ it('asks for a date before sending a cancellation, then sends it and opens the r
     reason: 'I sold the vehicle last week.',
     requestedEffectiveDate: '2099-06-30',
     files: [],
-  });
+  }, expect.objectContaining({ key: expect.any(String) }));
   expect(await screen.findByText('Request page')).toBeInTheDocument();
 });
 
@@ -73,4 +73,6 @@ it('shows the reason the server refused', async () => {
   await userEvent.type(screen.getByLabelText('Tell the insurer what you need'), 'Please explain my excess.');
   await userEvent.click(screen.getByRole('button', { name: 'Send to the insurer' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('You have already asked to cancel this policy.');
+  await userEvent.click(screen.getByRole('button', { name: 'Send to the insurer' }));
+  expect(api.serviceRequests.submit.mock.calls[1][1].key).toBe(api.serviceRequests.submit.mock.calls[0][1].key);
 });

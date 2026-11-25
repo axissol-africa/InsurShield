@@ -14,6 +14,7 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import {
   SERVICE_REQUEST_STATUSES,
   SERVICE_REQUEST_TYPES,
@@ -40,6 +41,7 @@ export class SubmitServiceRequestDto extends WithDocuments {
   @IsIn(SERVICE_REQUEST_TYPES, { message: 'Choose what you need: a change, a replacement document, a cancellation or help.' })
   type!: ServiceRequestType;
 
+  @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value)
   @IsString()
   @MinLength(10, { message: 'Tell the insurer what you need in at least 10 characters.' })
   @MaxLength(2000)

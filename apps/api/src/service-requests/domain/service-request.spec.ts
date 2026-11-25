@@ -50,6 +50,12 @@ describe('cancellationDateProblem', () => {
     expect(cancellationDateProblem('2026-11-24', '2026-11-25', '2027-01-31')).toBe('DATE_IN_PAST');
     expect(cancellationDateProblem('2027-02-01', '2026-11-25', '2027-01-31')).toBe('DATE_AFTER_COVER');
   });
+
+  it('accepts leap day only in a leap year and rejects dates JavaScript would otherwise roll forward', () => {
+    expect(cancellationDateProblem('2028-02-29', '2027-01-01', null)).toBeNull();
+    expect(cancellationDateProblem('2027-02-29', '2027-01-01', null)).toBe('INVALID_DATE');
+    expect(cancellationDateProblem('2027-11-31', '2027-01-01', null)).toBe('INVALID_DATE');
+  });
 });
 
 describe('refundTooLarge', () => {

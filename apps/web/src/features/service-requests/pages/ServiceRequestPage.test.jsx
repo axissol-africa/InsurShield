@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { api } from '@/api';
 import ServiceRequestPage from './ServiceRequestPage';
@@ -64,5 +64,32 @@ it('shows an approved cancellation with its end date and refund, and lets the cu
   await userEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
   expect(api.serviceRequests.withdraw).toHaveBeenCalledWith('SR-1');
   expect(await screen.findByText('Withdrawn')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Withdraw this request' })).not.toBeInTheDocument();
+});
+
+it('isolates loaded details, drafts and confirmation when the request route changes', async () => {
+  let loadSecond;
+  api.serviceRequests.get.mockResolvedValueOnce(request({ status: 'INFORMATION_REQUIRED', nextAction: 'REPLY' }))
+    .mockImplementationOnce(() => new Promise((resolve) => { loadSecond = resolve; }));
+  const router = createMemoryRouter([{ path: '/service-requests/:reference', element: <ServiceRequestPage /> }], { initialEntries: ['/service-requests/SR-1'] });
+  render(<RouterProvider router={router} />);
+  await userEvent.type(await screen.findByLabelText('Your answer'), 'Private draft for request one.');
+  await userEvent.upload(screen.getByLabelText('Attach documents'), new File(['proof'], 'request-one.pdf', { type: 'application/pdf' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Withdraw this request' }));
+  await act(async () => router.navigate('/service-requests/SR-2'));
+  expect(screen.queryByLabelText('Your answer')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Withdraw this request' })).not.toBeInTheDocument();
+  await act(async () => loadSecond(request({ reference: 'SR-2', status: 'INFORMATION_REQUIRED', nextAction: 'REPLY' })));
+  expect(screen.getByLabelText('Your answer')).toHaveValue('');
+  expect(screen.queryByText('request-one.pdf')).not.toBeInTheDocument();
+});
+it('does not leave a prior request actionable when the next reference fails to load', async () => {
+  api.serviceRequests.get.mockResolvedValueOnce(request()).mockRejectedValueOnce(new Error('Request was not found.'));
+  const router = createMemoryRouter([{ path: '/service-requests/:reference', element: <ServiceRequestPage /> }], { initialEntries: ['/service-requests/SR-1'] });
+  render(<RouterProvider router={router} />);
+  await screen.findByRole('button', { name: 'Withdraw this request' });
+  await act(async () => router.navigate('/service-requests/MISSING'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Request was not found.');
   expect(screen.queryByRole('button', { name: 'Withdraw this request' })).not.toBeInTheDocument();
 });

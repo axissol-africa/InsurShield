@@ -255,7 +255,7 @@ describe('record', () => {
   const row = { id: 'd', fileName: 'quote.pdf', mimeType: 'application/pdf', sizeBytes: 10, storageKey: 'k/quote.pdf', scanStatus: 'CLEAN' };
   const unscanned = { ...row, scanStatus: 'UNSCANNED' };
 
-  function serviceFinding(found: typeof row | undefined) {
+  function serviceFinding(found: (typeof row & { deletionStartedAt?: Date; deletedAt?: Date }) | undefined) {
     const reads: (Transaction | undefined)[] = [];
     const repository = {
       find: async (_id: string, tx?: Transaction) => {
@@ -293,6 +293,11 @@ describe('record', () => {
     const { service } = serviceFinding(undefined);
 
     await expect(service.record('d', {} as Transaction)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it.each(['deletionStartedAt', 'deletedAt'] as const)('never signs a link when %s is set', async (field) => {
+    const { service } = serviceFinding({ ...row, [field]: new Date() });
+    expect(await service.record('d')).not.toHaveProperty('url');
   });
 
   it('describes a document that has not been found clean, without signing a link for it', async () => {

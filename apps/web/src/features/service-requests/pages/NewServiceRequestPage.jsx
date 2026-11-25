@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/api';
+import { newIdempotencyKey } from '@/api/shared';
 import { hydrateCustomer } from '@/api/sync';
 import { useStore, belongsToCustomer } from '@/store';
 import { Button } from '@/components/ui/primitives/button';
@@ -30,6 +31,8 @@ export default function NewServiceRequestPage() {
   const [files, setFiles] = useState([]);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const attempt = useRef(null);
+  const pending = useRef(false);
 
   const policy = eligible.find((entry) => entry.policyNumber === policyNumber);
   const types = SERVICE_REQUEST_TYPES.filter((entry) => entry.id !== 'CANCELLATION' || canCancel(policy));
@@ -50,22 +53,30 @@ export default function NewServiceRequestPage() {
 
   const submit = async (event) => {
     event.preventDefault();
+    if (pending.current) return;
     const found = problem();
     setError(found || '');
     if (found) return;
+    const request = {
+      policyNumber,
+      type,
+      reason: reason.trim(),
+      ...(type === 'CANCELLATION' ? { requestedEffectiveDate: effectiveDate } : {}),
+    };
+    const fingerprint = JSON.stringify(request);
+    if (attempt.current?.fingerprint !== fingerprint || attempt.current?.files !== files) {
+      attempt.current = { fingerprint, files, key: newIdempotencyKey(), uploaded: new WeakMap() };
+    }
+    pending.current = true;
     setSending(true);
     try {
-      const created = await api.serviceRequests.submit({
-        policyNumber,
-        type,
-        reason: reason.trim(),
-        ...(type === 'CANCELLATION' ? { requestedEffectiveDate: effectiveDate } : {}),
-        files,
-      });
+      const created = await api.serviceRequests.submit({ ...request, files }, attempt.current);
       navigate(`/service-requests/${encodeURIComponent(created.reference)}`, { replace: true });
     } catch (caught) {
       setError(messageOf(caught, 'Your request could not be sent. Try again.'));
       setSending(false);
+    } finally {
+      pending.current = false;
     }
   };
 

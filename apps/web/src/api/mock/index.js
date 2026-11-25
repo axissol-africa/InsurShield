@@ -6,6 +6,7 @@
  * loading states are exercised. Anything the prototype does not model yet
  * (OTP, payment gateway, RTSA registry) returns a realistic stub.
  */
+import { accountDocuments, exportAccount } from './account';
 import { env } from '@/config/env';
 import { useStore, belongsToCustomer } from '@/store';
 import { demoCoverGuides } from '@/domain/insurers';
@@ -152,11 +153,12 @@ const versionFor = (s, productId, versionId) => {
   const version = product?.versions?.find((entry) => entry.id === versionId);
   return { product, version };
 };
-const publicProductDirectory = (s, { coverType, limit = 100 } = {}) => seededProducts(s)
+const publicProductDirectory = (s, { coverType, productVersionId, limit = 100 } = {}) => seededProducts(s)
   .flatMap((product) => product.versions.map((version) => ({ product, version })))
   .filter(({ product, version }) => {
     const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
     return version.status === 'APPROVED' && (!coverType || version.coverType === coverType)
+      && (!productVersionId || version.id === productVersionId)
       && (!insurer?.status || insurer.status === 'Active')
       && version.effectiveFrom <= today() && (!version.effectiveUntil || version.effectiveUntil >= today());
   })
@@ -440,17 +442,15 @@ export const contactPreferences = {
 };
 
 export const account = {
-  close: () => call((s) => { s.deleteCurrentAccount(); return { ok: true }; }),
-  // The browser lane holds only what this browser saw, so that is all it can hand back.
-  exportData: () => call((s) => ({
-    exportedAt: new Date().toISOString(),
-    about: 'Everything this demonstration holds about you in this browser.',
-    profile: s.customer ? { fullName: s.customer.fullName, email: s.customer.email, phone: s.customer.phone } : null,
-    quoteRequests: mine(s.quoteRequests),
-    policies: mine(s.policies),
-    claims: mine(s.claims),
-    serviceRequests: s.serviceRequests.filter((entry) => entry.customerEmail === s.customer?.email).map(srToCustomer),
-  })),
+  export: () => call(exportAccount),
+  documents: () => call(accountDocuments),
+  close: () => call((s) => {
+    const records = exportAccount(s);
+    if (records.policies.some((policy) => policy.status === 'Active' && (!policy.policyDates?.endDate || policy.policyDates.endDate >= lusakaToday()))) throw new Error('Your account cannot be closed while cover is in force.');
+    if (records.serviceRequests.some((request) => isOpen(request.status))) throw new Error('Your account cannot be closed while a service request is open.');
+    if (records.policies.some((policy) => policy.status === 'Issuance failed')) throw new Error('Your account cannot be closed while a refund is in progress.');
+    s.deleteCurrentAccount(); return { ok: true };
+  }),
 };
 
 /**
@@ -482,8 +482,9 @@ export const quotes = {
     if (selectedIds.length < 1 || selectedIds.length > 5) {
       throw new Error('Choose one to five published insurance products.');
     }
-    const available = publicProductDirectory(s);
-    const selectedProducts = selectedIds.map((id) => available.find((product) => product.version.id === id)).filter(Boolean);
+    const selectedProducts = selectedIds
+      .map((productVersionId) => publicProductDirectory(s, { productVersionId, limit: 1 })[0])
+      .filter(Boolean);
     if (selectedProducts.length !== selectedIds.length) {
       throw new Error('One or more selected products are no longer available. Reload the product list and try again.');
     }

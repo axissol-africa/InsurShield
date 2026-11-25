@@ -16,6 +16,10 @@ import { filesProblem, messageOf } from '../shared';
 /** One request: where it stands, what the insurer decided, and what has been said. */
 export default function ServiceRequestPage() {
   const { reference } = useParams();
+  return <ServiceRequestDetail key={reference} reference={reference} />;
+}
+
+function ServiceRequestDetail({ reference }) {
   const [request, setRequest] = useState(null);
   const [error, setError] = useState('');
   const [answer, setAnswer] = useState('');

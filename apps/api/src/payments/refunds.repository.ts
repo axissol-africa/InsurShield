@@ -41,6 +41,13 @@ export class RefundsRepository {
     return this.db.transaction(work);
   }
 
+  /** Payment ownership is immutable; discover it without taking the payment lock before the customer lock. */
+  async paymentCustomerId(tx: Transaction, transactionId: string): Promise<string | undefined> {
+    const [payment] = await tx.select({ customerId: payments.customerId }).from(payments)
+      .where(eq(payments.transactionId, transactionId));
+    return payment?.customerId;
+  }
+
   async lockPaymentByTransaction(tx: Transaction, transactionId: string) {
     const [payment] = await tx.select().from(payments).where(eq(payments.transactionId, transactionId)).for('update');
     return payment;

@@ -1,3 +1,4 @@
+import { RetentionModule } from './retention/retention.module.js';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from './config/config.module.js';
@@ -15,7 +16,6 @@ import { VehiclesModule } from './vehicles/vehicles.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
 import { SettlementsModule } from './settlements/settlements.module.js';
 import { ServiceRequestsModule } from './service-requests/service-requests.module.js';
-import { PrivacyModule } from './privacy/privacy.module.js';
 import { SupportModule } from './support/support.module.js';
 import { InspectionsModule } from './inspections/inspections.module.js';
 import { AuthGuard } from './common/auth/auth.guard.js';
@@ -58,10 +58,10 @@ import { IntegrationsModule } from './integrations/integrations.module.js';
     PaymentsModule,
     SettlementsModule,
     ServiceRequestsModule,
-    PrivacyModule,
     SupportModule,
     InspectionsModule,
     SettingsModule,
+    RetentionModule,
     ProductsModule,
   ],
   controllers: [HealthController],

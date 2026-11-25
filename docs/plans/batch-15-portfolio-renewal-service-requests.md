@@ -211,6 +211,13 @@ One branch, `feat/batch-15-portfolio`, one PR at the end:
 - The served job runner test now queues its job ahead of everything else, so a long backlog left by the rest of
   the suite cannot time it out.
 
+- The normal quote submission keeps the source policy reference through to the selected insurer's queue. The API
+  verifies policy ownership and serializes renewal submissions against the same original policy.
+- The account and reminders share the same eligibility checks. An open payment or replacement cover prevents
+  a duplicate renewal, while a failed purchase without replacement cover lets the customer renew again. Renewal
+  dates follow the Lusaka calendar.
+- The earlier product is retrieved directly if it falls outside the first page of the product directory.
+
 ### Part 2 as delivered
 
 - Migration 0044 adds `service_requests`, the append-only `service_request_updates` (a database trigger refuses any
@@ -223,6 +230,8 @@ One branch, `feat/batch-15-portfolio`, one PR at the end:
   can be kept internal; the customer never sees it, nor a document attached to it.
 - A correction, replacement or help request can be completed in one step, which records the approval and the
   completion together. A cancellation must be approved first and is completed on or after its end date.
+- A service request retry reuses its submission key and the evidence already uploaded. Cancelling with a refund
+  rechecks the payment balance under lock before ending cover and adding the item for approval.
 - A customer can ask about a policy that is active or still being issued, but can cancel only cover that is in force:
   before issue, the insurer reports it cannot issue and the customer is refunded that way.
 - Documents on a service request are kept under `POLICY_EVIDENCE`, as evidence about the contract.
@@ -238,49 +247,27 @@ One branch, `feat/batch-15-portfolio`, one PR at the end:
   support page, and "Find a record by reference" under Find customer in the admin console. A notification about a
   service request opens it.
 
-### Renewal fixes found in review
+### Part 3 delivery
 
-A review of part 1 made in the local checkout found that a renewal bought through the journey was never linked to
-the policy it renewed (the web did not send `renewalOfPolicyNumber` and the API did not accept it), and that renewal
-days were counted at the server's midnight rather than Lusaka's. Both are fixed with tests, together with the smaller
-points in that commit: a renewal blocks another while its payment is in progress or its cover stands, only cover in
-force is renewable, a start-up job that fails is retried, and the two Playwright journeys that failed on main now pass.
+- My Account brings quotes, policies, renewals, service requests and documents together with search, status filters
+  and links to continue each journey. The Privacy section explains when an account can close and offers a JSON export.
+- `GET /account/export` requires a verified customer session started within the last ten minutes. The server assembles
+  the export on demand, records a contents-free audit event and instructs clients not to cache the response. Document
+  links require the same account to be signed in before the server can issue a short-lived storage link.
+- Account closure checks outstanding cover, service requests, payments and refunds before withdrawing open quotes
+  and expiring drafts. Historical insurance records remain available to authorised operations staff under the retention rules.
 
-### Part 3 as delivered
+- Migration 0045 introduces the retention fields and setting. Migration 0046 adds the durable deletion marker and
+  PostgreSQL guards that serialize document attachment and the creation of new legal holds with deletion. A failed
+  storage removal remains pending for retry, while other documents and eligible accounts can still be processed.
+- The daily sweep retains documents needed by live policies, open claims, service requests or reconciliation. Claims
+  stay protected while Batch 16 adds a way to close them. The sweep keeps document tombstones and anonymises eligible
+  closed accounts, preserving their regulated records. Audit entries contain counts and record references only.
 
-- `GET /account/export` returns one JSON document built from the same services that serve each record to the
-  customer, so it holds nothing they could not already see. Payments show only the masked number paid from.
-  It is audited as `customer.data_exported` with counts, sent with `Cache-Control: no-store`, limited to five an hour,
-  and never stored. The plan's "fresh session check" is not a separate step: sessions are never refreshed, so a
-  session is at most its fixed lifetime old.
-- Closing an account is also refused while a service request (`SERVICE_REQUEST_OPEN`), a payment
-  (`PAYMENT_IN_PROGRESS`) or a refund (`REFUND_IN_PROGRESS`) is in progress. Closing ends the customer's open quote
-  requests, cancels their chosen products for the insurers (reason `ACCOUNT_CLOSED`) and deletes drafts.
-- Fixed on the way: an `ACTIVE` policy whose last day had passed still counted as in force, so its holder could
-  never close the account. Cover is in force only until its end date.
-- A daily job applies `DOCUMENT_RETENTION`: it deletes the stored file of each document past its class period that
-  nothing still needs, and keeps the row with `deletedAt`, so a reference to it still explains what was there. It
-  never gives a link again, and downloading it answers `DOCUMENT_NOT_AVAILABLE`. Held documents: the papers of cover
-  that stands or is being issued, of a policy with an unresolved reconciliation item, anything on a claim (claims
-  cannot close before batch 16), on an open service request, evidence on an unresolved item, an insurer's logo or
-  evidence while the insurer exists, and draft attachments.
-- The same job replaces the name, phone and email of an account closed longer than the new `ACCOUNT_RETENTION`
-  setting (`{ daysAfterClosure: 2555 }`, provisional) with "Closed account" and unique placeholders, and removes its
-  sign-in. Policies, payments and claims stay, pointing at the anonymised customer. Each run is audited as
-  `data_retention.applied` with counts only.
-- Migration 0045 adds `documents.deletedAt`, `customers.anonymisedAt` (only ever set on a closed account), the
-  `ACCOUNT_RETENTION` setting key and the `ACCOUNT_CLOSED` cancellation reason.
-- Web: "Your data" in the account overview with "Download my data" and what closing does and keeps; the closing
-  dialog says the same. Policies and quote requests can be searched by reference, insurer, product, vehicle or plate,
-  and quote requests filtered by waiting, quoted or expired. Search and filter live in the address.
-- Not in this part: the service request and renewal lists keep their own pages rather than one combined portfolio
-  list, and documents have no list of their own outside the export.
+## Provisional settings for the Batch 20 release gate
 
-## Provisional settings this batch adds
-
-For the batch 20 release gate: `RENEWAL_POLICY` (60-day window, reminders at 30, 14 and 3 days),
-`ACCOUNT_RETENTION` (2,555 days), and the help desk contact (`HELP_DESK_EMAIL`, `HELP_DESK_PHONE`,
-`HELP_DESK_HOURS`), which is unset until the help desk is chosen.
+`RENEWAL_POLICY` uses a 60-day window and reminders at 30, 14 and 3 days. `ACCOUNT_RETENTION` defaults to 2,555 days,
+subject to compliance confirmation. `HELP_DESK_EMAIL`, `HELP_DESK_PHONE` and `HELP_DESK_HOURS` are set once the help desk is chosen.
 
 ## Size and split
 

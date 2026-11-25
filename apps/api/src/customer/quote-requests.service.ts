@@ -1,3 +1,4 @@
+import { assertOpenCustomer } from '../db/customer-lock.js';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
@@ -113,6 +114,7 @@ export class QuoteRequestsService {
     );
 
     const create = async (tx: Transaction) => {
+      await assertOpenCustomer(tx, customer.id);
       // Batch 12 is a clean cutover for new writes.  A browser that still
       // posts the old, generic request shape must reload rather than create a
       // request that would fan out to insurers the customer never chose.
@@ -195,6 +197,7 @@ export class QuoteRequestsService {
    */
   async requote(customer: CustomerPrincipal, id: string): Promise<QuoteRequestResponse> {
     return this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const original = await this.repository.lockOwned(tx, customer.id, id);
       if (!original) throw ApiException.notFound('Quote request', id);
 

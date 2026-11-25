@@ -11,13 +11,13 @@ import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
 import { coverPeriod } from '@/domain/coverPeriod';
 import { canAskAbout } from '@/domain/serviceRequests';
-import { REQUEST_FILTERS, policyMatches, requestInFilter, requestMatches } from '@/domain/portfolio';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocuments';
 import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
-import PrivacyCard from '@/features/account/components/PrivacyCard';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
+import AccountPortfolio from '../components/AccountPortfolio';
+import AccountPrivacy from '../components/AccountPrivacy';
 import ContactPreferences from '../components/ContactPreferences';
 import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
 import { needsCoverGuideSelection } from '@/store/shared';
@@ -39,6 +39,10 @@ const ISSUANCE_FAILED = 'Issuance failed';
 const QUOTE_REQUESTS_PER_PAGE = 5;
 
 const ACCOUNT_SECTION_COPY = {
+  documents: { title: 'Documents', description: 'Your protected documents and their availability.' },
+  renewals: { title: 'Renewals', description: 'Review cover dates and continue your renewal.' },
+  'service-requests': { title: 'Service requests', description: 'Track requests and respond to your insurer.' },
+  privacy: { title: 'Privacy', description: 'Download your data and understand account closure.' },
   overview: { title: 'Overview', description: 'Your insurance activity at a glance.' },
   certificates: { title: 'Certificates', description: 'Track paid quotes while insurers prepare the official policy certificate.' },
   policies: { title: 'Policies', description: 'View active cover, certificates and renewal details.' },
@@ -73,10 +77,18 @@ const openCertificate = (policy) =>
 export default function CustomerAccountPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount, requoteFromRequest, resetJourney } = useStore();
+  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, requoteFromRequest, resetJourney } = useStore();
 
   // Your records come from the server when one is configured; a no-op otherwise.
-  useEffect(() => { void hydrateCustomer(); }, []);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadState, setLoadState] = useState(env.apiMode === 'http' ? 'loading' : 'ready');
+  useEffect(() => {
+    let current = true;
+    hydrateCustomer().then((results) => {
+      if (current) setLoadState(results?.some((ok) => !ok) ? 'error' : 'ready');
+    }).catch(() => { if (current) setLoadState('error'); });
+    return () => { current = false; };
+  }, [loadAttempt]);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [readingGuide, setReadingGuide] = useState(null); // the policy whose cover guide is open
@@ -89,19 +101,8 @@ export default function CustomerAccountPage() {
   const myPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Active');
   // Paid policies without a certificate: still being issued, or not issued and being refunded.
   const pendingPolicies = policies.filter((policy) => mine(policy) && ([AWAITING_CERTIFICATE, ISSUANCE_FAILED].includes(policy.status) || refundedAfterFailure(policy)));
-  const allRequests = quoteRequests.filter(mine).sort((first, second) => requestDate(second) - requestDate(first));
-  // Search and filter live in the address, so a filtered list survives a reload and the back button.
-  const search = searchParams.get('q') || '';
-  const requestFilter = REQUEST_FILTERS.some((entry) => entry.id === searchParams.get('filter')) ? searchParams.get('filter') : 'all';
-  const shownPolicies = myPolicies.filter((policy) => policyMatches(policy, search));
-  const myRequests = allRequests.filter((request) => requestMatches(request, search) && requestInFilter(request, requestFilter));
-  const setListParam = (key, value) => {
-    const next = new URLSearchParams(searchParams);
-    if (value && value !== 'all') next.set(key, value);
-    else next.delete(key);
-    next.delete('page');
-    setSearchParams(next, { replace: true });
-  };
+  const policyHistory = policies.filter((policy) => mine(policy) && !pendingPolicies.includes(policy));
+  const myRequests = quoteRequests.filter(mine).sort((first, second) => requestDate(second) - requestDate(first));
   const myClaims = claims.filter(mine);
   const requestPageCount = Math.max(1, Math.ceil(myRequests.length / QUOTE_REQUESTS_PER_PAGE));
   const requestedPage = Number.parseInt(searchParams.get('page') || '1', 10);
@@ -113,13 +114,7 @@ export default function CustomerAccountPage() {
   const displayedRequests = myRequests.slice(firstRequestIndex, firstRequestIndex + QUOTE_REQUESTS_PER_PAGE);
   const requestPages = visiblePages(requestPageCount, currentRequestPage);
 
-  const requestPageHref = (page) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('section', 'quotes');
-    if (page > 1) next.set('page', String(page));
-    else next.delete('page');
-    return `/account?${next.toString()}`;
-  };
+  const requestPageHref = (page) => page > 1 ? `/account?section=quotes&page=${page}` : '/account?section=quotes';
   const goToRequestPage = (event, page) => {
     event.preventDefault();
     if (page < 1 || page > requestPageCount || page === currentRequestPage) return;
@@ -141,23 +136,19 @@ export default function CustomerAccountPage() {
   };
   const removeAccount = async () => {
     setAccountError('');
-    if (env.apiMode === 'http') {
-      try {
-        await api.account.close();
-        requestIdentityTransition({ landing: '/', userId: null, announce: true });
-      } catch (error) {
-        setConfirmingRemoval(false);
-        setAccountError(error instanceof Error ? error.message : 'We could not close your account. Please try again.');
-      }
-      return;
+    try {
+      await api.account.close();
+      setConfirmingRemoval(false);
+      if (env.apiMode === 'http') requestIdentityTransition({ landing: '/', userId: null, announce: true });
+    } catch (error) {
+      setConfirmingRemoval(false);
+      setAccountError(error instanceof Error ? error.message : 'We could not close your account. Please try again.');
     }
-    setConfirmingRemoval(false);
-    deleteCurrentAccount(); // CustomerRoute sends the visitor home once the session ends
   };
 
   const summary = [
     ['Active policies', myPolicies.length, 'verified_user'],
-    ['Quote requests', allRequests.length, 'send'],
+    ['Quote requests', myRequests.length, 'send'],
     ['Claims', myClaims.length, 'report_problem'],
   ];
 
@@ -167,7 +158,7 @@ export default function CustomerAccountPage() {
         <div className="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8">
           <AccountSidebar
             customer={customer}
-            counts={{ policies: myPolicies.length, quotes: allRequests.length, certificates: pendingPolicies.length, claims: myClaims.length }}
+            counts={{ policies: myPolicies.length, quotes: myRequests.length, certificates: pendingPolicies.length, claims: myClaims.length }}
             activeSection={activeSection}
             onNewQuote={resetJourney}
           />
@@ -185,8 +176,12 @@ export default function CustomerAccountPage() {
               </p>
             </section>
 
+            {loadState === 'loading' && <p role="status" className="mt-4">Loading your account…</p>}
+            {loadState === 'error' && <div role="alert" className="mt-4"><p>Some account records could not be refreshed. Displayed records may be out of date.</p><Button variant="outline" onClick={() => { setLoadState('loading'); setLoadAttempt((value) => value + 1); }}>Retry account</Button></div>}
             <MobileQuickActions onNewQuote={resetJourney} />
             <MobileAccountNavigation activeSection={activeSection} />
+            {['overview', 'documents', 'renewals', 'service-requests'].includes(activeSection) && <AccountPortfolio key={`${customer?.email}-${activeSection}`} section={activeSection} onOpenRequest={openRequest} />}
+            {activeSection === 'privacy' && <AccountPrivacy key={customer?.email} onClose={() => setConfirmingRemoval(true)} accountError={accountError} canClose={!isDemoAccount} />}
 
         {activeSection === 'overview' && <section aria-label="Account summary" className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
           {summary.map(([label, value, icon]) => (
@@ -224,7 +219,7 @@ export default function CustomerAccountPage() {
                     <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><FileText className="size-4" aria-hidden="true" /></span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium">Quote activity</span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">{allRequests.length ? `${allRequests.length} request${allRequests.length === 1 ? '' : 's'} to review, compare or follow up.` : 'Start a quote to compare cover from active insurers.'}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{myRequests.length ? `${myRequests.length} request${myRequests.length === 1 ? '' : 's'} to review, compare or follow up.` : 'Start a quote to compare cover from active insurers.'}</span>
                     </span>
                     <span className="text-sm font-medium text-primary">View</span>
                   </Link>
@@ -249,7 +244,7 @@ export default function CustomerAccountPage() {
                 {[
                   ['Active cover', myPolicies.length],
                   ['Certificates pending', pendingPolicies.length],
-                  ['Quote requests', allRequests.length],
+                  ['Quote requests', myRequests.length],
                   ['Claims', myClaims.length],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-xl border border-primary/15 bg-primary/[0.035] p-3">
@@ -323,25 +318,17 @@ export default function CustomerAccountPage() {
             <CardHeader className="grid-cols-[1fr_auto] items-center border-b">
               <div>
                 <CardTitle>Policies</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Certificates and documents for cover that is active.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Certificates and documents for your current and past cover.</p>
               </div>
               {myPolicies.length > 0 && (
                 <Button asChild variant="ghost" size="sm"><Link to="/renewal">Renew</Link></Button>
               )}
             </CardHeader>
 
-            {myPolicies.length > 0 && (
-              <CardContent className="border-b pt-5 pb-5">
-                <PortfolioSearch value={search} onChange={(value) => setListParam('q', value)} label="Search your policies" placeholder="Policy number, insurer, vehicle or plate" />
-              </CardContent>
-            )}
-            {myPolicies.length > 0 && shownPolicies.length === 0 && (
-              <CardContent className="pt-5"><Empty text="No policy matches that search." action={<button type="button" className="font-medium text-primary underline" onClick={() => setListParam('q', '')}>Clear the search</button>} /></CardContent>
-            )}
-            {shownPolicies.length ? (
+            {policyHistory.length ? (
               <CardContent className="pt-5">
               <ul className="overflow-hidden rounded-xl border border-border">
-                {shownPolicies.map((policy, index) => (
+                {policyHistory.map((policy, index) => (
                   <li key={policy.policyNumber} className={`p-4 sm:p-5 ${index === 0 ? '' : 'border-t border-border'}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -351,7 +338,7 @@ export default function CustomerAccountPage() {
                           {policy.vehicle}{policy.vehicleDetails?.plateNumber ? ` · ${policy.vehicleDetails.plateNumber}` : ''}
                         </p>
                       </div>
-                      <Badge variant="outline" className="shrink-0 border-primary/20 bg-primary/10 text-primary">Active</Badge>
+                      <Badge variant="outline" className="shrink-0 border-primary/20 bg-primary/10 text-primary">{policy.status}</Badge>
                     </div>
 
                     <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
@@ -408,7 +395,7 @@ export default function CustomerAccountPage() {
                 ))}
               </ul>
               </CardContent>
-            ) : myPolicies.length === 0 && (
+            ) : (
               <CardContent><Empty text="Policies you buy through InsurShield will appear here." /></CardContent>
             )}
           </Card>}
@@ -419,21 +406,6 @@ export default function CustomerAccountPage() {
               <p className="mt-1 text-sm text-muted-foreground">Your latest requests, guide choices and insurer quotations.</p>
             </CardHeader>
 
-            {allRequests.length > 0 && (
-              <CardContent className="space-y-3 border-b pt-5 pb-5">
-                <PortfolioSearch value={search} onChange={(value) => setListParam('q', value)} label="Search your quote requests" placeholder="Request reference, insurer, product or vehicle" />
-                <div role="group" aria-label="Show requests" className="flex flex-wrap gap-2">
-                  {REQUEST_FILTERS.map((entry) => (
-                    <Button key={entry.id} type="button" size="sm" variant={requestFilter === entry.id ? 'default' : 'outline'} aria-pressed={requestFilter === entry.id} onClick={() => setListParam('filter', entry.id)}>
-                      {entry.label}
-                    </Button>
-                  ))}
-                </div>
-              </CardContent>
-            )}
-            {allRequests.length > 0 && myRequests.length === 0 && (
-              <CardContent className="pt-5"><Empty text="No request matches that search or filter." action={<button type="button" className="font-medium text-primary underline" onClick={() => setSearchParams(new URLSearchParams({ section: 'quotes' }), { replace: true })}>Show all requests</button>} /></CardContent>
-            )}
             {myRequests.length ? (
               <CardContent className="pt-5">
               <ul className="overflow-hidden rounded-xl border border-border">
@@ -491,7 +463,7 @@ export default function CustomerAccountPage() {
                 })}
               </ul>
               </CardContent>
-            ) : allRequests.length === 0 && (
+            ) : (
               <CardContent><Empty
                 text="Complete your vehicle details to compare cover guides, then request final quotes from the insurers you choose."
                 action={<Link to="/insurance-type" className="text-primary underline-offset-4 hover:underline">Start a quote</Link>}
@@ -556,12 +528,11 @@ export default function CustomerAccountPage() {
                 {[customer?.fullName, customer?.email, customer?.phone].filter(Boolean).join(' · ')}
                 </p>
               </div>
-              <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingRemoval(true)} className="text-primary hover:bg-primary/10 hover:text-primary">Close account</Button>
+              <Button type="button" variant="ghost" size="sm" asChild className="text-primary hover:bg-primary/10 hover:text-primary"><Link to="/account?section=privacy">Privacy</Link></Button>
             </CardHeader>
             {accountError && <CardContent className="pt-0"><p role="alert" className="text-sm text-primary">{accountError}</p></CardContent>}
           </Card>
         )}
-        {activeSection === 'overview' && !isDemoAccount && <PrivacyCard api={api} />}
           </div>
         </div>
       </div>
@@ -580,10 +551,9 @@ export default function CustomerAccountPage() {
         title="Close your account?"
         description="You will be signed out and will need to register again to use InsurShield."
         consequences={[
-          { text: 'You lose access to your quote requests and documents. Download your data first if you want a copy.' },
-          { text: 'Requests still waiting for quotes end, and drafts are deleted.' },
-          { text: 'Your policies, claims and payment records are kept for regulatory retention; seven years after closing your name and contact details are removed from them.', kept: true },
-          { text: 'An account with cover in force, or a service request, payment or refund in progress, cannot be closed until it is finished.', kept: true },
+          { text: 'You lose access to your quote requests and documents.' },
+          { text: 'Your policies, claims and payment records are kept for regulatory retention.', kept: true },
+          { text: 'Closure is blocked by cover in force, open service requests, payments in progress or refunds in progress.', kept: true },
         ]}
         confirmLabel="Close account"
         cancelLabel="Keep my account"
@@ -594,34 +564,6 @@ export default function CustomerAccountPage() {
   );
 }
 
-
-function PortfolioSearch({ value, onChange, label, placeholder }) {
-  // Typed text is kept here and written to the address a moment later, so typing stays smooth.
-  const [text, setText] = useState(value);
-  const [shown, setShown] = useState(value);
-  // A search cleared or changed from elsewhere (a "clear" link, the back button) replaces what is typed.
-  if (value !== shown) {
-    setShown(value);
-    setText(value);
-  }
-  useEffect(() => {
-    if (text === value) return undefined;
-    const timer = setTimeout(() => onChange(text), 250);
-    return () => clearTimeout(timer);
-  }, [text, value, onChange]);
-  return (
-    <label className="block">
-      <span className="sr-only">{label}</span>
-      <input
-        type="search"
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        placeholder={placeholder}
-        className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-      />
-    </label>
-  );
-}
 
 function Empty({ text, action }) {
   return (
@@ -644,6 +586,10 @@ function AccountSidebar({ customer, counts, activeSection, onNewQuote }) {
     { id: 'certificates', label: 'Certificates', icon: FileCheck2, count: counts.certificates },
     { id: 'policies', label: 'Policies', icon: ShieldCheck, count: counts.policies },
     { id: 'quotes', label: 'Quote activity', icon: FileText, count: counts.quotes },
+    { id: 'documents', label: 'Documents', icon: FileText },
+    { id: 'renewals', label: 'Renewals', icon: RefreshCw },
+    { id: 'service-requests', label: 'Service requests', icon: MessageSquareText },
+    { id: 'privacy', label: 'Privacy', icon: ShieldCheck },
   ];
 
   return (
@@ -736,7 +682,10 @@ function MobileAccountNavigation({ activeSection }) {
     ['policies', 'Policies'],
     ['quotes', 'Quotes'],
     ['claims', 'Claims & NCD', '/claims'],
-    ['service-requests', 'Service requests', '/service-requests'],
+    ['documents', 'Documents'],
+    ['renewals', 'Renewals'],
+    ['service-requests', 'Service requests'],
+    ['privacy', 'Privacy'],
   ];
 
   return (

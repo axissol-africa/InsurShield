@@ -19,6 +19,7 @@ const RULES = [
   { key: 'ADD_ON_CATALOGUE', label: 'Add-on catalogue', description: 'Reusable optional benefits that products may offer.', template: { addOns: [{ code: 'ROADSIDE', label: 'Roadside assistance', description: 'Emergency assistance after a breakdown.' }] } },
   { key: 'USAGE_LOADINGS', label: 'Vehicle use loadings', description: 'Rate adjustments for each declared vehicle use.', template: { loadings: { INDIVIDUAL: 10000, DEFAULT: 10000 } } },
   { key: 'DOCUMENT_RETENTION', label: 'Document retention', description: 'Retention periods for each evidence class.', template: { daysByClass: { UNDERWRITING_EVIDENCE: 2555, POLICY_EVIDENCE: 2555, CLAIM_EVIDENCE: 2555, BRAND_ASSET: 365, COMPLIANCE_EVIDENCE: 2555 } } },
+  { key: 'ACCOUNT_RETENTION', label: 'Closed account retention', description: 'Days before eligible closed accounts are de-identified.', template: { daysAfterClosure: 2555 } },
   { key: 'QUOTE_DECLINE_REASONS', label: 'Quote decline reasons', description: 'The approved reasons an insurer may decline a product with, and what the customer reads for each.', template: { reasons: [{ code: 'OUTSIDE_APPETITE', customerText: 'This insurer does not offer this cover for your vehicle at the moment.', internalText: "Risk is outside the insurer's underwriting appetite." }] } },
 ];
 const CATEGORIES = ['COVERAGE', 'EXCLUSION', 'LIMIT', 'EXCESS', 'ADD_ON'];

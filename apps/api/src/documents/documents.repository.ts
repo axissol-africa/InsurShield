@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, exists, inArray, isNotNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Principal } from '../common/auth/auth.types.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
@@ -64,6 +64,16 @@ export class DocumentsRepository {
     return document;
   }
 
+  listForCustomer(customerId: string, tx: Database | Transaction = this.db) {
+    return tx.select({
+      id: documents.id, name: documents.fileName, type: documents.mimeType, size: documents.sizeBytes,
+      kind: documents.kind, uploadedAt: documents.uploadedAt, scanStatus: documents.scanStatus,
+      deletionStartedAt: documents.deletionStartedAt, deletedAt: documents.deletedAt,
+    }).from(documents)
+      .where(or(eq(documents.uploadedByCustomerId, customerId), ...this.ownedByCustomer(customerId)))
+      .orderBy(desc(documents.uploadedAt), asc(documents.id));
+  }
+
   /** Locks in id order, so two requests naming the same documents cannot deadlock. */
   async lockForAttach(tx: Transaction, documentIds: string[]) {
     return await tx
@@ -74,7 +84,7 @@ export class DocumentsRepository {
         uploadedByStaffId: documents.uploadedByStaffId,
       })
       .from(documents)
-      .where(inArray(documents.id, documentIds))
+      .where(and(inArray(documents.id, documentIds), isNull(documents.deletionStartedAt), isNull(documents.deletedAt)))
       .orderBy(asc(documents.id))
       .for('update');
   }

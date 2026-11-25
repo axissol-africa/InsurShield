@@ -109,6 +109,10 @@ reference implementation is `apps/api/src/common/json/canonical-json.ts`.
 
 ## Required safeguards
 
+Renewals use the existing quote process. The prior policy reference is shown in the insurer portal. Policy
+service requests, responses and cancellation approvals use the portal during Batch 15. The partner API and
+webhook contract retain their existing message formats.
+
 - Authenticate server-to-server with OAuth client credentials or mTLS; never from the browser.
 - Sign webhook payloads and verify the signature, timestamp and insurer identity.
 - Use idempotency keys for quote, paid-policy and claim delivery; retries must not create duplicates.

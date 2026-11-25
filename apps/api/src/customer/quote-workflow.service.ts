@@ -145,6 +145,24 @@ export class QuoteWorkflowService {
     return to;
   }
 
+  /** Account closure and its quote transitions commit together, under the customer lock. */
+  async closeAccount(tx: Transaction, customerId: string, actor: AuditActor, at: Date) {
+    const requests = await this.versions.lockUnpaidAccountRequests(tx, customerId);
+    let cancelledProducts = 0;
+    for (const requestId of requests) {
+      for (const version of await this.versions.lockAccountVersions(tx, requestId)) {
+        if (!nextStatus(version.status, 'CANCEL')) continue;
+        await this.move(tx, version, 'CANCEL', {
+          actor, at, note: 'Customer closed their account.', patch: { pausedAt: null, cancelledReason: 'ACCOUNT_CLOSED' },
+        });
+        cancelledProducts++;
+      }
+      await this.versions.withdrawAccountRequest(tx, requestId, at);
+    }
+    const expiredDrafts = await this.versions.expireAccountDrafts(tx, customerId, at);
+    return { withdrawnRequests: requests.length, cancelledProducts, expiredDrafts };
+  }
+
   /**
    * Decision 24 for one insurer's chosen versions: every one still open or
    * quoted but unpaid is cancelled; a paid one keeps its state and is only
@@ -166,26 +184,6 @@ export class QuoteWorkflowService {
       affected.add(version.quoteRequestId);
     }
     return [...affected];
-  }
-
-  /**
-   * A closing customer's requests stop for every insurer: each chosen product
-   * still open, or quoted but unpaid, is cancelled, so no insurer keeps working
-   * on a request nobody can buy. Returns how many were cancelled.
-   */
-  async cancelForClosedAccount(tx: Transaction, customerId: string, actor: AuditActor, at: Date): Promise<number> {
-    let cancelled = 0;
-    for (const version of await this.versions.lockCancellableForCustomer(tx, customerId)) {
-      if (!nextStatus(version.status, 'CANCEL')) continue;
-      await this.move(tx, version, 'CANCEL', {
-        actor,
-        note: 'The customer closed their account.',
-        at,
-        patch: { cancelledAt: at, cancelledReason: 'ACCOUNT_CLOSED', pausedAt: null },
-      });
-      cancelled += 1;
-    }
-    return cancelled;
   }
 
   // ── Hourly sweep ───────────────────────────────────────────────

@@ -2,6 +2,9 @@ import { RENEWAL_REMINDERS, RenewalReminders } from './renewal-reminders.js';
 import { Module, type OnModuleInit } from '@nestjs/common';
 import { AccountRepository } from './account.repository.js';
 import { AccountService } from './account.service.js';
+import { AccountDataController } from './account-data.controller.js';
+import { AccountDataRepository } from './account-data.repository.js';
+import { AccountDataService } from './account-data.service.js';
 import { ClaimsRepository } from './claims.repository.js';
 import { ClaimsService } from './claims.service.js';
 import { CustomerController } from './customer.controller.js';
@@ -26,7 +29,7 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
 
 @Module({
   imports: [SettingsModule],
-  controllers: [CustomerController, QuoteRequestDraftsController],
+  controllers: [CustomerController, QuoteRequestDraftsController, AccountDataController],
   providers: [
     QuoteRequestsService,
     QuoteRequestsRepository,
@@ -40,6 +43,8 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
     NcdRepository,
     AccountService,
     AccountRepository,
+    AccountDataRepository,
+    AccountDataService,
     IdempotencyService,
     QuoteRequestDraftsService,
     QuoteRequestDraftsRepository,
@@ -50,10 +55,6 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
     UnderwritingInspectionsService,
   ],
   exports: [
-    ClaimsService,
-    NcdService,
-    PoliciesService,
-    QuoteRequestsService,
     QuoteAvailabilityService,
     QuoteProductsRepository,
     QuoteWorkflowService,
