@@ -102,6 +102,30 @@ describe('settlements and money adjustments', () => {
     expect(await testApp.db.select().from(settlements).where(eq(settlements.insurerId, insurer.insurer.id))).toHaveLength(1);
   });
 
+  it('keeps the premium of cover cancelled after issue, and deducts what was refunded on it', async () => {
+    const insurer = await buildInsurer(testApp.db);
+    const cancelled = await paid(insurer);
+    await testApp.db
+      .update(policies)
+      .set({ status: 'CANCELLED', issuedAt: SEPTEMBER, cancelledAt: new Date('2026-09-25T08:00:00.000Z') })
+      .where(eq(policies.policyNumber, cancelled.policy.policyNumber));
+    await testApp.db.insert(paymentRefunds).values({
+      paymentId: cancelled.payment.id,
+      amountMinor: 40_000,
+      reasonCode: 'CUSTOMER_REQUEST',
+      reason: 'Cancelled mid-term on the customer request.',
+      status: 'COMPLETED',
+      provider: 'STAND_IN',
+      providerRefundId: `SIRF-cancel-${cancelled.payment.id}`,
+      proposedByStaffId: makerId,
+      completedAt: new Date('2026-09-26T08:00:00.000Z'),
+    });
+
+    const drafted = await draft(insurer);
+
+    expect(drafted.body).toMatchObject({ grossPremium: 1000, refunds: 400, netPayable: 600 });
+  });
+
   it('finalises only after a second administrator approves, then nothing in it is settled again or changed', async () => {
     const insurer = await buildInsurer(testApp.db);
     const bought = await paid(insurer);

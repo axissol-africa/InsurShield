@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   insurerQuotes,
@@ -17,6 +17,15 @@ export type LineRow = typeof settlementLines.$inferSelect;
 
 /** Cover that stands, or is still being issued: what an insurer is paid for. */
 const LIVE_POLICY = ['ACTIVE', 'AWAITING_INSURER_CERTIFICATE'] as const;
+
+/**
+ * Cover that stood, so its premium is the insurer's and refunds on it come out
+ * of the insurer's money: live cover, and cover the insurer issued and later
+ * cancelled on the customer's request. A policy never issued was refunded in
+ * full and is no part of a settlement.
+ */
+const coverStood = () =>
+  or(inArray(policies.status, LIVE_POLICY), and(eq(policies.status, 'CANCELLED'), isNotNull(policies.issuedAt)));
 
 @Injectable()
 export class SettlementsRepository {
@@ -72,7 +81,7 @@ export class SettlementsRepository {
           eq(payments.status, 'CONFIRMED'),
           isNull(payments.settlementId),
           lt(payments.confirmedAt, before),
-          inArray(policies.status, LIVE_POLICY),
+          coverStood(),
         ),
       )
       .orderBy(asc(payments.confirmedAt), asc(payments.id));
@@ -92,7 +101,7 @@ export class SettlementsRepository {
           eq(paymentRefunds.status, 'COMPLETED'),
           isNull(paymentRefunds.settlementId),
           lt(paymentRefunds.completedAt, before),
-          inArray(policies.status, LIVE_POLICY),
+          coverStood(),
         ),
       )
       .orderBy(asc(paymentRefunds.completedAt), asc(paymentRefunds.id));
