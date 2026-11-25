@@ -72,6 +72,8 @@ export const RULE_SETTING_KEYS = [
   'PAYMENT_CHARGES',
   'PAYMENT_PENDING_TIMEOUT',
   'ISSUANCE_DEADLINE',
+  'COMMISSION_RULE',
+  'SETTLEMENT_PERIOD',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
@@ -162,6 +164,15 @@ export const OPEN_REFUND_STATUSES = ['PROPOSED', 'APPROVED', 'SUBMITTED'] as con
 export const REFUND_REASONS = ['ISSUANCE_FAILED', 'INSURER_UNAVAILABLE', 'DUPLICATE_PAYMENT', 'AMOUNT_MISMATCH', 'CUSTOMER_REQUEST', 'OTHER'] as const;
 export type RefundReason = (typeof REFUND_REASONS)[number];
 
+/** A settlement is drafted, sent for a second administrator's approval, and then frozen. */
+export const SETTLEMENT_STATUSES = ['DRAFT', 'PROPOSED', 'FINALISED'] as const;
+export type SettlementStatus = (typeof SETTLEMENT_STATUSES)[number];
+export const SETTLEMENT_LINE_KINDS = ['PAYMENT', 'REFUND', 'ADJUSTMENT'] as const;
+export type SettlementLineKind = (typeof SETTLEMENT_LINE_KINDS)[number];
+/** Why money is moved in or out of an insurer's next settlement outside a payment or refund. */
+export const ADJUSTMENT_KINDS = ['SETTLEMENT_CORRECTION', 'REVERSAL_RECOVERY', 'FEE_CORRECTION', 'OTHER'] as const;
+export type AdjustmentKind = (typeof ADJUSTMENT_KINDS)[number];
+
 export const PAYMENT_METHODS = ['MOBILE_MONEY', 'CARD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
@@ -216,6 +227,8 @@ export const APPROVAL_ACTIONS = [
   'INSURER_DELETE',
   'INSURER_RESTORE',
   'PAYMENT_REFUND',
+  'MONEY_ADJUSTMENT',
+  'SETTLEMENT_FINALISE',
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 

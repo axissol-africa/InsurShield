@@ -472,8 +472,19 @@ As batch 13 did, this batch is delivered in parts on one branch, `feat/batch-14-
   - Found while testing in the browser: the API never started its job runner, so no background job ran in a served
     app (status checks, refunds, emails, deliveries, sweeps), only in tests that drive the runner. `main.ts` now
     starts it once the provider gate has passed and the port is open, and it stops on shutdown.
-- **Part 3b**: money adjustments (B14.5 item 4), provider statement import and its item kinds (B14.6 item 2), and
-  settlement (B14.7), with their admin screens and the insurer's settlement view.
+- **Part 3b** (delivered): money adjustments (B14.5 item 4) and settlement (B14.7), with the admin console's
+  Settlements section, adjustments from the reconciliation queue, the approvals inbox entries, and the insurer
+  portal's Settlements section. Where it differs from the plan:
+  - Migration 0041 adds `settlements`, `settlement_lines`, `money_adjustments`, `settlementId` on payments and
+    refunds, the two approval actions and the two settings, with triggers that freeze a finalised settlement and its
+    lines and keep adjustments append-only.
+  - An adjustment is written only when approved; until then it is the approval request, so nothing unapproved can
+    reach a draft.
+  - A draft also picks up older payments a previous settlement missed, and deducts only refunds on cover that stayed
+    live, so a payment refunded after a failed issue is neither paid nor deducted.
+  - The CSV is produced from the frozen lines when asked for, rather than stored as a document: the lines cannot
+    change, so the file is the same every time.
+- **Part 3c**: provider statement import and its item kinds (B14.6 item 2), with its admin screen.
 
 Until part 3 lands, every case that needs a refund opens its reconciliation item so nothing is lost, and the branch
 stays unmerged.

@@ -90,6 +90,8 @@ export const PERMISSIONS = {
   'reconciliation:read': INSURSHIELD_ADMIN,
   'reconciliation:manage': INSURSHIELD_ADMIN,
   'refund:propose': INSURSHIELD_ADMIN,
+  'adjustment:propose': INSURSHIELD_ADMIN,
+  'settlement:manage': INSURSHIELD_ADMIN,
   'pia:set-floor': INSURSHIELD_ADMIN,
   'insurer:read': INSURSHIELD_ADMIN,
   'insurer:create': INSURSHIELD_ADMIN,
@@ -140,6 +142,8 @@ export const PERMISSIONS = {
   'portal:queue:claim': QUOTING,
   'portal:queue:assign': QUOTING,
   'portal:policy:read': ANY_INSURER,
+  // What the insurer is paid: its administrator and its finance team.
+  'portal:settlement:read': ['INSURER_ADMIN', 'FINANCE'],
   'portal:certificate:issue': ISSUING,
   'portal:claim:read': READS_CLAIMS,
   'portal:claim:acknowledge': CLAIMS_AND_NCD,

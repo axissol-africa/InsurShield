@@ -35,7 +35,7 @@ import { StandInPaymentProvider } from './provider/stand-in-payment-provider.js'
     // Only the stand-in exists until DEC-008 names the providers; PAYMENT_PROVIDER selects among them.
     { provide: PAYMENT_PROVIDER, useExisting: StandInPaymentProvider },
   ],
-  exports: [PAYMENT_PROVIDER, RefundsService],
+  exports: [PAYMENT_PROVIDER, RefundsService, RefundsRepository],
 })
 export class PaymentsModule implements OnModuleInit {
   constructor(

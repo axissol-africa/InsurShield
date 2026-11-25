@@ -52,6 +52,7 @@ export class ReconciliationService {
           openedAt: row.item.openedAt.toISOString(),
           ageDays: Math.floor((now - row.item.openedAt.getTime()) / DAY_MS),
           owner: row.item.ownerStaffId ? { id: row.item.ownerStaffId, name: row.ownerName } : null,
+          insurerId: row.item.insurerId,
           insurer: row.insurerName,
           policyNumber: row.item.policyNumber,
           payment: row.transactionId

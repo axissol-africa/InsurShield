@@ -88,7 +88,17 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyAuditLogAppendOnlyInvariant);
   await query(db, applyProductSelectionIntegrityInvariants);
   await query(db, applyInternalNotesAppendOnlyInvariant);
+  await query(db, applySettlementInvariants);
   return db;
+}
+
+/** The settlement and adjustment triggers, read from migration 0041 itself so the two cannot drift. */
+async function applySettlementInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0041_batch_14_settlements.sql', import.meta.url), 'utf8');
+  const triggers = migration.slice(migration.indexOf('-- A finalised settlement and its lines never change'));
+  for (const statement of triggers.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 async function applyInternalNotesAppendOnlyInvariant(client: ClientBase) {
@@ -1166,7 +1176,7 @@ describe('the final schema', () => {
     // when a product was assigned and when its owner was warned, and then
     // when a quote was withdrawn and when the customer chose one, and
     // finally when an inspection was decided.
-    expect(timestampColumns).toHaveLength(162);
+    expect(timestampColumns).toHaveLength(169);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

@@ -1,7 +1,7 @@
 # Payments
 
 How InsurShield takes a payment for an accepted quote, and how the insurer then issues the policy. Batch 14 builds
-this in parts; this page covers parts 1, 2 and 3a, and grows with part 3b (statements, adjustments and settlement).
+this in parts; this page covers parts 1 to 3b, and grows with part 3c (provider statement import).
 
 ## The rules
 
@@ -133,6 +133,43 @@ insurer, policy, the payment with what has been refunded, and its refunds.
 
 All of it is for InsurShield administrators only (`reconciliation:read`, `reconciliation:manage`, `refund:propose`).
 
+## Money adjustments
+
+`POST /api/v1/admin/money-adjustments` with `insurerId`, a signed `amount` (positive pays the insurer more, negative
+takes money back), a `kind` (`SETTLEMENT_CORRECTION`, `REVERSAL_RECOVERY`, `FEE_CORRECTION`, `OTHER`), a `reason` and,
+optionally, the `reconciliationItemId` it settles. Nothing is written but a `MONEY_ADJUSTMENT` approval request. Once
+a different administrator approves it, the adjustment is written, append-only (a database trigger refuses any edit
+or delete, except recording once the settlement that took it), and its item resolves as `ADJUSTED`.
+
+## Settlement
+
+What InsurShield owes one insurer for one Lusaka calendar month (`SETTLEMENT_PERIOD`), drawn up only once the month
+has ended:
+
+- **Payments**: every confirmed payment for that insurer's quotes, confirmed before the month ended and not settled
+  yet, whose policy is active or still being issued. Earlier ones a previous settlement missed are picked up. Its
+  premium and add-ons are the insurer's; its charges (the `CHARGE` lines, such as the RTSA fee) are shown apart.
+- **Refunds**: completed refunds on cover that stayed live come off. A refund for a policy that was never issued is
+  not deducted, because that payment was never paid to the insurer.
+- **Adjustments**: every approved adjustment not settled yet.
+- **Commission**: `COMMISSION_RULE` basis points of the gross premium, rounded half up to the ngwee, from the rule
+  version in force when the month began (recorded on the settlement).
+- **Net payable** = gross premium - refunds + adjustments - commission.
+
+| Route | Effect |
+| --- | --- |
+| `POST /api/v1/admin/settlements` | `insurerId` and `period` (`YYYY-MM`): draws up a `DRAFT`, replacing an earlier draft. |
+| `POST /api/v1/admin/settlements/:id/finalise` | With a `reason`: a `SETTLEMENT_FINALISE` approval request; the settlement is `PROPOSED`. |
+| `GET /api/v1/admin/settlements`, `.../:id`, `.../:id/export` | The list, one with its lines, and its CSV. |
+| `GET /api/v1/insurer/settlements`, `.../:id`, `.../:id/export` | The insurer's own finalised settlements (`INSURER_ADMIN` and `FINANCE`). |
+
+When a different administrator approves, every payment, refund and adjustment in it is marked with the settlement, so
+no later settlement takes it again; if one was taken meanwhile, the approval is refused with `SETTLEMENT_STALE` and
+the month is drawn up again. A rejected request turns it back into a draft. A finalised settlement and its lines never
+change (database triggers); a later correction is an adjustment in a later month.
+
+The CSV has the reference, insurer and month, one row per line (kind, reference, date, amount, fees), then the totals.
+
 ## The provider port and the stand-in
 
 The port is `src/payments/provider/payment-provider.ts`: `initiate`, `status`, `cancel`, `refund` and
@@ -165,5 +202,7 @@ Left unset outside production, the stand-in makes up a secret at each start.
 | `PAYMENT_CHARGES` | the RTSA anniversary fee only | Approved charges added to the premium. Until a version is approved, the fee keeps the amount in `RTSA_ANNIVERSARY_FEE_NGWEE`. |
 | `PAYMENT_PENDING_TIMEOUT` | 15 minutes | How long an attempt may stay open, and how long the price is held. |
 | `ISSUANCE_DEADLINE` | 48 hours | When a paid policy is due from the insurer. |
+| `COMMISSION_RULE` | 0 basis points | InsurShield's commission on gross premium in a settlement. |
+| `SETTLEMENT_PERIOD` | monthly | The period a settlement covers. Only monthly for now. |
 
-All three are provisional until DEC-008 and the finance questions in the batch 14 plan are answered.
+All of these are provisional until DEC-008 and the finance questions in the batch 14 plan are answered.

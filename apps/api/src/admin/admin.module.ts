@@ -5,13 +5,14 @@ import { AdminRepository } from './admin.repository.js';
 import { ApprovalsController } from './approvals.controller.js';
 import { ApprovalsModule } from '../approvals/approvals.module.js';
 import { PaymentsModule } from '../payments/payments.module.js';
+import { SettlementsModule } from '../settlements/settlements.module.js';
 import { InsurersModule } from '../insurers/insurers.module.js';
 import { PiaModule } from '../pia/pia.module.js';
 import { SupportPasswordResetRepository } from './support-password-reset.repository.js';
 import { SupportPasswordResetService } from './support-password-reset.service.js';
 
 @Module({
-  imports: [ApprovalsModule, InsurersModule, PiaModule, PaymentsModule],
+  imports: [ApprovalsModule, InsurersModule, PiaModule, PaymentsModule, SettlementsModule],
   controllers: [AdminController, ApprovalsController],
   providers: [AdminService, AdminRepository, SupportPasswordResetRepository, SupportPasswordResetService],
 })

@@ -46,8 +46,11 @@ import {
   NCD_STATUSES,
   PAYMENT_METHODS,
   PAYMENT_PROVIDER_NAMES,
+  ADJUSTMENT_KINDS,
   REFUND_REASONS,
   REFUND_STATUSES,
+  SETTLEMENT_LINE_KINDS,
+  SETTLEMENT_STATUSES,
   PAYMENT_STATUSES,
   RECONCILIATION_KINDS,
   RECONCILIATION_OUTCOMES,
@@ -146,6 +149,8 @@ const updatedAt = () =>
 const id = () => uuid('id').primaryKey().$defaultFn(randomUUID);
 
 const ngwee = (name: string) => bigint(name, { mode: 'number' });
+/** Money that can go either way, such as an adjustment or a net payable. */
+const signedNgwee = ngwee;
 
 function fk(
   name: string,
@@ -1308,6 +1313,8 @@ export const payments = pgTable(
     reversedAt: timestamptz('reversedAt'),
     reversalReference: varchar('reversalReference', { length: 200 }),
     lastStatusCheckAt: timestamptz('lastStatusCheckAt'),
+    /** The finalised settlement that paid this to the insurer; set once, so nothing is settled twice. */
+    settlementId: uuid('settlementId'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1487,6 +1494,8 @@ export const paymentRefunds = pgTable(
     submittedAt: timestamptz('submittedAt'),
     completedAt: timestamptz('completedAt'),
     failureReason: text('failureReason'),
+    /** The finalised settlement this refund was taken from, set once. */
+    settlementId: uuid('settlementId'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1500,6 +1509,105 @@ export const paymentRefunds = pgTable(
     fk('payment_refunds_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
     fk('payment_refunds_proposedByStaffId_fkey', [t.proposedByStaffId], [staffUsers.id], 'restrict'),
     check('payment_refunds_amount_check', sql`${t.amountMinor} > 0`),
+  ],
+);
+
+export const settlementStatus = pgEnum('SettlementStatus', SETTLEMENT_STATUSES);
+export const settlementLineKind = pgEnum('SettlementLineKind', SETTLEMENT_LINE_KINDS);
+export const adjustmentKind = pgEnum('AdjustmentKind', ADJUSTMENT_KINDS);
+
+/**
+ * What InsurShield owes one insurer for one period. A draft can be redrawn;
+ * once a second administrator approves it, it and its lines never change, and
+ * a later correction is an adjustment in a later settlement.
+ */
+export const settlements = pgTable(
+  'settlements',
+  {
+    id: id(),
+    reference: text('reference').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    period: varchar('period', { length: 7 }).notNull(),
+    periodStart: timestamptz('periodStart').notNull(),
+    periodEnd: timestamptz('periodEnd').notNull(),
+    status: settlementStatus('status').notNull().default('DRAFT'),
+    grossPremiumMinor: ngwee('grossPremiumMinor').notNull(),
+    feesMinor: ngwee('feesMinor').notNull(),
+    refundsMinor: ngwee('refundsMinor').notNull(),
+    adjustmentsMinor: signedNgwee('adjustmentsMinor').notNull(),
+    commissionMinor: ngwee('commissionMinor').notNull(),
+    netPayableMinor: signedNgwee('netPayableMinor').notNull(),
+    commissionBps: integer('commissionBps').notNull(),
+    ruleVersions: jsonb('ruleVersions').$type<Record<string, number | null>>().notNull(),
+    approvalRequestId: uuid('approvalRequestId'),
+    draftedByStaffId: uuid('draftedByStaffId').notNull(),
+    finalisedAt: timestamptz('finalisedAt'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('settlements_insurerId_period_key').on(t.insurerId, t.period),
+    uniqueIndex('settlements_reference_key').on(t.reference),
+    fk('settlements_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('settlements_draftedByStaffId_fkey', [t.draftedByStaffId], [staffUsers.id], 'restrict'),
+    check('settlements_finalised_check', sql`(${t.status} = 'FINALISED') = (${t.finalisedAt} IS NOT NULL)`),
+  ],
+);
+
+export const settlementLines = pgTable(
+  'settlement_lines',
+  {
+    id: id(),
+    settlementId: uuid('settlementId').notNull(),
+    kind: settlementLineKind('kind').notNull(),
+    paymentId: uuid('paymentId'),
+    refundId: uuid('refundId'),
+    adjustmentId: uuid('adjustmentId'),
+    /** The insurer's money on the line: premium, a refund (negative) or an adjustment (signed). */
+    amountMinor: signedNgwee('amountMinor').notNull(),
+    feeMinor: ngwee('feeMinor').notNull().default(0),
+    reference: text('reference').notNull(),
+    occurredAt: timestamptz('occurredAt').notNull(),
+  },
+  (t) => [
+    index('settlement_lines_settlementId_idx').on(t.settlementId),
+    fk('settlement_lines_settlementId_fkey', [t.settlementId], [settlements.id], 'cascade'),
+    fk('settlement_lines_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('settlement_lines_refundId_fkey', [t.refundId], [paymentRefunds.id], 'restrict'),
+    check(
+      'settlement_lines_source_check',
+      sql`num_nonnulls(${t.paymentId}, ${t.refundId}, ${t.adjustmentId}) = 1`,
+    ),
+  ],
+);
+
+/**
+ * Money moved into or out of an insurer's next settlement that is not a
+ * payment or a refund. Written only once a second administrator approves it,
+ * and never changed afterwards except to record the settlement that took it.
+ */
+export const moneyAdjustments = pgTable(
+  'money_adjustments',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    kind: adjustmentKind('kind').notNull(),
+    amountMinor: signedNgwee('amountMinor').notNull(),
+    reason: text('reason').notNull(),
+    reconciliationItemId: uuid('reconciliationItemId'),
+    approvalRequestId: uuid('approvalRequestId').notNull(),
+    proposedByStaffId: uuid('proposedByStaffId').notNull(),
+    approvedByStaffId: uuid('approvedByStaffId').notNull(),
+    settlementId: uuid('settlementId'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('money_adjustments_insurerId_settlementId_idx').on(t.insurerId, t.settlementId),
+    uniqueIndex('money_adjustments_approvalRequestId_key').on(t.approvalRequestId),
+    fk('money_adjustments_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('money_adjustments_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
+    fk('money_adjustments_settlementId_fkey', [t.settlementId], [settlements.id], 'restrict'),
+    check('money_adjustments_amount_check', sql`${t.amountMinor} <> 0`),
   ],
 );
 

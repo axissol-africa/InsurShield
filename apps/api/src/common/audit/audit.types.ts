@@ -20,7 +20,7 @@ export interface AuditEvent {
 
 export interface StateTransition {
   actor: AuditActor;
-  entityType: 'QUOTE_REQUEST' | 'QUOTE_REQUEST_PRODUCT' | 'POLICY' | 'CLAIM' | 'NCD_APPLICATION' | 'INSPECTION' | 'PAYMENT' | 'RECONCILIATION_ITEM' | 'REFUND';
+  entityType: 'QUOTE_REQUEST' | 'QUOTE_REQUEST_PRODUCT' | 'POLICY' | 'CLAIM' | 'NCD_APPLICATION' | 'INSPECTION' | 'PAYMENT' | 'RECONCILIATION_ITEM' | 'REFUND' | 'SETTLEMENT' | 'MONEY_ADJUSTMENT';
   entityId: string;
   fromStatus: string | null;
   toStatus: string;

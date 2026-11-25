@@ -106,6 +106,8 @@ const schemas = {
   PAYMENT_CHARGES: paymentCharges,
   PAYMENT_PENDING_TIMEOUT: z.object({ minutes: z.number().int().min(2).max(24 * 60) }),
   ISSUANCE_DEADLINE: z.object({ hours: z.number().int().min(1).max(30 * 24) }),
+  COMMISSION_RULE: z.object({ basisPoints: z.number().int().min(0).max(10_000) }),
+  SETTLEMENT_PERIOD: z.object({ kind: z.literal('MONTHLY') }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
 export type RuleValue = {
@@ -191,6 +193,9 @@ const defaults = {
   },
   PAYMENT_PENDING_TIMEOUT: { minutes: 15 },
   ISSUANCE_DEADLINE: { hours: 48 },
+  // Provisional until DEC-008 settles the commercial model.
+  COMMISSION_RULE: { basisPoints: 0 },
+  SETTLEMENT_PERIOD: { kind: 'MONTHLY' },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 
 /** Default values seed demonstrations only; a response always says whether its value is provisional. */

@@ -180,6 +180,21 @@ function safeProposal(action: ApprovalRequestRow['action'], payload: Record<stri
         reasonCode: typeof payload.reasonCode === 'string' ? payload.reasonCode : null,
         reason: typeof payload.reason === 'string' ? payload.reason : null,
       };
+    case 'SETTLEMENT_FINALISE':
+      return {
+        reference: typeof payload.reference === 'string' ? payload.reference : null,
+        insurer: typeof payload.insurer === 'string' ? payload.insurer : null,
+        period: typeof payload.period === 'string' ? payload.period : null,
+        grossPremium: typeof payload.grossPremium === 'number' ? payload.grossPremium : null,
+        netPayable: typeof payload.netPayable === 'number' ? payload.netPayable : null,
+      };
+    case 'MONEY_ADJUSTMENT':
+      return {
+        insurer: typeof payload.insurer === 'string' ? payload.insurer : null,
+        amount: typeof payload.amount === 'number' ? payload.amount : null,
+        kind: typeof payload.kind === 'string' ? payload.kind : null,
+        reason: typeof payload.reason === 'string' ? payload.reason : null,
+      };
     default:
       return {};
   }
