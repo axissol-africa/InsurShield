@@ -84,6 +84,7 @@ const POLICY_KEYS = [
   'customerPhone',
   'insurerPolicyNumber',
   'insurerQuoteReference',
+  'issuance',
   'issuedAt',
   'paymentProof',
   'plan',
@@ -487,6 +488,7 @@ describe('insurer portal', () => {
         },
         receivedAt: '2026-10-22T10:00:01.500Z',
         issuedAt: null,
+        issuance: { dueAt: null, acceptedAt: null, overdue: false, failedAt: null, failureReason: null },
       });
       expect(sorted(policy.quoteDocument)).toEqual(DOCUMENT_KEYS);
     });

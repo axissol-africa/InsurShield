@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, notExists } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { customerAvailableProductConditions } from '../products/customer-availability.js';
 import {
@@ -11,6 +11,7 @@ import {
   insurers,
   ncdCodes,
   payments,
+  policies,
   productVersionRequirements,
   quoteRequestRecipients,
   quoteRequestProductRequirementAnswers,
@@ -24,13 +25,16 @@ import {
   type QuoteComponent,
   type QuoteCondition,
 } from '../db/schema.js';
-import type {
-  CoverageDuration,
-  InsuranceType,
-  InspectionMethod,
-  InspectionRule,
-  InspectionTiming,
-  QuoteProductStatus,
+import {
+  OPEN_PAYMENT_STATUSES,
+  type CoverageDuration,
+  type InsuranceType,
+  type InspectionMethod,
+  type InspectionRule,
+  type InspectionTiming,
+  type PaymentStatus,
+  type PolicyStatus,
+  type QuoteProductStatus,
 } from '../common/domain/enums.js';
 import { ncdCodeIssuedTo } from './ncd-code-ownership.js';
 
@@ -78,7 +82,15 @@ export interface SelectionRow {
   quoteRequestId: string;
   insurerQuoteId: string;
   acceptedConditionCodes: string[];
+  selectedAddOnCodes: string[];
   selectedAt: Date;
+}
+
+/** The latest payment attempt on a request and the policy it led to, if any. */
+export interface PurchaseRow {
+  quoteRequestId: string;
+  paymentStatus: PaymentStatus;
+  policyStatus: PolicyStatus | null;
 }
 
 /** Immutable customer-facing product terms captured at selection time. */
@@ -254,10 +266,54 @@ export class QuoteRequestsRepository {
         quoteRequestId: quoteSelections.quoteRequestId,
         insurerQuoteId: quoteSelections.insurerQuoteId,
         acceptedConditionCodes: quoteSelections.acceptedConditionCodes,
+        selectedAddOnCodes: quoteSelections.selectedAddOnCodes,
         selectedAt: quoteSelections.selectedAt,
       })
       .from(quoteSelections)
       .where(inArray(quoteSelections.quoteRequestId, quoteRequestIds));
+  }
+
+  /**
+   * Each request's purchase as it stands: a confirmed payment wins over later
+   * attempts, otherwise the newest attempt counts.
+   */
+  async purchasesOf(quoteRequestIds: string[], tx?: Transaction): Promise<PurchaseRow[]> {
+    if (quoteRequestIds.length === 0) return [];
+    const rows = await this.on(tx)
+      .selectDistinctOn([payments.quoteRequestId], {
+        quoteRequestId: payments.quoteRequestId,
+        paymentStatus: payments.status,
+        policyStatus: policies.status,
+      })
+      .from(payments)
+      .leftJoin(policies, eq(policies.paymentId, payments.id))
+      .where(inArray(payments.quoteRequestId, quoteRequestIds))
+      .orderBy(
+        asc(payments.quoteRequestId),
+        sql`CASE WHEN ${payments.status} IN ('CONFIRMED', 'REVERSED') THEN 0 ELSE 1 END`,
+        desc(payments.createdAt),
+        desc(payments.id),
+      );
+    return rows;
+  }
+
+  /** Payment attempts still open on an insurer's quotes, for decision 24 to stop at the provider. */
+  async openPaymentsForInsurer(tx: Transaction, insurerId: string) {
+    return tx
+      .select({ id: payments.id })
+      .from(payments)
+      .innerJoin(insurerQuotes, eq(insurerQuotes.id, payments.insurerQuoteId))
+      .where(and(eq(insurerQuotes.insurerId, insurerId), inArray(payments.status, [...OPEN_PAYMENT_STATUSES])));
+  }
+
+  /** Whether the request has a payment that is still open or already confirmed, which fixes its choice. */
+  async lockedPurchase(tx: Transaction, quoteRequestId: string) {
+    const [payment] = await tx
+      .select({ status: payments.status, transactionId: payments.transactionId })
+      .from(payments)
+      .where(and(eq(payments.quoteRequestId, quoteRequestId), inArray(payments.status, ['CONFIRMED', ...OPEN_PAYMENT_STATUSES])))
+      .limit(1);
+    return payment;
   }
 
   /** Locks an offer this customer can still choose on this request, with its conditions. */
@@ -269,6 +325,7 @@ export class QuoteRequestsRepository {
         validUntil: insurerQuotes.validUntil,
         unpayableAt: insurerQuotes.unpayableAt,
         conditions: insurerQuotes.conditions,
+        addOns: insurerQuotes.addOns,
       })
       .from(insurerQuotes)
       .where(and(eq(insurerQuotes.quoteRequestId, quoteRequestId), eq(insurerQuotes.id, insurerQuoteId)))
@@ -286,6 +343,7 @@ export class QuoteRequestsRepository {
         set: {
           insurerQuoteId: selection.insurerQuoteId,
           acceptedConditionCodes: selection.acceptedConditionCodes,
+          selectedAddOnCodes: selection.selectedAddOnCodes ?? [],
           selectedAt: selection.selectedAt,
           customerId: selection.customerId,
         },

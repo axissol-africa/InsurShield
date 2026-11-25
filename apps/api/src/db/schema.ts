@@ -45,7 +45,18 @@ import {
   INSURER_STATUSES,
   NCD_STATUSES,
   PAYMENT_METHODS,
+  PAYMENT_PROVIDER_NAMES,
+  ADJUSTMENT_KINDS,
+  STATEMENT_LINE_STATUSES,
+  STATEMENT_LINE_TYPES,
+  REFUND_REASONS,
+  REFUND_STATUSES,
+  SETTLEMENT_LINE_KINDS,
+  SETTLEMENT_STATUSES,
   PAYMENT_STATUSES,
+  RECONCILIATION_KINDS,
+  RECONCILIATION_OUTCOMES,
+  RECONCILIATION_STATUSES,
   POLICY_STATUSES,
   PRODUCT_VERSION_STATUSES,
   RULE_SETTING_KEYS,
@@ -71,6 +82,8 @@ import { MAX_NGWEE, MAX_RATE_BPS, MIN_NGWEE, MIN_RATE_BPS } from '../common/doma
 export type QuoteComponent = { code: string; label: string; amountMinor: number };
 export type QuoteAddOn = { code: string; label: string; priceMinor: number; included: boolean; terms: string | null };
 export type QuoteCondition = { code: string; text: string; purchaseCritical: boolean };
+/** One line of what a customer pays: the premium, a chosen add-on, or an approved charge. */
+export type PaymentLine = { kind: 'PREMIUM' | 'ADD_ON' | 'CHARGE'; code: string; label: string; amountMinor: number };
 
 // Physical names are the ones Prisma created; only the money and rate columns were renamed.
 
@@ -94,6 +107,10 @@ export const comparisonValueType = pgEnum('ComparisonValueType', COMPARISON_VALU
 export const comparisonDisplayRule = pgEnum('ComparisonDisplayRule', COMPARISON_DISPLAY_RULES);
 export const paymentStatus = pgEnum('PaymentStatus', PAYMENT_STATUSES);
 export const paymentMethod = pgEnum('PaymentMethod', PAYMENT_METHODS);
+export const paymentProviderName = pgEnum('PaymentProviderName', PAYMENT_PROVIDER_NAMES);
+export const reconciliationKind = pgEnum('ReconciliationKind', RECONCILIATION_KINDS);
+export const reconciliationStatus = pgEnum('ReconciliationStatus', RECONCILIATION_STATUSES);
+export const reconciliationOutcome = pgEnum('ReconciliationOutcome', RECONCILIATION_OUTCOMES);
 export const claimStatus = pgEnum('ClaimStatus', CLAIM_STATUSES);
 export const ncdStatus = pgEnum('NcdStatus', NCD_STATUSES);
 export const inspectionStatus = pgEnum('InspectionStatus', INSPECTION_STATUSES);
@@ -134,6 +151,8 @@ const updatedAt = () =>
 const id = () => uuid('id').primaryKey().$defaultFn(randomUUID);
 
 const ngwee = (name: string) => bigint(name, { mode: 'number' });
+/** Money that can go either way, such as an adjustment or a net payable. */
+const signedNgwee = ngwee;
 
 function fk(
   name: string,
@@ -1251,6 +1270,8 @@ export const quoteSelections = pgTable(
     insurerQuoteId: uuid('insurerQuoteId').notNull(),
     customerId: uuid('customerId').notNull(),
     acceptedConditionCodes: text('acceptedConditionCodes').array().notNull().default(sql`'{}'::text[]`),
+    /** Optional add-ons the customer chose; included ones need no choice. */
+    selectedAddOnCodes: text('selectedAddOnCodes').array().notNull().default(sql`'{}'::text[]`),
     selectedAt: timestamptz('selectedAt').notNull(),
   },
   (t) => [
@@ -1279,12 +1300,38 @@ export const payments = pgTable(
     customerId: uuid('customerId').notNull(),
     quoteRequestId: text('quoteRequestId').notNull(),
     insurerQuoteId: uuid('insurerQuoteId').notNull(),
+    provider: paymentProviderName('provider').notNull().default('STAND_IN'),
+    /** The provider's own id, known once it accepted the instruction. */
+    providerPaymentId: varchar('providerPaymentId', { length: 200 }),
+    /** Card checkout only. Short-lived, and never written to a log or an audit entry. */
+    checkoutUrl: text('checkoutUrl'),
+    payerMsisdnMasked: varchar('payerMsisdnMasked', { length: 24 }),
+    amountBreakdown: jsonb('amountBreakdown').$type<PaymentLine[]>().notNull().default(sql`'[]'::jsonb`),
+    selectionId: uuid('selectionId'),
+    initiatedAt: timestamptz('initiatedAt'),
+    /** The price is held until then; a confirmation after it is not honoured. */
+    pendingUntil: timestamptz('pendingUntil'),
+    failureCode: varchar('failureCode', { length: 60 }),
+    reversedAt: timestamptz('reversedAt'),
+    reversalReference: varchar('reversalReference', { length: 200 }),
+    lastStatusCheckAt: timestamptz('lastStatusCheckAt'),
+    /** The finalised settlement that paid this to the insurer; set once, so nothing is settled twice. */
+    settlementId: uuid('settlementId'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex('payments_transactionId_key').on(t.transactionId),
     uniqueIndex('payments_idempotencyKey_key').on(t.idempotencyKey),
+    uniqueIndex('payments_provider_providerPaymentId_key').on(t.provider, t.providerPaymentId),
+    uniqueIndex('payments_quoteRequestId_open_key')
+      .on(t.quoteRequestId)
+      .where(sql`${t.status} IN ('INITIATED', 'PENDING')`),
+    uniqueIndex('payments_quoteRequestId_confirmed_key')
+      .on(t.quoteRequestId)
+      .where(sql`${t.status} = 'CONFIRMED'`),
+    index('payments_selectionId_idx').on(t.selectionId),
+    fk('payments_selectionId_fkey', [t.selectionId], [quoteSelections.id], 'set null'),
     index('payments_customerId_createdAt_idx').on(t.customerId, t.createdAt),
     index('payments_status_idx').on(t.status),
     fk('payments_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
@@ -1317,10 +1364,19 @@ export const policies = pgTable(
     paymentId: uuid('paymentId').notNull(),
     receivedAt: createdAt('receivedAt'),
     issuedAt: timestamptz('issuedAt'),
+    /** The product version quoted; null for policies from before product selection. */
+    productVersionId: uuid('productVersionId'),
+    issuanceDueAt: timestamptz('issuanceDueAt'),
+    issuanceAcceptedAt: timestamptz('issuanceAcceptedAt'),
+    issuanceFailedAt: timestamptz('issuanceFailedAt'),
+    issuanceFailureReason: text('issuanceFailureReason'),
+    cancelledAt: timestamptz('cancelledAt'),
     updatedAt: updatedAt(),
   },
   (t): PgTableExtraConfigValue[] => [
     uniqueIndex('policies_paymentId_key').on(t.paymentId),
+    index('policies_status_issuanceDueAt_idx').on(t.status, t.issuanceDueAt),
+    fk('policies_productVersionId_fkey', [t.productVersionId], [insurerProductVersions.id], 'restrict'),
     index('policies_customerId_receivedAt_idx').on(t.customerId, t.receivedAt),
     index('policies_insurerId_status_idx').on(t.insurerId, t.status),
     uniqueIndex('policies_quoteRequestId_insurerPolicyNumber_key').on(
@@ -1336,6 +1392,285 @@ export const policies = pgTable(
     fk('policies_certificateDocumentId_fkey', [t.certificateDocumentId], [documents.id], 'set null'),
     fk('policies_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
     moneyCheck('policies', t.premiumMinor),
+  ],
+);
+
+/**
+ * Each provider event once. The pair (provider, eventId) is the replay key; the
+ * envelope hash tells a true replay from the same id reused for other content.
+ * The body itself is not kept.
+ */
+export const paymentCallbacks = pgTable(
+  'payment_callbacks',
+  {
+    id: id(),
+    provider: paymentProviderName('provider').notNull(),
+    eventId: varchar('eventId', { length: 200 }).notNull(),
+    eventType: varchar('eventType', { length: 60 }).notNull(),
+    envelopeHash: varchar('envelopeHash', { length: 64 }).notNull(),
+    paymentId: uuid('paymentId'),
+    receivedAt: createdAt('receivedAt'),
+    processedAt: timestamptz('processedAt'),
+    /** What applying it did, so a replay answers the same. */
+    outcome: varchar('outcome', { length: 60 }),
+  },
+  (t) => [
+    uniqueIndex('payment_callbacks_provider_eventId_key').on(t.provider, t.eventId),
+    index('payment_callbacks_paymentId_idx').on(t.paymentId),
+    fk('payment_callbacks_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+  ],
+);
+
+/**
+ * Money that needs a person: a refund owed, an amount that did not match, a
+ * reversal, an event nobody could place. Opened by the system, closed by an
+ * InsurShield administrator; nothing here moves money by itself.
+ */
+export const reconciliationItems = pgTable(
+  'reconciliation_items',
+  {
+    id: id(),
+    kind: reconciliationKind('kind').notNull(),
+    status: reconciliationStatus('status').notNull().default('OPEN'),
+    outcome: reconciliationOutcome('outcome'),
+    paymentId: uuid('paymentId'),
+    paymentCallbackId: uuid('paymentCallbackId'),
+    /** The provider statement line that raised it, for the kinds a statement import opens. */
+    statementLineId: uuid('statementLineId'),
+    policyNumber: text('policyNumber'),
+    insurerId: uuid('insurerId'),
+    amountMinor: ngwee('amountMinor'),
+    ownerStaffId: uuid('ownerStaffId'),
+    reason: text('reason').notNull(),
+    evidenceDocumentIds: uuid('evidenceDocumentIds').array().notNull().default(sql`'{}'::uuid[]`),
+    resolutionNote: text('resolutionNote'),
+    openedAt: createdAt('openedAt'),
+    resolvedAt: timestamptz('resolvedAt'),
+    resolvedByStaffId: uuid('resolvedByStaffId'),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // One open item of a kind per payment: a repeated trigger finds the item already there.
+    uniqueIndex('reconciliation_items_kind_paymentId_open_key')
+      .on(t.kind, t.paymentId)
+      .where(sql`${t.paymentId} IS NOT NULL AND ${t.status} <> 'RESOLVED'`),
+    uniqueIndex('reconciliation_items_kind_paymentCallbackId_key')
+      .on(t.kind, t.paymentCallbackId)
+      .where(sql`${t.paymentCallbackId} IS NOT NULL`),
+    uniqueIndex('reconciliation_items_kind_statementLineId_key')
+      .on(t.kind, t.statementLineId)
+      .where(sql`${t.statementLineId} IS NOT NULL`),
+    index('reconciliation_items_status_openedAt_idx').on(t.status, t.openedAt),
+    index('reconciliation_items_insurerId_idx').on(t.insurerId),
+    fk('reconciliation_items_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('reconciliation_items_paymentCallbackId_fkey', [t.paymentCallbackId], [paymentCallbacks.id], 'restrict'),
+    fk('reconciliation_items_policyNumber_fkey', [t.policyNumber], [policies.policyNumber], 'restrict'),
+    fk('reconciliation_items_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('reconciliation_items_ownerStaffId_fkey', [t.ownerStaffId], [staffUsers.id], 'set null'),
+    fk('reconciliation_items_resolvedByStaffId_fkey', [t.resolvedByStaffId], [staffUsers.id], 'restrict'),
+    check(
+      'reconciliation_items_resolution_check',
+      sql`(${t.status} = 'RESOLVED') = (${t.resolvedAt} IS NOT NULL AND ${t.outcome} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const refundStatus = pgEnum('RefundStatus', REFUND_STATUSES);
+export const refundReason = pgEnum('RefundReason', REFUND_REASONS);
+
+/**
+ * Money going back to a customer. Proposed by one administrator, approved by
+ * another, then sent to the provider. A payment has at most one refund that
+ * can still move money, so two can never together exceed what was paid.
+ */
+export const paymentRefunds = pgTable(
+  'payment_refunds',
+  {
+    id: id(),
+    paymentId: uuid('paymentId').notNull(),
+    amountMinor: ngwee('amountMinor').notNull(),
+    reasonCode: refundReason('reasonCode').notNull(),
+    reason: text('reason').notNull(),
+    status: refundStatus('status').notNull().default('PROPOSED'),
+    approvalRequestId: uuid('approvalRequestId'),
+    reconciliationItemId: uuid('reconciliationItemId'),
+    provider: paymentProviderName('provider').notNull(),
+    providerRefundId: varchar('providerRefundId', { length: 200 }),
+    proposedByStaffId: uuid('proposedByStaffId').notNull(),
+    approvedAt: timestamptz('approvedAt'),
+    submittedAt: timestamptz('submittedAt'),
+    completedAt: timestamptz('completedAt'),
+    failureReason: text('failureReason'),
+    /** The finalised settlement this refund was taken from, set once. */
+    settlementId: uuid('settlementId'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('payment_refunds_paymentId_open_key')
+      .on(t.paymentId)
+      .where(sql`${t.status} IN ('PROPOSED', 'APPROVED', 'SUBMITTED')`),
+    uniqueIndex('payment_refunds_provider_providerRefundId_key').on(t.provider, t.providerRefundId),
+    index('payment_refunds_status_idx').on(t.status, t.updatedAt),
+    fk('payment_refunds_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('payment_refunds_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
+    fk('payment_refunds_proposedByStaffId_fkey', [t.proposedByStaffId], [staffUsers.id], 'restrict'),
+    check('payment_refunds_amount_check', sql`${t.amountMinor} > 0`),
+  ],
+);
+
+export const settlementStatus = pgEnum('SettlementStatus', SETTLEMENT_STATUSES);
+export const settlementLineKind = pgEnum('SettlementLineKind', SETTLEMENT_LINE_KINDS);
+export const adjustmentKind = pgEnum('AdjustmentKind', ADJUSTMENT_KINDS);
+
+/**
+ * What InsurShield owes one insurer for one period. A draft can be redrawn;
+ * once a second administrator approves it, it and its lines never change, and
+ * a later correction is an adjustment in a later settlement.
+ */
+export const settlements = pgTable(
+  'settlements',
+  {
+    id: id(),
+    reference: text('reference').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    period: varchar('period', { length: 7 }).notNull(),
+    periodStart: timestamptz('periodStart').notNull(),
+    periodEnd: timestamptz('periodEnd').notNull(),
+    status: settlementStatus('status').notNull().default('DRAFT'),
+    grossPremiumMinor: ngwee('grossPremiumMinor').notNull(),
+    feesMinor: ngwee('feesMinor').notNull(),
+    refundsMinor: ngwee('refundsMinor').notNull(),
+    adjustmentsMinor: signedNgwee('adjustmentsMinor').notNull(),
+    commissionMinor: ngwee('commissionMinor').notNull(),
+    netPayableMinor: signedNgwee('netPayableMinor').notNull(),
+    commissionBps: integer('commissionBps').notNull(),
+    ruleVersions: jsonb('ruleVersions').$type<Record<string, number | null>>().notNull(),
+    approvalRequestId: uuid('approvalRequestId'),
+    draftedByStaffId: uuid('draftedByStaffId').notNull(),
+    finalisedAt: timestamptz('finalisedAt'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('settlements_insurerId_period_key').on(t.insurerId, t.period),
+    uniqueIndex('settlements_reference_key').on(t.reference),
+    fk('settlements_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('settlements_draftedByStaffId_fkey', [t.draftedByStaffId], [staffUsers.id], 'restrict'),
+    check('settlements_finalised_check', sql`(${t.status} = 'FINALISED') = (${t.finalisedAt} IS NOT NULL)`),
+  ],
+);
+
+export const settlementLines = pgTable(
+  'settlement_lines',
+  {
+    id: id(),
+    settlementId: uuid('settlementId').notNull(),
+    kind: settlementLineKind('kind').notNull(),
+    paymentId: uuid('paymentId'),
+    refundId: uuid('refundId'),
+    adjustmentId: uuid('adjustmentId'),
+    /** The insurer's money on the line: premium, a refund (negative) or an adjustment (signed). */
+    amountMinor: signedNgwee('amountMinor').notNull(),
+    feeMinor: ngwee('feeMinor').notNull().default(0),
+    reference: text('reference').notNull(),
+    occurredAt: timestamptz('occurredAt').notNull(),
+  },
+  (t) => [
+    index('settlement_lines_settlementId_idx').on(t.settlementId),
+    fk('settlement_lines_settlementId_fkey', [t.settlementId], [settlements.id], 'cascade'),
+    fk('settlement_lines_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('settlement_lines_refundId_fkey', [t.refundId], [paymentRefunds.id], 'restrict'),
+    check(
+      'settlement_lines_source_check',
+      sql`num_nonnulls(${t.paymentId}, ${t.refundId}, ${t.adjustmentId}) = 1`,
+    ),
+  ],
+);
+
+/**
+ * Money moved into or out of an insurer's next settlement that is not a
+ * payment or a refund. Written only once a second administrator approves it,
+ * and never changed afterwards except to record the settlement that took it.
+ */
+export const moneyAdjustments = pgTable(
+  'money_adjustments',
+  {
+    id: id(),
+    insurerId: uuid('insurerId').notNull(),
+    kind: adjustmentKind('kind').notNull(),
+    amountMinor: signedNgwee('amountMinor').notNull(),
+    reason: text('reason').notNull(),
+    reconciliationItemId: uuid('reconciliationItemId'),
+    approvalRequestId: uuid('approvalRequestId').notNull(),
+    proposedByStaffId: uuid('proposedByStaffId').notNull(),
+    approvedByStaffId: uuid('approvedByStaffId').notNull(),
+    settlementId: uuid('settlementId'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('money_adjustments_insurerId_settlementId_idx').on(t.insurerId, t.settlementId),
+    uniqueIndex('money_adjustments_approvalRequestId_key').on(t.approvalRequestId),
+    fk('money_adjustments_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('money_adjustments_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
+    fk('money_adjustments_settlementId_fkey', [t.settlementId], [settlements.id], 'restrict'),
+    check('money_adjustments_amount_check', sql`${t.amountMinor} <> 0`),
+  ],
+);
+
+export const statementLineType = pgEnum('StatementLineType', STATEMENT_LINE_TYPES);
+export const statementLineStatus = pgEnum('StatementLineStatus', STATEMENT_LINE_STATUSES);
+
+/** A provider statement as imported; the same file twice is the same import. */
+export const providerStatementImports = pgTable(
+  'provider_statement_imports',
+  {
+    id: id(),
+    provider: paymentProviderName('provider').notNull(),
+    fileName: text('fileName').notNull(),
+    checksum: varchar('checksum', { length: 64 }).notNull(),
+    periodStart: timestamptz('periodStart').notNull(),
+    periodEnd: timestamptz('periodEnd').notNull(),
+    lineCount: integer('lineCount').notNull(),
+    newLines: integer('newLines').notNull(),
+    matched: integer('matched').notNull(),
+    itemsOpened: integer('itemsOpened').notNull(),
+    importedByStaffId: uuid('importedByStaffId').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('provider_statement_imports_provider_checksum_key').on(t.provider, t.checksum),
+    fk('provider_statement_imports_importedByStaffId_fkey', [t.importedByStaffId], [staffUsers.id], 'restrict'),
+  ],
+);
+
+/**
+ * Each statement line once, whichever file it came in: an overlapping
+ * statement adds only the lines InsurShield has not seen.
+ */
+export const providerStatementLines = pgTable(
+  'provider_statement_lines',
+  {
+    id: id(),
+    importId: uuid('importId').notNull(),
+    provider: paymentProviderName('provider').notNull(),
+    lineKey: varchar('lineKey', { length: 64 }).notNull(),
+    type: statementLineType('type').notNull(),
+    providerPaymentId: varchar('providerPaymentId', { length: 200 }).notNull(),
+    providerRefundId: varchar('providerRefundId', { length: 200 }),
+    amountMinor: ngwee('amountMinor').notNull(),
+    currency: varchar('currency', { length: 3 }).notNull(),
+    occurredAt: timestamptz('occurredAt').notNull(),
+    status: statementLineStatus('status').notNull(),
+    paymentId: uuid('paymentId'),
+    refundId: uuid('refundId'),
+  },
+  (t) => [
+    uniqueIndex('provider_statement_lines_provider_lineKey_key').on(t.provider, t.lineKey),
+    index('provider_statement_lines_paymentId_idx').on(t.paymentId),
+    fk('provider_statement_lines_importId_fkey', [t.importId], [providerStatementImports.id], 'restrict'),
+    fk('provider_statement_lines_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('provider_statement_lines_refundId_fkey', [t.refundId], [paymentRefunds.id], 'restrict'),
   ],
 );
 

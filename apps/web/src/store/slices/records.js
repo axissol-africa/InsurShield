@@ -156,8 +156,11 @@ export const createRecordsSlice = (set) => ({
         certificateDocument,
         insurerPolicyNumber: insurerPolicyNumber || policy.insurerPolicyNumber || policy.policyNumber,
         issuedAt: NOW(),
+        issuance: { ...policy.issuance, acceptedAt: policy.issuance?.acceptedAt || NOW(), overdue: false },
       } : policy)),
     })),
+  updatePolicy: (policyNumber, change) =>
+    set((state) => ({ policies: state.policies.map((policy) => (policy.policyNumber === policyNumber ? { ...policy, ...change(policy) } : policy)) })),
 
   // ─── Customer experience reviews ───────────────────────
   // One review per purchased policy. The user may amend their own review,

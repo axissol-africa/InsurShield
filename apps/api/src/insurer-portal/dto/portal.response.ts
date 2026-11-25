@@ -202,6 +202,7 @@ export function toPortalPolicy(
     },
     receivedAt: policy.receivedAt.toISOString(),
     issuedAt: iso(policy.issuedAt),
+    issuance: issuanceOf(policy, new Date()),
   };
 }
 
@@ -281,5 +282,25 @@ export function toNcdApproval(decision: NcdDecisionRow, code: { code: string; pe
     approvedCode: code.code,
     percentage: code.percentage,
     decidedAt: iso(decision.decidedAt),
+  };
+}
+
+/** Where issuing stands: due, accepted, overdue or failed. Shared by the portal and the customer's view. */
+export function issuanceOf(
+  policy: {
+    status: string;
+    issuanceDueAt: Date | null;
+    issuanceAcceptedAt: Date | null;
+    issuanceFailedAt: Date | null;
+    issuanceFailureReason: string | null;
+  },
+  now: Date,
+) {
+  return {
+    dueAt: iso(policy.issuanceDueAt),
+    acceptedAt: iso(policy.issuanceAcceptedAt),
+    overdue: policy.status === 'AWAITING_INSURER_CERTIFICATE' && policy.issuanceDueAt !== null && policy.issuanceDueAt <= now,
+    failedAt: iso(policy.issuanceFailedAt),
+    failureReason: policy.issuanceFailureReason,
   };
 }

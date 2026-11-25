@@ -60,6 +60,35 @@ const declineReasons = z.object({ reasons: z.array(declineReason).min(1).max(40)
   }
 });
 
+/**
+ * An approved levy, tax or fee added to the premium. A fixed amount or a share
+ * of the premium, optionally only for some cover types, and optionally only
+ * when the policy is aligned to the vehicle's RTSA anniversary.
+ */
+const paymentCharge = z.object({
+  code: z.string().regex(QUESTION_CODE),
+  label: z.string().trim().min(2).max(120),
+  basis: z.enum(['FIXED', 'PERCENT_OF_PREMIUM']),
+  amountMinor: z.number().int().min(0).max(100_000_000).optional(),
+  basisPoints: z.number().int().min(0).max(10_000).optional(),
+  coverTypes: z.array(z.string().regex(QUESTION_CODE)).max(20).optional(),
+  when: z.enum(['ALWAYS', 'RTSA_ANNIVERSARY']).default('ALWAYS'),
+}).superRefine((value, context) => {
+  if (value.basis === 'FIXED' && value.amountMinor === undefined) {
+    context.addIssue({ code: 'custom', path: ['amountMinor'], message: 'Set the fixed amount in ngwee.' });
+  }
+  if (value.basis === 'PERCENT_OF_PREMIUM' && value.basisPoints === undefined) {
+    context.addIssue({ code: 'custom', path: ['basisPoints'], message: 'Set the share of the premium in basis points.' });
+  }
+});
+
+const paymentCharges = z.object({ charges: z.array(paymentCharge).max(20) }).superRefine((value, context) => {
+  const codes = value.charges.map((charge) => charge.code);
+  if (new Set(codes).size !== codes.length) {
+    context.addIssue({ code: 'custom', path: ['charges'], message: 'Each charge must use a different code.' });
+  }
+});
+
 const schemas = {
   PIA_FLOOR: z.object({ rateBps: z.number().int().min(0).max(10_000) }),
   QUOTE_REPLY_DEADLINE: z.object({ days: z.number().int().min(1).max(90) }),
@@ -74,6 +103,11 @@ const schemas = {
   DOCUMENT_RETENTION: documentRetention,
   QUOTE_DECLINE_REASONS: declineReasons,
   QUOTE_SLA_WARNING: z.object({ hoursBeforeDue: z.number().int().min(1).max(240) }),
+  PAYMENT_CHARGES: paymentCharges,
+  PAYMENT_PENDING_TIMEOUT: z.object({ minutes: z.number().int().min(2).max(24 * 60) }),
+  ISSUANCE_DEADLINE: z.object({ hours: z.number().int().min(1).max(30 * 24) }),
+  COMMISSION_RULE: z.object({ basisPoints: z.number().int().min(0).max(10_000) }),
+  SETTLEMENT_PERIOD: z.object({ kind: z.literal('MONTHLY') }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
 export type RuleValue = {
@@ -150,6 +184,18 @@ const defaults = {
   },
   // How long before a product's reply due date its owner is warned.
   QUOTE_SLA_WARNING: { hoursBeforeDue: 24 },
+  // Provisional until DEC-008. Until a version is stored, the RTSA anniversary
+  // fee keeps its amount from RTSA_ANNIVERSARY_FEE_NGWEE.
+  PAYMENT_CHARGES: {
+    charges: [
+      { code: 'RTSA_ANNIVERSARY_FEE', label: 'RTSA anniversary fee', basis: 'FIXED', amountMinor: 0, when: 'RTSA_ANNIVERSARY' },
+    ],
+  },
+  PAYMENT_PENDING_TIMEOUT: { minutes: 15 },
+  ISSUANCE_DEADLINE: { hours: 12 },
+  // Provisional until DEC-008 settles the commercial model.
+  COMMISSION_RULE: { basisPoints: 0 },
+  SETTLEMENT_PERIOD: { kind: 'MONTHLY' },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 
 /** Default values seed demonstrations only; a response always says whether its value is provisional. */

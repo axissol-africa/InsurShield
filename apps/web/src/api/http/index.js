@@ -92,9 +92,9 @@ export const quotes = {
     { ...quote, documentId: await uploadedDocumentId(document, 'quotation', 'QUOTATION') },
   ),
   // The customer's choice of quote, with the conditions they accept.
-  select: (id, insurerQuoteId, acceptedConditionCodes = []) => apiClient.post(
+  select: (id, insurerQuoteId, acceptedConditionCodes = [], addOnCodes = []) => apiClient.post(
     `/quote-requests/${encodeURIComponent(id)}/selection`,
-    { insurerQuoteId, acceptedConditionCodes },
+    { insurerQuoteId, acceptedConditionCodes, addOnCodes },
   ),
   claim: (id, productVersionId) => apiClient.post(`${productPath(id, productVersionId)}/claim`),
   assign: (id, productVersionId, staffId) => apiClient.post(`${productPath(id, productVersionId)}/assign`, { staffId }),
@@ -177,8 +177,10 @@ export const staff = {
 };
 
 export const payments = {
-  pay: (payment) => apiClient.post('/payments', payment, { headers: { 'Idempotency-Key': newIdempotencyKey() } }),
+  /** Starts an attempt. The same key is sent again when the same attempt is retried, so it is never started twice. */
+  pay: (payment, idempotencyKey = newIdempotencyKey()) => apiClient.post('/payments', payment, { headers: { 'Idempotency-Key': idempotencyKey } }),
   status: (id) => apiClient.get(`/payments/${id}`),
+  cancel: (id) => apiClient.post(`/payments/${id}/cancel`),
 };
 
 export const policies = {
@@ -192,6 +194,11 @@ export const policies = {
       ? { ...issuance, certificateDocumentId: await uploadedDocumentId(certificateDocument, 'certificate', 'CERTIFICATE') }
       : issuance,
   ),
+  acceptIssuance: (policyNumber, insurerPolicyNumber) => apiClient.post(
+    `/insurer/policies/${policyNumber}/accept`,
+    insurerPolicyNumber ? { insurerPolicyNumber } : {},
+  ),
+  reportIssuanceFailure: (policyNumber, failure) => apiClient.post(`/insurer/policies/${policyNumber}/issuance-failure`, failure),
 };
 
 export const claims = {
@@ -251,4 +258,28 @@ export const admin = {
   findCustomer: (query) => apiClient.get('/admin/customers/find', { params: { query } }),
   requestCustomerPasswordReset: (request) => apiClient.post('/admin/customers/password-reset', request),
   auditLogs: (query = {}) => apiClient.get('/admin/audit-logs', { params: query }),
+  reconciliation: {
+    list: (query = {}) => apiClient.get('/admin/reconciliation/items', { params: query }),
+    assign: (id, staffId) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/assign`, { staffId }),
+    resolve: (id, outcome, note) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/resolve`, { outcome, note }),
+    proposeRefund: (transactionId, refund) => apiClient.post(`/admin/payments/${encodeURIComponent(transactionId)}/refunds`, refund),
+    proposeAdjustment: (adjustment) => apiClient.post('/admin/money-adjustments', adjustment),
+    importStatement: (statement) => apiClient.post('/admin/reconciliation/statements', statement),
+    listStatements: () => apiClient.get('/admin/reconciliation/statements'),
+    standInStatement: (from, to) => apiClient.get('/admin/reconciliation/stand-in-statement', { params: { from, to }, responseType: 'text' }),
+  },
+  settlements: {
+    list: (insurerId) => apiClient.get('/admin/settlements', { params: insurerId ? { insurerId } : {} }),
+    draft: (insurerId, period) => apiClient.post('/admin/settlements', { insurerId, period }),
+    get: (id) => apiClient.get(`/admin/settlements/${encodeURIComponent(id)}`),
+    finalise: (id, reason) => apiClient.post(`/admin/settlements/${encodeURIComponent(id)}/finalise`, { reason }),
+    exportCsv: (id) => apiClient.get(`/admin/settlements/${encodeURIComponent(id)}/export`, { responseType: 'text' }),
+  },
+};
+
+/** What an insurer is paid: its own finalised settlements. */
+export const settlements = {
+  listForInsurer: () => apiClient.get('/insurer/settlements'),
+  getForInsurer: (id) => apiClient.get(`/insurer/settlements/${encodeURIComponent(id)}`),
+  exportCsv: (id) => apiClient.get(`/insurer/settlements/${encodeURIComponent(id)}/export`, { responseType: 'text' }),
 };

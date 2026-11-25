@@ -142,4 +142,25 @@ describe('PolicyIssuePanel', () => {
     await user.click(issue());
     expect(onIssued).toHaveBeenCalledTimes(2);
   });
+
+  it('accepts the policy for issuing before the certificate is ready, and shows when it is overdue', async () => {
+    const onAccept = vi.fn().mockResolvedValue(undefined);
+    show({ onAccept, policy: { ...policy, issuance: { dueAt: '2026-01-02T10:00:00.000Z', overdue: true, acceptedAt: null } } });
+    expect(screen.getByText('Overdue since 02 Jan 2026')).toBeVisible();
+    await userEvent.type(screen.getByLabelText('Your policy number'), 'PA-9');
+    await userEvent.click(screen.getByRole('button', { name: 'Accept for issuing' }));
+    expect(onAccept).toHaveBeenCalledWith('PA-2026-011293', 'PA-9');
+  });
+
+  it('reports that a policy cannot be issued, with a reason the customer can read', async () => {
+    const onFail = vi.fn().mockResolvedValue(undefined);
+    show({ onFail });
+    await userEvent.click(screen.getByRole('button', { name: 'Report that it cannot be issued' }));
+    const send = screen.getByRole('button', { name: 'Report and refund the customer' });
+    expect(send).toBeDisabled();
+    await userEvent.selectOptions(screen.getByLabelText('Reason *'), 'VEHICLE_DETAILS_WRONG');
+    await userEvent.type(screen.getByLabelText('What to tell the customer *'), 'The chassis number does not match.');
+    await userEvent.click(send);
+    expect(onFail).toHaveBeenCalledWith('PA-2026-011293', { reasonCode: 'VEHICLE_DETAILS_WRONG', customerMessage: 'The chassis number does not match.' });
+  });
 });

@@ -65,3 +65,27 @@ it('downloads the RTSA disc using the policy fee charged at payment', () => {
     rtsaAnniversaryFee: 500,
   }));
 });
+
+it('tells the customer where issuing stands: delayed, or not issued and being refunded', () => {
+  const pending = { insurer: 'Test insurer', customerEmail: 'mwiza@example.com', quoteRequestId: 'QR-1', receivedAt: '2026-11-05T10:00:00.000Z' };
+  useStore.setState({
+    policies: [
+      { ...pending, policyNumber: 'POL-LATE', status: 'Awaiting insurer certificate', product: { name: 'Comprehensive Plus', versionNumber: 2 }, issuance: { overdue: true } },
+      { ...pending, policyNumber: 'POL-FAILED', status: 'Issuance failed', issuance: { failureReason: 'The vehicle is already covered.' } },
+      { ...pending, policyNumber: 'POL-REFUNDED', status: 'Cancelled', issuance: { failedAt: '2026-11-06T10:00:00.000Z' } },
+    ],
+  });
+  render(
+    <MemoryRouter initialEntries={['/account?section=certificates']}>
+      <CustomerAccountPage />
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByText('Delayed')).toBeInTheDocument();
+  expect(screen.getByText(/taking longer than expected/)).toBeInTheDocument();
+  expect(screen.getByText(/Comprehensive Plus/)).toBeInTheDocument();
+  expect(screen.getByText('Not issued')).toBeInTheDocument();
+  expect(screen.getByText(/could not issue this policy: The vehicle is already covered. Your payment will be refunded/)).toBeInTheDocument();
+  expect(screen.getByText('Refunded')).toBeInTheDocument();
+  expect(screen.getByText(/your payment has been refunded in full/)).toBeInTheDocument();
+});

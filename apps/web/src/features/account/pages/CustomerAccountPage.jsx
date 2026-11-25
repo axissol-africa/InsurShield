@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/primitives/pagination';
 
 const AWAITING_CERTIFICATE = 'Awaiting insurer certificate';
+const ISSUANCE_FAILED = 'Issuance failed';
 const QUOTE_REQUESTS_PER_PAGE = 5;
 
 const ACCOUNT_SECTION_COPY = {
@@ -83,7 +84,8 @@ export default function CustomerAccountPage() {
 
   const mine = belongsToCustomer(customer);
   const myPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Active');
-  const pendingPolicies = policies.filter((policy) => mine(policy) && policy.status === AWAITING_CERTIFICATE);
+  // Paid policies without a certificate: still being issued, or not issued and being refunded.
+  const pendingPolicies = policies.filter((policy) => mine(policy) && ([AWAITING_CERTIFICATE, ISSUANCE_FAILED].includes(policy.status) || refundedAfterFailure(policy)));
   const myRequests = quoteRequests.filter(mine).sort((first, second) => requestDate(second) - requestDate(first));
   const myClaims = claims.filter(mine);
   const requestPageCount = Math.max(1, Math.ceil(myRequests.length / QUOTE_REQUESTS_PER_PAGE));
@@ -264,11 +266,11 @@ export default function CustomerAccountPage() {
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium text-foreground">{policy.insurer}</p>
-                            <p className="mt-1 text-xs text-muted-foreground">Paid quote <span className="font-mono text-foreground">{policy.quoteRequestId}</span></p>
+                            <p className="mt-1 text-xs text-muted-foreground">{policy.product?.name ? `${policy.product.name} · ` : ''}Paid quote <span className="font-mono text-foreground">{policy.quoteRequestId}</span></p>
                           </div>
-                          <Badge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Preparing</Badge>
+                          <IssuanceBadge policy={policy} />
                         </div>
-                        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">We will place the official certificate under Policies as soon as your insurer issues it.</p>
+                        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{issuanceMessage(policy)}</p>
                         {/* The certificate can take days; what the customer has already paid for is readable meanwhile. */}
                         {(policy.coverGuide?.planName || policy.quoteDocument) && (
                           <div className="mt-3 flex flex-wrap gap-2">
@@ -669,4 +671,27 @@ function MobileAccountNavigation({ activeSection }) {
       </div>
     </nav>
   );
+}
+
+/** Where issuing stands for a paid policy, in words and not by colour alone. */
+function IssuanceBadge({ policy }) {
+  if (refundedAfterFailure(policy)) return <Badge variant="secondary">Refunded</Badge>;
+  if (policy.status === ISSUANCE_FAILED) return <Badge variant="destructive">Not issued</Badge>;
+  if (policy.issuance?.overdue) return <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10">Delayed</Badge>;
+  return <Badge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Preparing</Badge>;
+}
+
+/** A policy the insurer could not issue, cancelled once the payment went back in full. */
+function refundedAfterFailure(policy) {
+  return policy.status === 'Cancelled' && Boolean(policy.issuance?.failedAt);
+}
+
+function issuanceMessage(policy) {
+  if (refundedAfterFailure(policy)) return `${policy.insurer} could not issue this policy, and your payment has been refunded in full.`;
+  if (policy.status === ISSUANCE_FAILED) {
+    return `${policy.insurer} could not issue this policy${policy.issuance?.failureReason ? `: ${policy.issuance.failureReason}` : '.'} Your payment will be refunded and our team will contact you.`;
+  }
+  if (policy.issuance?.overdue) return 'Your insurer is taking longer than expected. We are following it up and will tell you as soon as the certificate is ready.';
+  const due = policy.issuance?.dueAt ? ` It is expected by ${formatDate(policy.issuance.dueAt)}.` : '';
+  return `We will place the official certificate under Policies as soon as your insurer issues it.${due}`;
 }

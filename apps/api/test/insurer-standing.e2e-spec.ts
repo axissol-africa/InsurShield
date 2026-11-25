@@ -148,7 +148,10 @@ describe('an insurer that may no longer trade', () => {
       );
 
       expect(response.status).toBe(201);
-      expect(response.body.policyNumber).toMatch(/^POL-[0-9A-Z]+$/);
+      expect(response.body.status).toBe('Pending');
+      // The provider confirms it when asked, and only then is the policy created.
+      const settled = await testApp.http.get(`/api/v1/payments/${response.body.transactionId}`).set(await asCustomer(customer));
+      expect(settled.body.policyNumber).toMatch(/^POL-[0-9A-Z]+$/);
     });
   });
 

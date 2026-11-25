@@ -19,7 +19,7 @@ import {
 } from 'class-validator';
 import { CONTRACT_VALUES, fromContract, type NcdDecisionStatus } from '../../common/contract.js';
 import { MAX_KWACHA } from '../../common/domain/money-limits.js';
-import { QUOTE_PRIORITIES, type QuotePriority } from '../../common/domain/enums.js';
+import { ISSUANCE_FAILURE_REASONS, QUOTE_PRIORITIES, type IssuanceFailureReason, type QuotePriority } from '../../common/domain/enums.js';
 
 const CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const CODE_MESSAGE = 'Codes are capital letters, digits and underscores, starting with a letter.';
@@ -187,6 +187,20 @@ export class IssueCertificateDto {
   certificateDocumentId!: string;
 
   @IsOptional() @IsString() @MinLength(1) @MaxLength(120) insurerPolicyNumber?: string;
+}
+
+export class AcceptIssuanceDto {
+  /** The insurer's own policy number, when it has one already. */
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(120) insurerPolicyNumber?: string;
+}
+
+export class IssuanceFailureDto {
+  @IsIn(ISSUANCE_FAILURE_REASONS, { message: 'Choose why the policy cannot be issued.' })
+  reasonCode!: IssuanceFailureReason;
+
+  /** Shown to the customer as written, so it is plain and specific. */
+  @IsString() @MinLength(10, { message: 'Tell the customer why, in at least 10 characters.' }) @MaxLength(1000)
+  customerMessage!: string;
 }
 
 export class AcknowledgeClaimDto {

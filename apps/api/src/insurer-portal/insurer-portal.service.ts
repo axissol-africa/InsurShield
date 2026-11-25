@@ -56,6 +56,8 @@ import type {
   RequestInformationDto,
   ExtendQuoteDto,
   IssueCertificateDto,
+  AcceptIssuanceDto,
+  IssuanceFailureDto,
   NcdDecisionDto,
   SubmitQuoteDto,
   WithdrawQuoteDto,
@@ -930,15 +932,28 @@ export class InsurerPortalService {
         );
       }
       if (policy.status === 'ACTIVE') throw alreadyIssued();
+      if (policy.status !== 'AWAITING_INSURER_CERTIFICATE') throw issuanceClosed();
 
       await this.documents.assertAttachable(tx, principal, [dto.certificateDocumentId], 'CERTIFICATE');
 
       const activated = await this.portal.activatePolicy(tx, policyNumber, insurerId, {
         certificateDocumentId: dto.certificateDocumentId,
-        insurerPolicyNumber: dto.insurerPolicyNumber ?? null,
+        // The number given at acceptance stands unless the certificate brings one.
+        insurerPolicyNumber: dto.insurerPolicyNumber ?? policy.insurerPolicyNumber ?? null,
         issuedAt: new Date(),
       });
       if (!activated) throw alreadyIssued();
+      for (const resolved of await this.portal.resolveOverdue(tx, policy.paymentId, activated.issuedAt ?? new Date())) {
+        await this.audit.transition(tx, {
+          actor: auditActor(principal),
+          entityType: 'RECONCILIATION_ITEM',
+          entityId: resolved.id,
+          fromStatus: 'OPEN',
+          toStatus: 'RESOLVED',
+          note: 'Resolved as ISSUED: the insurer issued the late policy.',
+          correlationId: activated.policyNumber,
+        });
+      }
       await this.audit.write(tx, {
         actor: auditActor(principal),
         action: 'policy.certificate_issued',
@@ -969,6 +984,107 @@ export class InsurerPortalService {
 
     this.logger.log(`Policy ${policyNumber} activated by insurer ${insurerId}`);
     return issued;
+  }
+
+  /** The insurer takes on issuing a paid policy. Recorded once; a repeat answers what was recorded. */
+  async acceptIssuance(principal: Principal, policyNumber: string, dto: AcceptIssuanceDto) {
+    const insurerId = this.insurerOf(principal);
+    return this.portal.transaction(async (tx) => {
+      const policy = await this.issuingPolicy(tx, principal, policyNumber, insurerId);
+      if (policy.issuanceAcceptedAt) {
+        return { policyNumber, issuanceAcceptedAt: policy.issuanceAcceptedAt.toISOString(), insurerPolicyNumber: policy.insurerPolicyNumber };
+      }
+      const at = new Date();
+      const accepted = await this.portal.acceptIssuance(tx, policyNumber, at, dto.insurerPolicyNumber?.trim() || null);
+      if (!accepted) throw issuanceClosed();
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'policy.issuance_accepted',
+        entityType: 'POLICY',
+        entityId: policyNumber,
+        after: { hasInsurerPolicyNumber: Boolean(accepted.insurerPolicyNumber) },
+        note: 'The insurer accepted the paid policy for issuing.',
+        correlationId: policyNumber,
+      });
+      await this.notifications.notify(tx, {
+        customerId: policy.customerId,
+        key: 'policy.issuance_accepted',
+        entity: { type: 'POLICY', id: policyNumber },
+        values: { insurer: policy.insurerName, policyNumber },
+      });
+      return { policyNumber, issuanceAcceptedAt: at.toISOString(), insurerPolicyNumber: accepted.insurerPolicyNumber };
+    });
+  }
+
+  /**
+   * The insurer cannot issue a paid policy. The money is the customer's, so
+   * the failure opens a reconciliation item that ends in a refund; nothing is
+   * refunded from here.
+   */
+  async reportIssuanceFailure(principal: Principal, policyNumber: string, dto: IssuanceFailureDto) {
+    const insurerId = this.insurerOf(principal);
+    const message = dto.customerMessage.trim();
+    return this.portal.transaction(async (tx) => {
+      const policy = await this.issuingPolicy(tx, principal, policyNumber, insurerId);
+      const at = new Date();
+      const failed = await this.portal.failIssuance(tx, policyNumber, at, message);
+      if (!failed) throw issuanceClosed();
+      await this.audit.write(tx, {
+        actor: auditActor(principal),
+        action: 'policy.issuance_failed',
+        entityType: 'POLICY',
+        entityId: policyNumber,
+        after: { reasonCode: dto.reasonCode },
+        note: message,
+        correlationId: policyNumber,
+      });
+      await this.audit.transition(tx, {
+        actor: auditActor(principal),
+        entityType: 'POLICY',
+        entityId: policyNumber,
+        fromStatus: 'AWAITING_INSURER_CERTIFICATE',
+        toStatus: 'ISSUANCE_FAILED',
+        note: `The insurer could not issue the policy (${dto.reasonCode}).`,
+        correlationId: policyNumber,
+      });
+      const item = await this.portal.openReconciliationItem(tx, {
+        kind: 'ISSUANCE_FAILED',
+        paymentId: policy.paymentId,
+        policyNumber,
+        insurerId,
+        amountMinor: policy.amountMinor,
+        reason: `${policy.insurerName} could not issue the policy (${dto.reasonCode}): ${message}`,
+      });
+      if (item) {
+        await this.audit.transition(tx, {
+          actor: auditActor(principal),
+          entityType: 'RECONCILIATION_ITEM',
+          entityId: item.id,
+          fromStatus: null,
+          toStatus: 'OPEN',
+          note: 'ISSUANCE_FAILED: a refund is due to the customer.',
+          correlationId: policyNumber,
+        });
+      }
+      await this.notifications.notify(tx, {
+        customerId: policy.customerId,
+        key: 'policy.issuance_failed',
+        entity: { type: 'POLICY', id: policyNumber },
+        values: { insurer: policy.insurerName, policyNumber, reason: message },
+      });
+      return { policyNumber, status: toContract.policyStatus('ISSUANCE_FAILED'), issuanceFailedAt: at.toISOString(), reason: message };
+    });
+  }
+
+  /** The insurer's policy still being issued, locked. Another insurer's answers as absent and is audited. */
+  private async issuingPolicy(tx: Transaction, principal: Principal, policyNumber: string, insurerId: string) {
+    const policy = await this.portal.lockPolicy(tx, policyNumber, insurerId);
+    if (!policy) {
+      throw await this.absent(principal, { type: 'POLICY', label: 'Policy' }, policyNumber, await this.portal.policyExists(policyNumber, tx));
+    }
+    if (policy.status === 'ACTIVE') throw ApiException.conflict('ALREADY_ISSUED', 'This policy has already been issued and is active.');
+    if (policy.status !== 'AWAITING_INSURER_CERTIFICATE') throw issuanceClosed();
+    return policy;
   }
 
   // ── Claims ──────────────────────────────────────────────────────
@@ -1171,4 +1287,8 @@ export class InsurerPortalService {
     }
     throw new Error(`No unused NCD code was found in ${NCD_CODE_ATTEMPTS} attempts.`);
   }
+}
+
+function issuanceClosed() {
+  return ApiException.conflict('ISSUANCE_CLOSED', 'This policy could not be issued and is being refunded, so it cannot be issued now.');
 }

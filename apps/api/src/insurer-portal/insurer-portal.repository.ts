@@ -17,6 +17,7 @@ import {
   quoteRequestRecipients,
   quoteSelections,
   quoteRequests,
+  reconciliationItems,
   staffUsers,
   vehicles,
 } from '../db/schema.js';
@@ -440,6 +441,10 @@ export class InsurerPortalRepository {
         certificateDocumentId: policies.certificateDocumentId,
         receivedAt: policies.receivedAt,
         issuedAt: policies.issuedAt,
+        issuanceDueAt: policies.issuanceDueAt,
+        issuanceAcceptedAt: policies.issuanceAcceptedAt,
+        issuanceFailedAt: policies.issuanceFailedAt,
+        issuanceFailureReason: policies.issuanceFailureReason,
         customer: { fullName: customers.fullName, email: customers.email, phone: customers.phone },
         vehicle: { plateNumber: vehicles.plateNumber, make: vehicles.make, model: vehicles.model, year: vehicles.year },
         payment: {
@@ -463,12 +468,56 @@ export class InsurerPortalRepository {
   /** Locks the insurer's policy, so its certificate is issued once. Undefined when the insurer has no such policy. */
   async lockPolicy(tx: Transaction, policyNumber: string, insurerId: string) {
     const [policy] = await tx
-      .select({ status: policies.status, customerId: policies.customerId, insurerName: insurers.name })
+      .select({
+        status: policies.status,
+        customerId: policies.customerId,
+        insurerName: insurers.name,
+        paymentId: policies.paymentId,
+        premiumMinor: policies.premiumMinor,
+        insurerPolicyNumber: policies.insurerPolicyNumber,
+        issuanceAcceptedAt: policies.issuanceAcceptedAt,
+        amountMinor: payments.amountMinor,
+      })
       .from(policies)
       .innerJoin(insurers, eq(insurers.id, policies.insurerId))
+      .innerJoin(payments, eq(payments.id, policies.paymentId))
       .where(and(eq(policies.policyNumber, policyNumber), eq(policies.insurerId, insurerId)))
       .for('update', { of: policies });
     return policy;
+  }
+
+  /** The insurer takes on issuing: recorded once, with its policy number when it has one. */
+  async acceptIssuance(tx: Transaction, policyNumber: string, at: Date, insurerPolicyNumber: string | null) {
+    const [accepted] = await tx
+      .update(policies)
+      .set({ issuanceAcceptedAt: at, ...(insurerPolicyNumber ? { insurerPolicyNumber } : {}) })
+      .where(and(eq(policies.policyNumber, policyNumber), eq(policies.status, 'AWAITING_INSURER_CERTIFICATE')))
+      .returning({ policyNumber: policies.policyNumber, issuanceAcceptedAt: policies.issuanceAcceptedAt, insurerPolicyNumber: policies.insurerPolicyNumber });
+    return accepted;
+  }
+
+  async failIssuance(tx: Transaction, policyNumber: string, at: Date, reason: string) {
+    const [failed] = await tx
+      .update(policies)
+      .set({ status: 'ISSUANCE_FAILED', issuanceFailedAt: at, issuanceFailureReason: reason })
+      .where(and(eq(policies.policyNumber, policyNumber), eq(policies.status, 'AWAITING_INSURER_CERTIFICATE')))
+      .returning({ policyNumber: policies.policyNumber, status: policies.status });
+    return failed;
+  }
+
+  /** A late policy that is now issued closes its overdue item: there is nothing left to chase. */
+  resolveOverdue(tx: Transaction, paymentId: string, at: Date) {
+    return tx
+      .update(reconciliationItems)
+      .set({ status: 'RESOLVED', outcome: 'ISSUED', resolvedAt: at, resolutionNote: 'The insurer issued the policy.' })
+      .where(and(eq(reconciliationItems.kind, 'ISSUANCE_OVERDUE'), eq(reconciliationItems.paymentId, paymentId), ne(reconciliationItems.status, 'RESOLVED')))
+      .returning({ id: reconciliationItems.id });
+  }
+
+  /** Once per kind and payment while open; undefined when one is already open. */
+  async openReconciliationItem(tx: Transaction, item: typeof reconciliationItems.$inferInsert) {
+    const [opened] = await tx.insert(reconciliationItems).values(item).onConflictDoNothing().returning({ id: reconciliationItems.id });
+    return opened;
   }
 
   /** Undefined unless the policy was still awaiting its certificate. */
@@ -480,7 +529,8 @@ export class InsurerPortalRepository {
   ) {
     const [activated] = await tx
       .update(policies)
-      .set({ ...issue, status: 'ACTIVE' })
+      // Issuing without a separate acceptance accepts it at the same moment.
+      .set({ ...issue, status: 'ACTIVE', issuanceAcceptedAt: sql`coalesce(${policies.issuanceAcceptedAt}, ${issue.issuedAt})` })
       .where(
         and(
           eq(policies.policyNumber, policyNumber),

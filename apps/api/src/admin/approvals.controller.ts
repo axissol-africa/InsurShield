@@ -9,6 +9,8 @@ import { ApiException } from '../common/errors/api.exception.js';
 import type { Transaction } from '../db/database.module.js';
 import { InsurersService } from '../insurers/insurers.service.js';
 import { PiaService } from '../pia/pia.service.js';
+import { RefundsService } from '../payments/refunds.service.js';
+import { SettlementsService } from '../settlements/settlements.service.js';
 
 /** The independent administrator's inbox for high-risk platform changes. */
 @Controller('admin/approvals')
@@ -17,6 +19,8 @@ export class ApprovalsController {
     private readonly approvals: ApprovalService,
     private readonly insurers: InsurersService,
     private readonly pia: PiaService,
+    private readonly refunds: RefundsService,
+    private readonly settlements: SettlementsService,
   ) {}
 
   @Needs('approval:read')
@@ -42,7 +46,12 @@ export class ApprovalsController {
     @Body() dto: ApprovalDecisionDto,
     @CurrentUser() principal: Extract<Principal, { kind: 'staff' }>,
   ) {
-    return this.approvals.reject(id, principal, dto.reason);
+    // A rejected refund ends with its request, so it no longer blocks a new proposal.
+    return this.approvals.reject(id, principal, dto.reason, (tx, request) => {
+      if (request.action === 'PAYMENT_REFUND') return this.refunds.rejected(tx, request, principal);
+      if (request.action === 'SETTLEMENT_FINALISE') return this.settlements.rejectedFinalise(tx, request, principal);
+      return Promise.resolve();
+    });
   }
 
   private execute(tx: Transaction, request: ApprovalRequestRow, principal: Extract<Principal, { kind: 'staff' }>) {
@@ -59,6 +68,12 @@ export class ApprovalsController {
           throw ApiException.forbidden('Only a super administrator may approve insurer deletion or restoration.');
         }
         return this.insurers.executeApproved(tx, request, principal);
+      case 'PAYMENT_REFUND':
+        return this.refunds.executeApproved(tx, request, principal);
+      case 'MONEY_ADJUSTMENT':
+        return this.settlements.executeAdjustment(tx, request, principal);
+      case 'SETTLEMENT_FINALISE':
+        return this.settlements.executeFinalise(tx, request, principal);
       default:
         throw ApiException.conflict('APPROVAL_ACTION_INVALID', 'This approval action cannot be executed.');
     }

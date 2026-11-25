@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DATABASE, type Database } from '../db/database.module.js';
 import { isExhausted, nextRunAfter } from './domain/backoff.js';
@@ -15,7 +15,7 @@ export const LEASE_MS = 2 * 60_000;
 const IDLE_MS = 5_000;
 
 @Injectable()
-export class JobRunner {
+export class JobRunner implements OnApplicationShutdown {
   private readonly logger = new Logger(JobRunner.name);
   private readonly handlers = new Map<string, JobHandler>();
   private timer: NodeJS.Timeout | undefined;
@@ -68,6 +68,11 @@ export class JobRunner {
         });
     };
     void tick();
+  }
+
+  /** A closing application stops polling before its database pool goes. */
+  async onApplicationShutdown(): Promise<void> {
+    await this.stop();
   }
 
   /** Lets the batch in hand finish, so a shutdown does not abandon leased work. */

@@ -667,8 +667,9 @@ describe('the quote workflow of a chosen product', () => {
       const [quote] = await testApp.db.select().from(insurerQuotes).where(eq(insurerQuotes.quoteRequestId, request.id));
       expect(sent.status).toBe(201);
 
+      // A chosen product's quote is paid only once the customer has chosen it, which is where the conditions are accepted.
       const unpaid = await pay(customer, request.id, quote.id);
-      expect(unpaid.body).toMatchObject({ code: 'CONDITIONS_NOT_ACCEPTED', details: { missing: ['TRACKER'] } });
+      expect(unpaid.body).toMatchObject({ code: 'SELECTION_REQUIRED' });
 
       const select = async (body: Record<string, unknown>) =>
         testApp.http.post(`/api/v1/quote-requests/${request.id}/selection`).set(await asCustomer(customer)).send(body);

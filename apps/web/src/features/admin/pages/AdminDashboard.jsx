@@ -10,6 +10,8 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboardingForm';
 import InsurerOnboardingReview from '@/features/admin/components/InsurerOnboardingReview';
 import AdminApprovalInbox from '@/features/admin/components/AdminApprovalInbox';
+import ReconciliationQueue from '@/features/admin/components/ReconciliationQueue';
+import SettlementsPanel from '@/features/admin/components/SettlementsPanel';
 import ProductReviewQueue from '@/features/admin/components/ProductReviewQueue';
 import RuleSettingsWorkspace from '@/features/admin/components/RuleSettingsWorkspace';
 import StaffManagement from '@/features/admin/components/StaffManagement';
@@ -348,6 +350,8 @@ export default function AdminDashboard() {
     { id: 'add_insurer', label: 'Onboard insurer', icon: 'domain_add', hint: 'Add a provider', matches: ['add_insurer'] },
     { id: 'onboarding_review', label: 'Review onboarding', icon: 'fact_check', hint: 'Evidence and activation', matches: ['onboarding_review'] },
     { id: 'approvals', label: 'Approvals', icon: 'approval', hint: 'Independent decisions', matches: ['approvals'] },
+    { id: 'reconciliation', label: 'Reconciliation', icon: 'account_balance', hint: 'Money to account for', matches: ['reconciliation'] },
+    { id: 'settlements', label: 'Settlements', icon: 'payments', hint: 'What insurers are paid', matches: ['settlements'] },
     { id: 'staff_management', label: 'Staff and teams', icon: 'groups', hint: 'Access control', matches: ['staff_management'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'rule_settings', label: 'Rules and terms', icon: 'tune', hint: 'Rules and comparison fields', matches: ['rule_settings'] },
@@ -390,6 +394,10 @@ export default function AdminDashboard() {
     content = <InsurerOnboardingReview insurers={managedInsurers} api={api} initialInsurerId={reviewingInsurerId} onBack={showInsurers} onChanged={refreshInsurers} />;
   } else if (view === 'approvals') {
     content = <AdminApprovalInbox api={api} onChanged={refreshInsurers} onBack={() => setView('dashboard')} />;
+  } else if (view === 'reconciliation') {
+    content = <ReconciliationQueue api={api} />;
+  } else if (view === 'settlements') {
+    content = <SettlementsPanel api={api} insurers={managedInsurers} />;
   } else if (view === 'product_reviews') {
     content = <ProductReviewQueue api={api} onBack={() => setView('dashboard')} />;
   } else if (view === 'staff_management') {

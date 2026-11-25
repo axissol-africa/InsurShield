@@ -212,17 +212,20 @@ export default function QuotesComparisonPage() {
   const cover = coverPeriod(request?.policyDates);
   const requestExpired = status.status === 'expired';
 
-  const choose = async (quote, acceptedConditionCodes = []) => {
+  const choose = async (quote, acceptedConditionCodes = [], addOnCodes = []) => {
     // Indicative estimates explain the market but are not an offer a customer
     // can buy. A documented insurer reply is required before payment.
     if (!quote.isFinal || quote.unavailable || quote.expired || requestExpired) return;
     // A chosen product's quote is chosen on the server too, with the conditions
     // accepted, because payment checks the required ones were.
-    if (quote.productVersionId) await api.quotes.select(request.id, quote.reply.id, acceptedConditionCodes);
+    if (quote.productVersionId) await api.quotes.select(request.id, quote.reply.id, acceptedConditionCodes, addOnCodes);
+    const addOns = (quote.reply?.addOns || []).filter((addOn) => !addOn.included && addOnCodes.includes(addOn.code));
     selectQuote(
       {
         ...quote,
         price: quote.premium,
+        // Shown on the payment page; the server works out the amount itself.
+        addOns: addOns.map((addOn) => ({ code: addOn.code, label: addOn.label, price: addOn.price })),
         requestId: request.id,
         insurerQuoteId: quote.reply?.id || legacyMockQuoteId(request, quote.name),
         validUntil: quote.validity.validUntil,
@@ -339,7 +342,7 @@ export default function QuotesComparisonPage() {
                 quote={quote}
                 coverageType={quote.coverType || coverageType}
                 disabled={requestExpired}
-                onChoose={(accepted) => choose(quote, accepted)}
+                onChoose={(accepted, addOnCodes) => choose(quote, accepted, addOnCodes)}
                 onRequote={requote}
                 selectionLabel={quotes.length === 1 ? 'Continue to payment' : `Choose ${quote.productName || quote.name}`}
               />
@@ -644,6 +647,9 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
   const conditions = quote.reply?.conditions || [];
   const required = conditions.filter((condition) => condition.purchaseCritical);
   const [accepted, setAccepted] = useState([]);
+  const optionalAddOns = (quote.reply?.addOns || []).filter((addOn) => !addOn.included);
+  const includedAddOns = (quote.reply?.addOns || []).filter((addOn) => addOn.included);
+  const [addOnCodes, setAddOnCodes] = useState([]);
   const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState('');
   const ready = required.every((condition) => accepted.includes(condition.code));
@@ -652,7 +658,7 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
     setChoosing(true);
     setError('');
     try {
-      await onChoose(accepted);
+      await onChoose(accepted, addOnCodes);
     } catch (caught) {
       setError(caught?.code && caught?.message ? caught.message : 'This quote could not be chosen. Please try again.');
       setChoosing(false);
@@ -717,6 +723,25 @@ function QuoteCard({ quote, coverageType, disabled, onChoose, onRequote, selecti
           {quote.question && <AnswerQuestion quote={quote} />}
           {quote.reply?.excess != null && (
             <p className="text-sm"><span className="text-muted-foreground">Excess on each claim:</span> <strong>{formatZMW(quote.reply.excess)}</strong></p>
+          )}
+          {includedAddOns.length > 0 && (
+            <p className="text-sm"><span className="text-muted-foreground">Included:</span> {includedAddOns.map((addOn) => addOn.label).join(', ')}</p>
+          )}
+          {optionalAddOns.length > 0 && !quote.unavailable && !quote.expired && (
+            <fieldset className="space-y-2 rounded-xl border border-border p-3 text-sm">
+              <legend className="px-1 font-medium">Optional extras</legend>
+              {optionalAddOns.map((addOn) => (
+                <label key={addOn.code} className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={addOnCodes.includes(addOn.code)}
+                    onChange={(event) => setAddOnCodes((current) => (event.target.checked ? [...current, addOn.code] : current.filter((code) => code !== addOn.code)))}
+                  />
+                  <span>{addOn.label} <span className="text-ink-muted">(+{formatZMW(addOn.price)})</span></span>
+                </label>
+              ))}
+            </fieldset>
           )}
           {conditions.length > 0 && !quote.unavailable && !quote.expired && (
             <fieldset className="space-y-2 rounded-xl border border-border p-3 text-sm">

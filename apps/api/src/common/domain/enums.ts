@@ -69,6 +69,11 @@ export const RULE_SETTING_KEYS = [
   'DOCUMENT_RETENTION',
   'QUOTE_DECLINE_REASONS',
   'QUOTE_SLA_WARNING',
+  'PAYMENT_CHARGES',
+  'PAYMENT_PENDING_TIMEOUT',
+  'ISSUANCE_DEADLINE',
+  'COMMISSION_RULE',
+  'SETTLEMENT_PERIOD',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
@@ -109,11 +114,70 @@ export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 export const EVIDENCE_REVIEW_STATES = ['PENDING', 'APPROVED', 'REJECTED'] as const;
 export type EvidenceReviewState = (typeof EVIDENCE_REVIEW_STATES)[number];
 
-export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'] as const;
+/** Payment alone never makes a policy active (DEC-019); only the insurer's certificate does. */
+export const POLICY_STATUSES = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE', 'ISSUANCE_FAILED', 'CANCELLED'] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
 
-export const PAYMENT_STATUSES = ['PENDING', 'CONFIRMED', 'FAILED'] as const;
+/**
+ * INITIATED is written before the provider is called, PENDING once it has the
+ * instruction. Only a verified provider callback or status check moves an
+ * attempt on from there.
+ */
+export const PAYMENT_STATUSES = ['PENDING', 'CONFIRMED', 'FAILED', 'INITIATED', 'CANCELLED', 'EXPIRED', 'REVERSED'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/** The attempts still waiting on the provider. */
+export const OPEN_PAYMENT_STATUSES = ['INITIATED', 'PENDING'] as const satisfies readonly PaymentStatus[];
+
+/** Real provider names arrive with their adapters once DEC-008 names them. */
+export const PAYMENT_PROVIDER_NAMES = ['STAND_IN'] as const;
+export type PaymentProviderName = (typeof PAYMENT_PROVIDER_NAMES)[number];
+
+/** Something about money that a person has to look at and close. */
+export const RECONCILIATION_KINDS = [
+  'REFUND_REQUIRED',
+  'AMOUNT_MISMATCH',
+  'REVERSAL',
+  'UNMATCHED_PROVIDER_EVENT',
+  'STATE_CONFLICT',
+  'ISSUANCE_FAILED',
+  'ISSUANCE_OVERDUE',
+  'PENDING_TOO_LONG',
+  'STATEMENT_UNMATCHED',
+  'MISSING_FROM_STATEMENT',
+  'DUPLICATE',
+] as const;
+export type ReconciliationKind = (typeof RECONCILIATION_KINDS)[number];
+
+export const RECONCILIATION_STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED'] as const;
+export type ReconciliationStatus = (typeof RECONCILIATION_STATUSES)[number];
+
+export const RECONCILIATION_OUTCOMES = ['REFUNDED', 'ADJUSTED', 'ISSUED', 'NO_ACTION', 'WRITTEN_OFF'] as const;
+export type ReconciliationOutcome = (typeof RECONCILIATION_OUTCOMES)[number];
+
+/** A refund is proposed by one administrator and approved by another before any money moves. */
+export const REFUND_STATUSES = ['PROPOSED', 'APPROVED', 'SUBMITTED', 'COMPLETED', 'REJECTED', 'EXPIRED', 'FAILED'] as const;
+export type RefundStatus = (typeof REFUND_STATUSES)[number];
+/** Still able to move money; at most one per payment at a time. */
+export const OPEN_REFUND_STATUSES = ['PROPOSED', 'APPROVED', 'SUBMITTED'] as const satisfies readonly RefundStatus[];
+
+export const REFUND_REASONS = ['ISSUANCE_FAILED', 'INSURER_UNAVAILABLE', 'DUPLICATE_PAYMENT', 'AMOUNT_MISMATCH', 'CUSTOMER_REQUEST', 'OTHER'] as const;
+export type RefundReason = (typeof REFUND_REASONS)[number];
+
+/** One line of a provider's statement, in the provider-neutral CSV. */
+export const STATEMENT_LINE_TYPES = ['CHARGE', 'REFUND', 'REVERSAL'] as const;
+export type StatementLineType = (typeof STATEMENT_LINE_TYPES)[number];
+export const STATEMENT_LINE_STATUSES = ['MATCHED', 'UNMATCHED', 'MISMATCH', 'DUPLICATE'] as const;
+export type StatementLineStatus = (typeof STATEMENT_LINE_STATUSES)[number];
+
+/** A settlement is drafted, sent for a second administrator's approval, and then frozen. */
+export const SETTLEMENT_STATUSES = ['DRAFT', 'PROPOSED', 'FINALISED'] as const;
+export type SettlementStatus = (typeof SETTLEMENT_STATUSES)[number];
+export const SETTLEMENT_LINE_KINDS = ['PAYMENT', 'REFUND', 'ADJUSTMENT'] as const;
+export type SettlementLineKind = (typeof SETTLEMENT_LINE_KINDS)[number];
+/** Why money is moved in or out of an insurer's next settlement outside a payment or refund. */
+export const ADJUSTMENT_KINDS = ['SETTLEMENT_CORRECTION', 'REVERSAL_RECOVERY', 'FEE_CORRECTION', 'OTHER'] as const;
+export type AdjustmentKind = (typeof ADJUSTMENT_KINDS)[number];
 
 export const PAYMENT_METHODS = ['MOBILE_MONEY', 'CARD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -168,6 +232,9 @@ export const APPROVAL_ACTIONS = [
   'INSURER_SUSPEND',
   'INSURER_DELETE',
   'INSURER_RESTORE',
+  'PAYMENT_REFUND',
+  'MONEY_ADJUSTMENT',
+  'SETTLEMENT_FINALISE',
 ] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
 
@@ -307,3 +374,7 @@ export const NOTIFICATION_CATEGORIES = [
   'MARKETING',
 ] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/** Why an insurer could not issue a paid policy. The customer is told in the insurer's own words. */
+export const ISSUANCE_FAILURE_REASONS = ['RISK_NOT_ACCEPTED', 'VEHICLE_DETAILS_WRONG', 'DOCUMENTS_MISSING', 'DUPLICATE_COVER', 'OTHER'] as const;
+export type IssuanceFailureReason = (typeof ISSUANCE_FAILURE_REASONS)[number];

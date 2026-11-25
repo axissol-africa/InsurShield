@@ -35,6 +35,19 @@ describe('AdminApprovalInbox', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
   });
 
+  it('shows a refund proposal with the payment, the amounts and the reason', async () => {
+    api.admin.approvals.list.mockResolvedValue([{
+      ...request, action: 'PAYMENT_REFUND', targetId: 'refund-1',
+      proposal: { transactionId: 'TXN-77', amount: 1234.56, paidAmount: 1500, reasonCode: 'ISSUANCE_FAILED', reason: 'The insurer could not issue it.' },
+    }]);
+    render(<AdminApprovalInbox api={api} />);
+    expect(await screen.findByText('Refund a payment')).toBeVisible();
+    expect(screen.getByText('TXN-77')).toBeVisible();
+    expect(screen.getByText('ZMW 1,234.56')).toBeVisible();
+    expect(screen.getByText('ZMW 1,500.00')).toBeVisible();
+    expect(screen.getByText('The insurer could not issue it.')).toBeVisible();
+  });
+
   it('supports loading, failure, retry and empty states', async () => {
     let reject;
     api.admin.approvals.list.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; })).mockResolvedValueOnce([]);

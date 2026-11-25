@@ -1,7 +1,7 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
-import type { QuoteRow, RecipientRow, RequestWithParties, SelectedProductVersionRow, SelectionRow } from '../quote-requests.repository.js';
+import type { QuoteRow, RecipientRow, RequestWithParties, SelectedProductVersionRow, PurchaseRow, SelectionRow } from '../quote-requests.repository.js';
 import { quoteContentResponse } from '../../insurer-portal/dto/portal.response.js';
 import type { InformationRequestRow } from '../quote-products.repository.js';
 import { CUSTOMER_STATUS_LABELS, REQUEST_PROGRESS_LABELS, requestProgress } from '../domain/quote-workflow.js';
@@ -103,7 +103,7 @@ export interface QuoteRequestResponse {
   progress: string | null;
   progressLabel: string | null;
   /** The quote the customer has chosen, and the conditions they accepted. */
-  selection: { insurerQuoteId: string; acceptedConditionCodes: string[]; selectedAt: string } | null;
+  selection: { insurerQuoteId: string; acceptedConditionCodes: string[]; selectedAddOnCodes: string[]; selectedAt: string } | null;
 }
 
 /**
@@ -120,6 +120,7 @@ export function toQuoteRequestResponse(
   informationRequests: InformationRequestRow[] = [],
   declineCustomerText: ReadonlyMap<string, string> = new Map(),
   selection: SelectionRow | null = null,
+  purchase: PurchaseRow | null = null,
 ): QuoteRequestResponse {
   const insurerQuotes: Record<string, InsurerQuoteResponse> = {};
   const productQuotes: ProductQuoteResponse[] = [];
@@ -225,18 +226,19 @@ export function toQuoteRequestResponse(
     photosCapturedAt: request.photosCapturedAt?.toISOString() ?? null,
     requotedFromId: request.requotedFromId,
     requotedAs,
-    ...progressOf(selectedProducts, selection),
+    ...progressOf(selectedProducts, selection, purchase),
     selection: selection
       ? {
           insurerQuoteId: selection.insurerQuoteId,
           acceptedConditionCodes: selection.acceptedConditionCodes,
+          selectedAddOnCodes: selection.selectedAddOnCodes,
           selectedAt: selection.selectedAt.toISOString(),
         }
       : null,
   };
 }
 
-function progressOf(selectedProducts: SelectedProductVersionRow[], selection: SelectionRow | null) {
-  const progress = requestProgress(selectedProducts.map((selected) => selected.status), selection !== null);
+function progressOf(selectedProducts: SelectedProductVersionRow[], selection: SelectionRow | null, purchase: PurchaseRow | null) {
+  const progress = requestProgress(selectedProducts.map((selected) => selected.status), selection !== null, purchase);
   return { progress, progressLabel: progress ? REQUEST_PROGRESS_LABELS[progress] : null };
 }

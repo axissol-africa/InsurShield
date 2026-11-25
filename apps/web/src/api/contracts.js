@@ -31,7 +31,7 @@
  *              GET/POST /admin/settings/comparison-taxonomy · PATCH /admin/settings/comparison-taxonomy/:id
  *  staff       GET /staff/users · POST /staff/users · PATCH /staff/users/:id · POST /staff/users/:id/invitation
  *              GET /staff/teams · POST /staff/teams · PATCH /staff/teams/:id · DELETE /staff/teams/:id
- *  payments    POST /payments · GET /payments/:id
+ *  payments    POST /payments (Idempotency-Key required; answers the attempt status, never a receipt) · GET /payments/:id · POST /payments/:id/cancel
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
  *  claims      POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received

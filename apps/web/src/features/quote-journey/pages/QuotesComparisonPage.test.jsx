@@ -331,8 +331,38 @@ describe('quote comparison', () => {
       expect(choose).toBeDisabled();
       await user.click(within(card).getByRole('checkbox', { name: /Fit a tracker within 14 days/ }));
       await user.click(choose);
-      expect(select).toHaveBeenCalledWith('QR-TEST', 'IQ-3', ['TRACKER']);
+      expect(select).toHaveBeenCalledWith('QR-TEST', 'IQ-3', ['TRACKER'], []);
       expect(await screen.findByText(/^\/payment/)).toBeInTheDocument();
+    });
+
+    it('lets the customer add an optional extra, never one already included, and carries it to payment', async () => {
+      const user = userEvent.setup();
+      select.mockResolvedValue({});
+      const request = useStore.getState().quoteRequests[0];
+      useStore.setState({
+        quoteRequests: [{
+          ...request,
+          selectedProducts: [product('pv-4', 'Prestige Assurance', { status: 'QUOTED', statusLabel: 'Quote ready' })],
+          productQuotes: [{
+            id: 'IQ-4', productVersionId: 'pv-4', insurer: { id: 'Prestige Assurance', name: 'Prestige Assurance' },
+            premium: 9000, validityDays: 7, sentAt: new Date().toISOString(),
+            validUntil: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+            addOns: [
+              { code: 'WINDSCREEN', label: 'Windscreen cover', price: 150, included: false, terms: null },
+              { code: 'TOWING', label: 'Towing', price: 90, included: true, terms: null },
+            ],
+          }],
+        }],
+      });
+      renderPage();
+
+      const card = within(screen.getByRole('list', { name: 'Insurer quotes' })).getByRole('listitem');
+      expect(within(card).getByText('Towing')).toBeVisible();
+      expect(within(card).queryByRole('checkbox', { name: /Towing/ })).not.toBeInTheDocument();
+      await user.click(within(card).getByRole('checkbox', { name: /Windscreen cover/ }));
+      await user.click(within(card).getByRole('button', { name: 'Continue to payment' }));
+      expect(select).toHaveBeenCalledWith('QR-TEST', 'IQ-4', [], ['WINDSCREEN']);
+      expect(useStore.getState().selectedQuote.addOns).toEqual([{ code: 'WINDSCREEN', label: 'Windscreen cover', price: 150 }]);
     });
   });
 });

@@ -12,7 +12,7 @@ import {
   staffUsers,
   vehicles,
 } from '../db/schema.js';
-import type { QuotePriority, QuoteProductStatus, StaffRole } from '../common/domain/enums.js';
+import { OPEN_PAYMENT_STATUSES, type QuotePriority, type QuoteProductStatus, type StaffRole } from '../common/domain/enums.js';
 import { OPEN_QUOTE_PRODUCT_STATUSES } from './domain/quote-workflow.js';
 
 /** One chosen version with what its workflow needs to decide and to tell people. */
@@ -277,7 +277,8 @@ export class QuoteProductsRepository {
     const confirmed = tx
       .select({ id: payments.id })
       .from(payments)
-      .where(and(eq(payments.insurerQuoteId, insurerQuotes.id), eq(payments.status, 'CONFIRMED')));
+      // A quote being paid for right now keeps its price until its attempt ends (batch 14, rule 2 of B14.3).
+      .where(and(eq(payments.insurerQuoteId, insurerQuotes.id), inArray(payments.status, ['CONFIRMED', ...OPEN_PAYMENT_STATUSES])));
     return this.versions(tx)
       .innerJoin(
         insurerQuotes,
@@ -303,7 +304,8 @@ export class QuoteProductsRepository {
     const confirmed = tx
       .select({ id: payments.id })
       .from(payments)
-      .where(and(eq(payments.insurerQuoteId, insurerQuotes.id), eq(payments.status, 'CONFIRMED')));
+      // A quote being paid for right now keeps its price until its attempt ends (batch 14, rule 2 of B14.3).
+      .where(and(eq(payments.insurerQuoteId, insurerQuotes.id), inArray(payments.status, ['CONFIRMED', ...OPEN_PAYMENT_STATUSES])));
     const [lapsed] = await tx
       .select({ id: quoteRequestProductVersions.id })
       .from(quoteRequestProductVersions)

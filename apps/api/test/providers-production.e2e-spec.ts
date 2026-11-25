@@ -24,7 +24,7 @@ describe('the provider gate with the application wired for production', () => {
         { name: 'insurer-api-delivery', mode: 'manual' },
         { name: 'malware-scanner', mode: 'stand-in', setting: 'MALWARE_SCANNER' },
         { name: 'object-storage', mode: 'stand-in', setting: 'S3_ENDPOINT' },
-        { name: 'payment-provider', mode: 'stand-in' },
+        { name: 'payment-provider', mode: 'stand-in', setting: 'PAYMENT_PROVIDER' },
         { name: 'rtsa-vehicle-lookup', mode: 'manual' },
       ]);
     } finally {
@@ -40,7 +40,7 @@ describe('the provider gate with the application wired for production', () => {
       expect(() => registry.assertNoStandInsInProduction('production')).toThrow(
         'Refusing to start in production on simulated providers: email (MAIL_SENDER), ' +
           'malware-scanner (MALWARE_SCANNER), object-storage (S3_ENDPOINT), ' +
-          'payment-provider (no live adapter yet). ' +
+          'payment-provider (PAYMENT_PROVIDER). ' +
           'Configure a live adapter for each, or deploy a non-production environment.',
       );
     } finally {

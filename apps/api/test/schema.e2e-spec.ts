@@ -36,6 +36,9 @@ const QUOTE_WORKFLOW = TAGS.findIndex((tag) => tag.startsWith('0033_'));
 /** The migration that releases products held for an inspection. */
 const OPTIONAL_INSPECTIONS = TAGS.findIndex((tag) => tag.startsWith('0037_'));
 
+/** The batch 14 migration: real payment states, provider callbacks and reconciliation items. */
+const PAYMENTS = TAGS.findIndex((tag) => tag.startsWith('0038_'));
+
 const created: ScratchDatabase[] = [];
 
 afterEach(async () => {
@@ -85,7 +88,17 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyAuditLogAppendOnlyInvariant);
   await query(db, applyProductSelectionIntegrityInvariants);
   await query(db, applyInternalNotesAppendOnlyInvariant);
+  await query(db, applySettlementInvariants);
   return db;
+}
+
+/** The settlement and adjustment triggers, read from migration 0041 itself so the two cannot drift. */
+async function applySettlementInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0041_batch_14_settlements.sql', import.meta.url), 'utf8');
+  const triggers = migration.slice(migration.indexOf('-- A finalised settlement and its lines never change'));
+  for (const statement of triggers.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 async function applyInternalNotesAppendOnlyInvariant(client: ClientBase) {
@@ -1044,6 +1057,61 @@ describe('0033_batch_13_quote_workflow', () => {
   });
 });
 
+describe('0038_batch_14_payments', () => {
+  it('keeps existing payments confirmed with their breakdown, and allows one open and one confirmed payment per request', async () => {
+    const db = await scratch(async (client) => {
+      await buildPrismaEraDatabase(client, { data: true });
+      for (let index = 1; index < PAYMENTS; index += 1) await applyMigration(client, index);
+    });
+
+    await query(db, async (client) => {
+      await client.query(`UPDATE payments SET status = 'CONFIRMED', "rtsaAnniversaryFeeMinor" = 2500, "amountMinor" = "amountMinor" + 2500`);
+      const legacyPending = randomUUID();
+      await client.query(
+        `INSERT INTO payments (id, "transactionId", status, method, "amountMinor", "idempotencyKey", "customerId", "quoteRequestId", "insurerQuoteId", "updatedAt")
+         SELECT $1, 'TXN-LEGACY', 'PENDING', method, 100, 'legacy-key', "customerId", "quoteRequestId", "insurerQuoteId", CURRENT_TIMESTAMP FROM payments`,
+        [legacyPending],
+      );
+      await applyMigration(client, PAYMENTS);
+
+      // Nothing was ever sent to a provider before this batch, so an old pending payment cannot complete.
+      expect((await client.query(`SELECT status, "failureCode" FROM payments WHERE id = $1`, [legacyPending])).rows).toEqual([
+        { status: 'EXPIRED', failureCode: 'NEVER_SENT' },
+      ]);
+
+      const { rows: [paid] } = await client.query(
+        `SELECT p.status, p.provider, p."amountMinor"::int AS amount, p."amountBreakdown" AS lines,
+                p."initiatedAt" = p."createdAt" AS initiated, p."quoteRequestId", p."customerId", p."insurerQuoteId", p.method
+         FROM payments p WHERE p."transactionId" <> 'TXN-LEGACY'`,
+      );
+      expect(paid).toMatchObject({ status: 'CONFIRMED', provider: 'STAND_IN', initiated: true });
+      expect(paid.lines).toEqual([
+        { kind: 'PREMIUM', code: 'PREMIUM', label: 'Premium', amountMinor: paid.amount - 2500 },
+        { kind: 'CHARGE', code: 'RTSA_ANNIVERSARY_FEE', label: 'RTSA anniversary fee', amountMinor: 2500 },
+      ]);
+
+      const attempt = (status: string) =>
+        client.query(
+          `INSERT INTO payments (id, "transactionId", status, method, "amountMinor", "idempotencyKey", "customerId", "quoteRequestId", "insurerQuoteId", "updatedAt")
+           VALUES ($1, $2, $3, $4, 100, $5, $6, $7, $8, CURRENT_TIMESTAMP)`,
+          [randomUUID(), `TXN-${randomUUID()}`, status, paid.method, randomUUID(), paid.customerId, paid.quoteRequestId, paid.insurerQuoteId],
+        );
+      await expect(attempt('CONFIRMED')).rejects.toMatchObject({ code: '23505', constraint: 'payments_quoteRequestId_confirmed_key' });
+      await attempt('INITIATED');
+      await expect(attempt('PENDING')).rejects.toMatchObject({ code: '23505', constraint: 'payments_quoteRequestId_open_key' });
+      await attempt('FAILED');
+      await attempt('EXPIRED');
+
+      await expect(
+        client.query(
+          `INSERT INTO reconciliation_items (id, kind, status, reason, "updatedAt") VALUES ($1, 'REVERSAL', 'RESOLVED', 'x', CURRENT_TIMESTAMP)`,
+          [randomUUID()],
+        ),
+      ).rejects.toMatchObject({ code: '23514', constraint: 'reconciliation_items_resolution_check' });
+    });
+  });
+});
+
 describe('drizzle-kit', () => {
   it('generate finds no difference between src/db/schema.ts and the migrations', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'insurshield-generate-'));
@@ -1108,7 +1176,7 @@ describe('the final schema', () => {
     // when a product was assigned and when its owner was warned, and then
     // when a quote was withdrawn and when the customer chose one, and
     // finally when an inspection was decided.
-    expect(timestampColumns).toHaveLength(144);
+    expect(timestampColumns).toHaveLength(173);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }
