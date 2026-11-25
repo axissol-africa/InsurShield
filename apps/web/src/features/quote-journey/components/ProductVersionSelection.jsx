@@ -138,6 +138,7 @@ export default function ProductVersionSelection({
   vehicleUsage,
   coverageDurationId,
   selectedProductVersionIds = [],
+  selectedProductVersions,
   onSelectionChange,
   onLoadStateChange,
   productRequirementAnswers = {},
@@ -187,10 +188,14 @@ export default function ProductVersionSelection({
   useEffect(() => {
     if (!ready) return;
     const validIds = selectedProductVersionIds.filter((id) => availableIds.has(id));
-    if (validIds.length !== selectedProductVersionIds.length) {
+    // A selection made outside this list (a renewal starting from the product
+    // bought last year) arrives as ids alone; fill in the products so their
+    // requirements are asked for.
+    const missingDetails = selectedProductVersions !== undefined && validIds.some((id) => !selectedProductVersions.some((entry) => entry?.version?.id === id));
+    if (validIds.length !== selectedProductVersionIds.length || missingDetails) {
       onSelectionChange(validIds, products.filter((product) => validIds.includes(product.version.id)));
     }
-  }, [availableIds, onSelectionChange, products, ready, selectedProductVersionIds]);
+  }, [availableIds, onSelectionChange, products, ready, selectedProductVersionIds, selectedProductVersions]);
 
   const selectedProducts = useMemo(
     () => products.filter((product) => selectedProductVersionIds.includes(product.version?.id)),

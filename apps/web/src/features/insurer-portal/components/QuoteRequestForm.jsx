@@ -6,7 +6,7 @@ import { isForeignRegistered } from '@/domain/countries';
 import { COVER_TYPE_LABELS, isCoverGuideComplete } from '@/domain/coverGuide';
 import { useDocumentUpload } from '@/hooks/useDocumentUpload';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
-import { coverTypeOf, days, portalPath, premiumCheck, quotableNow, quoteOpenUntil, replyDeadline } from '@/features/insurer-portal/portal';
+import { coverTypeOf, days, portalPath, premiumCheck, quotableNow, quoteOpenUntil, renewalNote, replyDeadline } from '@/features/insurer-portal/portal';
 import ProductWorkflowPanel from './ProductWorkflowPanel';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
@@ -112,7 +112,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
   return (
     <TaskScreen
       title={replacing ? 'Replace quotation' : 'Prepare quotation'}
-      description={<>{request.productName ? <>{request.productName} · </> : null}Request <span className="font-mono text-foreground">{request.id}</span>{request.time ? ` · received ${request.time}` : ''}</>}
+      description={<>{request.productName ? <>{request.productName} · </> : null}Request <span className="font-mono text-foreground">{request.id}</span>{request.time ? ` · received ${request.time}` : ''}{renewalNote(request) ? <> · {renewalNote(request)}</> : null}</>}
       onBack={onBack}
       backLabel="Back to overview"
       status={deadline && (deadline.urgent

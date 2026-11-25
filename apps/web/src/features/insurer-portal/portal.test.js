@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AWAITING_CERTIFICATE, awaitsInsurer, inQueueView, benefitsForCoverage, quotableNow, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
+import { AWAITING_CERTIFICATE, awaitsInsurer, inQueueView, benefitsForCoverage, quotableNow, coverTypeOf, isOpenNcdApplication, portalPath, premiumCheck, quoteOpenUntil, renewalNote, replyDeadline, statusTone, toPortalCases, toPortalRequest, waitingLongestFirst } from './portal';
 
 describe('toPortalRequest', () => {
   const request = {
@@ -224,5 +224,17 @@ describe('queue views', () => {
     expect(cases.filter(inQueueView('all', 'me'))).toEqual(cases);
     expect(cases.filter(inQueueView('mine', 'me'))).toEqual([mine]);
     expect(cases.filter(inQueueView('unassigned', 'me'))).toEqual([unowned, legacy]);
+  });
+});
+
+describe('renewalNote', () => {
+  it('names the policy being renewed and who holds it now', () => {
+    const note = renewalNote({ renewalOf: { policyNumber: 'POL-77', endDate: '2026-12-31T00:00:00.000Z', insurer: 'Prestige Assurance' } });
+    expect(note).toMatch(/^Renewal of POL-77 \(Prestige Assurance, ends .*2026\)$/);
+  });
+
+  it('says nothing for a new request', () => {
+    expect(renewalNote({ renewalOf: null })).toBeNull();
+    expect(renewalNote({})).toBeNull();
   });
 });

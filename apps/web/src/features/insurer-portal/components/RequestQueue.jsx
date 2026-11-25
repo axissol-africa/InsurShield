@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/primitives/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/primitives/card';
 import { DataTable } from '@/components/ui/data-table';
 import { useKeyedPortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
-import { EXTENSION_DAYS, days, quotableNow, replyDeadline } from '@/features/insurer-portal/portal';
+import { EXTENSION_DAYS, days, quotableNow, renewalNote, replyDeadline } from '@/features/insurer-portal/portal';
 import { PORTAL_STATUS_LABELS } from '@/domain/quoteWorkflow';
 
 const PAGE_SIZE = 4;
@@ -45,6 +45,7 @@ export default function RequestQueue({ title, hint, countLabel, requests, emptyM
         <div className="min-w-40 max-w-60 whitespace-normal">
           <p className="font-medium text-foreground">{row.original.vehicle}</p>
           <ProductLine request={row.original} />
+          {renewalNote(row.original) && <p className="mt-1 text-xs text-muted-foreground">{renewalNote(row.original)}</p>}
           <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{row.original.id}</p>
         </div>
       ),

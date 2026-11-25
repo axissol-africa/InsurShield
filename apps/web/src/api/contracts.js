@@ -253,6 +253,7 @@
  * @property {'QUOTE'|'PAYMENT'|'POLICY'|'CLAIM'|'NCD'|'INSPECTION'|'ACCOUNT'|'MARKETING'} category
  * @property {string} entityType             the kind of record this is about
  * @property {string} entityId               the record itself, for the link
+ * @property {'RENEW'|null} action           a step the notice asks for, beyond opening the record
  * @property {boolean} read
  * @property {string} createdAt
  */

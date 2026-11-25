@@ -19,6 +19,13 @@ const DESTINATION = {
   INSPECTION: '/account',
 };
 
+/** Where a notice that asks for a step takes the reader, ahead of its record. */
+const ACTION = {
+  RENEW: { to: '/renewal', label: 'Renew' },
+};
+
+const linkFor = (item) => ACTION[item.action] ?? (DESTINATION[item.entityType] ? { to: DESTINATION[item.entityType], label: 'Open' } : null);
+
 export default function NotificationCentrePage() {
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
@@ -127,9 +134,9 @@ export default function NotificationCentrePage() {
                   <time className="font-mono text-[11px] uppercase tracking-[0.18em] text-ink-muted" dateTime={item.createdAt}>
                     {formatDate(new Date(item.createdAt))}
                   </time>
-                  {DESTINATION[item.entityType] && (
-                    <Link to={DESTINATION[item.entityType]} className="text-sm font-medium text-primary underline-offset-4 hover:underline">
-                      Open
+                  {linkFor(item) && (
+                    <Link to={linkFor(item).to} className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+                      {linkFor(item).label}
                     </Link>
                   )}
                   {!item.read && (

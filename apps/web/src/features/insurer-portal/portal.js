@@ -112,6 +112,18 @@ export const benefitsForCoverage = (insurer, insuranceType) =>
 export const coverTypeOf = (request) =>
   (request.insuranceType === 'ThirdParty' || (!request.insuranceType && request.coverage === 'Third Party Only') ? 'ThirdParty' : 'Comprehensive');
 
+/**
+ * Which policy a renewal request renews, as the portal says it, or null for a
+ * new request. The previous insurer is named so a different insurer knows it
+ * is being asked to take the cover over.
+ */
+export const renewalNote = (request) => {
+  const previous = request.renewalOf;
+  if (!previous?.policyNumber) return null;
+  const ends = previous.endDate ? `, ends ${formatDate(previous.endDate)}` : '';
+  return `Renewal of ${previous.policyNumber} (${previous.insurer || 'another insurer'}${ends})`;
+};
+
 /** Shape a stored quote request for the portal: display strings plus this insurer's reply, if any. */
 export const toPortalRequest = (request, insurerName) => ({
   ...request,

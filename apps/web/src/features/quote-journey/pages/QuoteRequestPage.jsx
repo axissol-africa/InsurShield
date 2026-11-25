@@ -480,6 +480,7 @@ export default function QuoteRequestPage() {
                   vehicleUsage={vehicleUsage}
                   coverageDurationId={coverageDurationId}
                   selectedProductVersionIds={selectedProductVersionIds}
+                  selectedProductVersions={selectedProductVersions}
                   onSelectionChange={setSelectedProductVersions}
                   onLoadStateChange={setProductDirectoryState}
                   productRequirementAnswers={productRequirementAnswers}

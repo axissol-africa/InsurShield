@@ -231,9 +231,15 @@ export const createJourneySlice = (set, get) => ({
       policyStartDate: resumeDate > TODAY() ? resumeDate : TODAY(),
       vehicleDetails: policy.vehicleDetails || null,
       vehicleValue: policy.vehicleValue || policy.insuredValue || 0,
+      ...(policy.vehicleUsage ? { vehicleUsage: policy.vehicleUsage } : {}),
       insuranceType: /third/i.test(policy.coverage || '') ? 'ThirdParty' : 'Comprehensive',
       documents: { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
       renewalOfPolicyNumber: policyNumber,
+      // The product the server says this renewal continues with, so the
+      // customer starts from it and can add others to compare.
+      ...(policy.renewalProduct?.available
+        ? { selectedProductVersionIds: [policy.renewalProduct.productVersionId], selectedProductVersions: [] }
+        : {}),
     });
     return true;
   },
