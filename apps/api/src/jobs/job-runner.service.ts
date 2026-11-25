@@ -34,7 +34,7 @@ export class JobRunner implements OnApplicationShutdown {
   }
 
   /**
-   * Work to do once, when the runner starts.
+   * Work to complete once per start, retrying failures on the polling interval.
    *
    * Recurring jobs put their first occurrence on the queue here rather than at
    * module init: initialising a module should not touch the database. Doing so
@@ -55,12 +55,22 @@ export class JobRunner implements OnApplicationShutdown {
   start(): void {
     if (this.running) return;
     this.running = true;
-    for (const work of this.starting) {
-      void work().catch((error: unknown) => this.logger.error(`Start-up job failed: ${String(error)}`));
-    }
+    const pending = new Set(this.starting);
+    const runTick = async () => {
+      for (const work of pending) {
+        if (!this.running) return;
+        try {
+          await work();
+          pending.delete(work);
+        } catch (error: unknown) {
+          this.logger.error(`Start-up job failed; will retry: ${String(error)}`);
+        }
+      }
+      if (this.running) await this.runOnce();
+    };
     const tick = async () => {
       if (!this.running) return;
-      this.draining = this.runOnce()
+      this.draining = runTick()
         .then(() => undefined)
         .catch((error: unknown) => this.logger.error(`Job tick failed: ${String(error)}`))
         .finally(() => {

@@ -98,6 +98,7 @@ export interface QuoteRequestResponse {
   unavailableInsurers: UnavailableInsurerResponse[];
   photosCapturedAt: string | null;
   requotedFromId: string | null;
+  renewalOfPolicyNumber?: string;
   requotedAs: string | null;
   /** Where the request stands across its chosen products; null for a request from before product selection. */
   progress: string | null;
@@ -225,6 +226,7 @@ export function toQuoteRequestResponse(
     ),
     photosCapturedAt: request.photosCapturedAt?.toISOString() ?? null,
     requotedFromId: request.requotedFromId,
+    ...(request.renewalOfPolicyNumber ? { renewalOfPolicyNumber: request.renewalOfPolicyNumber } : {}),
     requotedAs,
     ...progressOf(selectedProducts, selection, purchase),
     selection: selection

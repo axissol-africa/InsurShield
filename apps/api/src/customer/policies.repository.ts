@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gte, inArray, lte } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { customers, insurerProductVersions, insurerProducts, insurers, payments, policies, quoteRequests, renewalReminders, vehicles } from '../db/schema.js';
 import { customerAvailableProductConditions } from '../products/customer-availability.js';
@@ -27,7 +27,11 @@ export interface PolicyWithParties {
   quoted: { vehicleValueMinor: number; vehicleUsage: string } | null;
 }
 
-export type PolicyRenewal = RenewalRequest & { renewalOfPolicyNumber: string };
+export type PolicyRenewal = RenewalRequest & {
+  renewalOfPolicyNumber: string;
+  replacementInProgress: boolean;
+  closedPurchase: boolean;
+};
 
 const PARTIES = {
   policy: policies,
@@ -87,22 +91,27 @@ export class PoliciesRepository {
         status: quoteRequests.status,
         expiresAt: quoteRequests.expiresAt,
         renewalOfPolicyNumber: quoteRequests.renewalOfPolicyNumber,
+        replacementInProgress: sql<boolean>`exists (
+          select 1 from ${payments} as attempt
+          where attempt."quoteRequestId" = "quote_requests"."id"
+            and attempt."status" in ('INITIATED', 'PENDING')
+        ) or exists (
+          select 1 from ${policies} as replacement
+          join ${payments} as funding on replacement."paymentId" = funding."id"
+          where replacement."quoteRequestId" = "quote_requests"."id"
+            and replacement."status" in ('ACTIVE', 'AWAITING_INSURER_CERTIFICATE')
+            and funding."status" = 'CONFIRMED'
+        )`,
+        closedPurchase: sql<boolean>`exists (
+          select 1 from ${payments} as attempt
+          where attempt."quoteRequestId" = "quote_requests"."id"
+            and attempt."status" in ('CONFIRMED', 'REVERSED')
+        )`,
       })
       .from(quoteRequests)
       .where(inArray(quoteRequests.renewalOfPolicyNumber, policyNumbers))
       .orderBy(desc(quoteRequests.submittedAt))
       .then((rows) => rows.filter((row): row is PolicyRenewal => row.renewalOfPolicyNumber !== null));
-  }
-
-  /** Renewal requests that were paid for: a renewed policy needs no more reminders. */
-  async paidRenewalsOf(policyNumbers: string[]): Promise<Set<string>> {
-    if (policyNumbers.length === 0) return new Set();
-    const rows = await this.db
-      .select({ renewalOfPolicyNumber: quoteRequests.renewalOfPolicyNumber })
-      .from(quoteRequests)
-      .innerJoin(payments, and(eq(payments.quoteRequestId, quoteRequests.id), eq(payments.status, 'CONFIRMED')))
-      .where(inArray(quoteRequests.renewalOfPolicyNumber, policyNumbers));
-    return new Set(rows.flatMap((row) => (row.renewalOfPolicyNumber ? [row.renewalOfPolicyNumber] : [])));
   }
 
   /** Active policies ending between `from` and `to`, with what a reminder needs. */

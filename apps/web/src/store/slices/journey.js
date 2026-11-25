@@ -107,6 +107,9 @@ export const createJourneySlice = (set, get) => ({
     const state = get();
     const id = newReference('QR');
     const submittedAt = NOW();
+    const previousPolicy = state.renewalOfPolicyNumber
+      ? state.policies.find((entry) => entry.policyNumber === state.renewalOfPolicyNumber)
+      : null;
     const request = {
       id,
       status: selectedProducts.length ? 'Submitted' : 'GuidesReady',
@@ -116,6 +119,13 @@ export const createJourneySlice = (set, get) => ({
       expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
       requotedFromId: state.requotedFromId,
       renewalOfPolicyNumber: state.renewalOfPolicyNumber,
+      ...(previousPolicy ? {
+        renewalOf: {
+          policyNumber: previousPolicy.policyNumber,
+          insurer: previousPolicy.insurer,
+          endDate: previousPolicy.policyDates?.endDate ?? null,
+        },
+      } : {}),
       customer,
       insurers: [...new Map(selectedProducts.map((product) => [product.insurerId, product.insurerName])).values()],
       insurerIds: [...new Set(selectedProducts.map((product) => product.insurerId))],
@@ -209,6 +219,7 @@ export const createJourneySlice = (set, get) => ({
       documents: reusePhotos ? { ...state.documents } : { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
       photosCapturedAt: reusePhotos ? old.photosCapturedAt : null,
       requotedFromId: requestId,
+      renewalOfPolicyNumber: old.renewalOfPolicyNumber || null,
     });
     return true;
   },

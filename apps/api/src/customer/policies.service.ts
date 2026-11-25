@@ -7,6 +7,7 @@ import { PoliciesRepository, type PolicyWithParties } from './policies.repositor
 import { SettingsService } from '../settings/settings.service.js';
 import type { RenewalProduct } from './dto/policy.response.js';
 import type { CustomerPrincipal } from './customer-principal.js';
+import type { Transaction } from '../db/database.module.js';
 
 @Injectable()
 export class PoliciesService {
@@ -51,6 +52,19 @@ export class PoliciesService {
     });
   }
 
+  async assertRenewalAvailable(tx: Transaction, customerId: string, policyNumber: string, now: Date): Promise<void> {
+    // Serializes submissions using different idempotency keys against the same policy.
+    const policy = await this.repository.lockOwned(tx, customerId, policyNumber);
+    if (!policy) throw ApiException.notFound('Policy', policyNumber);
+    if (policy.status !== 'ACTIVE') {
+      throw ApiException.conflict('POLICY_NOT_RENEWABLE', 'Only an issued policy can be renewed. You can still start a new quote.');
+    }
+    const existing = openRenewal(await this.repository.renewalsOf([policyNumber], tx), now);
+    if (existing) {
+      throw ApiException.conflict('RENEWAL_IN_PROGRESS', `A renewal for this policy already exists as ${existing.id}.`);
+    }
+  }
+
   private async responses(rows: PolicyWithParties[]): Promise<PolicyResponse[]> {
     const renewals = await this.repository.renewalsOf(rows.map((row) => row.policy.policyNumber));
     const now = new Date();
@@ -61,15 +75,16 @@ export class PoliciesService {
     const responses: PolicyResponse[] = [];
     for (const row of rows) {
       const { policy } = row;
+      const state = renewalState(
+        policy.policyEndDate,
+        renewals.filter((entry) => entry.renewalOfPolicyNumber === policy.policyNumber),
+        now,
+        renewal.windowDays,
+      );
       responses.push(
         toPolicyResponse(
           row,
-          renewalState(
-            policy.policyEndDate,
-            renewals.filter((entry) => entry.renewalOfPolicyNumber === policy.policyNumber),
-            now,
-            renewal.windowDays,
-          ),
+          { ...state, renewable: state.renewable && policy.status === 'ACTIVE' },
           policy.quoteDocumentId ? await this.documents.record(policy.quoteDocumentId) : null,
           policy.certificateDocumentId ? await this.documents.record(policy.certificateDocumentId) : null,
           renewalProductOf(policy.productVersionId, current),

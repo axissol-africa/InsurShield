@@ -26,7 +26,7 @@ export default function RenewalPage() {
   const mine = useMemo(
     () =>
       policies
-        .filter((policy) => policy.customerEmail === customer?.email || policy.customerPhone === customer?.phone)
+        .filter((policy) => policy.status === 'Active' && (policy.customerEmail === customer?.email || policy.customerPhone === customer?.phone))
         .slice()
         .sort(byRenewalUrgency),
     [policies, customer],
@@ -149,7 +149,7 @@ function PolicyCard({ policy, index, busy, disabled, onRenew }) {
         {inFlight ? (
           <div className="mt-4">
             <p className="text-[13px] leading-[1.55] text-ink-muted">
-              A renewal is already open as <span className="font-mono text-ink">{state.renewalRequestId}</span>.
+              A renewal already exists as <span className="font-mono text-ink">{state.renewalRequestId}</span>.
             </p>
             <Link
               to="/account"

@@ -1348,7 +1348,8 @@ describe('customer', () => {
           engineNumber: null,
           rtsaAnniversaryDate: '2027-03-01T00:00:00.456Z',
         },
-        renewal: { window: 'NOT_DUE', daysRemaining: 65, endDate: endDate.toISOString(), renewable: true, renewalRequestId: null },
+        // Still being issued: there is nothing to renew until the insurer issues it.
+        renewal: { window: 'NOT_DUE', daysRemaining: 65, endDate: endDate.toISOString(), renewable: false, renewalRequestId: null },
         policyDates: { startDate: '2026-01-01T00:00:00.000Z', endDate: endDate.toISOString() },
         quoteRequestId: purchase.quoteRequest.id,
         insurerQuoteReference: purchase.quote.insurerReference,
@@ -1382,7 +1383,7 @@ describe('customer', () => {
       const expected: Record<string, { window: string; daysRemaining: number }> = {};
       for (const [days, window] of cases) {
         const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
-        await testApp.db.update(policies).set({ policyEndDate: inDays(days) }).where(eq(policies.policyNumber, policy.policyNumber));
+        await testApp.db.update(policies).set({ status: 'ACTIVE', policyEndDate: inDays(days) }).where(eq(policies.policyNumber, policy.policyNumber));
         expected[policy.policyNumber] = { window, daysRemaining: days };
       }
 
@@ -1397,6 +1398,7 @@ describe('customer', () => {
       const customer = await buildCustomer(testApp.db);
       const insurer = await buildInsurer(testApp.db);
       const { policy, quoteRequest } = await buildPurchasedPolicy(testApp.db, { customer, insurer });
+      await testApp.db.update(policies).set({ status: 'ACTIVE' }).where(eq(policies.policyNumber, policy.policyNumber));
       const { quoteRequest: open } = await buildRenewalRequest(testApp.db, {
         customerId: customer.id,
         vehicleId: quoteRequest.vehicleId,

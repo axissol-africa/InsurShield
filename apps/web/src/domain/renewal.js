@@ -10,21 +10,25 @@ export const RENEWAL_WINDOW_DAYS = 60;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-const startOfDay = (value) => {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
+const LUSAKA_DAY = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Africa/Lusaka', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+const calendarDay = (value) => {
+  const parts = LUSAKA_DAY.formatToParts(new Date(value));
+  const part = (type) => parts.find((found) => found.type === type).value;
+  return Date.parse(`${part('year')}-${part('month')}-${part('day')}`);
 };
 
 /**
- * Calendar days from today until `date`: 0 the day cover ends, negative once
+ * Lusaka calendar days from today until `date`: 0 the day cover ends, negative once
  * it has passed. Counting whole days rather than hours is what stops a policy
  * ending this afternoon from reading as "ends tomorrow".
  */
 export const daysUntil = (date, now = new Date()) => {
   const end = new Date(date);
   if (Number.isNaN(end.getTime())) return null;
-  return Math.round((startOfDay(end) - startOfDay(now)) / MS_PER_DAY);
+  return (calendarDay(end) - calendarDay(now)) / MS_PER_DAY;
 };
 
 /**

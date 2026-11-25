@@ -9,6 +9,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('guest is asked to sign in before requesting quotes, then completes a purchase', async ({ page }) => {
+  test.setTimeout(90000);
   // Cover
   await page.goto('/insurance-type');
   await page.getByRole('radio', { name: /Third party only/ }).click();
@@ -45,11 +46,13 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
   });
   await page.goto('/quote-request');
 
-  // Request page: estimates reflect value + usage; validation lists every gap
+  // Select published products before submitting; validation lists every gap
   await expect(page).toHaveURL(/quote-request/);
-  await expect(page.getByText('Indicative premiums for your vehicle')).toBeVisible();
-  await expect(page.getByText('ZMW 14,400.00')).toBeVisible(); // 250 000 × 4.5 % × taxi factor
-  await page.getByRole('button', { name: /See cover guides from 5 insurers/ }).click();
+  await expect(page.getByRole('heading', { name: 'Choose insurance products' })).toBeVisible();
+  const productChoices = page.getByRole('checkbox', { name: /^Select .+ from / });
+  await expect(productChoices).toHaveCount(5);
+  await page.getByRole('button', { name: 'Request quotes for your selected products' }).click();
+  await expect(page.getByText('Choose at least one insurance product to request a final quote.')).toBeVisible();
   await expect(page.getByText('Add your White Book')).toBeVisible();
   await expect(page.getByText('Capture 7 more inspection photos.')).toBeVisible();
   await expect(page.getByText('Accept the declaration')).toBeVisible();
@@ -66,22 +69,36 @@ test('guest is asked to sign in before requesting quotes, then completes a purch
 
   for (let index = 1; index <= 7; index += 1) await inputs.nth(index).setInputFiles(vehiclePhoto(`shot-${index}.png`));
   await expect(page.getByText('7 of 7 captured')).toBeVisible();
+  for (const product of await productChoices.all()) await product.check();
   await page.getByText('I confirm the vehicle and contact information').click();
-  await page.getByRole('button', { name: /See cover guides from 5 insurers/ }).click();
+  await page.getByRole('button', { name: 'Request quotes for 5 products' }).click();
 
   // Compare → pay → confirm
   await expect(page).toHaveURL(/quotes-comparison/);
-  await expect(page.getByRole('heading', { name: 'Choose cover guides' })).toBeVisible();
-  const guideChoices = page.getByRole('checkbox', { name: /cover guide$/ });
-  await expect(guideChoices).toHaveCount(5);
-  await expect(page.getByRole('button', { name: /^Request . final quote/ })).toBeDisabled();
-  for (let index = 0; index < 5; index += 1) await guideChoices.nth(index).check();
-  await page.getByRole('button', { name: 'Request 5 final quotes' }).click();
   await expect(page.getByRole('heading', { name: 'Compare your quotes' })).toBeVisible();
 
-  await expect(page.getByRole('status').filter({ hasText: 'All insurers have sent their final quotes.' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' })).toHaveCount(0);
-  await page.getByRole('button', { name: /Choose Prestige/ }).first().click();
+  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' })).toHaveCount(5);
+  await expect(page.getByRole('button', { name: /^Choose / })).toHaveCount(0);
+
+  // A product request needs an actual insurer reply before the customer can pay.
+  const requestId = await page.evaluate(() => JSON.parse(localStorage.getItem('insurshield-storage')).state.activeQuoteRequestId);
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
+    store.state.staffSession = { role: 'insurer', name: 'Prestige Assurance' };
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+  await page.goto('/insurer');
+  await page.getByRole('row').filter({ hasText: requestId }).getByRole('button', { name: 'Send quote', exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles(tinyImage('quotation.png'));
+  await page.getByPlaceholder('e.g. PA-Q-2026-00412').fill('PA-Q-GUEST-001');
+  await page.getByPlaceholder('e.g. 21000').fill('14400');
+  await page.getByRole('button', { name: 'Send quote to customer' }).click();
+  await expect(page.getByText('Quote sent', { exact: true })).toBeVisible();
+  await page.goto('/quotes-comparison');
+  await expect(page.getByRole('status').filter({ hasText: '1 of 5 selected products have final quotes.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Awaiting insurer quote' })).toHaveCount(4);
+  const prestigeQuote = page.getByRole('list', { name: 'Insurer quotes' }).getByRole('listitem').filter({ hasText: 'Prestige Assurance' });
+  await prestigeQuote.getByRole('button', { name: /^Choose / }).click();
 
   await expect(page).toHaveURL(/payment/);
   await expect(page.getByRole('heading', { name: 'Confirm and pay' })).toBeVisible();

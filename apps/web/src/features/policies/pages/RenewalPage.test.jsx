@@ -10,6 +10,7 @@ const initial = useStore.getInitialState();
 
 const policy = (policyNumber, renewalProduct) => ({
   policyNumber,
+  status: 'Active',
   customerEmail: DEMO_CUSTOMER_ACCOUNT.email,
   vehicle: `Toyota ${policyNumber}`,
   insurer: 'Prestige Assurance',

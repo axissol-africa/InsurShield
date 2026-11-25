@@ -149,39 +149,49 @@ export default function ProductVersionSelection({
   onRequirementDocumentChange,
 }) {
   const [products, setProducts] = useState([]);
-  const [loadedCoverType, setLoadedCoverType] = useState(null);
+  const [loadedKey, setLoadedKey] = useState(null);
   const [error, setError] = useState('');
   const [estimates, setEstimates] = useState({});
   const [selectionError, setSelectionError] = useState('');
   const coverType = coverTypeFor(insuranceType);
-  const ready = loadedCoverType === coverType && !error;
-  const loading = loadedCoverType !== coverType && !error;
-  const failed = loadedCoverType === coverType && Boolean(error);
+  const selectionKey = JSON.stringify(selectedProductVersionIds);
+  const loadKey = `${coverType}:${selectionKey}`;
+  const ready = loadedKey === loadKey && !error;
+  const loading = loadedKey !== loadKey;
+  const failed = loadedKey === loadKey && Boolean(error);
 
   useEffect(() => {
     let cancelled = false;
     onLoadStateChange?.('loading');
     api.products
       .directory({ coverType, limit: 100 })
-      .then((records) => {
+      .then(async (records) => {
         if (cancelled) return;
-        const available = Array.isArray(records) ? records : [];
+        const available = Array.isArray(records) ? [...records] : [];
+        const listedIds = new Set(available.map((product) => product.version.id));
+        // A bounded directory page cannot establish that a renewal is unavailable.
+        const missingIds = [...new Set(JSON.parse(selectionKey))].filter((id) => !listedIds.has(id));
+        const resolved = await Promise.all(missingIds.map((productVersionId) =>
+          api.products.directory({ coverType, productVersionId, limit: 1 }),
+        ));
+        if (cancelled) return;
+        available.push(...resolved.flat());
         setProducts(available);
-        setLoadedCoverType(coverType);
+        setLoadedKey(loadKey);
         setError('');
         onLoadStateChange?.('ready');
       })
       .catch((caught) => {
         if (cancelled) return;
         setProducts([]);
-        setLoadedCoverType(coverType);
+        setLoadedKey(loadKey);
         setError(caught.message || 'The available insurance products could not be loaded. Please try again.');
         onLoadStateChange?.('error');
       });
     return () => {
       cancelled = true;
     };
-  }, [coverType, onLoadStateChange]);
+  }, [coverType, loadKey, selectionKey, onLoadStateChange]);
 
   const availableIds = useMemo(() => new Set(products.map((product) => product.version?.id).filter(Boolean)), [products]);
 

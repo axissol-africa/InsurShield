@@ -81,6 +81,7 @@ test('insurer uploads a quotation document and the customer can open it', async 
 });
 
 test('admin can edit insurers and submits lifecycle changes for independent approval', async ({ page }) => {
+  test.setTimeout(60000);
   await seedStaff('admin', 'Admin')({ page });
   await page.evaluate(() => {
     const store = JSON.parse(localStorage.getItem('insurshield-storage'));
@@ -113,7 +114,16 @@ test('admin can edit insurers and submits lifecycle changes for independent appr
   await expect(page.getByText('PIA/GI/2026/001')).toBeVisible();
 
   await page.goto('/quote-request');
-  await expect(page.getByRole('button', { name: 'See cover guides from 5 insurers' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose insurance products' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /^Select .+ from / })).toHaveCount(5);
+  // Proposed lifecycle changes do not remove products before independent approval.
+  for (const insurer of ['Prestige Assurance', 'Global Guard Insurance', 'ValueDirect Insurance', 'Metro Safe Assurance', 'Madison General']) {
+    const product = page.getByRole('checkbox', { name: new RegExp(`^Select .+ from ${insurer}$`) });
+    await expect(product).toBeEnabled();
+    await product.check();
+    await expect(product).toBeChecked();
+  }
+  await expect(page.getByRole('button', { name: 'Request quotes for 5 products' })).toBeEnabled();
   await page.goto('/support');
   await expect(page.getByText('Madison General')).toBeVisible();
 });

@@ -129,6 +129,10 @@ export class SubmitQuoteRequestDto {
 
   @IsOptional() @ValidateNested() @Type(() => PolicyDatesDto) policyDates?: PolicyDatesDto;
 
+  /** The customer's existing policy when this is a renewal through the quote journey. */
+  @IsOptional() @IsString() @MinLength(3) @MaxLength(60)
+  renewalOfPolicyNumber?: string;
+
   /** Registration White Book uploaded separately before the request is sent. */
   @IsOptional() @IsUUID('4') whiteBookDocumentId?: string;
 

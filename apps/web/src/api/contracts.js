@@ -153,6 +153,7 @@
  * @property {string[]} inspectionShots        keys of the live photos captured
  * @property {string|null} photosCapturedAt
  * @property {string|null} [requotedFromId]
+ * @property {string} [renewalOfPolicyNumber] policy the customer is renewing
  * @property {string} [requotedAs]
  */
 

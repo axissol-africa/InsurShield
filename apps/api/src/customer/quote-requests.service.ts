@@ -16,6 +16,7 @@ import type { CustomerPrincipal } from './customer-principal.js';
 import { QuoteWorkflowService } from './quote-workflow.service.js';
 import { resumedReplyDueAt } from './domain/quote-workflow.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
+import { PoliciesService } from './policies.service.js';
 import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
@@ -74,6 +75,7 @@ export class QuoteRequestsService {
     private readonly workflow: QuoteWorkflowService,
     private readonly versions: QuoteProductsRepository,
     private readonly underwriting: UnderwritingInspectionsService,
+    private readonly policies: PoliciesService,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -119,6 +121,9 @@ export class QuoteRequestsService {
           'RELOAD_REQUIRED',
           'InsurShield has been updated; reload the page and choose the insurance products you want to compare.',
         );
+      }
+      if (dto.renewalOfPolicyNumber) {
+        await this.policies.assertRenewalAvailable(tx, customer.id, dto.renewalOfPolicyNumber, new Date());
       }
       const selectedVersions = await this.selectedVersions(
         tx,
@@ -166,6 +171,7 @@ export class QuoteRequestsService {
           ncdCode: ncd?.code ?? null,
           ncdPercentage: ncd?.percentage ?? null,
           photosCapturedAt: dto.photosCapturedAt ? new Date(dto.photosCapturedAt) : null,
+          renewalOfPolicyNumber: dto.renewalOfPolicyNumber ?? null,
         },
         insurerIds,
         shots,

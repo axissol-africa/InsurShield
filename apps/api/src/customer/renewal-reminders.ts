@@ -1,3 +1,4 @@
+import { lusakaDay } from '../common/domain/lusaka.js';
 import { Injectable, Logger } from '@nestjs/common';
 import { JobsRepository } from '../jobs/jobs.repository.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -11,7 +12,7 @@ const DAY_MS = 86_400_000;
 
 /** One run a day, keyed by the day, so a restart cannot queue it twice. */
 export function renewalReminderKey(at: Date): string {
-  return at.toISOString().slice(0, 10);
+  return lusakaDay(at);
 }
 
 /**
@@ -47,12 +48,10 @@ export class RenewalReminders {
     );
     const numbers = ending.map((policy) => policy.policyNumber);
     const renewals = await this.policies.renewalsOf(numbers);
-    const paid = await this.policies.paidRenewalsOf(numbers);
     const sent = await this.policies.remindersOf(numbers);
 
     let count = 0;
     for (const policy of ending) {
-      if (paid.has(policy.policyNumber)) continue;
       if (openRenewal(renewals.filter((renewal) => renewal.renewalOfPolicyNumber === policy.policyNumber), now)) continue;
       const daysRemaining = daysUntil(policy.policyEndDate!, now);
       const already = sent
@@ -61,6 +60,9 @@ export class RenewalReminders {
       const due = reminderDue(daysRemaining, value.reminderDays, already);
       if (!due) continue;
       const delivered = await this.policies.transaction(async (tx) => {
+        const current = await this.policies.lockOwned(tx, policy.customerId, policy.policyNumber);
+        if (current?.status !== 'ACTIVE' || current.policyEndDate?.getTime() !== policy.policyEndDate?.getTime()) return false;
+        if (openRenewal(await this.policies.renewalsOf([policy.policyNumber], tx), now)) return false;
         if (!(await this.policies.recordReminder(tx, { policyNumber: policy.policyNumber, ...due }))) return false;
         await this.notifications.notify(tx, {
           customerId: policy.customerId,

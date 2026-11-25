@@ -35,6 +35,7 @@ export const createRecordsSlice = (set) => ({
       quoteRequests: [request, ...state.quoteRequests.filter((item) => item.id !== request.id)],
       activeQuoteRequestId: request.id,
       requotedFromId: null,
+      renewalOfPolicyNumber: null,
     })),
   setPolicies: (policies) => applyUnlessLeaving(set, () => ({ policies })),
   setClaims: (claims) => applyUnlessLeaving(set, () => ({ claims })),

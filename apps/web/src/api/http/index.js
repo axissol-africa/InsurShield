@@ -65,7 +65,12 @@ const productPath = (id, productVersionId) =>
   `/insurer/quote-requests/${encodeURIComponent(id)}/products/${encodeURIComponent(productVersionId)}`;
 
 export const quotes = {
-  submitRequest: (request, idempotencyKey = newIdempotencyKey()) => apiClient.post('/quote-requests', request, { headers: { 'Idempotency-Key': idempotencyKey } }),
+  // The customer's own details are the server's to fill in from the session; the API refuses them in the body.
+  submitRequest: (request, idempotencyKey = newIdempotencyKey()) => {
+    const body = { ...request };
+    delete body.customer;
+    return apiClient.post('/quote-requests', body, { headers: { 'Idempotency-Key': idempotencyKey } });
+  },
   listMine: () => apiClient.get('/quote-requests'),
   get: (id) => apiClient.get(`/quote-requests/${id}`),
   requote: (id) => apiClient.post(`/quote-requests/${id}/requote`),

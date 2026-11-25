@@ -1,3 +1,4 @@
+import { lusakaDay } from '../../common/domain/lusaka.js';
 import type { QuoteRequestStatus } from '../../common/domain/enums.js';
 import { isRequestOpen } from '../../common/domain/quote-request.js';
 import { MS_PER_DAY } from './cover-period.js';
@@ -18,6 +19,8 @@ export interface RenewalRequest {
   id: string;
   status: QuoteRequestStatus;
   expiresAt: Date;
+  replacementInProgress?: boolean;
+  closedPurchase?: boolean;
 }
 
 export interface RenewalState {
@@ -28,22 +31,18 @@ export interface RenewalState {
   renewalRequestId: string | null;
 }
 
-const startOfDay = (value: Date) => {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
-};
-
 /**
- * Calendar days from today until `date`: 0 on the day cover ends, negative
+ * Lusaka calendar days from today until `date`: 0 on the day cover ends, negative
  * once it has passed. Mirrored in the client's `domain/renewal.js`.
  */
 export const daysUntil = (date: Date, now: Date): number =>
-  Math.round((startOfDay(date).getTime() - startOfDay(now).getTime()) / MS_PER_DAY);
+  (Date.parse(lusakaDay(date)) - Date.parse(lusakaDay(now))) / MS_PER_DAY;
 
-/** A renewal request still open blocks starting another for the same policy. */
+/** A live quote, open payment or viable replacement blocks another renewal. */
 export const openRenewal = (renewals: RenewalRequest[], now: Date): RenewalRequest | undefined =>
-  renewals.find((renewal) => isRequestOpen(renewal.status, renewal.expiresAt, now));
+  renewals.find((renewal) => renewal.replacementInProgress || (
+    !renewal.closedPurchase && isRequestOpen(renewal.status, renewal.expiresAt, now)
+  ));
 
 /** Cover is still in force on its last day, so only a negative count has lapsed. */
 export function renewalWindow(daysRemaining: number | null, windowDays = RENEWAL_WINDOW_DAYS): RenewalWindow {

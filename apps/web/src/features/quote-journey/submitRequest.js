@@ -87,6 +87,7 @@ export async function submitQuoteRequest({ customer, policyDates, selectedProduc
     vehicleUsage: state.vehicleUsage,
     insuranceType: state.insuranceType,
     coverageDurationId: state.coverageDurationId,
+    renewalOfPolicyNumber: state.renewalOfPolicyNumber,
     matchRtsaAnniversary: state.matchRtsaAnniversary,
     rtsaRegistrationDate: state.rtsaRegistrationDate,
     selectedProductVersionIds,
@@ -128,6 +129,7 @@ export async function submitQuoteRequest({ customer, policyDates, selectedProduc
           vehicleUsage: state.vehicleUsage,
           insuranceType: state.insuranceType,
           coverageDurationId: state.coverageDurationId,
+          renewalOfPolicyNumber: state.renewalOfPolicyNumber || undefined,
           selectedProductVersionIds,
           productRequirementAnswers: requirements
             .filter((requirement) => requirement.kind === 'QUESTION')

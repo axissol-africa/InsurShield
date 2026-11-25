@@ -1,3 +1,4 @@
+import { renewalReminderKey } from '../renewal-reminders.js';
 import { isRequestOpen } from '../../common/domain/quote-request.js';
 import { daysUntil, reminderDue, renewalState, renewalWindow } from './renewal.js';
 
@@ -69,8 +70,7 @@ describe('renewal', () => {
   });
 
   it('counts calendar days, not elapsed hours', () => {
-    const lateTonight = new Date(now);
-    lateTonight.setHours(23, 59, 0, 0);
+    const lateTonight = new Date('2026-10-24T21:59:00.000Z');
     const earlyTomorrow = new Date(lateTonight.getTime() + 2 * 60_000);
 
     expect(daysUntil(earlyTomorrow, lateTonight)).toBe(1);
@@ -107,5 +107,24 @@ describe('reminderDue', () => {
     expect(reminderDue(-1, days, [])).toEqual({ kind: 'LAPSED', daysBefore: 0 });
     expect(reminderDue(-5, days, [{ kind: 'LAPSED', daysBefore: 0 }])).toBeNull();
     expect(reminderDue(-31, days, [])).toBeNull();
+  });
+});
+
+describe('Lusaka renewal calendar', () => {
+  it('keeps cover current until the end of its Lusaka day', () => {
+    const end = new Date('2026-10-24T00:00:00.000+02:00');
+    expect(renewalState(end, [], new Date('2026-10-24T21:59:59.999Z')).window).toBe('DUE');
+    expect(renewalState(end, [], new Date('2026-10-24T22:00:00.000Z')).window).toBe('EXPIRED');
+  });
+
+  it('counts across month and year boundaries in Lusaka', () => {
+    expect(daysUntil(new Date('2027-01-01T00:00:00.000Z'), new Date('2026-12-31T22:00:00.000Z'))).toBe(0);
+    expect(daysUntil(new Date('2026-11-01T00:00:00.000Z'), new Date('2026-10-31T21:59:59.999Z'))).toBe(1);
+  });
+
+  it('uses one reminder key for each Lusaka day', () => {
+    expect(renewalReminderKey(new Date('2026-12-31T21:59:59.999Z'))).toBe('2026-12-31');
+    expect(renewalReminderKey(new Date('2026-12-31T22:00:00.000Z'))).toBe('2027-01-01');
+    expect(renewalReminderKey(new Date('2027-01-01T21:59:59.999Z'))).toBe('2027-01-01');
   });
 });
