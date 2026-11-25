@@ -121,6 +121,8 @@ const schemas = {
         context.addIssue({ code: 'custom', path: ['reminderDays'], message: 'A reminder cannot come before the renewal window opens.' });
       }
     }),
+  /** How long a closed account keeps its holder's name, phone and email before they are replaced. */
+  ACCOUNT_RETENTION: z.object({ daysAfterClosure: z.number().int().min(30).max(36_500) }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
 export type RuleValue = {
@@ -211,6 +213,8 @@ const defaults = {
   SETTLEMENT_PERIOD: { kind: 'MONTHLY' },
   // Provisional: open question 1 of the batch 15 plan.
   RENEWAL_POLICY: { windowDays: 60, reminderDays: [30, 14, 3] },
+  // Provisional: open question 3 of the batch 15 plan, seven years after closure.
+  ACCOUNT_RETENTION: { daysAfterClosure: 2_555 },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 
 /** Default values seed demonstrations only; a response always says whether its value is provisional. */

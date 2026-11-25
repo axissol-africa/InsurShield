@@ -168,6 +168,26 @@ export class QuoteWorkflowService {
     return [...affected];
   }
 
+  /**
+   * A closing customer's requests stop for every insurer: each chosen product
+   * still open, or quoted but unpaid, is cancelled, so no insurer keeps working
+   * on a request nobody can buy. Returns how many were cancelled.
+   */
+  async cancelForClosedAccount(tx: Transaction, customerId: string, actor: AuditActor, at: Date): Promise<number> {
+    let cancelled = 0;
+    for (const version of await this.versions.lockCancellableForCustomer(tx, customerId)) {
+      if (!nextStatus(version.status, 'CANCEL')) continue;
+      await this.move(tx, version, 'CANCEL', {
+        actor,
+        note: 'The customer closed their account.',
+        at,
+        patch: { cancelledAt: at, cancelledReason: 'ACCOUNT_CLOSED', pausedAt: null },
+      });
+      cancelled += 1;
+    }
+    return cancelled;
+  }
+
   // ── Hourly sweep ───────────────────────────────────────────────
 
   async schedule(at: Date): Promise<void> {

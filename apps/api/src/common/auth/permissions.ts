@@ -65,6 +65,7 @@ export const PERMISSIONS = {
   'payment:make': ['customer'],
   'payment:read': ['customer'],
   'account:close': ['customer'],
+  'account:export': ['customer'],
   'service-request:read': ['customer'],
   'service-request:submit': ['customer'],
   'support:contact': ['customer'],

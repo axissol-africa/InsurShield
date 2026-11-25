@@ -50,6 +50,10 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
     UnderwritingInspectionsService,
   ],
   exports: [
+    ClaimsService,
+    NcdService,
+    PoliciesService,
+    QuoteRequestsService,
     QuoteAvailabilityService,
     QuoteProductsRepository,
     QuoteWorkflowService,

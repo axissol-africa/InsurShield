@@ -35,6 +35,8 @@ export const API_LIMITS = {
   bulkRead: { bucket: 'bulk-read', limit: 60, windowMs: 5 * 60_000 },
   /** Customer submissions should tolerate retries but stop accidental loops. */
   customerWrite: { bucket: 'customer-write', limit: 20, windowMs: 5 * 60_000 },
+  /** A data export reads everything a customer holds; a few a day is plenty. */
+  dataExport: { bucket: 'data-export', limit: 5, windowMs: 60 * 60_000 },
   /** Signed callbacks may retry but must not become an unbounded verification workload. */
   integrationCallback: { bucket: 'integration-callback', limit: 120, windowMs: 60_000 },
 } as const satisfies Record<string, ApiRateLimitPolicy>;

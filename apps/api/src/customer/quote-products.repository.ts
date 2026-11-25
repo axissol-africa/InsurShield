@@ -344,6 +344,36 @@ export class QuoteProductsRepository {
       .for('update', { of: quoteRequestProductVersions });
   }
 
+  /** The closing customer's chosen versions still open or quoted, on requests nobody paid for. */
+  async lockCancellableForCustomer(tx: Transaction, customerId: string) {
+    const paid = tx
+      .select({ id: payments.id })
+      .from(payments)
+      .innerJoin(insurerQuotes, eq(insurerQuotes.id, payments.insurerQuoteId))
+      .where(
+        and(
+          eq(insurerQuotes.quoteRequestId, quoteRequestProductVersions.quoteRequestId),
+          eq(insurerQuotes.productVersionId, quoteRequestProductVersions.productVersionId),
+          eq(payments.status, 'CONFIRMED'),
+        ),
+      );
+    return tx
+      .select(versionColumns)
+      .from(quoteRequestProductVersions)
+      .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestProductVersions.quoteRequestId))
+      .innerJoin(insurers, eq(insurers.id, quoteRequestProductVersions.insurerId))
+      .where(
+        and(
+          eq(quoteRequests.customerId, customerId),
+          isNull(quoteRequestProductVersions.cancelledAt),
+          inArray(quoteRequestProductVersions.status, [...OPEN_QUOTE_PRODUCT_STATUSES, 'QUOTED']),
+          sql`NOT EXISTS (${paid})`,
+        ),
+      )
+      .orderBy(asc(quoteRequestProductVersions.quoteRequestId), asc(quoteRequestProductVersions.productVersionId))
+      .for('update', { of: quoteRequestProductVersions });
+  }
+
   /** Marks a version cancelled under decision 24 without changing its state, for one that was paid. */
   async markCancelled(tx: Transaction, id: string, cancelledAt: Date): Promise<void> {
     await tx

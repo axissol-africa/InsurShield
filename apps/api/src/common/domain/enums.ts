@@ -75,6 +75,7 @@ export const RULE_SETTING_KEYS = [
   'COMMISSION_RULE',
   'SETTLEMENT_PERIOD',
   'RENEWAL_POLICY',
+  'ACCOUNT_RETENTION',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
@@ -350,7 +351,8 @@ export type IntegrationTargetKind = (typeof INTEGRATION_TARGET_KINDS)[number];
  * suspension can make either unavailable. Keeping the reason separate from
  * delivery and quote statuses preserves their operational history.
  */
-export const QUOTE_UNAVAILABILITY_REASONS = ['INSURER_SUSPENDED'] as const;
+/** Why a chosen product stopped being quotable: its insurer was suspended, or the customer closed their account. */
+export const QUOTE_UNAVAILABILITY_REASONS = ['INSURER_SUSPENDED', 'ACCOUNT_CLOSED'] as const;
 export type QuoteUnavailabilityReason = (typeof QUOTE_UNAVAILABILITY_REASONS)[number];
 
 export const DELIVERY_KINDS = [
