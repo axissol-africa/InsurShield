@@ -136,6 +136,9 @@ Error messages name a variable but never print its value.
 | `MAIL_API_KEY` | with `http` | The provider's key, sent as a bearer token |
 | `MAIL_FROM` | with `http` | The address messages are sent from, as the provider has verified it |
 | `MAIL_TIMEOUT_MS` | no (`10000`) | How long to wait for the provider before treating a send as unanswered |
+| `HELP_DESK_EMAIL` | no | The external help desk's address, shown to customers on the Contact support page |
+| `HELP_DESK_PHONE` | no | The help desk's phone number, shown as written |
+| `HELP_DESK_HOURS` | no | When the help desk answers, shown as written, for example `Monday to Friday, 08:00 to 17:00` |
 
 ### Seed (`npm run db:seed`, read from the same `apps/api/.env`)
 

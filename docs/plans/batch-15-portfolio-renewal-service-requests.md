@@ -211,6 +211,33 @@ One branch, `feat/batch-15-portfolio`, one PR at the end:
 - The served job runner test now queues its job ahead of everything else, so a long backlog left by the rest of
   the suite cannot time it out.
 
+### Part 2 as delivered
+
+- Migration 0044 adds `service_requests`, the append-only `service_request_updates` (a database trigger refuses any
+  change or deletion), the `SERVICE_REQUEST_DOCUMENT` document kind and the `service_request.*` templates. The
+  templates are mandatory: a customer always hears what the insurer decided about their own request.
+- The database holds the state model too: a decision matches the status, a completed request has its completion time,
+  an approved cancellation carries its refund and end date, and a policy has at most one open cancellation.
+- Insurer routes: `GET /insurer/service-requests` (oldest first, optional `status`), `GET .../:reference`, and
+  `POST .../:reference/review`, `/information-requests`, `/updates`, `/decline`, `/approve`, `/complete`. An update
+  can be kept internal; the customer never sees it, nor a document attached to it.
+- A correction, replacement or help request can be completed in one step, which records the approval and the
+  completion together. A cancellation must be approved first and is completed on or after its end date.
+- A customer can ask about a policy that is active or still being issued, but can cancel only cover that is in force:
+  before issue, the insurer reports it cannot issue and the customer is refunded that way.
+- Documents on a service request are kept under `POLICY_EVIDENCE`, as evidence about the contract.
+- Fixed on the way: a policy issued and then cancelled on the customer's request dropped out of settlements, so its
+  premium and the refund on it were never accounted to the insurer. Settlements now include cover that was issued
+  and later cancelled. The failing test came first.
+- Support: `GET /support/contact` gives the help desk from `HELP_DESK_EMAIL`, `HELP_DESK_PHONE` and `HELP_DESK_HOURS`
+  and up to ten open references per kind. `GET /admin/records/:reference?reason=` searches requests, policies,
+  payments, claims, service requests, NCD applications and inspections, and audits every look-up with the reason,
+  found or not.
+- Web: "Request a change" on each policy that can take one, a form per type with evidence upload, the request's
+  timeline with reply and withdraw, a Service requests section in the insurer portal, the help desk card on the
+  support page, and "Find a record by reference" under Find customer in the admin console. A notification about a
+  service request opens it.
+
 ## Size and split
 
 L. If it splits, split after part 2: renewal and service requests first, data lifecycle second.

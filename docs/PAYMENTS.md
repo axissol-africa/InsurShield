@@ -121,6 +121,17 @@ A payment taken before batch 14 never went through a provider, so it has nothing
 for one is refused with `REFUND_NOT_POSSIBLE`. Refund it outside InsurShield, then resolve its item as `REFUNDED`.
 The queue marks such payments with `refundable: false`.
 
+### Cancelling cover the customer no longer needs
+
+A customer asks to cancel through a service request (`CANCELLATION`), naming the day they want the cover to end. The
+insurer approves it with the refund it owes (zero or more, worked out by the insurer, at most what is left of the
+payment after completed refunds) and the day the cover ends. On or after that day the insurer completes it: the policy
+becomes `CANCELLED` and, when the refund is above zero, a `REFUND_REQUIRED` item opens for that amount. The refund is
+then proposed and approved by two administrators as above; the service request never moves money itself.
+
+A policy cancelled this way after it was issued stays in settlements: its premium is the insurer's, and the refund on
+it comes off the insurer's settlement.
+
 ## The reconciliation queue
 
 `GET /api/v1/admin/reconciliation/items` lists items oldest first, filtered by `status`, `kind`, `insurerId` and
@@ -175,9 +186,9 @@ What InsurShield owes one insurer for one Lusaka calendar month (`SETTLEMENT_PER
 has ended:
 
 - **Payments**: every confirmed payment for that insurer's quotes, confirmed before the month ended and not settled
-  yet, whose policy is active or still being issued. Earlier ones a previous settlement missed are picked up. Its
+  yet, whose policy is active, still being issued, or was issued and later cancelled on the customer's request. Earlier ones a previous settlement missed are picked up. Its
   premium and add-ons are the insurer's; its charges (the `CHARGE` lines, such as the RTSA fee) are shown apart.
-- **Refunds**: completed refunds on cover that stayed live come off. A refund for a policy that was never issued is
+- **Refunds**: completed refunds on cover that stood (live, or issued and later cancelled) come off. A refund for a policy that was never issued is
   not deducted, because that payment was never paid to the insurer.
 - **Adjustments**: every approved adjustment not settled yet.
 - **Commission**: `COMMISSION_RULE` basis points of the gross premium, rounded half up to the ngwee, from the rule
