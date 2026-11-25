@@ -264,6 +264,9 @@ export const admin = {
     resolve: (id, outcome, note) => apiClient.post(`/admin/reconciliation/items/${encodeURIComponent(id)}/resolve`, { outcome, note }),
     proposeRefund: (transactionId, refund) => apiClient.post(`/admin/payments/${encodeURIComponent(transactionId)}/refunds`, refund),
     proposeAdjustment: (adjustment) => apiClient.post('/admin/money-adjustments', adjustment),
+    importStatement: (statement) => apiClient.post('/admin/reconciliation/statements', statement),
+    listStatements: () => apiClient.get('/admin/reconciliation/statements'),
+    standInStatement: (from, to) => apiClient.get('/admin/reconciliation/stand-in-statement', { params: { from, to }, responseType: 'text' }),
   },
   settlements: {
     list: (insurerId) => apiClient.get('/admin/settlements', { params: insurerId ? { insurerId } : {} }),

@@ -1252,6 +1252,9 @@ export const admin = {
     resolve: () => call(() => { throw new Error(NEEDS_API); }),
     proposeRefund: () => call(() => { throw new Error(NEEDS_API); }),
     proposeAdjustment: () => call(() => { throw new Error(NEEDS_API); }),
+    importStatement: () => call(() => { throw new Error(NEEDS_API); }),
+    listStatements: () => call(() => []),
+    standInStatement: () => call(() => { throw new Error(NEEDS_API); }),
   },
   settlements: {
     list: () => call(() => []),

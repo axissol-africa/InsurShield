@@ -18,6 +18,8 @@ const api = (items) => ({
       assign: vi.fn().mockResolvedValue({}),
       resolve: vi.fn().mockResolvedValue({}),
       proposeRefund: vi.fn().mockResolvedValue({}),
+      listStatements: vi.fn().mockResolvedValue([]),
+      importStatement: vi.fn(),
     },
   },
 });

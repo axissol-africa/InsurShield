@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/primitives/input';
 import { NativeSelect } from '@/components/ui/primitives/native-select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/primitives/tabs';
 import { Textarea } from '@/components/ui/primitives/textarea';
+import StatementImport from './StatementImport';
 
 /** What each kind of item means, in the words an administrator acts on. */
 const KINDS = {
@@ -91,6 +92,7 @@ export default function ReconciliationQueue({ api = defaultApi }) {
         <h2 id="reconciliation-title" className="text-xl font-semibold">Reconciliation</h2>
         <p className="mt-1 text-sm text-muted-foreground">Money taken that has not become a policy, and anything the provider said that does not match our records. Oldest first. A refund needs a second administrator to approve it in Approvals.</p>
       </div>
+      <StatementImport api={api} onImported={changed} />
       <Tabs value={status} onValueChange={(value) => { setItems(null); setStatus(value); }}>
         <TabsList aria-label="Item status">
           {Object.entries(STATUSES).map(([value, label]) => <TabsTrigger key={value} value={value}>{label}</TabsTrigger>)}
