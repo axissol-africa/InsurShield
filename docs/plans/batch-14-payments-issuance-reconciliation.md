@@ -484,7 +484,15 @@ As batch 13 did, this batch is delivered in parts on one branch, `feat/batch-14-
     live, so a payment refunded after a failed issue is neither paid nor deducted.
   - The CSV is produced from the frozen lines when asked for, rather than stored as a document: the lines cannot
     change, so the file is the same every time.
-- **Part 3c**: provider statement import and its item kinds (B14.6 item 2), with its admin screen.
+- **Part 3c** (delivered): provider statement import and its item kinds (B14.6 item 2), with its admin screen in the
+  Reconciliation section. Where it differs from the plan:
+  - Migration 0042 adds `provider_statement_imports`, `provider_statement_lines` (each line once per provider, by a
+    key over its content) and `statementLineId` on reconciliation items.
+  - The CSV is posted as text with the period and is not kept as a scanned document: it carries no customer data,
+    only provider references and amounts, and every line is stored.
+  - `PENDING_TOO_LONG` is not opened: an attempt the provider never settles expires at `pendingUntil`, and a
+    confirmation after that follows the normal paths.
+  - A `MISSING_FROM_STATEMENT` item resolves itself when a later statement has the payment.
 
 Until part 3 lands, every case that needs a refund opens its reconciliation item so nothing is lost, and the branch
 stays unmerged.

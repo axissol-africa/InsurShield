@@ -7,6 +7,7 @@ import { ApprovalsModule } from '../approvals/approvals.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { ReconciliationController } from './reconciliation.controller.js';
 import { ReconciliationService } from './reconciliation.service.js';
+import { StatementsService } from './statements.service.js';
 import { RefundsRepository } from './refunds.repository.js';
 import { REFUND_SUBMIT, RefundsService } from './refunds.service.js';
 import { ISSUANCE_OVERDUE_CHECK, IssuanceJobs } from './issuance-jobs.js';
@@ -31,6 +32,7 @@ import { StandInPaymentProvider } from './provider/stand-in-payment-provider.js'
     RefundsRepository,
     RefundsService,
     ReconciliationService,
+    StatementsService,
     StandInPaymentProvider,
     // Only the stand-in exists until DEC-008 names the providers; PAYMENT_PROVIDER selects among them.
     { provide: PAYMENT_PROVIDER, useExisting: StandInPaymentProvider },

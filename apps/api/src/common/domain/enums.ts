@@ -164,6 +164,12 @@ export const OPEN_REFUND_STATUSES = ['PROPOSED', 'APPROVED', 'SUBMITTED'] as con
 export const REFUND_REASONS = ['ISSUANCE_FAILED', 'INSURER_UNAVAILABLE', 'DUPLICATE_PAYMENT', 'AMOUNT_MISMATCH', 'CUSTOMER_REQUEST', 'OTHER'] as const;
 export type RefundReason = (typeof REFUND_REASONS)[number];
 
+/** One line of a provider's statement, in the provider-neutral CSV. */
+export const STATEMENT_LINE_TYPES = ['CHARGE', 'REFUND', 'REVERSAL'] as const;
+export type StatementLineType = (typeof STATEMENT_LINE_TYPES)[number];
+export const STATEMENT_LINE_STATUSES = ['MATCHED', 'UNMATCHED', 'MISMATCH', 'DUPLICATE'] as const;
+export type StatementLineStatus = (typeof STATEMENT_LINE_STATUSES)[number];
+
 /** A settlement is drafted, sent for a second administrator's approval, and then frozen. */
 export const SETTLEMENT_STATUSES = ['DRAFT', 'PROPOSED', 'FINALISED'] as const;
 export type SettlementStatus = (typeof SETTLEMENT_STATUSES)[number];

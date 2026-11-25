@@ -47,6 +47,8 @@ import {
   PAYMENT_METHODS,
   PAYMENT_PROVIDER_NAMES,
   ADJUSTMENT_KINDS,
+  STATEMENT_LINE_STATUSES,
+  STATEMENT_LINE_TYPES,
   REFUND_REASONS,
   REFUND_STATUSES,
   SETTLEMENT_LINE_KINDS,
@@ -1433,6 +1435,8 @@ export const reconciliationItems = pgTable(
     outcome: reconciliationOutcome('outcome'),
     paymentId: uuid('paymentId'),
     paymentCallbackId: uuid('paymentCallbackId'),
+    /** The provider statement line that raised it, for the kinds a statement import opens. */
+    statementLineId: uuid('statementLineId'),
     policyNumber: text('policyNumber'),
     insurerId: uuid('insurerId'),
     amountMinor: ngwee('amountMinor'),
@@ -1453,6 +1457,9 @@ export const reconciliationItems = pgTable(
     uniqueIndex('reconciliation_items_kind_paymentCallbackId_key')
       .on(t.kind, t.paymentCallbackId)
       .where(sql`${t.paymentCallbackId} IS NOT NULL`),
+    uniqueIndex('reconciliation_items_kind_statementLineId_key')
+      .on(t.kind, t.statementLineId)
+      .where(sql`${t.statementLineId} IS NOT NULL`),
     index('reconciliation_items_status_openedAt_idx').on(t.status, t.openedAt),
     index('reconciliation_items_insurerId_idx').on(t.insurerId),
     fk('reconciliation_items_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
@@ -1608,6 +1615,62 @@ export const moneyAdjustments = pgTable(
     fk('money_adjustments_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
     fk('money_adjustments_settlementId_fkey', [t.settlementId], [settlements.id], 'restrict'),
     check('money_adjustments_amount_check', sql`${t.amountMinor} <> 0`),
+  ],
+);
+
+export const statementLineType = pgEnum('StatementLineType', STATEMENT_LINE_TYPES);
+export const statementLineStatus = pgEnum('StatementLineStatus', STATEMENT_LINE_STATUSES);
+
+/** A provider statement as imported; the same file twice is the same import. */
+export const providerStatementImports = pgTable(
+  'provider_statement_imports',
+  {
+    id: id(),
+    provider: paymentProviderName('provider').notNull(),
+    fileName: text('fileName').notNull(),
+    checksum: varchar('checksum', { length: 64 }).notNull(),
+    periodStart: timestamptz('periodStart').notNull(),
+    periodEnd: timestamptz('periodEnd').notNull(),
+    lineCount: integer('lineCount').notNull(),
+    newLines: integer('newLines').notNull(),
+    matched: integer('matched').notNull(),
+    itemsOpened: integer('itemsOpened').notNull(),
+    importedByStaffId: uuid('importedByStaffId').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('provider_statement_imports_provider_checksum_key').on(t.provider, t.checksum),
+    fk('provider_statement_imports_importedByStaffId_fkey', [t.importedByStaffId], [staffUsers.id], 'restrict'),
+  ],
+);
+
+/**
+ * Each statement line once, whichever file it came in: an overlapping
+ * statement adds only the lines InsurShield has not seen.
+ */
+export const providerStatementLines = pgTable(
+  'provider_statement_lines',
+  {
+    id: id(),
+    importId: uuid('importId').notNull(),
+    provider: paymentProviderName('provider').notNull(),
+    lineKey: varchar('lineKey', { length: 64 }).notNull(),
+    type: statementLineType('type').notNull(),
+    providerPaymentId: varchar('providerPaymentId', { length: 200 }).notNull(),
+    providerRefundId: varchar('providerRefundId', { length: 200 }),
+    amountMinor: ngwee('amountMinor').notNull(),
+    currency: varchar('currency', { length: 3 }).notNull(),
+    occurredAt: timestamptz('occurredAt').notNull(),
+    status: statementLineStatus('status').notNull(),
+    paymentId: uuid('paymentId'),
+    refundId: uuid('refundId'),
+  },
+  (t) => [
+    uniqueIndex('provider_statement_lines_provider_lineKey_key').on(t.provider, t.lineKey),
+    index('provider_statement_lines_paymentId_idx').on(t.paymentId),
+    fk('provider_statement_lines_importId_fkey', [t.importId], [providerStatementImports.id], 'restrict'),
+    fk('provider_statement_lines_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
+    fk('provider_statement_lines_refundId_fkey', [t.refundId], [paymentRefunds.id], 'restrict'),
   ],
 );
 

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import {
   RECONCILIATION_KINDS,
   RECONCILIATION_OUTCOMES,
@@ -49,4 +49,17 @@ export class ResolveItemDto {
 
   @IsString() @MinLength(10, { message: 'Say what was done, in at least 10 characters.' }) @MaxLength(2000)
   note!: string;
+}
+
+export class ImportStatementDto {
+  @IsString() @MaxLength(200) fileName!: string;
+  @IsISO8601() periodStart!: string;
+  @IsISO8601() periodEnd!: string;
+  /** The statement file's text, in the provider-neutral CSV. */
+  @IsString() @MinLength(1) @MaxLength(2_000_000) csv!: string;
+}
+
+export class StatementPeriodQuery {
+  @IsISO8601() from!: string;
+  @IsISO8601() to!: string;
 }

@@ -1,7 +1,7 @@
 # Payments
 
 How InsurShield takes a payment for an accepted quote, and how the insurer then issues the policy. Batch 14 builds
-this in parts; this page covers parts 1 to 3b, and grows with part 3c (provider statement import).
+this in parts; this page covers all of them.
 
 ## The rules
 
@@ -132,6 +132,34 @@ insurer, policy, the payment with what has been refunded, and its refunds.
   `note` of at least 10 characters. `REFUNDED` needs a completed refund. Resolving never moves money.
 
 All of it is for InsurShield administrators only (`reconciliation:read`, `reconciliation:manage`, `refund:propose`).
+
+## Provider statements
+
+`POST /api/v1/admin/reconciliation/statements` with `fileName`, `periodStart`, `periodEnd` and `csv`, the statement in
+this provider-neutral format (amounts in kwacha, to the ngwee):
+
+```
+type,provider_payment_id,provider_refund_id,amount,currency,occurred_at
+CHARGE,SI-C-123456-...,,1234.56,ZMW,2026-10-02T08:00:00.000Z
+REFUND,SI-C-123456-...,SIRF-...,1234.56,ZMW,2026-10-05T09:30:00.000Z
+REVERSAL,SI-C-123456-...,,1234.56,ZMW,2026-10-07T10:00:00.000Z
+```
+
+The whole file is read first: one bad line refuses it, naming every bad line, and nothing is stored. The same file
+twice is the same import (by checksum), and each line is stored once whichever file it came in, so an overlapping
+statement adds only its new lines. Each new line:
+
+| Line | Result |
+| --- | --- |
+| Agrees with a confirmed payment, completed refund or reversed payment | `MATCHED` |
+| No payment or refund InsurShield knows | `STATEMENT_UNMATCHED` item |
+| Amount, currency or state differs | `STATEMENT_UNMATCHED` item (a reversal of a payment we still hold: `REVERSAL`) |
+| A second charge for a payment already charged | `DUPLICATE` item |
+
+Then every payment confirmed in the period that no statement line accounts for opens a `MISSING_FROM_STATEMENT`
+item (payments from before batch 14 never reached a provider and are left out), which resolves itself as `NO_ACTION` when a later statement has the payment. Nothing here changes a payment or
+moves money. In development, `GET /api/v1/admin/reconciliation/stand-in-statement?from=&to=` gives the statement the
+stand-in would send, built from InsurShield's own records.
 
 ## Money adjustments
 
