@@ -25,7 +25,7 @@ import { startApp, type TestApp } from './helpers.js';
  * signed payment provider callback, and the stand-in provider's three
  * development routes (absent in production, which refuses the stand-in).
  */
-const PUBLIC_ROUTES = 14;
+const PUBLIC_ROUTES = 15;
 /**
  * Served to guests too, but a signed-in caller is still held to a permission,
  * because the guard returns early only when there is no session.
@@ -105,6 +105,7 @@ describe('every route says who may reach it', () => {
     expect(routes.filter((route) => route.optional)).toHaveLength(OPTIONAL_AUTH_ROUTES);
     expect(routes.find((route) => route.name.startsWith('ReviewsController.publicReviews'))).toMatchObject({ public: true });
     expect(routes.find((route) => route.name.startsWith('ReputationController.list'))).toMatchObject({ public: true });
+    expect(routes.find((route) => route.name.startsWith('CustomerContentController.') && route.public)).toMatchObject({ public: true });
     expect(routes.find((route) => route.name.startsWith('InsurerProfilesController.publicProfile'))).toMatchObject({ public: true });
   });
 

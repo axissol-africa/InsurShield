@@ -13,6 +13,7 @@ import {
   documents,
   staffUsers,
   insurerReviews,
+  policies,
   reviewRevisions,
   reviewDecisions,
   reviewAppeals,
@@ -54,11 +55,16 @@ export class RetentionRepository {
     )`;
   }
 
+  private noPrivacyHold() {
+    return sql`NOT EXISTS (SELECT 1 FROM privacy_requests pr JOIN policies p ON p."customerId" = pr."customerId"
+      WHERE p."policyNumber" = ${insurerReviews.policyNumber} AND pr.held)`;
+  }
+
   async reviewCandidates(now: Date, days: number, appealDays: number) {
     const revisions = this.db.select({ id: reviewRevisions.id }).from(reviewRevisions)
       .where(and(eq(reviewRevisions.reviewId, insurerReviews.id), this.revisionCanPurge()));
     return this.db.select({ id: insurerReviews.id }).from(insurerReviews).where(and(
-      isNull(insurerReviews.legalHoldAt), this.reviewExpired(now, days, appealDays),
+      isNull(insurerReviews.legalHoldAt), this.noPrivacyHold(), this.reviewExpired(now, days, appealDays),
       or(exists(revisions), sql`EXISTS (SELECT 1 FROM review_appeals a JOIN review_decisions d ON d.id = a."decisionId"
         JOIN review_revisions r ON r.id = d."revisionId" WHERE r."reviewId" = ${insurerReviews.id}
         AND a."decidedAt" IS NOT NULL AND a."purgedAt" IS NULL)`),
@@ -66,10 +72,17 @@ export class RetentionRepository {
   }
 
   async purgeReview(tx: Transaction, id: string, now: Date, days: number, appealDays: number) {
-    await tx.select({ id: insurerReviews.id }).from(insurerReviews).where(eq(insurerReviews.id, id)).for('update');
+    const [review] = await tx.select({ id: insurerReviews.id, customerId: policies.customerId }).from(insurerReviews)
+      .innerJoin(policies, eq(policies.policyNumber, insurerReviews.policyNumber))
+      .where(eq(insurerReviews.id, id)).for('update', { of: insurerReviews });
+    if (!review) return { revisions: 0, appeals: 0 };
+    const fence = await tx.execute<{ acquired: boolean }>(
+      sql`SELECT pg_try_advisory_xact_lock(hashtextextended(${review.customerId}, 16)) AS acquired`,
+    );
+    if (!fence.rows[0]?.acquired) return { revisions: 0, appeals: 0 };
     // Re-read after acquiring the lock: an appeal/hold may have committed while waiting.
     const [eligible] = await tx.select({ id: insurerReviews.id }).from(insurerReviews).where(and(
-      eq(insurerReviews.id, id), isNull(insurerReviews.legalHoldAt), this.reviewExpired(now, days, appealDays),
+      eq(insurerReviews.id, id), isNull(insurerReviews.legalHoldAt), this.noPrivacyHold(), this.reviewExpired(now, days, appealDays),
     ));
     if (!eligible) return { revisions: 0, appeals: 0 };
     const revisions = await tx.update(reviewRevisions).set({

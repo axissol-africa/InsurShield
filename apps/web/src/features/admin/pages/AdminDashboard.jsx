@@ -1,3 +1,4 @@
+import OversightWorkspace from '@/features/compliance/OversightWorkspace';
 import BadgeGovernance from '@/features/reputation/admin/BadgeGovernance';
 import AdminReviews from '@/features/reviews/staff/AdminReviews';
 import StaffProfiles from '@/features/reviews/staff/StaffProfiles';
@@ -368,6 +369,7 @@ export default function AdminDashboard() {
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'rule_settings', label: 'Rules and terms', icon: 'tune', hint: 'Rules and comparison fields', matches: ['rule_settings'] },
     { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account or reference', matches: ['find_account'] },
+    ...(canModerate(staffSession?.staffRole) ? [{ id: 'oversight', label: 'Reports and compliance', icon: 'fact_check', hint: 'Reports, content, privacy and risk', matches: ['oversight'] }] : []),
     { id: 'audit_log', label: 'Audit trail', icon: 'history', hint: 'Immutable history', matches: ['audit_log'] },
     { id: 'integrations', label: 'Integrations', icon: 'hub', hint: 'Delivery exceptions', matches: ['integrations'] },
   ];
@@ -474,6 +476,8 @@ export default function AdminDashboard() {
     );
   } else if (view === 'recent_policies') {
     content = <RecentPolicies policies={dashboardPolicies} onBack={() => setView('dashboard')} />;
+  } else if (view === 'oversight' && canModerate(staffSession?.staffRole)) {
+    content = <OversightWorkspace key={staffSession.id} staffId={staffSession.id} />;
   } else if (view === 'audit_log') {
     content = <AuditTrail onBack={() => setView('dashboard')} />;
   } else if (view === 'integrations') {
@@ -853,7 +857,7 @@ function AuditTrail({ onBack }) {
 
   return (
     <>
-      <SubPageHeader title="Audit trail" description="Review who changed an operational record and when. Values and personal details are deliberately not displayed here." onBack={onBack} />
+      <SubPageHeader title="Audit trail" description="Review protected actions and access across the platform." onBack={onBack} />
       <Card className="gap-0 border-border shadow-none">
         <CardHeader className="border-b">
           <CardTitle>Filter history</CardTitle>
@@ -864,7 +868,7 @@ function AuditTrail({ onBack }) {
             <label className="block"><span className={labelClass}>Record type</span>
               <select value={draft.entityType} onChange={(event) => setDraft((current) => ({ ...current, entityType: event.target.value }))} className={inputClass}>
                 <option value="">All record types</option>
-                {['CLAIM', 'CONSENT', 'CUSTOMER', 'DOCUMENT', 'INSPECTION', 'INSURER', 'INSURER_QUOTE', 'NCD_APPLICATION', 'PAYMENT', 'POLICY', 'QUOTE_REQUEST', 'SETTING'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
+                {['AUDIT_LOG', 'CLAIM', 'CONSENT', 'CUSTOMER', 'CUSTOMER_CONTENT', 'DOCUMENT', 'INSPECTION', 'INSURER', 'INSURER_QUOTE', 'NCD_APPLICATION', 'NOTIFICATION_TEMPLATE', 'PAYMENT', 'PERMISSION', 'PIA_CONFIG', 'POLICY', 'PRIVACY_REQUEST', 'QUOTE_REQUEST', 'REPORT', 'RISK_REVIEW', 'SETTING'].map((value) => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
               </select>
             </label>
             <label className="block"><span className={labelClass}>Actor</span>
@@ -881,7 +885,7 @@ function AuditTrail({ onBack }) {
       </Card>
 
       <Card className="mt-6 gap-0 border-border shadow-none">
-        <CardHeader className="grid-cols-[1fr_auto] items-center gap-4 border-b"><div><CardTitle>Recorded changes</CardTitle><p className="mt-1 text-sm text-muted-foreground">The platform stores the full protected record, while this view shows safe operational context.</p></div><UiBadge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Read-only</UiBadge></CardHeader>
+        <CardHeader className="grid-cols-[1fr_auto] items-center gap-4 border-b"><div><CardTitle>Recorded activity</CardTitle><p className="mt-1 text-sm text-muted-foreground">This view shows a summary of each audit event.</p></div><UiBadge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Read-only</UiBadge></CardHeader>
         <CardContent className="pt-5">
           {loading && <p className="py-10 text-center text-sm text-muted-foreground">Loading audit history…</p>}
           {loadError && <p role="alert" className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{loadError}</p>}

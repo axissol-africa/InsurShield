@@ -1,3 +1,4 @@
+import ReportsWorkspace from '@/features/reporting/ReportsWorkspace';
 import InsurerReviews from '@/features/reviews/staff/InsurerReviews';
 import StaffProfiles from '@/features/reviews/staff/StaffProfiles';
 import Appeals from '@/features/reviews/staff/Appeals';
@@ -34,7 +35,9 @@ import { SERVICE_REQUEST_HANDLER_ROLES } from '@/domain/serviceRequests';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'service-requests', 'ncd', 'settlements', 'integrations', 'staff', 'reviews', 'review-appeals', 'profile'];
+const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'service-requests', 'ncd', 'reports', 'settlements', 'integrations', 'staff', 'reviews', 'review-appeals', 'profile'];
+const OPERATIONS_REPORT_ROLES = ['INSURER_ADMIN', 'QUOTE_OFFICER', 'CLAIMS_OFFICER', 'COMPLIANCE_READ_ONLY', 'INSURER_USER'];
+const FINANCE_REPORT_ROLES = ['INSURER_ADMIN', 'FINANCE'];
 const QUOTE_QUEUE_ID = 'quote-requests';
 /** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
 const NEXT_OFFER_MS = 20_000;
@@ -57,7 +60,12 @@ export default function InsurerDashboard() {
   const [searchParams] = useSearchParams();
   const requestedTab = searchParams.get('view');
   const restrictedReviewView = ['reviews', 'review-appeals', 'profile'].includes(requestedTab) && staffSession?.staffRole !== 'INSURER_ADMIN';
-  const activeTab = SECTION_IDS.includes(requestedTab) && !restrictedReviewView ? requestedTab : 'overview';
+  const reportScopes = [
+    ...(OPERATIONS_REPORT_ROLES.includes(staffSession?.staffRole) ? ['operations'] : []),
+    ...(FINANCE_REPORT_ROLES.includes(staffSession?.staffRole) ? ['finance'] : []),
+  ];
+  const restrictedReports = requestedTab === 'reports' && !reportScopes.length;
+  const activeTab = SECTION_IDS.includes(requestedTab) && !restrictedReviewView && !restrictedReports ? requestedTab : 'overview';
 
   // A session may name the insurer separately from the staff member; the
   // prototype session puts the insurer in `name`.
@@ -120,6 +128,7 @@ export default function InsurerDashboard() {
     { id: 'claims', label: 'Claims', icon: MessageSquareWarning, badge: newClaims.length },
     { id: 'service-requests', label: 'Service requests', shortLabel: 'Requests', icon: MessageSquareText },
     { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: BadgePercent, badge: openNcd.length },
+    ...(reportScopes.length ? [{ id: 'reports', label: 'Reports', icon: FileText }] : []),
     ...(canReadSettlements ? [{ id: 'settlements', label: 'Settlements', icon: Landmark }] : []),
     ...(canManageStaff ? [{ id: 'integrations', label: 'Integration activity', shortLabel: 'Integrations', icon: PlugZap }] : []),
     ...(canManageStaff ? [
@@ -331,6 +340,8 @@ export default function InsurerDashboard() {
     content = <ClaimsTab claims={myClaims} />;
   } else if (activeTab === 'service-requests') {
     content = <ServiceRequestsTab api={api} canManage={canManageServiceRequests} />;
+  } else if (activeTab === 'reports') {
+    content = <ReportsWorkspace key={staffSession?.id} scopes={reportScopes} />;
   } else if (activeTab === 'settlements' && canReadSettlements) {
     content = <SettlementsTab api={api} />;
   } else if (activeTab === 'integrations' && canManageStaff) {

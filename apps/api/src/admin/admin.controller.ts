@@ -52,7 +52,7 @@ export class AdminController {
   /** Immutable operational history, intentionally limited to safe summaries. */
   @Needs('admin:audit-read')
   @Get('audit-logs')
-  auditLogs(@Query() query: AuditLogQueryDto) {
-    return this.admin.auditLogs(query);
+  auditLogs(@CurrentUser() principal: Principal, @Query() query: AuditLogQueryDto) {
+    return this.admin.auditLogs(principal, query);
   }
 }

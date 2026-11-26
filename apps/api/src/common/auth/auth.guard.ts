@@ -179,17 +179,18 @@ export class AuthGuard implements CanActivate {
    * denial writes a row naming the actor and the permission they lacked -- never
    * anything about the record behind it, which the caller never reached.
    *
-   * Staff only. A customer meeting a staff route is not a role reaching past its
-   * assignment, and auditing it would dilute the log while letting any
-   * signed-in caller write rows at will.
+   * Privacy and audit access also require recording denials by authenticated
+   * customers. For those permissions, keep the requested path out of the log.
+   * Other refusals are recorded for staff roles only.
    */
   private async recordRefusal(
     principal: Principal,
     needed: Permission | undefined,
     request: Request,
   ): Promise<void> {
-    if (principal.kind !== 'staff') return;
-    const route = `${request.method} ${request.path}`;
+    const privateAccess = needed === 'admin:privacy:review' || needed === 'admin:audit-read';
+    if (principal.kind !== 'staff' && !privateAccess) return;
+    const route = privateAccess ? request.method : `${request.method} ${request.path}`;
     await this.audit.refusal({
       actor: auditActor(principal),
       action: 'access.refused',
@@ -197,7 +198,7 @@ export class AuthGuard implements CanActivate {
       // A route naming no permission is the fail-closed case, and worth seeing as itself.
       entityId: needed ?? 'none',
       note: needed ? route : `${route} names no permission`,
-      correlationId: principal.insurerId,
+      correlationId: principal.kind === 'staff' ? principal.insurerId : undefined,
     });
   }
 }

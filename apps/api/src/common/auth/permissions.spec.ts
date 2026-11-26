@@ -101,6 +101,7 @@ describe('the permission table', () => {
         'portal:policy:read',
         'portal:profile:read',
         'portal:queue:read',
+        'portal:reports:operations',
         'portal:request:read',
         'portal:service-request:read',
         'session:read',

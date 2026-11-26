@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { isUUID } from 'class-validator';
+import { AuditService } from '../common/audit/audit.service.js';
+import { auditActor } from '../common/audit/audit.types.js';
+import type { Principal } from '../common/auth/auth.types.js';
+import { holds } from '../common/auth/permissions.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { sumToKwacha } from '../common/money.js';
 import { AdminRepository } from './admin.repository.js';
@@ -16,7 +21,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 @Injectable()
 export class AdminService {
-  constructor(private readonly admin: AdminRepository) {}
+  constructor(private readonly admin: AdminRepository, private readonly audit: AuditService) {}
 
   async overview() {
     const now = new Date();
@@ -53,7 +58,8 @@ export class AdminService {
    * Cursor pagination keeps long platform histories responsive without making
    * the ordering depend on a mutable page offset.
    */
-  async auditLogs(query: AuditLogQueryDto) {
+  async auditLogs(principal: Principal, query: AuditLogQueryDto) {
+    if (!holds(principal, 'admin:audit-read')) throw ApiException.forbidden();
     const cursor = query.cursor ? decodeCursor(query.cursor) : undefined;
     const from = query.from ? new Date(query.from) : undefined;
     const to = query.to ? new Date(query.to) : undefined;
@@ -72,6 +78,23 @@ export class AdminService {
     });
     const page = rows.slice(0, query.limit);
     const last = page.at(-1);
+    await this.audit.recordRead({
+      actor: auditActor(principal),
+      action: 'audit_log.viewed',
+      entityType: 'AUDIT_LOG',
+      entityId: 'audit-log',
+      after: {
+        entityType: query.entityType,
+        actorType: query.actorType,
+        from: from?.toISOString(),
+        to: to?.toISOString(),
+        entityFiltered: Boolean(query.entityId),
+        actionFiltered: Boolean(query.action),
+        continued: Boolean(cursor),
+        limit: query.limit,
+        resultCount: page.length,
+      },
+    });
     return {
       items: page.map(toAuditLogResponse),
       nextCursor: rows.length > query.limit && last ? encodeCursor(last.createdAt, last.id) : null,
@@ -87,7 +110,9 @@ function decodeCursor(cursor: string): { createdAt: Date; id: string } {
   try {
     const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { createdAt?: unknown; id?: unknown };
     const createdAt = typeof value.createdAt === 'string' ? new Date(value.createdAt) : null;
-    if (!createdAt || Number.isNaN(createdAt.getTime()) || typeof value.id !== 'string' || !value.id) throw new Error('Invalid cursor');
+    if (!createdAt || Number.isNaN(createdAt.getTime()) || typeof value.id !== 'string' || !isUUID(value.id)) {
+      throw new Error('Invalid cursor');
+    }
     return { createdAt, id: value.id };
   } catch {
     throw new ApiException('INVALID_CURSOR', 'The audit log page cursor is invalid.');
