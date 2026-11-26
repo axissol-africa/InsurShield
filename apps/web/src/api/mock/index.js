@@ -1591,3 +1591,18 @@ export const support = {
   })),
   findRecord: () => call(() => { throw new Error('Finding a record by reference needs the InsurShield API.'); }),
 };
+
+// Verified reviews are deliberately unavailable in the browser-storage prototype.
+export const reviews = {
+  forPolicy: async () => ({ canSubmit: false, canEdit: false, canWithdraw: false, review: null }),
+  submit: async () => { throw new Error('Verified reviews require the connected service.'); },
+  edit: async () => { throw new Error('Verified reviews require the connected service.'); },
+  withdraw: async () => { throw new Error('Verified reviews require the connected service.'); },
+  publicForInsurer: async (_id, page = 1) => ({ items: [], hasMore: false, page }),
+};
+export const insurerProfiles = { public: async () => null };
+
+export const reviewAppeals = {
+  list: async () => [],
+  submit: async () => { throw new Error('Review appeals require the connected service.'); },
+};

@@ -77,6 +77,7 @@ export const RULE_SETTING_KEYS = [
   'RENEWAL_POLICY',
   'ACCOUNT_RETENTION',
   'CLAIM_REPORTING',
+  'REVIEW_POLICY',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 

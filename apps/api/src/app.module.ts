@@ -32,6 +32,9 @@ import { StaffModule } from './staff/staff.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { SettingsModule } from './settings/settings.module.js';
 import { IntegrationsModule } from './integrations/integrations.module.js';
+import { ReviewsModule } from './reviews/reviews.module.js';
+import { InsurerProfilesModule } from './insurer-profiles/insurer-profiles.module.js';
+import { ReviewAppealsModule } from './review-appeals/review-appeals.module.js';
 
 @Module({
   imports: [
@@ -65,6 +68,9 @@ import { IntegrationsModule } from './integrations/integrations.module.js';
     SettingsModule,
     RetentionModule,
     ProductsModule,
+    ReviewsModule,
+    InsurerProfilesModule,
+    ReviewAppealsModule,
   ],
   controllers: [HealthController],
   providers: [

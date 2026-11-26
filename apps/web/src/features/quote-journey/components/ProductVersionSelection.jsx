@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/api';
+import { Link } from 'react-router-dom';
 import { formatZMW } from '@/domain/premiumEngine';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
@@ -304,6 +305,7 @@ export default function ProductVersionSelection({
                     <div className="min-w-0 flex-1">
                       <CardTitle className="text-base">{product.version.name}</CardTitle>
                       <p className="mt-1 text-sm font-medium text-primary">{product.insurer.name}</p>
+                      {product.insurer.id && <Link className="text-sm text-primary underline" to={`/insurers/${encodeURIComponent(product.insurer.id)}`} target="_blank" rel="noopener noreferrer">View insurer profile <span className="sr-only">for {product.insurer.name} (opens in a new tab)</span></Link>}
                     </div>
                     <Badge variant="outline">v{product.version.number}</Badge>
                   </div>

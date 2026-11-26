@@ -8,6 +8,7 @@ const {
   quoteRequestProductVersions, quoteRequestProductRequirementAnswers, quoteRequestProductRequirementDeclarations,
   quoteRequestProductRequirementDocuments, insurerQuotes, insurers, policies, payments, paymentRefunds,
   serviceRequests, serviceRequestUpdates, claimNotifications, claimUpdates, ncdApplications, inspections, notifications,
+  insurerReviews, reviewRevisions, reviewDecisions, reviewAppeals,
 } = tables;
 
 @Injectable()
@@ -134,6 +135,40 @@ export class AccountDataRepository {
     }).from(serviceRequestUpdates).innerJoin(serviceRequests, eq(serviceRequests.reference, serviceRequestUpdates.reference))
       .where(and(eq(serviceRequests.customerId, id), eq(serviceRequestUpdates.visibleToCustomer, true))).orderBy(asc(serviceRequestUpdates.createdAt));
     return { requests, updates };
+  }
+
+  async reviewRecords(tx: Transaction, id: string) {
+    const reviews = await tx.select({
+      id: insurerReviews.id, policyNumber: insurerReviews.policyNumber,
+      createdAt: insurerReviews.createdAt, withdrawnAt: insurerReviews.withdrawnAt,
+    }).from(insurerReviews).innerJoin(policies, eq(policies.policyNumber, insurerReviews.policyNumber))
+      .where(eq(policies.customerId, id)).orderBy(asc(insurerReviews.createdAt), asc(insurerReviews.id));
+    const revisions = await tx.select({
+      id: reviewRevisions.id, reviewId: reviewRevisions.reviewId, version: reviewRevisions.version,
+      status: reviewRevisions.status,
+      rating: sql<number | null>`CASE WHEN ${reviewRevisions.purgedAt} IS NULL THEN ${reviewRevisions.rating} ELSE NULL END`,
+      text: sql<string | null>`CASE WHEN ${reviewRevisions.purgedAt} IS NULL THEN ${reviewRevisions.text} ELSE NULL END`,
+      createdAt: reviewRevisions.createdAt, publishedAt: reviewRevisions.publishedAt,
+      retiredAt: reviewRevisions.retiredAt, purgedAt: reviewRevisions.purgedAt,
+    }).from(reviewRevisions).innerJoin(insurerReviews, eq(insurerReviews.id, reviewRevisions.reviewId))
+      .innerJoin(policies, eq(policies.policyNumber, insurerReviews.policyNumber))
+      .where(and(eq(policies.customerId, id), eq(reviewRevisions.kind, 'REVIEW')))
+      .orderBy(asc(reviewRevisions.version), asc(reviewRevisions.id));
+    const appeals = await tx.select({
+      id: reviewAppeals.id, reviewId: insurerReviews.id, revisionId: reviewRevisions.id, decisionId: reviewAppeals.decisionId,
+      reason: sql<string | null>`CASE WHEN ${reviewAppeals.purgedAt} IS NULL THEN ${reviewAppeals.reason} ELSE NULL END`,
+      evidence: sql<string | null>`CASE WHEN ${reviewAppeals.purgedAt} IS NULL THEN ${reviewAppeals.evidence} ELSE NULL END`,
+      createdAt: reviewAppeals.createdAt, dueAt: reviewAppeals.dueAt, decidedAt: reviewAppeals.decidedAt,
+      outcome: reviewAppeals.outcome,
+      outcomeReason: sql<string | null>`CASE WHEN ${reviewAppeals.purgedAt} IS NULL THEN ${reviewAppeals.outcomeReason} ELSE NULL END`,
+      purgedAt: reviewAppeals.purgedAt,
+    }).from(reviewAppeals).innerJoin(reviewDecisions, eq(reviewDecisions.id, reviewAppeals.decisionId))
+      .innerJoin(reviewRevisions, eq(reviewRevisions.id, reviewDecisions.revisionId))
+      .innerJoin(insurerReviews, eq(insurerReviews.id, reviewRevisions.reviewId))
+      .innerJoin(policies, eq(policies.policyNumber, insurerReviews.policyNumber))
+      .where(and(eq(policies.customerId, id), eq(reviewRevisions.kind, 'REVIEW'), eq(reviewAppeals.party, 'CUSTOMER')))
+      .orderBy(asc(reviewAppeals.createdAt), asc(reviewAppeals.id));
+    return { reviews, revisions, appeals };
   }
 
   async otherRecords(tx: Transaction, id: string) {

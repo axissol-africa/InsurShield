@@ -12,6 +12,8 @@ function fixture() {
       .mockResolvedValue({ id: 'document', storageKey: 'private-key' }),
     finishDocument: vi.fn().mockResolvedValue(true),
     accountCandidates: vi.fn().mockResolvedValue([{ id: 'customer' }]),
+    reviewCandidates: vi.fn().mockResolvedValue([{ id: 'review' }]),
+    purgeReview: vi.fn().mockResolvedValue({ revisions: 1, appeals: 1 }),
     anonymise: vi.fn().mockResolvedValue(true),
   };
   const jobs = {
@@ -19,8 +21,9 @@ function fixture() {
     enqueue: vi.fn().mockResolvedValue(undefined),
   };
   const settings = {
-    effective: vi.fn((key: 'DOCUMENT_RETENTION' | 'ACCOUNT_RETENTION') => ({
+    effective: vi.fn((key: 'DOCUMENT_RETENTION' | 'ACCOUNT_RETENTION' | 'REVIEW_POLICY') => ({
       value: defaultRuleValue(key),
+      provisional: true,
     })),
   };
   const storage = { delete: vi.fn().mockResolvedValue(undefined) };
@@ -36,6 +39,33 @@ function fixture() {
 }
 
 describe('retention sweep', () => {
+  it('does not purge reviews under provisional policy', async () => {
+    const f = fixture();
+    await f.service.run();
+    expect(f.repository.reviewCandidates).not.toHaveBeenCalled();
+    expect(f.repository.purgeReview).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the active confirmed rule in the purge transaction and audits only counts', async () => {
+    const f = fixture();
+    f.settings.effective.mockImplementation((key) => ({ value: defaultRuleValue(key), provisional: false }));
+    await f.service.run();
+    expect(f.repository.purgeReview).toHaveBeenCalledWith({}, 'review', expect.any(Date), 365, 30);
+    expect(f.audit.write).toHaveBeenCalledWith({}, expect.objectContaining({ action: 'review.private_content_purged', after: { revisions: 1, appeals: 1 } }));
+  });
+
+  it('does not purge if the effective rule is provisional when the transaction rechecks it', async () => {
+    const f = fixture();
+    let reviewReads = 0;
+    f.settings.effective.mockImplementation((key) => ({
+      value: defaultRuleValue(key),
+      provisional: key === 'REVIEW_POLICY' && ++reviewReads > 1,
+    }));
+    await f.service.run();
+    expect(f.repository.reviewCandidates).toHaveBeenCalled();
+    expect(f.repository.purgeReview).not.toHaveBeenCalled();
+  });
+
   it('deletes after the durable claim, marks completion and audits counts only', async () => {
     const f = fixture();
     await f.service.run(new Date('2035-01-01T00:00:00Z'));

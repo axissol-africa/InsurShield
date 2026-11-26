@@ -1358,6 +1358,100 @@ export const payments = pgTable(
   ],
 );
 
+export const insurerReviews = pgTable(
+  'insurer_reviews',
+  {
+    id: id(),
+    policyNumber: text('policyNumber').notNull(),
+    createdAt: createdAt(),
+    withdrawnAt: timestamptz('withdrawnAt'),
+    legalHoldAt: timestamptz('legalHoldAt'),
+  },
+  (t) => [
+    uniqueIndex('insurer_reviews_policy_key').on(t.policyNumber),
+    fk('insurer_reviews_policy_fkey', [t.policyNumber], [policies.policyNumber], 'restrict'),
+  ],
+);
+
+export const reviewRevisions = pgTable(
+  'review_revisions',
+  {
+    id: id(),
+    reviewId: uuid('reviewId').notNull(),
+    kind: text('kind', { enum: ['REVIEW', 'RESPONSE'] }).notNull(),
+    version: integer('version').notNull(),
+    status: text('status', { enum: ['PENDING', 'PUBLISHED', 'REJECTED', 'REMOVED', 'SUPERSEDED'] }).notNull(),
+    rating: integer('rating'),
+    text: text('text'),
+    createdAt: createdAt(),
+    publishedAt: timestamptz('publishedAt'),
+    retiredAt: timestamptz('retiredAt'),
+    purgedAt: timestamptz('purgedAt'),
+  },
+  (t) => [
+    fk('review_revisions_review_fkey', [t.reviewId], [insurerReviews.id], 'restrict'),
+    uniqueIndex('review_revisions_version_key').on(t.reviewId, t.kind, t.version),
+    uniqueIndex('review_revisions_pending_key').on(t.reviewId, t.kind).where(sql`${t.status} = 'PENDING'`),
+    uniqueIndex('review_revisions_published_key').on(t.reviewId, t.kind).where(sql`${t.status} = 'PUBLISHED'`),
+    index('review_revisions_status_created_idx').on(t.status, t.createdAt, t.id),
+    index('review_revisions_retention_idx').on(t.retiredAt).where(sql`${t.purgedAt} is null`),
+    check('review_revisions_kind_rating_check', sql`(${t.kind} = 'REVIEW' AND ${t.purgedAt} IS NULL AND ${t.rating} IS NOT NULL AND ${t.rating} BETWEEN 1 AND 5)
+        OR (${t.kind} = 'REVIEW' AND ${t.purgedAt} IS NOT NULL AND ${t.rating} IS NULL)
+        OR (${t.kind} = 'RESPONSE' AND ${t.rating} IS NULL)`),
+    check('review_revisions_purged_check', sql`${t.purgedAt} IS NULL OR
+        (${t.retiredAt} IS NOT NULL AND ${t.text} IS NULL AND ${t.status} IN ('REJECTED','REMOVED','SUPERSEDED'))`),
+    check('review_revisions_status_check', sql`${t.status} IN ('PENDING','PUBLISHED','REJECTED','REMOVED','SUPERSEDED')`),
+    check('review_revisions_text_length_check', sql`length(${t.text}) <= 2000`),
+    check('review_revisions_published_check', sql`${t.status} <> 'PUBLISHED' OR (${t.publishedAt} IS NOT NULL AND ${t.purgedAt} IS NULL)`),
+  ],
+);
+
+export const reviewDecisions = pgTable(
+  'review_decisions',
+  {
+    id: id(),
+    revisionId: uuid('revisionId').notNull(),
+    action: text('action', { enum: ['PUBLISH', 'REJECT', 'REMOVE', 'REINSTATE'] }).notNull(),
+    reason: text('reason').notNull(),
+    moderatorId: uuid('moderatorId').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    fk('review_decisions_revision_fkey', [t.revisionId], [reviewRevisions.id], 'restrict'),
+    fk('review_decisions_moderator_fkey', [t.moderatorId], [staffUsers.id], 'restrict'),
+    index('review_decisions_revision_created_idx').on(t.revisionId, t.createdAt, t.id),
+    check('review_decisions_action_check', sql`${t.action} IN ('PUBLISH','REJECT','REMOVE','REINSTATE')`),
+  ],
+);
+
+export const reviewAppeals = pgTable(
+  'review_appeals',
+  {
+    id: id(),
+    decisionId: uuid('decisionId').notNull(),
+    party: text('party', { enum: ['CUSTOMER', 'INSURER'] }).notNull(),
+    reason: text('reason'),
+    evidence: text('evidence'),
+    createdAt: createdAt(),
+    dueAt: date('dueAt').notNull(),
+    decidedAt: timestamptz('decidedAt'),
+    decidedBy: uuid('decidedBy'),
+    outcome: text('outcome', { enum: ['UPHELD', 'OVERTURNED'] }),
+    outcomeReason: text('outcomeReason'),
+    purgedAt: timestamptz('purgedAt'),
+  },
+  (t) => [
+    fk('review_appeals_decision_fkey', [t.decisionId], [reviewDecisions.id], 'restrict'),
+    fk('review_appeals_decider_fkey', [t.decidedBy], [staffUsers.id], 'restrict'),
+    uniqueIndex('review_appeals_party_decision_key').on(t.decisionId, t.party),
+    index('review_appeals_due_idx').on(t.dueAt).where(sql`${t.decidedAt} is null`),
+    index('review_appeals_retention_idx').on(t.decidedAt).where(sql`${t.purgedAt} is null`),
+    check('review_appeals_party_check', sql`${t.party} IN ('CUSTOMER','INSURER')`),
+    check('review_appeals_outcome_check', sql`(${t.outcome} IS NOT NULL AND ${t.outcome} IN ('UPHELD','OVERTURNED') AND ${t.decidedAt} IS NOT NULL AND ${t.decidedBy} IS NOT NULL AND ${t.outcomeReason} IS NOT NULL)
+         OR (${t.outcome} IS NULL AND ${t.decidedAt} IS NULL AND ${t.decidedBy} IS NULL AND ${t.outcomeReason} IS NULL)`),
+  ],
+);
+
 export const policies = pgTable(
   'policies',
   {
@@ -2432,3 +2526,46 @@ export const approvalRequests = pgTable(
     fk('approval_requests_decidedByStaffId_fkey', [t.decidedByStaffId], [staffUsers.id], 'restrict'),
   ],
 );
+
+// Batch 17: insurer profile content is immutable after submission.
+export const insurerProfileRevisionStatus = pgEnum('InsurerProfileRevisionStatus', ['PENDING', 'APPROVED', 'REJECTED', 'SUPERSEDED']);
+export const insurerProfileDecisionKind = pgEnum('InsurerProfileDecisionKind', ['APPROVE', 'REJECT']);
+
+export const insurerProfileRevisions = pgTable('insurer_profile_revisions', {
+  id: id(),
+  insurerId: uuid('insurerId').notNull(),
+  versionNumber: integer('versionNumber').notNull(),
+  status: insurerProfileRevisionStatus('status').notNull().default('PENDING'),
+  brandName: varchar('brandName', { length: 160 }).notNull(),
+  description: text('description').notNull(),
+  serviceInformation: text('serviceInformation').notNull(),
+  contactEmail: varchar('contactEmail', { length: 254 }),
+  contactPhone: varchar('contactPhone', { length: 40 }),
+  websiteUrl: varchar('websiteUrl', { length: 2048 }),
+  logoUrl: varchar('logoUrl', { length: 2048 }),
+  submittedByStaffId: uuid('submittedByStaffId').notNull(),
+  createdAt: createdAt(),
+}, (t) => [
+  fk('insurer_profile_revisions_insurer_fkey', [t.insurerId], [insurers.id], 'restrict'),
+  fk('insurer_profile_revisions_submitter_fkey', [t.submittedByStaffId], [staffUsers.id], 'restrict'),
+  uniqueIndex('insurer_profile_revisions_version_key').on(t.insurerId, t.versionNumber),
+  uniqueIndex('insurer_profile_revisions_pending_key').on(t.insurerId).where(sql`${t.status} = 'PENDING'`),
+  uniqueIndex('insurer_profile_revisions_approved_key').on(t.insurerId).where(sql`${t.status} = 'APPROVED'`),
+  check('insurer_profile_revisions_version_check', sql`${t.versionNumber} > 0`),
+  check('insurer_profile_revisions_content_check', sql`length(trim(${t.brandName})) BETWEEN 1 AND 160 AND length(trim(${t.description})) BETWEEN 1 AND 4000 AND length(trim(${t.serviceInformation})) BETWEEN 1 AND 4000`),
+]);
+
+/** Decisions are inserted once, never edited; reasons stay private. */
+export const insurerProfileDecisions = pgTable('insurer_profile_decisions', {
+  id: id(),
+  revisionId: uuid('revisionId').notNull(),
+  decision: insurerProfileDecisionKind('decision').notNull(),
+  reason: varchar('reason', { length: 2000 }).notNull(),
+  decidedByStaffId: uuid('decidedByStaffId').notNull(),
+  createdAt: createdAt(),
+}, (t) => [
+  fk('insurer_profile_decisions_revision_fkey', [t.revisionId], [insurerProfileRevisions.id], 'restrict'),
+  fk('insurer_profile_decisions_reviewer_fkey', [t.decidedByStaffId], [staffUsers.id], 'restrict'),
+  uniqueIndex('insurer_profile_decisions_revision_key').on(t.revisionId),
+  check('insurer_profile_decisions_reason_check', sql`length(trim(${t.reason})) BETWEEN 1 AND 2000`),
+]);

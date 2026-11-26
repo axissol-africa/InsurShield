@@ -82,3 +82,20 @@ it('offers the provisional claim reporting template', async () => {
     reportingDays: 14, responseDays: 7, excludedTypes: { COMPREHENSIVE: [], THIRD_PARTY: ['Theft', 'Fire Damage', 'Natural Disaster', 'Windscreen Damage'] }, requireAttachmentsFor: ['Theft'], requirePoliceReportFor: ['Theft'],
   } })));
 });
+
+it('offers the review policy and submits configurable private retention days', async () => {
+  const user = userEvent.setup();
+  const api = createApi();
+  render(<RuleSettingsWorkspace api={api} onBack={vi.fn()} onOpenPia={vi.fn()} />);
+  await user.click(await screen.findByRole('button', { name: /Review policy/ }));
+  const value = screen.getByLabelText('Rule value');
+  const template = { submissionDays: 90, editDays: 30, appealDays: 30, appealDecisionDays: 14, privateRetentionDays: 365 };
+  expect(JSON.parse(value.value)).toEqual(template);
+  await user.clear(value);
+  await user.paste(JSON.stringify({ ...template, privateRetentionDays: 730 }));
+  await user.click(screen.getByRole('button', { name: 'Save provisional version' }));
+  await waitFor(() => expect(api.settings.rules.create).toHaveBeenCalledWith('REVIEW_POLICY', expect.objectContaining({
+    value: { ...template, privateRetentionDays: 730 },
+  })));
+  expect(screen.getByRole('status')).toHaveTextContent('Review policy was saved as a provisional version.');
+});

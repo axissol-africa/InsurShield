@@ -347,3 +347,20 @@ export const support = {
   contact: () => apiClient.get('/support/contact'),
   findRecord: (reference, reason) => apiClient.get(`/admin/records/${encodeURIComponent(reference.trim())}`, { params: { reason } }),
 };
+
+const policyReviewPath = (number) => `/reviews/customer/policies/${encodeURIComponent(number)}`;
+export const reviews = {
+  forPolicy: (number, options) => apiClient.get(policyReviewPath(number), options),
+  submit: (number, body) => apiClient.post(policyReviewPath(number), body),
+  edit: (number, body) => apiClient.patch(policyReviewPath(number), body),
+  withdraw: (number) => apiClient.delete(policyReviewPath(number)),
+  publicForInsurer: (id, page = 1, options = {}) => apiClient.get(`/reviews/public/${encodeURIComponent(id)}`, { ...options, params: { page } }),
+};
+export const insurerProfiles = {
+  public: (id, options) => apiClient.get(`/insurer-profiles/${encodeURIComponent(id)}`, options),
+};
+
+export const reviewAppeals = {
+  list: (options) => apiClient.get('/review-appeals', options),
+  submit: (body) => apiClient.post('/review-appeals', body),
+};

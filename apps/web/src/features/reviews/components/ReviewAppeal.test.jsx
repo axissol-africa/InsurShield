@@ -1,0 +1,34 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+import { render as rtlRender, screen } from '@testing-library/react';
+import { useStore } from '@/store';
+const render = (ui) => rtlRender(ui);
+import userEvent from '@testing-library/user-event';
+import { api } from '@/api';
+import ReviewAppeal from './ReviewAppeal';
+vi.mock('@/api', () => ({ api: { reviewAppeals: { list: vi.fn(), submit: vi.fn() } } }));
+beforeEach(() => { vi.resetAllMocks(); useStore.setState({ customer: { email: 'customer@example.com' }, leaving: false }); api.reviewAppeals.list.mockResolvedValue([]); });
+it('preserves private evidence on failure and shows submitted appeal status', async () => {
+  const user = userEvent.setup();
+  api.reviewAppeals.list.mockResolvedValue([{ id: 'old-appeal', decisionId: 'old-decision', party: 'CUSTOMER', outcome: 'UPHELD', outcomeReason: 'Earlier result remains visible', dueAt: '2026-11-10' }]);
+  api.reviewAppeals.submit.mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce({ id: 'appeal', decisionId: 'decision', party: 'CUSTOMER', dueAt: '2026-12-10', outcome: null });
+  render(<ReviewAppeal reviewId="review" decisionId="decision" />);
+  expect(await screen.findByRole('button', { name: 'Submit appeal' })).toBeDisabled();
+  await user.type(screen.getByLabelText('Appeal reason (required)'), 'Please reconsider');
+  await user.type(screen.getByLabelText('Supporting evidence (optional)'), 'Private context');
+  await user.click(screen.getByRole('button', { name: 'Submit appeal' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Offline');
+  expect(screen.getByLabelText('Supporting evidence (optional)')).toHaveValue('Private context');
+  api.reviewAppeals.list.mockResolvedValue([{ id: 'appeal', decisionId: 'decision', party: 'CUSTOMER', dueAt: '2026-12-10', outcome: null }]);
+  await user.click(screen.getByRole('button', { name: 'Submit appeal' }));
+  expect(await screen.findByText('Appeal: Awaiting decision')).toBeVisible();
+  expect(screen.getByText('Earlier result remains visible')).toBeVisible();
+  expect(api.reviewAppeals.submit).toHaveBeenLastCalledWith({ decisionId: 'decision', reason: 'Please reconsider', evidence: 'Private context' });
+  expect(screen.queryByRole('button', { name: 'Submit appeal' })).not.toBeInTheDocument();
+});
+it('displays existing outcomes for this decision and prevents duplicate appeals', async () => {
+  api.reviewAppeals.list.mockResolvedValue([{ id: 'appeal', decisionId: 'decision', party: 'CUSTOMER', outcome: 'UPHELD', outcomeReason: 'Decision explanation', dueAt: '2026-12-10' }]);
+  render(<ReviewAppeal reviewId="review" decisionId="decision" />);
+  expect(await screen.findByText('Appeal: Original decision upheld')).toBeVisible();
+  expect(screen.getByText('Decision explanation')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Submit appeal' })).not.toBeInTheDocument();
+});

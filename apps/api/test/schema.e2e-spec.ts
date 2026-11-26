@@ -94,7 +94,16 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyClaimInvariants);
   await query(db, applyNcdInvariants);
   await query(db, applyLaterInspectionInvariants);
+  await query(db, applyReviewInvariants);
   return db;
+}
+
+async function applyReviewInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0050_batch_17_verified_reviews.sql', import.meta.url), 'utf8');
+  const invariants = migration.slice(migration.indexOf('-- Review decision invariants begin'), migration.indexOf('-- Review decision invariants end'));
+  for (const statement of invariants.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 /** Later inspection report guards and evidence retention are SQL-only invariants. */
@@ -1233,7 +1242,8 @@ describe('the final schema', () => {
     // Batch 15 adds account anonymisation and the two document deletion instants.
     // Batch 16 adds claim history, NCD declaration acceptance, code revocation and evidence creation.
     // Later inspection reports add their creation instant.
-    expect(timestampColumns).toHaveLength(187);
+    // Reviews, appeals and insurer profile revisions add 13 instants.
+    expect(timestampColumns).toHaveLength(200);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

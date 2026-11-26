@@ -16,6 +16,8 @@ const DESTINATION = {
   POLICY: '/account',
   CLAIM: '/account',
   NCD_APPLICATION: '/account',
+  REVIEW: '/account?section=policies',
+  REVIEW_APPEAL: '/account?section=policies',
 };
 
 /** Where a notice that asks for a step takes the reader, ahead of its record. */
