@@ -95,7 +95,16 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyNcdInvariants);
   await query(db, applyLaterInspectionInvariants);
   await query(db, applyReviewInvariants);
+  await query(db, applyCertificateBadgeInvariants);
   return db;
+}
+
+async function applyCertificateBadgeInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0051_batch_18_ratings_badges.sql', import.meta.url), 'utf8');
+  const invariants = migration.slice(migration.indexOf('-- Certificate badge invariants begin'), migration.indexOf('-- Certificate badge invariants end'));
+  for (const statement of invariants.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 async function applyReviewInvariants(client: ClientBase) {
@@ -1243,7 +1252,8 @@ describe('the final schema', () => {
     // Batch 16 adds claim history, NCD declaration acceptance, code revocation and evidence creation.
     // Later inspection reports add their creation instant.
     // Reviews, appeals and insurer profile revisions add 13 instants.
-    expect(timestampColumns).toHaveLength(200);
+    // Certificate badge snapshots and suspension state add six instants.
+    expect(timestampColumns).toHaveLength(206);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

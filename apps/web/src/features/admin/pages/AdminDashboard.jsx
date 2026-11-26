@@ -1,3 +1,4 @@
+import BadgeGovernance from '@/features/reputation/admin/BadgeGovernance';
 import AdminReviews from '@/features/reviews/staff/AdminReviews';
 import StaffProfiles from '@/features/reviews/staff/StaffProfiles';
 import Appeals from '@/features/reviews/staff/Appeals';
@@ -352,6 +353,7 @@ export default function AdminDashboard() {
     { id: 'recent_policies', label: 'Recent policies', icon: 'policy', hint: 'Issued cover', badge: policyCount, matches: ['recent_policies'] },
     { id: 'manage_insurers', label: 'Insurers', icon: 'manage_accounts', hint: 'View and edit', badge: managedInsurers.length, matches: ['manage_insurers', 'view_insurer', 'edit_insurer'] },
     ...(canModerate(staffSession?.staffRole) ? [
+      { id: 'badge_governance', label: 'Badge governance', icon: 'fact_check', hint: 'Performance badge eligibility', matches: ['badge_governance'] },
       { id: 'review_moderation', label: 'Review moderation', icon: 'fact_check', hint: 'Reviews and responses', matches: ['review_moderation'] },
       { id: 'review_appeals', label: 'Review appeals', icon: 'fact_check', hint: 'Independent decisions', matches: ['review_appeals'] },
       { id: 'public_profiles', label: 'Public profiles', icon: 'domain_add', hint: 'Approve profile changes', matches: ['public_profiles'] },
@@ -408,6 +410,8 @@ export default function AdminDashboard() {
     content = <ReconciliationQueue api={api} />;
   } else if (view === 'settlements') {
     content = <SettlementsPanel api={api} insurers={managedInsurers} />;
+  } else if (view === 'badge_governance') {
+    content = <BadgeGovernance insurers={managedInsurers} />;
   } else if (view === 'review_moderation') {
     content = <AdminReviews />;
   } else if (view === 'review_appeals') {

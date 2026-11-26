@@ -447,3 +447,20 @@ export {};
  * @typedef {{id:string,decisionId:string,party:string,reason:string|null,evidence:string|null,createdAt:string,dueAt:string,decidedAt:string|null,outcome:string|null,outcomeReason:string|null,purgedAt:string|null}} ReviewAppeal
  * PublicReview.publishedAt and response.publishedAt are Lusaka calendar months (YYYY-MM).
  */
+
+/**
+ * Batch 18: GET /insurer-reputation?insurerIds=<comma-separated UUIDs> (1–100 unique IDs)
+ * api.insurerReputation.list(insurerIds, {signal}) -> {items: InsurerReputation[]}
+ * Provisional rules and unknown insurers return no items. Mock returns no items.
+ * @typedef {{average:number|null,reviewCount:number,minimumReviews:number,periodStart:string,periodEnd:string,method:string,ruleVersion:number}} InsurerRating
+ * @typedef {{insurerId:string,code:'ON_TIME_CERTIFICATES',label:string,sampleCount:number,onTimeCount:number,minimumPolicies:number,thresholdBps:number,percentage:number,periodStart:string,periodEnd:string,awardedAt:string,expiresAt:string,ruleVersion:number,dataSource:string,method:string,disclaimer:string}} InsurerPerformanceBadge
+ * @typedef {{insurerId:string,rating:InsurerRating|null,badges:InsurerPerformanceBadge[]}} InsurerReputation
+ */
+
+/**
+ * Admin badge governance uses GET and PUT /admin/insurer-reputation/:insurerId/badge.
+ * api.badgeGovernance.get(insurerId) and update(insurerId, {suspended, reason, expectedGeneration})
+ * return the insurer's suspension generation, details and latest calculation.
+ * An out-of-date decision returns BADGE_STATE_CHANGED (409). Mock mode
+ * reports that governance requires a connected API.
+ */

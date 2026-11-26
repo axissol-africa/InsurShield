@@ -1,3 +1,4 @@
+import { InsurerReputation } from '@/features/reputation/components/InsurerReputation';
 import { useState } from 'react';
 import { usePublicInsurerProfile, usePublicReviews } from '../hooks/usePublicInsurerProfile';
 import { reviewLabel } from '../presentation';
@@ -54,6 +55,7 @@ function Profile({ insurerId }) {
         {httpsUrl(content.websiteUrl) && <a className="inline-block text-primary underline" href={httpsUrl(content.websiteUrl)} target="_blank" rel="noopener noreferrer">Visit insurer website (opens in a new tab)</a>}
       </CardContent></Card>
       <Card><CardHeader><CardTitle><h2>Available products</h2></CardTitle></CardHeader><CardContent>{record.products.length ? <ul className="space-y-2">{record.products.map((product) => <li key={product.versionId} className="break-words">{product.name} · {reviewLabel(product.coverType)}</li>)}</ul> : <p>No products are currently available.</p>}{record.productsTruncated && <p className="mt-3 text-sm text-muted-foreground">More products may be available when you explore cover.</p>}</CardContent></Card>
+      <InsurerReputation insurerId={insurerId} />
       <PublishedReviews insurerId={insurerId} />
     </>}
   </div>;

@@ -20,12 +20,12 @@ import { startApp, type TestApp } from './helpers.js';
 /**
  * Reached with no session at all, and so with no permission: two health probes,
  * the directory, approved product catalogue, PIA floor, approved insurer
- * profiles and verified reviews a visitor compares,
+ * profiles, verified reviews and reputation a visitor compares,
  * customer account-start routes, the signed insurer callback endpoint, the
  * signed payment provider callback, and the stand-in provider's three
  * development routes (absent in production, which refuses the stand-in).
  */
-const PUBLIC_ROUTES = 13;
+const PUBLIC_ROUTES = 14;
 /**
  * Served to guests too, but a signed-in caller is still held to a permission,
  * because the guard returns early only when there is no session.
@@ -104,6 +104,7 @@ describe('every route says who may reach it', () => {
     expect(routes.filter((route) => route.public)).toHaveLength(PUBLIC_ROUTES);
     expect(routes.filter((route) => route.optional)).toHaveLength(OPTIONAL_AUTH_ROUTES);
     expect(routes.find((route) => route.name.startsWith('ReviewsController.publicReviews'))).toMatchObject({ public: true });
+    expect(routes.find((route) => route.name.startsWith('ReputationController.list'))).toMatchObject({ public: true });
     expect(routes.find((route) => route.name.startsWith('InsurerProfilesController.publicProfile'))).toMatchObject({ public: true });
   });
 

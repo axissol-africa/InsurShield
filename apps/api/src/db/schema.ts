@@ -2569,3 +2569,45 @@ export const insurerProfileDecisions = pgTable('insurer_profile_decisions', {
   uniqueIndex('insurer_profile_decisions_revision_key').on(t.revisionId),
   check('insurer_profile_decisions_reason_check', sql`length(trim(${t.reason})) BETWEEN 1 AND 2000`),
 ]);
+
+// Batch 18: aggregate evidence is immutable; suspension generations prevent stale reinstatement.
+export const certificateBadgeStates = pgTable('certificate_badge_states', {
+  insurerId: uuid('insurerId').primaryKey(),
+  suspendedAt: timestamptz('suspendedAt'),
+  suspensionReason: varchar('suspensionReason', { length: 2000 }),
+  generation: integer('generation').notNull().default(0),
+  updatedAt: updatedAt(),
+}, (t) => [
+  fk('certificate_badge_states_insurer_fkey', [t.insurerId], [insurers.id], 'restrict'),
+  check('certificate_badge_states_generation_check', sql`${t.generation} >= 0`),
+  check('certificate_badge_states_suspension_check', sql`(${t.suspendedAt} IS NULL AND ${t.suspensionReason} IS NULL) OR (${t.suspendedAt} IS NOT NULL AND ${t.suspensionReason} IS NOT NULL AND length(trim(${t.suspensionReason})) BETWEEN 1 AND 2000)`),
+]);
+
+export const certificateBadgeSnapshots = pgTable('certificate_badge_snapshots', {
+  id: id(),
+  insurerId: uuid('insurerId').notNull(),
+  calculationDay: date('calculationDay').notNull(),
+  generation: integer('generation').notNull(),
+  ruleVersion: integer('ruleVersion').notNull(),
+  qualifies: boolean('qualifies').notNull(),
+  eligible: boolean('eligible').notNull(),
+  sampleCount: integer('sampleCount').notNull(),
+  onTimeCount: integer('onTimeCount').notNull(),
+  minimumPolicies: integer('minimumPolicies').notNull(),
+  thresholdBps: integer('thresholdBps').notNull(),
+  periodStart: timestamptz('periodStart').notNull(),
+  periodEnd: timestamptz('periodEnd').notNull(),
+  calculatedAt: timestamptz('calculatedAt').notNull(),
+  expiresAt: timestamptz('expiresAt').notNull(),
+  dataSource: text('dataSource').notNull(),
+  method: text('method').notNull(),
+  disclaimer: text('disclaimer').notNull(),
+}, (t) => [
+  fk('certificate_badge_snapshots_insurer_fkey', [t.insurerId], [insurers.id], 'restrict'),
+  uniqueIndex('certificate_badge_snapshots_daily_key').on(t.insurerId, t.calculationDay, t.ruleVersion, t.generation),
+  index('certificate_badge_snapshots_latest_idx').on(t.insurerId, t.calculatedAt),
+  check('certificate_badge_snapshots_counts_check', sql`${t.sampleCount} >= 0 AND ${t.onTimeCount} >= 0 AND ${t.onTimeCount} <= ${t.sampleCount}`),
+  check('certificate_badge_snapshots_rules_check', sql`${t.minimumPolicies} > 0 AND ${t.thresholdBps} BETWEEN 0 AND 10000 AND ${t.ruleVersion} > 0 AND ${t.generation} >= 0`),
+  check('certificate_badge_snapshots_dates_check', sql`${t.periodStart} < ${t.periodEnd} AND ${t.periodEnd} = ${t.calculatedAt} AND ${t.expiresAt} > ${t.calculatedAt}`),
+  check('certificate_badge_snapshots_qualifies_check', sql`${t.qualifies} = (${t.eligible} AND ${t.sampleCount} >= ${t.minimumPolicies} AND ${t.onTimeCount}::bigint * 10000 >= ${t.sampleCount}::bigint * ${t.thresholdBps})`),
+]);

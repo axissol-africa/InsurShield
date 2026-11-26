@@ -127,7 +127,7 @@ adds or changes, and the user's approval of its commits. The next batch starts o
 | 15 | Accounts, portfolio, renewal and service requests | US-CUS-018, US-CUS-020 (renewal journey), US-CUS-021, US-VEN-007 (renewals), EN-009 (data lifecycle), US-ADM-012 (entry point) | 14 | retention values (DEC-011, provisional) | L |
 | 16 | Claims, NCD and later inspections | US-CUS-022/023, US-VEN-008/009, US-CUS-024 and US-VEN-010 (inspections after payment and for claims) | 14, 6 | insurers' NCD and claim rules (provisional) | L |
 | 17 | Verified reviews and insurer profiles | US-CUS-025, US-VEN-013, US-ADM-015 (moderation) | 14, 16 | compliance approval of BR-013 before public reviews and replies | XL |
-| 18 | Ratings and performance badges | EN-010 (calculation), US-CUS-026 (badges), US-ADM-015 (badge governance) | 17 | compliance approval of BR-014 | L |
+| 18 | Ratings and performance badges | EN-010 (calculation), US-CUS-026 (badges), US-ADM-015 (badge governance) | 17 | compliance approval of BR-014 before public display | L |
 | 19 | Reporting, content and compliance | US-ADM-011, US-ADM-013 (privacy and retention review), US-ADM-014, US-VEN-012 | 15, 16, 18 | regulator reporting needs | L |
 | 20 | Production readiness and release gate | EN-006, EN-007, EN-008 (remaining kinds), encryption at rest, breach response, real adapters, the US-CUS-001 re-check, the section 12 release gate | 19 | hosting, RPO/RTO, providers, client UAT | L |
 
@@ -421,9 +421,10 @@ approval under DEC-014. See the [Batch 17 plan](batch-17-verified-reviews-insure
 policy reviews, moderation, public insurer profiles and responses, appeals, and retention.
 
 ### Batch 18: Ratings and performance badges
-Before planning: the BR-014 questions (metrics, data sources, thresholds, minimum sample, period, suspension). Then
-rating calculation with its disclosed method, badge award, expiry and recalculation by the job runner, and their
-display. The sponsored part of US-CUS-026 is deferred with decision 2.
+The user approved [provisional BR-014 defaults](batch-18-reputation-methodology-decisions.md) for
+development. Public display requires DEC-014 approval. The [Batch 18 plan](batch-18-ratings-and-performance-badges.md)
+covers rating calculation, badge award and expiry, recalculation by the job runner, and display. The sponsored part
+of US-CUS-026 is deferred with decision 2.
 
 ### Batch 19: Reporting, content and compliance
 Customer content and notification templates for admins (US-ADM-011); privacy and retention review over the audit
