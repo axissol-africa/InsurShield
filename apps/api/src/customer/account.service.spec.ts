@@ -21,6 +21,7 @@ describe('account closure', () => {
     lockCustomer: vi.fn(),
     policiesInForce: vi.fn(),
     hasOpenServiceRequest: vi.fn(),
+    hasOutstandingClaimEvidence: vi.fn(),
     hasOpenPayment: vi.fn(),
     hasOpenRefund: vi.fn(),
     close: vi.fn(),
@@ -37,7 +38,7 @@ describe('account closure', () => {
       deletedAt: null,
     });
     repository.policiesInForce.mockResolvedValue([]);
-    for (const check of [repository.hasOpenServiceRequest, repository.hasOpenPayment, repository.hasOpenRefund])
+    for (const check of [repository.hasOpenServiceRequest, repository.hasOutstandingClaimEvidence, repository.hasOpenPayment, repository.hasOpenRefund])
       check.mockResolvedValue(false);
     quotes.closeAccount.mockResolvedValue({
       withdrawnRequests: 2,
@@ -59,6 +60,7 @@ describe('account closure', () => {
   it.each([
     ['policiesInForce', ['policy'], 'ACTIVE_POLICY_EXISTS'],
     ['hasOpenServiceRequest', true, 'OPEN_SERVICE_REQUEST_EXISTS'],
+    ['hasOutstandingClaimEvidence', true, 'CLAIM_EVIDENCE_OUTSTANDING'],
     ['hasOpenPayment', true, 'PAYMENT_IN_PROGRESS'],
     ['hasOpenRefund', true, 'REFUND_IN_PROGRESS'],
   ] as const)('refuses %s before any writes', async (check, value, code) => {

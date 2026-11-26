@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/primitives/textarea';
 
 const RULES = [
   { key: 'QUOTE_REPLY_DEADLINE', label: 'Quote reply deadline', description: 'How long an insurer has to reply to a request.', template: { days: 7 } },
+  { key: 'CLAIM_REPORTING', label: 'Claim reporting', description: 'Provisional reporting, response and evidence requirements.', template: { reportingDays: 14, responseDays: 7, excludedTypes: { COMPREHENSIVE: [], THIRD_PARTY: ['Theft', 'Fire Damage', 'Natural Disaster', 'Windscreen Damage'] }, requireAttachmentsFor: ['Theft'], requirePoliceReportFor: ['Theft'] } },
   { key: 'NCD_POLICY', label: 'No Claim Discount policy', description: 'NCD eligibility, validity and tiers applied across channels.', template: { validityDays: 365, tiers: [{ yearsClaimFree: 1, percentage: 10 }] } },
   { key: 'DRIVER_QUESTIONS', label: 'Driver questions', description: 'Questions requested before an insurer can assess risk.', template: { questions: [{ code: 'DRIVER_AGE', label: 'Driver age', helpText: 'Age of the main driver.', required: true }] } },
   { key: 'RISK_QUESTIONS', label: 'Risk questions', description: 'Additional risk questions shared by eligible products.', template: { questions: [{ code: 'OVERNIGHT_PARKING', label: 'Where is the vehicle parked overnight?', required: false }] } },

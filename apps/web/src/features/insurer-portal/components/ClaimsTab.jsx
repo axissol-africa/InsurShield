@@ -1,3 +1,5 @@
+import ClaimTimeline from '@/features/claims/components/ClaimTimeline';
+import { Input } from '@/components/ui/primitives/input';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CircleCheck, FileText, Inbox, PhoneIncoming, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
@@ -53,12 +55,12 @@ export default function ClaimsTab({ claims }) {
   // Held here, not in the claim's detail: looking at another claim and coming
   // back makes a new detail, and a save still in flight must not be offered again.
   const marking = useKeyedPortalAction(
-    (number) => thenReloadPortal(() => api.claims.markReceived(number)),
+    (number, acknowledgement) => thenReloadPortal(() => api.claims.markReceived(number, acknowledgement)),
     'This claim could not be marked as received. Please try again.',
   );
-  const markReceived = async (claim) => {
+  const markReceived = async (claim, acknowledgement) => {
     const number = claimNumber(claim);
-    if (!(await marking.run(claim.id, number))) return false;
+    if (!(await marking.run(claim.id, number, acknowledgement))) return false;
     toast.success('Claim marked as received', { description: `The customer can now see that ${number} reached you.` });
     return true;
   };
@@ -141,7 +143,7 @@ export default function ClaimsTab({ claims }) {
               key={selected.id}
               claim={selected}
               onBack={() => setSelectedId(null)}
-              onMarkReceived={() => markReceived(selected)}
+              onMarkReceived={(acknowledgement) => markReceived(selected, acknowledgement)}
               saving={marking.pending(selected.id)}
               error={marking.error(selected.id)}
             />
@@ -182,12 +184,13 @@ function ClaimListItem({ claim, active, onSelect }) {
 function ClaimDetail({ claim, onBack, onMarkReceived, saving, error }) {
   const region = useRef(null);
   const isMobile = useIsMobile();
-  const received = claim.status === RECEIVED;
+  const received = claim.status !== NEW;
+  const [reference, setReference] = useState('');
   const number = claimNumber(claim);
   const documents = claim.supportingDocs || [];
   // The button that was pressed is replaced by the outcome, so focus stays on the claim it belongs to.
   const mark = async () => {
-    if (await onMarkReceived()) region.current?.focus({ preventScroll: true });
+    if (await onMarkReceived({ insurerClaimReference: reference.trim() })) region.current?.focus({ preventScroll: true });
   };
 
   // The list is hidden behind the claim on a phone; take the keyboard and
@@ -223,6 +226,7 @@ function ClaimDetail({ claim, onBack, onMarkReceived, saving, error }) {
 
       <div className="flex-1 space-y-6 p-4 sm:p-6">
         <StepTrack label="Where this claim stands" steps={steps} />
+        <ClaimTimeline claimNumber={number} insurer revision={claim.status} onUpdated={() => thenReloadPortal(() => Promise.resolve())} />
         <Separator />
 
         {/* The caller quotes the claim number; these are the details to check them against. */}
@@ -280,7 +284,8 @@ function ClaimDetail({ claim, onBack, onMarkReceived, saving, error }) {
                 <AlertTitle>{error}</AlertTitle>
               </Alert>
             )}
-            <Button type="button" size="lg" onClick={mark} disabled={saving} aria-busy={saving} aria-describedby="mark-received-hint" className="w-full sm:w-auto">
+            <label className="block text-sm">Insurer claim reference<Input value={reference} onChange={(event) => setReference(event.target.value)} disabled={saving} /></label>
+            <Button type="button" size="lg" onClick={mark} disabled={saving || !reference.trim()} aria-busy={saving} aria-describedby="mark-received-hint" className="w-full sm:w-auto">
               {saving ? <Spinner aria-hidden="true" /> : <PhoneIncoming aria-hidden="true" />}
               {saving ? 'Saving…' : 'Mark as received'}
             </Button>

@@ -211,7 +211,12 @@ export const claims = {
   notify: (claim, idempotencyKey = newIdempotencyKey()) => apiClient.post('/claims', claim, { headers: { 'Idempotency-Key': idempotencyKey } }),
   listMine: () => apiClient.get('/claims'),
   listForInsurer: () => apiClient.get('/insurer/claims'),
-  markReceived: (claimNumber) => apiClient.post(`/insurer/claims/${claimNumber}/received`),
+  markReceived: (claimNumber, acknowledgement) => apiClient.post(`/insurer/claims/${encodeURIComponent(claimNumber)}/received`, acknowledgement),
+  intakeRules: () => apiClient.get('/claims/intake-rules'),
+  timeline: (number) => apiClient.get(`/claims/${encodeURIComponent(number)}/timeline`),
+  insurerTimeline: (number) => apiClient.get(`/insurer/claims/${encodeURIComponent(number)}/timeline`),
+  update: (number, update, key = newIdempotencyKey()) => apiClient.post(`/insurer/claims/${encodeURIComponent(number)}/updates`, update, { headers: { 'Idempotency-Key': key } }),
+  submitEvidence: (number, evidence, key = newIdempotencyKey()) => apiClient.post(`/claims/${encodeURIComponent(number)}/evidence`, evidence, { headers: { 'Idempotency-Key': key } }),
 };
 
 export const ncd = {

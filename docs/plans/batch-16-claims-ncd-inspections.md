@@ -71,9 +71,12 @@ payment-stage inspection tests continue to pass.
 - The customer and insurer share the claim timeline. A new verified claim needs the insurer's reference at
   acknowledgement. It can then progress through review, requested evidence, decision and closure. New evidence is
   attached to its timeline update and cannot replace an earlier document. Customers receive status notifications.
+  Updates require the displayed timeline revision, so an old decision or upload cannot apply to a new evidence round.
+  Account closure waits while an evidence request needs the customer, and insurers cannot request evidence from a closed account.
 - Migration 0047 preserves existing values, makes the new timeline append-only, and removes the open-claim legal
   hold once the claim is closed. Other holds and retention periods still apply. The insurer deletion check also
-  protects policies through the last reporting day and accounts for open service requests.
+  protects policies through the last reporting day and accounts for open service requests. Submission of new service
+  requests and claim updates checks that the insurer can still service the policy.
 
 ## Verification and rollout
 

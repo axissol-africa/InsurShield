@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { INSURER_STATUSES } from '../src/common/domain/enums.js';
 import {
   type InsurerStanding,
@@ -8,7 +8,7 @@ import {
   takesNewBusiness,
   takesNewBusinessWhere,
 } from '../src/common/insurer-standing.js';
-import { insurers } from '../src/db/schema.js';
+import { insurers, policies } from '../src/db/schema.js';
 import { buildCustomer, buildDocument, buildInsurer, buildQuoteRequest, buildPurchasedPolicy, type Row } from './builders.js';
 import { buildNcdApplication } from './builders/customer.js';
 import { buildPiaConfig } from './builders/admin.js';
@@ -212,6 +212,9 @@ describe('an insurer that may no longer trade', () => {
       const insurer = await buildInsurer(testApp.db, { insurer: { licenceExpiry: EXPIRED, status: 'INACTIVE' } });
       const { customer, policy } = await buildPurchasedPolicy(testApp.db, { insurer });
 
+      await testApp.db.update(policies).set({ status: 'ACTIVE', policyStartDate: EXPIRED, policyEndDate: CURRENT })
+        .where(eq(policies.policyNumber, policy.policyNumber));
+
       const response = await testApp.http
         .post('/api/v1/claims')
         .set(await asCustomer(customer))
@@ -222,8 +225,8 @@ describe('an insurer that may no longer trade', () => {
           phone: '0970123456',
           plate: 'BAA 1234',
           vehicle: '2020 Toyota Hilux',
-          type: 'Theft',
-          incidentDate: '2026-10-20T06:15:00.000Z',
+          type: 'Accident / Collision',
+          incidentDate: new Date().toISOString(),
           location: 'Woodlands, Lusaka',
           description: 'Vehicle stolen from outside the residence overnight.',
         });

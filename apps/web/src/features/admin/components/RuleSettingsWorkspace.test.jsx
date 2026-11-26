@@ -71,3 +71,14 @@ describe('RuleSettingsWorkspace', () => {
     expect(api.settings.taxonomy.update.mock.calls[0][1]).not.toHaveProperty('code');
   });
 });
+
+it('offers the provisional claim reporting template', async () => {
+  const user = userEvent.setup();
+  const api = createApi();
+  render(<RuleSettingsWorkspace api={api} onBack={vi.fn()} onOpenPia={vi.fn()} />);
+  await user.click(await screen.findByRole('button', { name: /Claim reporting/ }));
+  await user.click(screen.getByRole('button', { name: 'Save provisional version' }));
+  await waitFor(() => expect(api.settings.rules.create).toHaveBeenCalledWith('CLAIM_REPORTING', expect.objectContaining({ value: {
+    reportingDays: 14, responseDays: 7, excludedTypes: { COMPREHENSIVE: [], THIRD_PARTY: ['Theft', 'Fire Damage', 'Natural Disaster', 'Windscreen Damage'] }, requireAttachmentsFor: ['Theft'], requirePoliceReportFor: ['Theft'],
+  } })));
+});

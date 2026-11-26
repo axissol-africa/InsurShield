@@ -1,3 +1,5 @@
+import ClaimTimeline from '../components/ClaimTimeline';
+import { env } from '@/config/env';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore, useActiveInsurers, belongsToCustomer } from '@/store';
@@ -211,6 +213,14 @@ export default function ClaimsPage() {
   const [plateLookupResult, setPlateLookupResult] = useState(null); // { insurer, coverage, plate } | null
   const [coverageMismatch, setCoverageMismatch] = useState(null); // error string | null
   const [claimError, setClaimError] = useState('');
+  const [refusal, setRefusal] = useState(null);
+  const [intakeRules, setIntakeRules] = useState(null);
+  const [rulesError, setRulesError] = useState('');
+  useEffect(() => {
+    let active = true;
+    api.claims.intakeRules().then((rules) => { if (active) setIntakeRules(rules); }).catch(() => { if (active) setRulesError('Reporting guidance is unavailable. The insurer will validate your notification when you submit.'); });
+    return () => { active = false; };
+  }, []);
   const [claimForm, setClaimForm] = useState({
     insurer: '', insurerId: '', type: '', incidentDate: '', location: '',
     description: '', policeReport: false, policeReportNumber: '',
@@ -229,7 +239,7 @@ export default function ClaimsPage() {
   const setClaimField = (k, v) => setClaimForm(prev => ({ ...prev, [k]: v }));
   const setNcdField = (k, v) => setNcdForm(prev => ({ ...prev, [k]: v }));
 
-  // 14-day window helpers
+  // Preview the configured reporting window; server validation remains authoritative.
   const getDaysSinceIncident = (dateStr) => {
     if (!dateStr) return null;
     const incident = new Date(dateStr);
@@ -239,7 +249,7 @@ export default function ClaimsPage() {
     return Math.floor((today - incident) / 86400000);
   };
   const daysSinceIncident = getDaysSinceIncident(claimForm.incidentDate);
-  const isLate = daysSinceIncident !== null && daysSinceIncident > 14;
+  const isLate = refusal?.code === 'CLAIM_LATE_REASON_REQUIRED' || (daysSinceIncident !== null && intakeRules && daysSinceIncident > intakeRules.reportingDays);
   const isSubmitBlocked = isLate && !claimForm.lateReason.trim();
 
   const allClaims = claims;
@@ -249,7 +259,14 @@ export default function ClaimsPage() {
   // ─── Handlers ───────────────────────────────────────────────
   const handleSubmitClaim = async (e) => {
     e.preventDefault();
-    if (coverageMismatch) return;
+    if (coverageMismatch || claimSubmitting) return;
+    if (env.apiMode === 'http' && !claimForm.policyNumber) { setClaimError('Select the policy covering this incident.'); return; }
+    if (env.apiMode === 'http' && intakeRules) {
+      const cover = claimForm.coverageType === 'Third Party' ? 'THIRD_PARTY' : 'COMPREHENSIVE';
+      if (intakeRules.excludedTypes[cover]?.includes(claimForm.type)) { setClaimError('This incident type is excluded from your selected cover. Contact your insurer for guidance.'); return; }
+      if (intakeRules.requireAttachmentsFor.includes(claimForm.type) && !docItems.some((item) => item.file)) { setClaimError('Attach supporting evidence for this incident type.'); return; }
+      if (intakeRules.requirePoliceReportFor.includes(claimForm.type) && !claimForm.policeReport) { setClaimError('A police report is required for this incident type.'); return; }
+    }
     setClaimSubmitting(true);
     setClaimError('');
     try {
@@ -268,13 +285,13 @@ export default function ClaimsPage() {
             await Promise.all(docItems.filter(item => item.file).map(item => api.documents.upload(item.file, 'CLAIM_ATTACHMENT')))
           ).map(document => document.id);
           return {
-            insurerId: claimForm.insurerId,
+            ...(env.apiMode === 'mock' ? { insurerId: claimForm.insurerId } : {}),
             policyNumber: claimForm.policyNumber || undefined,
             fullName: claimForm.fullName,
             phone: claimForm.phone,
             email: customer?.email || undefined,
             plate: claimForm.plateNumber || vehicleDetails?.plateNumber || 'N/A',
-            vehicle: vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your vehicle',
+            vehicle: claimForm.vehicle || (vehicleDetails ? `${vehicleDetails.year} ${vehicleDetails.make} ${vehicleDetails.model}` : 'Your vehicle'),
             type: claimForm.type,
             incidentDate: claimForm.incidentDate,
             location: claimForm.location,
@@ -297,6 +314,7 @@ export default function ClaimsPage() {
       setCoverageMismatch(null);
       setClaimView('success');
     } catch (error) {
+      setRefusal(error);
       setClaimError(error.message || 'Your claim could not be submitted. Please try again.');
     } finally {
       setClaimSubmitting(false);
@@ -354,18 +372,19 @@ export default function ClaimsPage() {
       setCoverageMismatch(null);
       setTimeout(() => {
         setPlateScanning(false);
-        const ownPolicy = policies.find(policy => (policy.vehicleDetails?.plateNumber || '').toUpperCase() === plate);
+        const ownPolicy = policies.filter(mine).find(policy => (policy.vehicleDetails?.plateNumber || '').toUpperCase() === plate);
         let result;
         if (ownPolicy) {
           const coverage = /third/i.test(ownPolicy.coverage || '') ? 'Third Party' : 'Comprehensive';
           result = { insurer: ownPolicy.insurer, insurerId: insurers.find((item) => item.name === ownPolicy.insurer)?.id ?? '', coverage, make: ownPolicy.vehicle, year: '', plate };
-        } else {
+        } else if (env.apiMode === 'mock') {
           const hash = plate.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
           const insurer = insurers[hash % insurers.length];
           result = { insurer: insurer?.name ?? '', insurerId: insurer?.id ?? '', coverage: hash % 3 === 0 ? 'Third Party' : 'Comprehensive', make: MAKES[hash % MAKES.length], year: YEARS[(hash + 3) % YEARS.length], plate };
         }
+        if (!result) { setCoverageMismatch('Choose the policy covering this incident.'); return; }
         setPlateLookupResult(result);
-        setClaimForm((prev) => ({ ...prev, insurer: result.insurer, insurerId: result.insurerId }));
+        setClaimForm((prev) => ({ ...prev, insurer: result.insurer, insurerId: result.insurerId, policyNumber: ownPolicy?.policyNumber || '', vehicle: ownPolicy?.vehicle || '' }));
       }, 1200);
     };
 
@@ -401,16 +420,28 @@ export default function ClaimsPage() {
         />
 
         <form onSubmit={handleSubmitClaim} className="space-y-5">
+          <fieldset className="rounded-xl border bg-card p-5"><legend className="px-2 font-medium">Policy covering this incident</legend>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Your policies">
+              {policies.filter(mine).map((policy) => <Button key={policy.policyNumber} type="button" variant={claimForm.policyNumber === policy.policyNumber ? 'default' : 'outline'} onClick={() => {
+                setClaimForm((previous) => ({ ...previous, policyNumber: policy.policyNumber, insurer: policy.insurer, insurerId: policy.insurerId || insurers.find((entry) => entry.name === policy.insurer)?.id || '', plateNumber: policy.vehicleDetails?.plateNumber || policy.plate || '', vehicle: policy.vehicle || '', coverageType: /third/i.test(policy.coverage || policy.coverageType || '') ? 'Third Party' : 'Comprehensive' }));
+                setCoverageMismatch(null); setPlateLookupResult(null);
+              }}>{policy.policyNumber} · {policy.insurer}</Button>)}
+            </div>
+            {!policies.filter(mine).length && <p>{env.apiMode === 'mock' ? 'Prototype: you can notify a claim using the vehicle details below.' : 'No policies are available. Contact support to link your historical policy before notifying a claim.'}</p>}
+            {claimForm.policyNumber && <p className="mt-3 text-sm">{claimForm.vehicle} · {claimForm.plateNumber} · {claimForm.insurer}</p>}
+            {rulesError && <p role="status">{rulesError}</p>}
+            {intakeRules && <p className="mt-3 text-sm text-muted-foreground">Report within {intakeRules.reportingDays} days. Insurer response target: {intakeRules.responseDays} days.{intakeRules.provisional ? ' These rules are provisional.' : ''}</p>}
+          </fieldset>
 
-          {/* 14-Day Rule Banner */}
+          {/* Reporting guidance */}
           <div className="flex items-start gap-4 rounded-xl border border-primary/20 bg-primary/5 p-5">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10">
               <span className="material-symbols-outlined text-primary text-2xl">timer</span>
             </div>
             <div>
-              <p className="font-semibold text-primary text-[15px]">14-Day Claim Submission Rule</p>
+              <p className="font-semibold text-primary text-[15px]">Claim reporting window</p>
               <p className="text-[13px] text-primary mt-1 leading-relaxed">
-                Claims must be submitted <strong>within 14 days of the incident</strong>. Claims received after this window will
+                Claims must be submitted <strong>within {intakeRules?.reportingDays ?? 'the configured number of'} days of the incident</strong>. Claims received after this window will
                 not be processed unless a valid written reason for the delay is provided.
               </p>
             </div>
@@ -452,7 +483,7 @@ export default function ClaimsPage() {
               <div className="flex gap-2">
                 <input
                   required
-                  value={claimForm.plateNumber}
+                  readOnly={!!claimForm.policyNumber} value={claimForm.plateNumber}
                   onChange={e => { setClaimField('plateNumber', e.target.value.toUpperCase()); setPlateLookupResult(null); setCoverageMismatch(null); }}
                   placeholder="e.g. BAA 1234"
                   className="flex-1 bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] font-mono uppercase tracking-widest focus:ring-2 focus:ring-primary outline-none"
@@ -460,7 +491,7 @@ export default function ClaimsPage() {
                 <button
                   type="button"
                   onClick={handlePlateLookup}
-                  disabled={!claimForm.plateNumber.trim() || plateScanning}
+                  disabled={!!claimForm.policyNumber || !claimForm.plateNumber.trim() || plateScanning}
                   className="flex items-center gap-2 bg-primary text-white font-medium px-4 py-3 rounded-lg transition-colors duration-200 ease-out hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas text-[13px] flex-shrink-0"
                 >
                   {plateScanning
@@ -491,6 +522,7 @@ export default function ClaimsPage() {
               <div className="relative">
                 <select
                   required
+                  disabled={!!claimForm.policyNumber}
                   value={claimForm.coverageType}
                   onChange={e => handleCoverageChange(e.target.value)}
                   className={`w-full appearance-none rounded-lg p-3 text-[15px] focus:ring-2 outline-none border-2 ${
@@ -531,7 +563,7 @@ export default function ClaimsPage() {
             <div>
               <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
               <div className="relative">
-                <select required value={claimForm.insurerId} onChange={e => setClaimForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
+                <select disabled={!!claimForm.policyNumber} required value={claimForm.insurerId} onChange={e => setClaimForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
                   className="w-full appearance-none bg-canvas-2 border-2 border-line-strong rounded-lg p-3.5 text-[15px] focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                   <option value="">Select the insurance company...</option>
                   {insurers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
@@ -605,8 +637,8 @@ export default function ClaimsPage() {
  }`}>
                     <span className="material-symbols-outlined text-[15px]">{isLate ? 'warning' : 'check_circle'}</span>
                     {isLate
-                      ? `${daysSinceIncident} days since incident — outside 14-day window`
-                      : `${daysSinceIncident} day${daysSinceIncident !== 1 ? 's' : ''} since incident — within 14-day window ✓`}
+                      ? `${daysSinceIncident} days since incident — outside ${intakeRules?.reportingDays ?? 'configured'}-day window`
+                      : `${daysSinceIncident} day${daysSinceIncident !== 1 ? 's' : ''} since incident — within ${intakeRules?.reportingDays ?? 'configured'}-day window ✓`}
                   </div>
                 )}
               </div>
@@ -758,14 +790,14 @@ export default function ClaimsPage() {
                 <div>
                   <p className="font-semibold text-primary text-[15px]">Late Submission — Reason Required</p>
                   <p className="text-[13px] text-primary mt-1">
-                    Your incident was <strong>{daysSinceIncident} days ago</strong>, outside the standard 14-day window.
+                    Your incident was <strong>{daysSinceIncident} days ago</strong>, outside the standard {intakeRules?.reportingDays ?? 'configured'}-day window.
                     You must provide a valid reason. The insurer may still decline at their discretion.
                   </p>
                 </div>
               </div>
               <div>
-                <label className="text-[12px] font-medium uppercase tracking-wider text-primary mb-1.5 block">Reason for Late Submission *</label>
-                <textarea required={isLate} rows={4} value={claimForm.lateReason}
+                <label htmlFor="claim-late-reason" className="text-[12px] font-medium uppercase tracking-wider text-primary mb-1.5 block">Reason for Late Submission *</label>
+                <textarea id="claim-late-reason" required={isLate} rows={4} value={claimForm.lateReason}
                   onChange={e => setClaimField('lateReason', e.target.value)}
                   placeholder="e.g. I was hospitalised following the accident and only discharged on [date]..."
                   className="w-full bg-white border-2 border-primary/30 rounded-lg p-3 text-[14px] focus:ring-2 focus:ring-red-400 outline-none resize-none" />
@@ -782,6 +814,7 @@ export default function ClaimsPage() {
           </div>
 
           {/* Submit */}
+          {refusal?.code === 'CLAIM_INSURER_UNAVAILABLE' && <div role="alert" className="rounded-xl border p-4"><p>Contact support to continue. Reference: {refusal.details?.reference}</p><p>{refusal.details?.contact?.hours}</p><a className="block underline" href={`mailto:${refusal.details?.contact?.email}`}>{refusal.details?.contact?.email}</a><a className="block underline" href={`tel:${refusal.details?.contact?.phone}`}>{refusal.details?.contact?.phone}</a></div>}
           {claimError && <p role="alert" className="mt-5 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-[14px] text-primary">{claimError}</p>}
           <button type="submit" disabled={claimSubmitting || isSubmitBlocked || !!coverageMismatch}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-[16px] font-medium text-white transition-colors duration-200 ease-out hover:bg-primary/90 disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas">
@@ -802,13 +835,14 @@ export default function ClaimsPage() {
   if (mainTab === 'claims' && claimView === 'detail' && selectedClaim) {
     const claim = allClaims.find(c => c.id === selectedClaim.id) || selectedClaim;
     const claimNumber = claim.claimNumber || claim.id;
-    const received = claim.status === 'Received by insurer';
+    const received = claim.status !== 'Notified';
 
     return (
       <ClaimsWorkspace>
         <ClaimsSubpageHeader eyebrow="Claim notification" title="Claim details" description={`${claim.type} · notified ${formatDate(claim.submittedAt)}${received && claim.receivedAt ? ` · received by ${claim.insurer} ${formatDate(claim.receivedAt)}` : ''}`} onBack={() => setClaimView('list')} />
         <Card className="gap-4 border-border shadow-none"><CardHeader className="grid-cols-[1fr_auto] items-start gap-3 border-b"><div><p className="font-mono text-lg font-medium text-primary sm:text-xl">{claimNumber}</p><p className="mt-1 text-sm text-muted-foreground">Reference for every call with {claim.insurer}.</p></div><Badge variant={CLAIM_STATUSES[claim.status] || 'muted'}>{claim.status}</Badge></CardHeader><CardContent><CopyButton value={claimNumber} className="border border-primary/20 bg-primary/10 text-primary hover:bg-primary/15" /></CardContent></Card>
 
+        <ClaimTimeline key={claimNumber} claimNumber={claimNumber} onUpdated={hydrateCustomer} />
         <p className={`mt-5 flex items-start gap-3 rounded-xl border p-4 text-sm leading-6 ${received ? 'border-primary/20 bg-primary/5 text-primary' : 'border-primary/30 bg-primary/[0.06] text-primary'}`}>
           <span className="material-symbols-outlined text-[20px]" aria-hidden="true">{received ? 'task_alt' : 'phone_in_talk'}</span>
           <span>{received

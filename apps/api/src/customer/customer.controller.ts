@@ -145,7 +145,14 @@ export class CustomerController {
     return this.claims.list(this.scope(principal).id);
   }
 
-  /** First notification: issues the claim number the customer quotes by phone. */
+  @ApiRateLimit(API_LIMITS.bulkRead)
+  @Needs('claim:notify')
+  @Get('claims/intake-rules')
+  claimIntakeRules() {
+    return this.claims.intakeRules();
+  }
+
+  /** First notification validates cover and issues the customer's claim reference. */
   @Needs('claim:notify')
   @Post('claims')
   @HttpCode(HttpStatus.CREATED)

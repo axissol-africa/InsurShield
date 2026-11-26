@@ -4,6 +4,8 @@ import type { InsurerStatusChange } from '../common/contract.js';
 import type { Transaction } from '../db/database.module.js';
 import { activationBlocks, describeBlocks } from './domain/onboarding.js';
 import { licenceValid } from '../common/insurer-standing.js';
+import { lusakaDay } from '../common/domain/lusaka.js';
+import { SettingsService } from '../settings/settings.service.js';
 
 /** A staff member making an onboarding decision. */
 type StaffPrincipal = Extract<Principal, { kind: 'staff' }>;
@@ -54,6 +56,7 @@ export class InsurersService {
     private readonly quoteAvailability: QuoteAvailabilityService,
     private readonly approvals: ApprovalService,
     private readonly integrationSecrets: IntegrationSecretsService,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Every insurer the admin portal manages, deleted ones excluded by default. */
@@ -364,7 +367,9 @@ export class InsurersService {
     if (!insurer || insurer.status === 'DELETED') throw ApiException.notFound('Insurer', id);
     this.assertStatusTransition(insurer.status, status);
     if (status === 'DELETED') {
-      const blockers = await this.insurers.deletionBlockers(tx, id);
+      const now = new Date();
+      const { value } = await this.settings.effective('CLAIM_REPORTING', now, tx);
+      const blockers = await this.insurers.deletionBlockers(tx, id, lusakaDay(now), value.reportingDays);
       if (blockers.length) {
         throw ApiException.conflict(
           'INSURER_HAS_SERVICE_RECORDS',

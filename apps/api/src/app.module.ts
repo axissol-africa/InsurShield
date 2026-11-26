@@ -1,3 +1,4 @@
+import { ClaimsModule } from './claims/claims.module.js';
 import { RetentionModule } from './retention/retention.module.js';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
@@ -54,6 +55,7 @@ import { IntegrationsModule } from './integrations/integrations.module.js';
     AdminModule,
     StaffModule,
     CustomerModule,
+    ClaimsModule,
     VehiclesModule,
     PaymentsModule,
     SettlementsModule,

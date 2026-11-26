@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { Response } from 'supertest';
-import { insurerContacts, insurers, staffUsers } from '../src/db/schema.js';
+import { claimNotifications, insurerContacts, insurers, policies, staffUsers } from '../src/db/schema.js';
 import { InsurersService } from '../src/insurers/insurers.service.js';
 import {
   buildClaim,
@@ -10,6 +10,7 @@ import {
   buildInsurer,
   buildPayment,
   buildPolicy,
+  buildPurchasedPolicy,
   buildStaffUser,
   unique,
   type Row,
@@ -586,6 +587,25 @@ describe('insurers', () => {
         details: { blockers: expect.arrayContaining(['policy', 'claim', 'ncd application', 'inspection', 'payment']) },
       });
       expect((await stored(insured.insurer.id)).row).toMatchObject({ status: 'ACTIVE', deletedAt: null });
+    });
+
+    it('keeps insurers serviceable through the configured last reporting day or until an open claim closes', async () => {
+      const superAdmin = await buildStaffUser(testApp.db, { role: 'SUPER_ADMIN' });
+      const session = await signIn(testApp.http, superAdmin);
+      const purchase = await buildPurchasedPolicy(testApp.db);
+      const insurerId = purchase.insurer.insurer.id;
+      const ago = (days: number) => new Date(Date.now() - days * 86_400_000);
+      await testApp.db.update(policies).set({ status: 'ACTIVE', issuedAt: ago(100), policyEndDate: ago(14) })
+        .where(eq(policies.policyNumber, purchase.policy.policyNumber));
+      const lastDay = await setStatus(insurerId, 'DELETED', session).expect(409);
+      expect(lastDay.body.details.blockers).toEqual(['policy']);
+      await testApp.db.update(policies).set({ policyEndDate: ago(15) }).where(eq(policies.policyNumber, purchase.policy.policyNumber));
+      const record = await buildClaim(testApp.db, { insurerId, customerId: purchase.customer.id, policyNumber: purchase.policy.policyNumber });
+      const open = await setStatus(insurerId, 'DELETED', session).expect(409);
+      expect(open.body.details.blockers).toEqual(['claim']);
+      await testApp.db.update(claimNotifications).set({ status: 'CLOSED' }).where(eq(claimNotifications.claimNumber, record.claimNumber));
+      const result = await setStatus(insurerId, 'DELETED', session).expect(200);
+      expect(result.body).toMatchObject({ action: 'INSURER_DELETE', status: 'PENDING' });
     });
 
     it('refuses a status outside the list', async () => {

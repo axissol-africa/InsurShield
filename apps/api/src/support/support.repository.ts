@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gt, gte, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
+import { and, ne, desc, eq, gt, gte, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { lusakaDay } from '../common/domain/lusaka.js';
 import {
@@ -77,7 +77,7 @@ export class SupportRepository {
       db
         .select({ reference: claimNotifications.claimNumber, status: claimNotifications.status, insurerId: claimNotifications.insurerId, createdAt: claimNotifications.submittedAt })
         .from(claimNotifications)
-        .where(eq(claimNotifications.customerId, customerId))
+        .where(and(eq(claimNotifications.customerId, customerId), ne(claimNotifications.status, 'CLOSED')))
         .orderBy(desc(claimNotifications.submittedAt))
         .limit(PER_KIND),
       db

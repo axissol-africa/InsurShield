@@ -283,6 +283,7 @@ export class DocumentsService {
     principal: Principal,
     documentIds: string[],
     kind: DocumentKind,
+    { requireClean = false }: { requireClean?: boolean } = {},
   ): Promise<void> {
     // PostgreSQL reads a UUID in any letter case as the same id.
     if (new Set(documentIds.map((id) => id.toLowerCase())).size !== documentIds.length) {
@@ -300,6 +301,7 @@ export class DocumentsService {
     const attachable = locked.filter(
       (document) =>
         document.kind === kind &&
+        (!requireClean || document.scanStatus === 'CLEAN') &&
         !referenced.has(document.id) &&
         (principal.kind === 'customer'
           ? document.uploadedByCustomerId === principal.id

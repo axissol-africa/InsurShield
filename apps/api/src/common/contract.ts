@@ -56,6 +56,11 @@ const POLICY_STATUS: Record<PolicyStatus, string> = {
 const CLAIM_STATUS: Record<ClaimStatus, string> = {
   NOTIFIED: 'Notified',
   RECEIVED_BY_INSURER: 'Received by insurer',
+  UNDER_REVIEW: 'Under review',
+  EVIDENCE_REQUIRED: 'Additional information required',
+  APPROVED: 'Approved',
+  DECLINED: 'Declined',
+  CLOSED: 'Closed',
 };
 
 const NCD_STATUS: Record<NcdStatus, string> = {

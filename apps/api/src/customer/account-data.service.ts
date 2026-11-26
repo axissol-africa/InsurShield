@@ -55,7 +55,7 @@ export class AccountDataService {
       const quoted = await this.repository.quoteRecords(tx, id);
       const financial = await this.repository.financialRecords(tx, id);
       const service = await this.repository.serviceRecords(tx, id);
-      const other = await this.repository.otherRecords(tx, id);
+      const { claims, claimTimeline, ...other } = await this.repository.otherRecords(tx, id);
       const prefix = this.config.get('API_PREFIX', { infer: true }).replace(/^\/+|\/+$/g, '');
       const origin = this.config.get('BETTER_AUTH_URL', { infer: true });
       const documents = (await this.customerDocuments(id, tx)).map(({ downloadPath, ...document }) => ({
@@ -77,6 +77,7 @@ export class AccountDataService {
       const evidence = groupBy(quoted.evidence, (row) => row.quoteRequestId);
       const quotations = groupBy(quoted.quotations, (row) => row.quoteRequestId);
       const updates = groupBy(service.updates, (row) => row.reference);
+      const claimUpdates = groupBy(claimTimeline, (row) => row.claimNumber);
       return {
         schemaVersion: 1,
         exportedAt: new Date().toISOString(),
@@ -94,6 +95,7 @@ export class AccountDataService {
         ...financial,
         serviceRequests: service.requests.map((request) => ({ ...request, updates: updates.get(request.reference) ?? [] })),
         ...other,
+        claims: claims.map((claim) => ({ ...claim, updates: claimUpdates.get(claim.claimNumber) ?? [] })),
         documents,
       };
     });

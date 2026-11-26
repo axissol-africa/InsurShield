@@ -34,7 +34,9 @@
  *  payments    POST /payments (Idempotency-Key required; answers the attempt status, never a receipt) · GET /payments/:id · POST /payments/:id/cancel
  *  policies    GET  /policies · GET /policies/:number · POST /policies/:number/renew
  *              GET  /insurer/policies · POST /insurer/policies/:number/certificate
- *  claims      POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received
+ *  claims      GET /claims/intake-rules · GET /claims/:number/timeline · GET /insurer/claims/:number/timeline
+ *              POST /claims/:number/evidence {documentIds,expectedRevision} · POST /insurer/claims/:number/updates {action,message,evidenceRequest?,expectedRevision}
+ *              POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received
  *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
  *  config      GET  /config/pia · PUT /config/pia
@@ -347,4 +349,24 @@ export {};
  * @property {boolean} available
  * @property {string|null} downloadPath Relative to the configured API prefix.
  * Opening requests a fresh protected URL via GET /documents/:id.
+ */
+
+/**
+ * @typedef {Object} ClaimTimeline
+ * @property {string} revision Latest persisted event id or synthetic :submitted / :acknowledged revision.
+ * @property {string} claimNumber
+ * @property {'Notified'|'Received by insurer'|'Under review'|'Additional information required'|'Approved'|'Declined'|'Closed'} status
+ * @property {string|null} responseDueOn
+ * @property {boolean} lateSubmission
+ * @property {string|null} insurerClaimReference
+ * @property {Array<{id: string, status: string, actorKind: string, message: string, evidenceRequest: string|null, createdAt: string, documents: DocumentRecord[]}>} updates
+ * Claim update and evidence POSTs return this detail. Real intake requires an owned policyNumber;
+ * insurer and vehicle fields are derived by the server. Acknowledgement accepts insurerClaimReference.
+ * CLAIM_INSURER_UNAVAILABLE details: {reference, contact:{email,phone,hours}}.
+ * CLAIM_LATE_REASON_REQUIRED retains the form and requests lateReason before resubmission.
+ */
+
+/** Claim lifecycle/evidence commands send expectedRevision from the rendered timeline and an
+ * Idempotency-Key stable for unchanged input. CLAIM_REVISION_CHANGED requires a refresh;
+ * evidence uploads must never be reused for a different revision or file selection.
  */

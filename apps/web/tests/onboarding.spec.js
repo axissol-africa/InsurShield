@@ -143,8 +143,33 @@ test('insurer can find a claim by its number and mark it received', async ({ pag
   await page.getByRole('button', { name: /CLM-654321/ }).click();
   await expect(page.getByText('ZP/2026/1')).toBeVisible();
   await expect(page.getByText('mwiza.banda@insurshield.zm').first()).toBeVisible();
+  await page.getByLabel('Insurer claim reference').fill('INS-123');
   await page.getByRole('button', { name: 'Mark as received' }).click();
   await expect(page.getByText('Received by insurer').first()).toBeVisible();
+  await page.getByLabel('Message to customer').fill('Review has started.');
+  await page.getByRole('button', { name: 'Start review', exact: true }).click();
+  await page.getByLabel('Message to customer').fill('Please provide damage photos.');
+  await page.getByLabel('Evidence needed').fill('Photographs of the damage');
+  await page.getByRole('button', { name: 'Request evidence', exact: true }).click();
+  await expect(page.getByText('Additional information required').first()).toBeVisible();
+  await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('insurshield-storage'));
+    Object.assign(store.state, { customer: { fullName: 'Mwiza Banda', email: 'mwiza.banda@insurshield.zm', phone: '0970123456' }, isAuthenticated: true, consentAccepted: true, staffSession: null });
+    localStorage.setItem('insurshield-storage', JSON.stringify(store));
+  });
+  await page.goto('/claims');
+  await page.getByRole('button', { name: /CLM-654321/ }).click();
+  await expect(page.getByText('Insurer reference: INS-123')).toBeVisible();
+  await page.getByLabel('Requested evidence files').setInputFiles({ name: 'damage.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('mock evidence') });
+  await page.getByRole('button', { name: 'Submit evidence', exact: true }).click();
+  await expect(page.getByText('Current status:')).toContainText('Under review');
+  await expect(page.getByLabel('Requested evidence files')).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: '/tmp/batch16-claim-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('heading', { name: 'Claim details' })).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: '/tmp/batch16-claim-mobile.png', fullPage: true });
 });
 
 test('a paid quote needs the insurer certificate before it becomes an active policy for the customer', async ({ page }) => {

@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, insurers, integrations, payments, policies, products, quotes, serviceRequests, settings } from './index';
+import { account, admin, auth, claims, insurers, integrations, payments, policies, products, quotes, serviceRequests, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -257,4 +257,17 @@ it('reads account JSON export and document metadata through the authenticated cl
   await expect(account.documents()).resolves.toEqual([]);
   expect(transport.get).toHaveBeenNthCalledWith(1, '/account/export');
   expect(transport.get).toHaveBeenNthCalledWith(2, '/account/documents');
+});
+
+it('uses claim timeline, evidence, acknowledgement and rule contracts', () => {
+  claims.intakeRules(); claims.timeline('CLM/1'); claims.insurerTimeline('CLM/1');
+  claims.update('CLM/1', { expectedRevision: 'CLM/1:acknowledged', action: 'START_REVIEW', message: 'Reviewing' }, 'update-key');
+  claims.submitEvidence('CLM/1', { expectedRevision: 'event-1', documentIds: ['DOC-1'] }, 'evidence-key');
+  claims.markReceived('CLM/1', { insurerClaimReference: 'INS-1' });
+  expect(transport.get).toHaveBeenCalledWith('/claims/intake-rules');
+  expect(transport.get).toHaveBeenCalledWith('/claims/CLM%2F1/timeline');
+  expect(transport.get).toHaveBeenCalledWith('/insurer/claims/CLM%2F1/timeline');
+  expect(transport.post).toHaveBeenCalledWith('/insurer/claims/CLM%2F1/updates', { expectedRevision: 'CLM/1:acknowledged', action: 'START_REVIEW', message: 'Reviewing' }, { headers: { 'Idempotency-Key': 'update-key' } });
+  expect(transport.post).toHaveBeenCalledWith('/claims/CLM%2F1/evidence', { expectedRevision: 'event-1', documentIds: ['DOC-1'] }, { headers: { 'Idempotency-Key': 'evidence-key' } });
+  expect(transport.post).toHaveBeenCalledWith('/insurer/claims/CLM%2F1/received', { insurerClaimReference: 'INS-1' });
 });

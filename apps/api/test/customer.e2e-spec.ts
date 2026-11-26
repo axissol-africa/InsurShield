@@ -305,8 +305,8 @@ describe('customer', () => {
     phone: '0970123456',
     plate: 'BAA 1234',
     vehicle: '2020 Toyota Hilux',
-    type: 'Theft',
-    incidentDate: '2026-10-20T06:15:00.000Z',
+    type: 'Accident / Collision',
+    incidentDate: lusakaDay(inDays(-2)),
     location: 'Woodlands, Lusaka',
     description: 'Vehicle stolen from outside the residence overnight.',
     ...overrides,
@@ -1607,10 +1607,20 @@ describe('customer', () => {
   });
 
   describe('POST /claims', () => {
+    async function issuedClaimPolicy(customer: Customer, insurer?: Awaited<ReturnType<typeof buildInsurer>>) {
+      const purchase = await buildPurchasedPolicy(testApp.db, { customer, insurer });
+      await testApp.db.update(policies).set({ status: 'ACTIVE', issuedAt: inDays(-45), policyStartDate: inDays(-45), policyEndDate: inDays(45) })
+        .where(eq(policies.policyNumber, purchase.policy.policyNumber));
+      return purchase;
+    }
+
     it('issues a claim number, attaches the documents and stores the loss in ngwee', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer } = await buildInsurer(testApp.db);
-      const { policy } = await buildPurchasedPolicy(testApp.db, { customer });
+      const { insurer: carrier, policy, quoteRequest } = await issuedClaimPolicy(customer);
+      const insurer = carrier.insurer;
+      const incidentDate = lusakaDay(inDays(-20));
+      await testApp.db.update(vehicles).set({ plateNumber: 'BAZ 8102', make: 'Toyota', model: 'Hilux', year: '2021' })
+        .where(eq(vehicles.id, quoteRequest.vehicleId));
       const photo = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'CLAIM_ATTACHMENT' });
 
       const response = await testApp.http
@@ -1619,6 +1629,8 @@ describe('customer', () => {
         .send(
           claim(insurer.id, {
             policyNumber: policy.policyNumber,
+            type: 'Theft',
+            incidentDate,
             estimatedLoss: 0.01,
             policeReport: true,
             policeReportNumber: ' PR-77 ',
@@ -1636,10 +1648,10 @@ describe('customer', () => {
         fullName: 'Mwiza Banda',
         phone: '0970123456',
         email: null,
-        plate: 'BAA 1234',
-        vehicle: '2020 Toyota Hilux',
+        plate: 'BAZ 8102',
+        vehicle: '2021 Toyota Hilux',
         type: 'Theft',
-        incidentDate: '2026-10-20T06:15:00.000Z',
+        incidentDate: `${incidentDate}T00:00:00.000Z`,
         location: 'Woodlands, Lusaka',
         description: 'Vehicle stolen from outside the residence overnight.',
         estimatedLoss: 0.01,
@@ -1652,7 +1664,7 @@ describe('customer', () => {
         supportingDocs: [await documentResponse(photo)],
       });
       const [stored] = await claimsOf(customer.id);
-      expect(stored).toMatchObject({ claimNumber: response.body.claimNumber, estimatedLossMinor: 1, status: 'NOTIFIED', lateReason: 'I was in hospital.' });
+      expect(stored).toMatchObject({ claimNumber: response.body.claimNumber, estimatedLossMinor: 1, status: 'NOTIFIED', lateReason: 'I was in hospital.', lateSubmission: true, responseDueOn: lusakaDay(inDays(7)) });
       expect(await testApp.db.select().from(claimAttachments).where(eq(claimAttachments.claimNumber, stored.claimNumber))).toMatchObject([
         { documentId: photo.id },
       ]);
@@ -1660,9 +1672,9 @@ describe('customer', () => {
 
     it('replays the same claim notification without issuing a second claim number', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer } = await buildInsurer(testApp.db);
+      const { insurer, policy } = await issuedClaimPolicy(customer);
       const key = 'claim-notification-retry';
-      const payload = claim(insurer.id);
+      const payload = claim(insurer.insurer.id, { policyNumber: policy.policyNumber });
 
       const first = await testApp.http
         .post('/api/v1/claims')
@@ -1681,7 +1693,7 @@ describe('customer', () => {
       expect(await claimsOf(customer.id)).toHaveLength(1);
     });
 
-    it('drops a policy number that is not the customer’s rather than refusing the claim', async () => {
+    it('refuses an unowned policy without revealing whether it exists', async () => {
       const customer = await buildCustomer(testApp.db);
       const { insurer } = await buildInsurer(testApp.db);
       const { policy } = await buildPurchasedPolicy(testApp.db);
@@ -1690,18 +1702,18 @@ describe('customer', () => {
         .post('/api/v1/claims')
         .set(await asCustomer(customer))
         .send(claim(insurer.id, { policyNumber: policy.policyNumber }))
-        .expect(201);
+        .expect(404);
 
-      expect(response.body.policyNumber).toBeNull();
-      expect(response.body.estimatedLoss).toBeNull();
+      expect(response.body.code).toBe('NOT_FOUND');
+      expect(await claimsOf(customer.id)).toEqual([]);
     });
 
     it('stores neither the claim nor its attachments when the claim fails after it was written', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer } = await buildInsurer(testApp.db);
+      const { insurer, policy } = await issuedClaimPolicy(customer);
       const photo = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'CLAIM_ATTACHMENT' });
       const notify = async () =>
-        testApp.http.post('/api/v1/claims').set(await asCustomer(customer)).send(claim(insurer.id, { supportingDocumentIds: [photo.id] }));
+        testApp.http.post('/api/v1/claims').set(await asCustomer(customer)).send(claim(insurer.insurer.id, { policyNumber: policy.policyNumber, supportingDocumentIds: [photo.id] }));
 
       const signing = vi.spyOn(testApp.storage, 'signedDownloadUrl').mockRejectedValueOnce(new Error('signing failed'));
       try {
@@ -1729,12 +1741,39 @@ describe('customer', () => {
       expect(await claimsOf(customer.id)).toEqual([]);
     });
 
-    it('answers 404 for a deleted insurer', async () => {
+    it('returns a searchable policy reference and help desk for a deleted insurer', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer } = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const insurer = await buildInsurer(testApp.db, { insurer: { status: 'DELETED', deletedAt: new Date() } });
+      const { policy } = await issuedClaimPolicy(customer, insurer);
 
-      await testApp.http.post('/api/v1/claims').set(await asCustomer(customer)).send(claim(insurer.id)).expect(404);
-      await testApp.http.post('/api/v1/claims').set(await asCustomer(customer)).send(claim(randomUUID())).expect(404);
+      const refused = await testApp.http.post('/api/v1/claims').set(await asCustomer(customer))
+        .send(claim(insurer.insurer.id, { policyNumber: policy.policyNumber })).expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'CLAIM_INSURER_UNAVAILABLE', details: { reference: policy.policyNumber, contact: expect.any(Object) },
+      });
+      expect(await claimsOf(customer.id)).toEqual([]);
+    });
+
+    it('reads intake defaults and enforces cover dates, late reasons and evidence on the server', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const { insurer, policy } = await issuedClaimPolicy(customer);
+      const session = await asCustomer(customer);
+      const rules = await testApp.http.get('/api/v1/claims/intake-rules').set(session).expect(200);
+      expect(rules.body).toMatchObject({ reportingDays: 14, responseDays: 7, provisional: true });
+      const refusal = async (overrides: Record<string, unknown>, code: string) => {
+        const response = await testApp.http.post('/api/v1/claims').set(session)
+          .send(claim(insurer.insurer.id, { policyNumber: policy.policyNumber, ...overrides })).expect(400);
+        expect(response.body.code).toBe(code);
+      };
+      await refusal({ policyNumber: undefined }, 'CLAIM_POLICY_REQUIRED');
+      await refusal({ insurerId: randomUUID() }, 'CLAIM_INSURER_MISMATCH');
+      await refusal({ incidentDate: lusakaDay(inDays(1)) }, 'CLAIM_FUTURE_INCIDENT');
+      await refusal({ incidentDate: lusakaDay(inDays(-46)) }, 'CLAIM_OUTSIDE_COVER');
+      await refusal({ incidentDate: lusakaDay(inDays(-15)) }, 'CLAIM_LATE_REASON_REQUIRED');
+      await refusal({ type: 'Theft' }, 'CLAIM_POLICE_REPORT_REQUIRED');
+      await refusal({ type: 'Theft', policeReport: true, policeReportNumber: 'POLICE-4' }, 'CLAIM_EVIDENCE_REQUIRED');
+      await testApp.db.update(policies).set({ coverage: 'Third Party' }).where(eq(policies.policyNumber, policy.policyNumber));
+      await refusal({ type: 'Theft' }, 'CLAIM_TYPE_NOT_COVERED');
       expect(await claimsOf(customer.id)).toEqual([]);
     });
 
@@ -1755,8 +1794,9 @@ describe('customer', () => {
       });
 
       it('notifies two claims with attachments at once, each reading its documents in its own transaction', async () => {
-        const { insurer } = await buildInsurer(testApp.db);
+        const insurer = await buildInsurer(testApp.db);
         const claimants = [await buildCustomer(testApp.db), await buildCustomer(testApp.db)];
+        const cover = await Promise.all(claimants.map((customer) => issuedClaimPolicy(customer, insurer)));
         const photos = [
           await buildDocument(testApp.db, { customerId: claimants[0].id }, { kind: 'CLAIM_ATTACHMENT' }),
           await buildDocument(testApp.db, { customerId: claimants[1].id }, { kind: 'CLAIM_ATTACHMENT' }),
@@ -1768,7 +1808,7 @@ describe('customer', () => {
           small.http
             .post('/api/v1/claims')
             .set(await asCustomer(claimants[index]))
-            .send(claim(insurer.id, { supportingDocumentIds: [photos[index].id] }));
+            .send(claim(insurer.insurer.id, { policyNumber: cover[index].policy.policyNumber, supportingDocumentIds: [photos[index].id] }));
 
         const responses = await queueBehind(held, LOCKING_THE_DOCUMENTS, 2, [notify(0), notify(1)]);
 
@@ -1781,7 +1821,7 @@ describe('customer', () => {
       it('refuses a document uploaded by someone else, of the wrong kind, already attached or never uploaded, and stores nothing', async () => {
         const customer = await buildCustomer(testApp.db);
         const other = await buildCustomer(testApp.db);
-        const { insurer } = await buildInsurer(testApp.db);
+        const { insurer: { insurer }, policy } = await issuedClaimPolicy(customer);
         const theirs = await buildDocument(testApp.db, { customerId: other.id }, { kind: 'CLAIM_ATTACHMENT' });
         const wrongKind = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'INSPECTION_PHOTO' });
         const earlier = await buildClaim(testApp.db, { insurerId: insurer.id, customerId: customer.id });
@@ -1791,7 +1831,7 @@ describe('customer', () => {
           const response = await testApp.http
             .post('/api/v1/claims')
             .set(await asCustomer(customer))
-            .send(claim(insurer.id, { supportingDocumentIds: [documentId] }))
+            .send(claim(insurer.id, { policyNumber: policy.policyNumber, supportingDocumentIds: [documentId] }))
             .expect(409);
           expect(response.body.code).toBe('DOCUMENT_NOT_ATTACHABLE');
         }
@@ -1800,13 +1840,13 @@ describe('customer', () => {
 
       it('refuses one document named twice with 400', async () => {
         const customer = await buildCustomer(testApp.db);
-        const { insurer } = await buildInsurer(testApp.db);
+        const { insurer: { insurer }, policy } = await issuedClaimPolicy(customer);
         const photo = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'CLAIM_ATTACHMENT' });
 
         const response = await testApp.http
           .post('/api/v1/claims')
           .set(await asCustomer(customer))
-          .send(claim(insurer.id, { supportingDocumentIds: [photo.id, photo.id] }))
+          .send(claim(insurer.id, { policyNumber: policy.policyNumber, supportingDocumentIds: [photo.id, photo.id] }))
           .expect(400);
         expect(response.body.code).toBe('VALIDATION_FAILED');
         expect(await claimsOf(customer.id)).toEqual([]);
@@ -2050,6 +2090,20 @@ describe('customer', () => {
       expect(response.status).toBe(409);
       expect(response.body.code).toBe('REFUND_IN_PROGRESS');
       expect(await isOpen(customer)).toBe(true);
+    });
+
+    it('keeps the account open while an insurer needs claim evidence, and permits closure after it is supplied', async () => {
+      const purchase = await buildPurchasedPolicy(testApp.db);
+      await testApp.db.update(policies).set({ status: 'ACTIVE', policyEndDate: inDays(-30) })
+        .where(eq(policies.policyNumber, purchase.policy.policyNumber));
+      const record = await buildClaim(testApp.db, {
+        customerId: purchase.customer.id, insurerId: purchase.insurer.insurer.id, policyNumber: purchase.policy.policyNumber,
+      }, { status: 'EVIDENCE_REQUIRED' });
+      const blocked = await closeAccount(purchase.customer);
+      expect(blocked.body.code).toBe('CLAIM_EVIDENCE_OUTSTANDING');
+      expect(await isOpen(purchase.customer)).toBe(true);
+      await testApp.db.update(claimNotifications).set({ status: 'UNDER_REVIEW' }).where(eq(claimNotifications.claimNumber, record.claimNumber));
+      expect((await closeAccount(purchase.customer)).status).toBe(200);
     });
 
     it('refuses an owed refund even before finance has proposed it', async () => {

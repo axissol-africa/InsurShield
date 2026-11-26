@@ -152,8 +152,8 @@ export class SubmitQuoteRequestDto {
 
 export class NotifyClaimDto {
   /** The insurer that carries the policy, by id. */
-  @IsUUID('4', { message: 'Choose the insurer that carries this policy.' })
-  insurerId!: string;
+  @IsOptional() @IsUUID('4', { message: 'Choose the insurer that carries this policy.' })
+  insurerId?: string;
 
   @IsOptional() @IsString() @MaxLength(40) policyNumber?: string;
 
@@ -161,11 +161,11 @@ export class NotifyClaimDto {
   @IsString() @MinLength(6) @MaxLength(24) phone!: string;
   @IsOptional() @IsString() @MaxLength(160) email?: string;
 
-  @IsString() @MinLength(3) @MaxLength(16) plate!: string;
-  @IsString() @MinLength(1) @MaxLength(120) vehicle!: string;
+  @IsOptional() @IsString() @MinLength(3) @MaxLength(16) plate?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(120) vehicle?: string;
 
   @IsString() @MinLength(2) @MaxLength(60) type!: string;
-  @IsDateString() incidentDate!: string;
+  @IsDateString({ strict: true }) incidentDate!: string;
   @IsString() @MinLength(2) @MaxLength(200) location!: string;
   @IsString() @MinLength(10) @MaxLength(4000) description!: string;
 

@@ -38,6 +38,9 @@ export class AccountService {
           'Finish or withdraw your open service requests before closing this account.',
         );
       }
+      if (await this.repository.hasOutstandingClaimEvidence(tx, customerId)) {
+        throw ApiException.conflict('CLAIM_EVIDENCE_OUTSTANDING', 'Send the requested evidence for your claim before closing this account.');
+      }
       if (await this.repository.hasOpenPayment(tx, customerId)) {
         throw ApiException.conflict('PAYMENT_IN_PROGRESS', 'Wait for your payment to finish before closing this account.');
       }
