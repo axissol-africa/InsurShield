@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { auditLogs, insurerReviews, notifications, platformRuleVersions, policies } from '../src/db/schema.js';
 import { defaultRuleValue } from '../src/settings/domain/rules.js';
 import { buildCustomer, buildInsurer, buildPurchasedPolicy, buildStaffUser } from './builders.js';
@@ -41,8 +41,13 @@ describe('verified policy reviews', () => {
   }
 
   async function confirmRules() {
+    const [latest] = await app.db.select({ version: platformRuleVersions.versionNumber })
+      .from(platformRuleVersions)
+      .where(eq(platformRuleVersions.key, 'REVIEW_POLICY'))
+      .orderBy(desc(platformRuleVersions.versionNumber))
+      .limit(1);
     await app.db.insert(platformRuleVersions).values({
-      key: 'REVIEW_POLICY', versionNumber: 1, state: 'CONFIRMED', value: defaultRuleValue('REVIEW_POLICY'),
+      key: 'REVIEW_POLICY', versionNumber: (latest?.version ?? 0) + 1, state: 'CONFIRMED', value: defaultRuleValue('REVIEW_POLICY'),
       effectiveFrom: new Date('2020-01-01T00:00:00Z'), createdByStaffId: adminId, confirmedByStaffId: adminId, confirmedAt: new Date(),
     });
   }

@@ -375,3 +375,54 @@ export const badgeGovernance = {
   get: (insurerId) => apiClient.get(badgeGovernancePath(insurerId)),
   update: (insurerId, decision) => apiClient.put(badgeGovernancePath(insurerId), decision),
 };
+
+const reportPaths = {
+  admin: '/admin/reports/operations',
+  operations: '/insurer/reports/operations',
+  finance: '/insurer/reports/finance',
+};
+export const reports = {
+  get: (scope, params) => apiClient.get(reportPaths[scope], { params }),
+  exportCsv: (scope, params) => apiClient.get(`${reportPaths[scope]}/export`, { params, responseType: 'text' }),
+};
+
+const contentPath = (slug) => `/customer-content/admin/${encodeURIComponent(slug)}`;
+export const customerContent = {
+  published: () => apiClient.get('/customer-content/public'),
+  list: (page) => apiClient.get('/customer-content/admin', { params: { page } }),
+  history: (slug) => apiClient.get(`${contentPath(slug)}/history`),
+  create: (slug, body) => apiClient.post(`${contentPath(slug)}/versions`, body),
+  approve: (slug, id) => apiClient.post(`${contentPath(slug)}/versions/${encodeURIComponent(id)}/approve`),
+  withdraw: (slug, id, body) => apiClient.post(`${contentPath(slug)}/versions/${encodeURIComponent(id)}/withdraw`, body),
+};
+
+const notificationTemplatePath = '/admin/notification-templates';
+const notificationVersionPath = (id) => `${notificationTemplatePath}/${encodeURIComponent(id)}`;
+export const notificationGovernance = {
+  list: (params) => apiClient.get(notificationTemplatePath, { params }),
+  create: (id, body) => apiClient.post(`${notificationVersionPath(id)}/versions`, body),
+  approve: (id, body) => apiClient.post(`${notificationVersionPath(id)}/approve`, body),
+  withdraw: (id, body) => apiClient.post(`${notificationVersionPath(id)}/withdraw`, body),
+  exceptions: (params) => apiClient.get('/admin/notification-delivery-exceptions', { params }),
+};
+
+const privacyPath = '/admin/privacy-requests';
+const privacyCasePath = (id) => `${privacyPath}/${encodeURIComponent(id)}`;
+export const privacyRequests = {
+  mine: (params) => apiClient.get('/privacy-requests', { params }),
+  submit: (body) => apiClient.post('/privacy-requests', body),
+  list: (params) => apiClient.get(privacyPath, { params }),
+  create: (body) => apiClient.post(privacyPath, body),
+  detail: (id, params) => apiClient.get(privacyCasePath(id), { params }),
+  transition: (id, body) => apiClient.post(`${privacyCasePath(id)}/transitions`, body),
+  hold: (id, body) => apiClient.post(`${privacyCasePath(id)}/hold`, body),
+};
+
+const riskReviewPath = '/admin/risk-review';
+const riskFlagPath = (id) => `${riskReviewPath}/${encodeURIComponent(id)}`;
+export const riskReview = {
+  list: (params) => apiClient.get(riskReviewPath, { params }),
+  refer: (body) => apiClient.post(riskReviewPath, body),
+  assign: (id, body) => apiClient.post(`${riskFlagPath(id)}/assign`, body),
+  resolve: (id, body) => apiClient.post(`${riskFlagPath(id)}/resolve`, body),
+};

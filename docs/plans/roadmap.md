@@ -427,6 +427,7 @@ covers rating calculation, badge award and expiry, recalculation by the job runn
 of US-CUS-026 is deferred with decision 2.
 
 ### Batch 19: Reporting, content and compliance
+Follow the [Batch 19 plan](batch-19-reporting-content-compliance.md) for delivery and verification.
 Customer content and notification templates for admins (US-ADM-011); privacy and retention review over the audit
 trail (US-ADM-013); reports and the manual risk review (US-ADM-014); insurer performance and finance reports
 (US-VEN-012).

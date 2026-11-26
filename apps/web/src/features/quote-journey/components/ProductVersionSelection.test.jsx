@@ -46,8 +46,8 @@ it('preserves a preselection and reports failure when its availability cannot be
   const onLoadStateChange = vi.fn();
   render(<ProductVersionSelection selectedProductVersionIds={['renewal']} onSelectionChange={onSelectionChange} onLoadStateChange={onLoadStateChange} />);
   expect(await screen.findByText('Availability check failed')).toBeVisible();
+  await waitFor(() => expect(onLoadStateChange).toHaveBeenLastCalledWith('error'));
   expect(onSelectionChange).not.toHaveBeenCalled();
-  expect(onLoadStateChange).toHaveBeenLastCalledWith('error');
 });
 
 it('keeps the loaded product list visible when selecting another listed product', async () => {

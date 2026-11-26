@@ -68,6 +68,7 @@ export const PERMISSIONS = {
   'payment:read': ['customer'],
   'account:close': ['customer'],
   'account:export': ['customer'],
+  'account:privacy:request': ['customer'],
   'review:manage': ['customer'],
   'service-request:read': ['customer'],
   'service-request:submit': ['customer'],
@@ -93,6 +94,11 @@ export const PERMISSIONS = {
   'admin:customer-find': INSURSHIELD_ADMIN,
   'admin:customer-password-reset': INSURSHIELD_ADMIN,
   'admin:audit-read': INSURSHIELD_ADMIN,
+  'admin:content:manage': INSURSHIELD_ADMIN,
+  'admin:notification:manage': INSURSHIELD_ADMIN,
+  'admin:privacy:review': INSURSHIELD_ADMIN,
+  'admin:risk:review': INSURSHIELD_ADMIN,
+  'admin:reports:read': INSURSHIELD_ADMIN,
   'admin:service-request:read': INSURSHIELD_ADMIN,
   // Looking a record up by its reference for a support case; every look-up is audited with the reason given.
   'admin:record-find': INSURSHIELD_ADMIN,
@@ -162,6 +168,8 @@ export const PERMISSIONS = {
   'portal:service-request:manage': SERVICE_REQUEST_HANDLERS,
   // What the insurer is paid: its administrator and its finance team.
   'portal:settlement:read': ['INSURER_ADMIN', 'FINANCE'],
+  'portal:reports:operations': ['INSURER_ADMIN', 'QUOTE_OFFICER', 'CLAIMS_OFFICER', 'COMPLIANCE_READ_ONLY', 'INSURER_USER'],
+  'portal:reports:finance': ['INSURER_ADMIN', 'FINANCE'],
   'portal:certificate:issue': ISSUING,
   'portal:claim:read': READS_CLAIMS,
   'portal:claim:acknowledge': CLAIMS_AND_NCD,

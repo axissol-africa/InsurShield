@@ -105,7 +105,29 @@ export class NotificationsService {
     const found = await this.repository.deliverable(notificationId);
     if (!found) return;
     const { notification, email } = found;
-    if (notification.deliveryStatus === 'SENT') return;
+    if (
+      notification.deliveryStatus === 'SENT' ||
+      notification.deliveryStatus === 'FAILED'
+    )
+      return;
+
+    const versions = await this.repository.transaction((tx) =>
+      this.repository.templatesFor(tx, notification.templateKey),
+    );
+    const template = versions.find(
+      (row) =>
+        row.version === notification.templateVersion &&
+        row.channel === notification.channel,
+    );
+    if (!template || !activeVersion([template], now)) {
+      await this.repository.recordDelivery(notification.id, {
+        status: 'FAILED',
+        providerReference: null,
+        deliveredAt: null,
+      });
+      return;
+    }
+
 
     const result = await this.mail.send({
       to: email,

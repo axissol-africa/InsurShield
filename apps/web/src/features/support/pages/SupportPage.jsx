@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primit
 import { useStore } from '@/store';
 import { hydrateDirectory } from '@/api/sync';
 import HelpDeskCard from '../components/HelpDeskCard';
+import PublishedContent from '../components/PublishedContent';
 
 // The directory is derived from the live insurer list so onboarding, edits and removals show immediately.
 const toContact = (insurer) => ({ id: insurer.id, name: insurer.tradingName || insurer.name, logo: insurer.icon, logoUrl: insurer.logoUrl, contactPerson: '', role: '', phone: '', mobile: '', whatsapp: '', email: '', address: '', hours: '', tagline: '', ...insurer.contact });
@@ -273,12 +274,13 @@ export default function SupportPage() {
 
       <section className="mt-6">
         <Card className="gap-0 border-border shadow-none">
-          <CardHeader className="border-b"><CardTitle>Frequently asked questions</CardTitle><p className="text-sm text-muted-foreground">Quick answers before you contact an insurer.</p></CardHeader>
+          <CardHeader className="border-b"><CardTitle>Platform help</CardTitle><p className="text-sm text-muted-foreground">Standard platform FAQs, separate from published customer updates.</p></CardHeader>
           <CardContent className="grid gap-2 pt-5 lg:grid-cols-2">
           {FAQS.map((faq, i) => <FAQItem key={i} q={faq.q} a={faq.a} />)}
           </CardContent>
         </Card>
       </section>
+      <PublishedContent />
       </motion.div>
     </main>
   );

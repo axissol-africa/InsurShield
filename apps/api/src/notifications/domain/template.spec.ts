@@ -68,3 +68,27 @@ describe('placeholders', () => {
     expect(placeholders('nothing to fill')).toEqual([]);
   });
 });
+
+describe('governed selection', () => {
+  it('never selects withdrawn or expired versions even with a past activeFrom', () => {
+    const seed = version(1, '2026-01-01');
+    expect(
+      activeVersion(
+        [seed, { ...version(2, '2026-02-01'), reviewStatus: 'WITHDRAWN' }],
+        AT,
+      )?.version,
+    ).toBe(1);
+    expect(
+      activeVersion([seed, { ...version(2, '2026-02-01'), expiresAt: AT }], AT)
+        ?.version,
+    ).toBe(1);
+  });
+  it('never selects an unapproved version with an activation date', () => {
+    expect(
+      activeVersion(
+        [{ ...version(1, '2026-01-01'), reviewStatus: 'DRAFT' }],
+        AT,
+      ),
+    ).toBeUndefined();
+  });
+});

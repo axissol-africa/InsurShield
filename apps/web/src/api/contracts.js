@@ -464,3 +464,18 @@ export {};
  * An out-of-date decision returns BADGE_STATE_CHANGED (409). Mock mode
  * reports that governance requires a connected API.
  */
+
+/**
+ * Batch 19 reports
+ * reports.get(scope, {from,to}) reads platform operations, insurer operations
+ * or insurer finance by authorised scope. Dates are inclusive Lusaka days.
+ * Aggregate metric values are decimal strings with count or minorUnits units.
+ * reports.exportCsv uses the same filters and returns CSV text from the API.
+ *
+ * customerContent.published() returns effective approved support content.
+ * customerContent manages versions and history by slug. notificationGovernance
+ * manages approved template versions and masked delivery exceptions.
+ * privacyRequests supports private, version-checked cases and retention holds.
+ * riskReview uses a version-checked queue whose outcomes do not change the
+ * underlying policy, payment or quote. All governance writes require HTTP mode.
+ */

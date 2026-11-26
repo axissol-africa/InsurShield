@@ -36,6 +36,10 @@ import { ReviewsModule } from './reviews/reviews.module.js';
 import { InsurerProfilesModule } from './insurer-profiles/insurer-profiles.module.js';
 import { ReviewAppealsModule } from './review-appeals/review-appeals.module.js';
 import { ReputationModule } from './reputation/reputation.module.js';
+import { CustomerContentModule } from './customer-content/customer-content.module.js';
+import { PrivacyReviewModule } from './privacy-review/privacy-review.module.js';
+import { RiskReviewModule } from './risk-review/risk-review.module.js';
+import { ReportingModule } from './reporting/reporting.module.js';
 
 @Module({
   imports: [
@@ -73,6 +77,10 @@ import { ReputationModule } from './reputation/reputation.module.js';
     InsurerProfilesModule,
     ReviewAppealsModule,
     ReputationModule,
+    CustomerContentModule,
+    PrivacyReviewModule,
+    RiskReviewModule,
+    ReportingModule,
   ],
   controllers: [HealthController],
   providers: [

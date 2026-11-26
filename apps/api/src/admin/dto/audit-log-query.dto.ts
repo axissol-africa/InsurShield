@@ -4,18 +4,25 @@ import { ACTOR_TYPES } from '../../common/domain/enums.js';
 
 /** Entity names are deliberately allowlisted: this is a staff tool, not a database browser. */
 const AUDIT_ENTITY_TYPES = [
+  'AUDIT_LOG',
   'CLAIM',
   'CONSENT',
   'CUSTOMER',
+  'CUSTOMER_CONTENT',
   'DOCUMENT',
   'INSPECTION',
   'INSURER',
   'INSURER_QUOTE',
   'NCD_APPLICATION',
+  'NOTIFICATION_TEMPLATE',
   'PAYMENT',
+  'PERMISSION',
   'PIA_CONFIG',
   'POLICY',
+  'PRIVACY_REQUEST',
   'QUOTE_REQUEST',
+  'REPORT',
+  'RISK_REVIEW',
   'SETTING',
 ] as const;
 

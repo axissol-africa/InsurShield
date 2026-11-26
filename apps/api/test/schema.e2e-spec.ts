@@ -96,7 +96,16 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyLaterInspectionInvariants);
   await query(db, applyReviewInvariants);
   await query(db, applyCertificateBadgeInvariants);
+  await query(db, applyGovernanceInvariants);
   return db;
+}
+
+async function applyGovernanceInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0052_batch_19_governance.sql', import.meta.url), 'utf8');
+  const invariants = migration.slice(migration.indexOf('-- Governance invariants begin'), migration.indexOf('-- Governance invariants end'));
+  for (const statement of invariants.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 async function applyCertificateBadgeInvariants(client: ClientBase) {
@@ -1253,7 +1262,8 @@ describe('the final schema', () => {
     // Later inspection reports add their creation instant.
     // Reviews, appeals and insurer profile revisions add 13 instants.
     // Certificate badge snapshots and suspension state add six instants.
-    expect(timestampColumns).toHaveLength(206);
+    // Content, notification governance, privacy and risk add fourteen instants.
+    expect(timestampColumns).toHaveLength(220);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

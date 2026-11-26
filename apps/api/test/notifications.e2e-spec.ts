@@ -7,7 +7,7 @@ import { MAIL_SENDER, type MailResult } from '../src/mail/mail.port.js';
 import { NOTIFICATION_EMAIL, NotificationsService } from '../src/notifications/notifications.service.js';
 import { NotificationsRepository } from '../src/notifications/notifications.repository.js';
 import { buildCustomer } from './builders.js';
-import { openTestDatabase, startApp, until, type TestApp } from './helpers.js';
+import { openTestDatabase, startApp, type TestApp } from './helpers.js';
 
 describe('notifications', () => {
   let testApp: TestApp;
@@ -59,21 +59,15 @@ describe('notifications', () => {
       service.notify(tx, { customerId, key, entity: { type: 'QUOTE_REQUEST', id: 'QR-1' }, values }),
     );
 
-  /**
-   * Runs the runner until this message has been dealt with.
-   *
-   * One pass is not enough: the runner claims a bounded batch of whatever is
-   * due, and real work now competes for it — other specs enqueue notifications
-   * and the idempotency purge schedules itself. Waiting on the row rather than
-   * on a single pass is what makes this independent of how busy the table is.
-   */
-  async function settle(notificationId: string): Promise<void> {
-    await until(async () => {
-      const [row] = await side.db.select().from(notifications).where(eq(notifications.id, notificationId));
-      if (row?.deliveryStatus !== 'PENDING') return true;
-      await runner.runOnce();
-      return false;
-    }, 'the message to be delivered or refused');
+  async function runQueuedDelivery(notificationId: string): Promise<void> {
+    // Make this fixture the only job due at the test cutoff. The real runner
+    // still claims its row, invokes the registered handler and settles the job.
+    const dueAt = new Date('1900-01-01T00:00:00.000Z');
+    const scheduled = await side.db.update(jobs).set({ runAfter: dueAt })
+      .where(and(eq(jobs.kind, NOTIFICATION_EMAIL), eq(jobs.key, notificationId), eq(jobs.status, 'PENDING')))
+      .returning({ id: jobs.id });
+    expect(scheduled).toHaveLength(1);
+    expect(await runner.runOnce(dueAt)).toBe(1);
   }
 
   it('writes the message and its job with the change it announces, or neither', async () => {
@@ -139,7 +133,7 @@ describe('notifications', () => {
     await notify(customer.id, key, { insurer: 'Global Guard' });
 
     const [queued] = await rows(key);
-    await settle(queued.id);
+    await runQueuedDelivery(queued.id);
 
     const [email] = await rows(key);
     expect(email.deliveryStatus).toBe('SENT');
@@ -159,7 +153,7 @@ describe('notifications', () => {
 
     try {
       const [queued] = await rows(key);
-      await settle(queued.id);
+      await runQueuedDelivery(queued.id);
     } finally {
       sender.send = original;
     }

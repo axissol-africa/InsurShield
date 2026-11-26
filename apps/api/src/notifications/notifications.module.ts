@@ -1,3 +1,6 @@
+import { TemplateGovernanceController } from './template-governance.controller.js';
+import { TemplateGovernanceService } from './template-governance.service.js';
+import { TemplateGovernanceRepository } from './template-governance.repository.js';
 import { Global, Module, type OnModuleInit } from '@nestjs/common';
 import { JobRunner } from '../jobs/job-runner.service.js';
 import { NOTIFICATION_EMAIL, NotificationsService } from './notifications.service.js';
@@ -6,8 +9,8 @@ import { NotificationsRepository } from './notifications.repository.js';
 
 @Global()
 @Module({
-  controllers: [NotificationsController],
-  providers: [NotificationsRepository, NotificationsService],
+  controllers: [NotificationsController, TemplateGovernanceController],
+  providers: [NotificationsRepository, NotificationsService, TemplateGovernanceService, TemplateGovernanceRepository],
   exports: [NotificationsRepository, NotificationsService],
 })
 export class NotificationsModule implements OnModuleInit {

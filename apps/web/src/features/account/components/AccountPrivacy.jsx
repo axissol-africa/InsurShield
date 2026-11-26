@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/api';
+import { env } from '@/config/env';
+import { CustomerPrivacyRequests } from '@/features/compliance/PrivacyWorkspace';
 import { requestIdentityTransition } from '@/app/identity';
 import { Button } from '@/components/ui/primitives/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
@@ -48,6 +50,7 @@ export default function AccountPrivacy({ onClose, accountError, canClose = true 
       {error && <p role="alert">{error.message || 'Your data could not be downloaded. Please try again.'}</p>}
       {error?.code === 'REAUTHENTICATION_REQUIRED' && <Button variant="outline" disabled={busy} onClick={signInAgain}>Sign out and sign in again</Button>}
     </CardContent></Card>
+    {env.apiMode === 'http' && <CustomerPrivacyRequests />}
     <Card><CardHeader><CardTitle>Close your account</CardTitle></CardHeader><CardContent className="space-y-4 text-sm">
       <p>Closing your account signs you out and removes access to your documents. Drafts and open quote requests are withdrawn. Records needed for regulatory retention are kept; closing an account does not immediately erase them.</p>
       <p>Closure is blocked while cover is in force, a service request is open, a payment is in progress, a refund is in progress, or requested claim evidence is still outstanding. Submit the requested evidence from Claims before trying again. The server checks these conditions when you request closure and explains any blocker.</p>

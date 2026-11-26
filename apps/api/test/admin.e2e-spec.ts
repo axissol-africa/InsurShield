@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { MAX_NGWEE } from '../src/common/domain/money-limits.js';
 import { parseKwacha } from '../src/common/money.js';
 import { auditLogs, payments, vehicles } from '../src/db/schema.js';
@@ -97,6 +97,26 @@ describe('admin console', () => {
   });
 
   describe('audit logs', () => {
+    it('records the administrator and safe filter metadata without copying the target reference', async () => {
+      const entityId = randomUUID();
+      await get(`audit-logs?entityType=PRIVACY_REQUEST&entityId=${entityId}`).expect(200, {
+        items: [], nextCursor: null,
+      });
+
+      const [entry] = await side.db.select().from(auditLogs).where(and(
+        eq(auditLogs.actorId, admin.id), eq(auditLogs.action, 'audit_log.viewed'),
+      ));
+      expect(entry).toMatchObject({
+        actorType: 'STAFF', entityType: 'AUDIT_LOG', entityId: 'audit-log',
+        correlationId: expect.any(String), createdAt: expect.any(Date),
+        after: {
+          entityType: 'PRIVACY_REQUEST', entityFiltered: true, actionFiltered: false,
+          continued: false, limit: 25, resultCount: 0,
+        },
+      });
+      expect(JSON.stringify(entry)).not.toContain(entityId);
+    });
+
     it('returns a safe, filterable change summary and never its stored values', async () => {
       const entityId = randomUUID();
       await side.db.insert(auditLogs).values({

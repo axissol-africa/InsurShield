@@ -365,6 +365,13 @@
       "when": 1795692752736,
       "tag": "0051_batch_18_ratings_badges",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795697944113,
+      "tag": "0052_batch_19_governance",
+      "breakpoints": true
     }
   ]
 }

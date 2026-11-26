@@ -7,6 +7,9 @@ export interface TemplateVersion {
   body: string;
   mandatory: boolean;
   activeFrom: Date | null;
+  reviewStatus?: string;
+  expiresAt?: Date | null;
+  withdrawnAt?: Date | null;
 }
 
 /**
@@ -19,7 +22,10 @@ export interface TemplateVersion {
  */
 export function activeVersion<T extends TemplateVersion>(versions: T[], at: Date): T | undefined {
   return versions
-    .filter((candidate) => candidate.activeFrom !== null && candidate.activeFrom <= at)
+    .filter((candidate) => candidate.activeFrom !== null && candidate.activeFrom <= at
+      && (candidate.reviewStatus === undefined || candidate.reviewStatus === 'APPROVED')
+      && !candidate.withdrawnAt
+      && (!candidate.expiresAt || candidate.expiresAt > at))
     .sort((a, b) => b.version - a.version)[0];
 }
 

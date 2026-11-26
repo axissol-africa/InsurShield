@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { auditLogs, stateHistory } from '../../db/schema.js';
 import { DATABASE, type Database, type Transaction } from '../../db/database.module.js';
 import type { AuditEvent, StateTransition } from './audit.types.js';
@@ -34,6 +35,13 @@ export class AuditService {
     } catch (error) {
       this.logger.error(`Could not record a refused ${event.entityType} access: ${String(error)}`);
     }
+  }
+
+  /** A privileged read may be returned only after its audit entry commits. */
+  async recordRead(event: AuditEvent): Promise<void> {
+    await this.db.transaction((tx) =>
+      this.write(tx, { ...event, correlationId: event.correlationId ?? randomUUID() }),
+    );
   }
 
   async write(tx: Transaction, event: AuditEvent): Promise<void> {

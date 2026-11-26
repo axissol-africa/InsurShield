@@ -1617,3 +1617,23 @@ export const badgeGovernance = {
   get: badgeGovernanceUnavailable,
   update: badgeGovernanceUnavailable,
 };
+
+async function oversightUnavailable() {
+  throw new Error('This workspace requires a connected API.');
+}
+export const reports = { get: oversightUnavailable, exportCsv: oversightUnavailable };
+export const customerContent = {
+  published: async () => ({ items: [] }), list: oversightUnavailable, history: oversightUnavailable,
+  create: oversightUnavailable, approve: oversightUnavailable, withdraw: oversightUnavailable,
+};
+export const notificationGovernance = {
+  list: oversightUnavailable, create: oversightUnavailable, approve: oversightUnavailable,
+  withdraw: oversightUnavailable, exceptions: oversightUnavailable,
+};
+export const privacyRequests = {
+  mine: oversightUnavailable, submit: oversightUnavailable, list: oversightUnavailable, create: oversightUnavailable,
+  detail: oversightUnavailable, transition: oversightUnavailable, hold: oversightUnavailable,
+};
+export const riskReview = {
+  list: oversightUnavailable, refer: oversightUnavailable, assign: oversightUnavailable, resolve: oversightUnavailable,
+};

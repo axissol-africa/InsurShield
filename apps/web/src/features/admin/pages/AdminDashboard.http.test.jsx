@@ -54,9 +54,9 @@ describe('administrator HTTP data', () => {
     await waitFor(() => expect(api.admin.overview).toHaveBeenCalledTimes(1));
     expect(api.admin.premiumByMonth).toHaveBeenCalledWith(12);
     expect(api.admin.recentPolicies).toHaveBeenCalledWith(50);
-    expect(screen.getByText('POL-SERVER-1')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('POL-SERVER-1')).toBeVisible());
     expect(screen.queryByText('POL-STALE')).not.toBeInTheDocument();
-    expect(screen.getByText('ZMW 12,800.00')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('ZMW 12,800.00')).toBeVisible());
   });
 
   it('uses the server lookup for a customer record', async () => {
