@@ -55,6 +55,8 @@ import {
   SETTLEMENT_STATUSES,
   PAYMENT_STATUSES,
   RECONCILIATION_KINDS,
+  SERVICE_REQUEST_STATUSES,
+  SERVICE_REQUEST_TYPES,
   RECONCILIATION_OUTCOMES,
   RECONCILIATION_STATUSES,
   POLICY_STATUSES,
@@ -134,6 +136,8 @@ export const notificationCategory = pgEnum('NotificationCategory', NOTIFICATION_
 export const notificationDeliveryStatus = pgEnum('NotificationDeliveryStatus', NOTIFICATION_DELIVERY_STATUSES);
 export const approvalAction = pgEnum('ApprovalAction', APPROVAL_ACTIONS);
 export const approvalStatus = pgEnum('ApprovalStatus', APPROVAL_STATUSES);
+export const serviceRequestStatus = pgEnum('ServiceRequestStatus', SERVICE_REQUEST_STATUSES);
+export const serviceRequestType = pgEnum('ServiceRequestType', SERVICE_REQUEST_TYPES);
 
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, precision: 3, mode: 'date' });
@@ -311,6 +315,7 @@ export const customers = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: timestamptz('deletedAt'),
+    anonymisedAt: timestamptz('anonymisedAt'),
     userId: uuid('userId'),
   },
   (t) => [
@@ -319,6 +324,7 @@ export const customers = pgTable(
     uniqueIndex('customers_userId_key').on(t.userId),
     index('customers_deletedAt_idx').on(t.deletedAt),
     fk('customers_userId_fkey', [t.userId], [authUsers.id], 'restrict'),
+    check('customers_anonymised_check', sql`${t.anonymisedAt} IS NULL OR ${t.deletedAt} IS NOT NULL`),
   ],
 );
 
@@ -752,6 +758,8 @@ export const documents = pgTable(
     scannerName: text('scannerName'),
     retentionClass: documentRetentionClass('retentionClass').notNull(),
     uploadedAt: createdAt('uploadedAt'),
+    deletionStartedAt: timestamptz('deletionStartedAt'),
+    deletedAt: timestamptz('deletedAt'),
     uploadedByCustomerId: uuid('uploadedByCustomerId'),
     uploadedByStaffId: uuid('uploadedByStaffId'),
   },
@@ -759,6 +767,9 @@ export const documents = pgTable(
     uniqueIndex('documents_storageKey_key').on(t.storageKey),
     index('documents_kind_idx').on(t.kind),
     index('documents_scanStatus_idx').on(t.scanStatus),
+    index('documents_retentionClass_uploadedAt_idx').on(t.retentionClass, t.uploadedAt).where(sql`${t.deletedAt} IS NULL`),
+    index('documents_pending_deletion_idx').on(t.uploadedByCustomerId, t.id)
+      .where(sql`${t.deletionStartedAt} IS NOT NULL AND ${t.deletedAt} IS NULL`),
     fk('documents_uploadedByCustomerId_fkey', [t.uploadedByCustomerId], [customers.id], 'set null'),
     fk('documents_uploadedByStaffId_fkey', [t.uploadedByStaffId], [staffUsers.id], 'set null'),
   ],
@@ -1671,6 +1682,118 @@ export const providerStatementLines = pgTable(
     fk('provider_statement_lines_importId_fkey', [t.importId], [providerStatementImports.id], 'restrict'),
     fk('provider_statement_lines_paymentId_fkey', [t.paymentId], [payments.id], 'restrict'),
     fk('provider_statement_lines_refundId_fkey', [t.refundId], [paymentRefunds.id], 'restrict'),
+  ],
+);
+
+/** Each renewal reminder a policy was sent, so a job that runs twice sends it once. */
+export const renewalReminders = pgTable(
+  'renewal_reminders',
+  {
+    id: id(),
+    policyNumber: text('policyNumber').notNull(),
+    kind: varchar('kind', { length: 10 }).$type<'DUE' | 'LAPSED'>().notNull(),
+    daysBefore: integer('daysBefore').notNull(),
+    sentAt: createdAt('sentAt'),
+  },
+  (t) => [
+    uniqueIndex('renewal_reminders_policyNumber_kind_daysBefore_key').on(t.policyNumber, t.kind, t.daysBefore),
+    fk('renewal_reminders_policyNumber_fkey', [t.policyNumber], [policies.policyNumber], 'cascade'),
+    check('renewal_reminders_kind_check', sql`${t.kind} IN ('DUE', 'LAPSED')`),
+  ],
+);
+
+/**
+ * A customer's request to the insurer about a policy they hold: a correction,
+ * a replacement document, a cancellation or help. Nothing here changes the
+ * policy until the insurer completes the request, and only a cancellation
+ * changes it then.
+ */
+export const serviceRequests = pgTable(
+  'service_requests',
+  {
+    reference: text('reference').primaryKey(),
+    policyNumber: text('policyNumber').notNull(),
+    customerId: uuid('customerId').notNull(),
+    insurerId: uuid('insurerId').notNull(),
+    type: serviceRequestType('type').notNull(),
+    status: serviceRequestStatus('status').notNull().default('SUBMITTED'),
+    reason: text('reason').notNull(),
+    /** The day the customer asks a cancellation to take effect, in Lusaka. */
+    requestedEffectiveDate: date('requestedEffectiveDate', { mode: 'string' }),
+    decision: varchar('decision', { length: 10 }).$type<'APPROVED' | 'DECLINED'>(),
+    decisionNote: text('decisionNote'),
+    decidedByStaffId: uuid('decidedByStaffId'),
+    decidedAt: timestamptz('decidedAt'),
+    /** What the insurer will refund on an approved cancellation, which it works out, not InsurShield. */
+    refundAmountMinor: ngwee('refundAmountMinor'),
+    effectiveDate: date('effectiveDate', { mode: 'string' }),
+    completedAt: timestamptz('completedAt'),
+    completedByStaffId: uuid('completedByStaffId'),
+    /** The refund item a completed cancellation opened, if it refunds anything. */
+    reconciliationItemId: uuid('reconciliationItemId'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('service_requests_customerId_createdAt_idx').on(t.customerId, t.createdAt),
+    index('service_requests_insurerId_status_createdAt_idx').on(t.insurerId, t.status, t.createdAt),
+    index('service_requests_policyNumber_idx').on(t.policyNumber),
+    // One cancellation at a time per policy: a second would race the first to the refund.
+    uniqueIndex('service_requests_policyNumber_open_cancellation_key')
+      .on(t.policyNumber)
+      .where(sql`${t.type} = 'CANCELLATION' AND ${t.status} IN ('SUBMITTED', 'IN_REVIEW', 'INFORMATION_REQUIRED', 'APPROVED')`),
+    fk('service_requests_policyNumber_fkey', [t.policyNumber], [policies.policyNumber], 'restrict'),
+    fk('service_requests_customerId_fkey', [t.customerId], [customers.id], 'restrict'),
+    fk('service_requests_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
+    fk('service_requests_decidedByStaffId_fkey', [t.decidedByStaffId], [staffUsers.id], 'restrict'),
+    fk('service_requests_completedByStaffId_fkey', [t.completedByStaffId], [staffUsers.id], 'restrict'),
+    fk('service_requests_reconciliationItemId_fkey', [t.reconciliationItemId], [reconciliationItems.id], 'restrict'),
+    check('service_requests_decision_check', sql`${t.decision} IS NULL OR ${t.decision} IN ('APPROVED', 'DECLINED')`),
+    check(
+      'service_requests_decided_check',
+      sql`(${t.decision} IS NULL) = (${t.decidedAt} IS NULL) AND (${t.decision} IS NULL) = (${t.decidedByStaffId} IS NULL)`,
+    ),
+    check(
+      'service_requests_status_decision_check',
+      // An approved request may still be withdrawn before it is done; a declined one is final.
+      sql`(${t.status} NOT IN ('APPROVED', 'COMPLETED') OR ${t.decision} = 'APPROVED') AND (${t.decision} IS DISTINCT FROM 'APPROVED' OR ${t.status} IN ('APPROVED', 'COMPLETED', 'WITHDRAWN')) AND (${t.status} = 'DECLINED') = (${t.decision} IS NOT DISTINCT FROM 'DECLINED')`,
+    ),
+    check('service_requests_completed_check', sql`(${t.status} = 'COMPLETED') = (${t.completedAt} IS NOT NULL)`),
+    check(
+      'service_requests_cancellation_check',
+      sql`(${t.type} = 'CANCELLATION') = (${t.requestedEffectiveDate} IS NOT NULL)
+        AND (${t.type} = 'CANCELLATION' OR (${t.refundAmountMinor} IS NULL AND ${t.effectiveDate} IS NULL))
+        AND (${t.type} <> 'CANCELLATION' OR ${t.decision} IS DISTINCT FROM 'APPROVED' OR (${t.refundAmountMinor} IS NOT NULL AND ${t.effectiveDate} IS NOT NULL))`,
+    ),
+    check('service_requests_refund_check', sql`${t.refundAmountMinor} IS NULL OR ${withinBounds(t.refundAmountMinor, 0, MAX_NGWEE)}`),
+  ],
+);
+
+/**
+ * Everything said and done on a service request, in order, never edited. An
+ * entry the insurer marks as internal is never shown to the customer.
+ */
+export const serviceRequestUpdates = pgTable(
+  'service_request_updates',
+  {
+    id: id(),
+    reference: text('reference').notNull(),
+    authorKind: varchar('authorKind', { length: 10 }).$type<'CUSTOMER' | 'INSURER' | 'SYSTEM'>().notNull(),
+    /** The customer or staff member; never shown to the customer for staff. */
+    authorId: uuid('authorId'),
+    message: text('message').notNull(),
+    visibleToCustomer: boolean('visibleToCustomer').notNull(),
+    statusFrom: serviceRequestStatus('statusFrom'),
+    statusTo: serviceRequestStatus('statusTo'),
+    documentIds: uuid('documentIds').array().notNull().default(sql`'{}'::uuid[]`),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('service_request_updates_reference_createdAt_idx').on(t.reference, t.createdAt),
+    fk('service_request_updates_reference_fkey', [t.reference], [serviceRequests.reference], 'cascade'),
+    check('service_request_updates_authorKind_check', sql`${t.authorKind} IN ('CUSTOMER', 'INSURER', 'SYSTEM')`),
+    // What the customer wrote or was sent is theirs to see; an internal note is the insurer's own.
+    check('service_request_updates_customer_visible_check', sql`${t.authorKind} <> 'CUSTOMER' OR ${t.visibleToCustomer}`),
   ],
 );
 

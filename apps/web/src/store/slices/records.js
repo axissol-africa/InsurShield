@@ -35,11 +35,18 @@ export const createRecordsSlice = (set) => ({
       quoteRequests: [request, ...state.quoteRequests.filter((item) => item.id !== request.id)],
       activeQuoteRequestId: request.id,
       requotedFromId: null,
+      renewalOfPolicyNumber: null,
     })),
   setPolicies: (policies) => applyUnlessLeaving(set, () => ({ policies })),
   setClaims: (claims) => applyUnlessLeaving(set, () => ({ claims })),
   setNcdApplications: (ncdApplications) => applyUnlessLeaving(set, () => ({ ncdApplications })),
   setInspections: (inspections) => applyUnlessLeaving(set, () => ({ inspections })),
+
+  // ─── Service requests (mock lane only) ──────────────────
+  // With a backend the pages read requests straight from the API; this list
+  // is what the browser adapter serves when there is none.
+  serviceRequests: [],
+  setServiceRequests: (serviceRequests) => applyUnlessLeaving(set, () => ({ serviceRequests })),
 
   // ─── Quote requests and insurer replies ─────────────────
   quoteRequests: seed(SEED_QUOTE_REQUESTS),

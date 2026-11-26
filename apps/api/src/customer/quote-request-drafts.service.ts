@@ -1,3 +1,4 @@
+import { assertOpenCustomer } from '../db/customer-lock.js';
 import { Injectable } from '@nestjs/common';
 import { fromContract } from '../common/contract.js';
 import { AuditService } from '../common/audit/audit.service.js';
@@ -50,6 +51,7 @@ export class QuoteRequestDraftsService {
   async create(customer: CustomerPrincipal, dto: CreateQuoteRequestDraftDto): Promise<QuoteRequestDraftResponse> {
     const now = new Date();
     return this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const references = dto.documentReferences ?? [];
       await this.assertDocumentReferences(tx, customer, references);
       const draft = await this.repository.create(tx, {
@@ -80,6 +82,7 @@ export class QuoteRequestDraftsService {
     }
     const now = new Date();
     return this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const before = await this.findOwnedActive(tx, customer.id, id, now);
       const beforeDocuments = await this.repository.documentsForDrafts(tx, [before.id]);
       const references = dto.documentReferences;
@@ -112,6 +115,7 @@ export class QuoteRequestDraftsService {
   async remove(customer: CustomerPrincipal, id: string): Promise<void> {
     const now = new Date();
     await this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const draft = await this.repository.deleteOwnedActive(tx, customer.id, id, now);
       if (!draft) throw ApiException.notFound('Quote request draft', id);
       await this.audit.write(tx, {

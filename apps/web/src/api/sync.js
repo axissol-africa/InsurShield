@@ -34,7 +34,7 @@ const load = async (label, fetcher, apply) => {
 export const hydrateCustomer = async () => {
   if (!live() || !useStore.getState().isAuthenticated) return;
   const store = useStore.getState();
-  await Promise.all([
+  return Promise.all([
     load('your quote requests', api.quotes.listMine, store.setQuoteRequests),
     load('your policies', api.policies.listMine, store.setPolicies),
     load('your claims', api.claims.listMine, store.setClaims),

@@ -1,3 +1,4 @@
+import { lockCustomerForFinance } from '../db/customer-lock.js';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ApprovalRequestRow } from '../approvals/approval.repository.js';
 import { ApprovalService } from '../approvals/approval.service.js';
@@ -53,6 +54,9 @@ export class RefundsService {
     const reason = dto.reason.trim();
     return this.refunds.transaction(async (tx) => {
       const now = new Date();
+      const customerId = await this.refunds.paymentCustomerId(tx, transactionId);
+      if (!customerId) throw ApiException.notFound('Payment', transactionId);
+      await lockCustomerForFinance(tx, customerId);
       const payment = await this.refunds.lockPaymentByTransaction(tx, transactionId);
       if (!payment) throw ApiException.notFound('Payment', transactionId);
       if (payment.status !== 'CONFIRMED') {

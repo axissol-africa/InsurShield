@@ -27,8 +27,10 @@ describe('a served application', () => {
       handled.push(job.key);
     });
     const key = `served-${Date.now()}`;
+    // Due before anything else the suite has left in the shared queue, so the
+    // test measures that the runner works, not how long the backlog is.
     await testApp.app.get(JobsRepository).transaction((tx) =>
-      testApp.app.get(JobsRepository).enqueue(tx, { kind: 'test.served', key, payload: {}, runAfter: new Date() }),
+      testApp.app.get(JobsRepository).enqueue(tx, { kind: 'test.served', key, payload: {}, runAfter: new Date(0) }),
     );
 
     startServing(testApp.app);

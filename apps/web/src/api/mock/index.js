@@ -6,12 +6,14 @@
  * loading states are exercised. Anything the prototype does not model yet
  * (OTP, payment gateway, RTSA registry) returns a realistic stub.
  */
+import { accountDocuments, exportAccount } from './account';
 import { env } from '@/config/env';
 import { useStore, belongsToCustomer } from '@/store';
 import { demoCoverGuides } from '@/domain/insurers';
 import { newIdempotencyKey, wait } from '../shared';
 import { documentToRecord } from '@/lib/files';
 import { canAskCustomer, canDecline, CUSTOMER_STATUS_LABELS, openQuestion, PROTOTYPE_DECLINE_REASONS } from '@/domain/quoteWorkflow';
+import { canAskAbout, canCancel, canMove, isOpen, lusakaToday, statusAfter } from '@/domain/serviceRequests';
 
 const state = () => useStore.getState();
 const call = async (fn) => { await wait(env.mockLatencyMs); return fn(state()); };
@@ -151,11 +153,12 @@ const versionFor = (s, productId, versionId) => {
   const version = product?.versions?.find((entry) => entry.id === versionId);
   return { product, version };
 };
-const publicProductDirectory = (s, { coverType, limit = 100 } = {}) => seededProducts(s)
+const publicProductDirectory = (s, { coverType, productVersionId, limit = 100 } = {}) => seededProducts(s)
   .flatMap((product) => product.versions.map((version) => ({ product, version })))
   .filter(({ product, version }) => {
     const insurer = s.insurersList.find((entry) => entry.id === product.insurerId);
     return version.status === 'APPROVED' && (!coverType || version.coverType === coverType)
+      && (!productVersionId || version.id === productVersionId)
       && (!insurer?.status || insurer.status === 'Active')
       && version.effectiveFrom <= today() && (!version.effectiveUntil || version.effectiveUntil >= today());
   })
@@ -439,7 +442,15 @@ export const contactPreferences = {
 };
 
 export const account = {
-  close: () => call((s) => { s.deleteCurrentAccount(); return { ok: true }; }),
+  export: () => call(exportAccount),
+  documents: () => call(accountDocuments),
+  close: () => call((s) => {
+    const records = exportAccount(s);
+    if (records.policies.some((policy) => policy.status === 'Active' && (!policy.policyDates?.endDate || policy.policyDates.endDate >= lusakaToday()))) throw new Error('Your account cannot be closed while cover is in force.');
+    if (records.serviceRequests.some((request) => isOpen(request.status))) throw new Error('Your account cannot be closed while a service request is open.');
+    if (records.policies.some((policy) => policy.status === 'Issuance failed')) throw new Error('Your account cannot be closed while a refund is in progress.');
+    s.deleteCurrentAccount(); return { ok: true };
+  }),
 };
 
 /**
@@ -471,8 +482,9 @@ export const quotes = {
     if (selectedIds.length < 1 || selectedIds.length > 5) {
       throw new Error('Choose one to five published insurance products.');
     }
-    const available = publicProductDirectory(s);
-    const selectedProducts = selectedIds.map((id) => available.find((product) => product.version.id === id)).filter(Boolean);
+    const selectedProducts = selectedIds
+      .map((productVersionId) => publicProductDirectory(s, { productVersionId, limit: 1 })[0])
+      .filter(Boolean);
     if (selectedProducts.length !== selectedIds.length) {
       throw new Error('One or more selected products are no longer available. Reload the product list and try again.');
     }
@@ -1344,4 +1356,149 @@ export const admin = {
   // Audit history needs the server's append-only database. Prototype mode
   // states that boundary plainly rather than inventing compliance records.
   auditLogs: () => call(() => ({ items: [], nextCursor: null })),
+};
+
+// ─── Service requests ─────────────────────────────────────────
+// The same moves the API allows, kept in the store so a demo survives a reload.
+// Documents are recorded by name only: the browser lane has nowhere to keep them.
+
+const srRefused = (message) => new Error(message);
+const srNamed = (files = []) => files.map((file) => ({ id: newReference('DOC'), name: file.name, type: file.type, size: file.size }));
+const SR_STAFF_ONLY = ['customerEmail', 'customer', 'reconciliationItemId'];
+const without = (record, keys) => Object.fromEntries(Object.entries(record).filter(([key]) => !keys.includes(key)));
+const srToCustomer = (request) => ({
+  ...without(request, SR_STAFF_ONLY),
+  nextAction: request.status === 'INFORMATION_REQUIRED' ? 'REPLY' : null,
+  updates: request.updates.filter((update) => update.visibleToCustomer).map((update) => without(update, ['authorName', 'visibleToCustomer'])),
+});
+const srToInsurer = (request) => ({ ...request, nextAction: request.status === 'INFORMATION_REQUIRED' ? 'REPLY' : null });
+const srSummary = (request) => without(request, ['updates']);
+const srSave = (s, request) => s.setServiceRequests([request, ...s.serviceRequests.filter((entry) => entry.reference !== request.reference)]);
+
+function srMine(s, reference) {
+  const request = s.serviceRequests.find((entry) => entry.reference === reference);
+  if (!request || request.customerEmail !== s.customer?.email) throw srRefused('Service request was not found.');
+  return request;
+}
+
+function srOwn(s, reference) {
+  const request = s.serviceRequests.find((entry) => entry.reference === reference);
+  if (!request || request.insurer !== insurerName()) throw srRefused('Service request was not found.');
+  return request;
+}
+
+function srMove(s, request, action, entry, patch = {}) {
+  if (!canMove(action, request.status)) {
+    throw srRefused(isOpen(request.status) ? 'This request is not at the step for that. Reload it to see where it stands.' : 'This request is closed, so nothing more can be done on it.');
+  }
+  const at = new Date().toISOString();
+  const status = statusAfter(action, request.status);
+  const moved = {
+    ...request,
+    ...patch,
+    status,
+    updatedAt: at,
+    updates: [...request.updates, { id: newReference('UPD'), statusFrom: action === 'UPDATE' ? null : request.status, statusTo: action === 'UPDATE' ? null : status, documents: [], createdAt: at, ...entry }],
+  };
+  srSave(s, moved);
+  return moved;
+}
+
+const srInsurerEntry = (message, visibleToCustomer = true) => ({ author: 'INSURER', authorName: state().staffSession?.fullName || insurerName(), message, visibleToCustomer });
+
+export const serviceRequests = {
+  submit: ({ policyNumber, type, reason, requestedEffectiveDate, files }) => call((s) => {
+    const policy = mine(s.policies).find((entry) => entry.policyNumber === policyNumber);
+    if (!policy) throw srRefused('Policy was not found.');
+    if (!canAskAbout(policy)) throw srRefused('This policy has ended or was never issued, so the insurer cannot act on it.');
+    if (type === 'CANCELLATION') {
+      if (!canCancel(policy)) throw srRefused('Only cover that is in force can be cancelled.');
+      if (!requestedEffectiveDate || requestedEffectiveDate < lusakaToday()) throw srRefused('Choose today or a later day for the cover to end.');
+      if (s.serviceRequests.some((entry) => entry.policyNumber === policyNumber && entry.type === 'CANCELLATION' && isOpen(entry.status))) {
+        throw srRefused('You have already asked to cancel this policy. Follow that request instead.');
+      }
+    }
+    if ((reason || '').trim().length < 10) throw srRefused('Tell the insurer what you need in at least 10 characters.');
+    const at = new Date().toISOString();
+    const request = {
+      reference: newReference('SR'),
+      policyNumber,
+      insurer: policy.insurer,
+      type,
+      status: 'SUBMITTED',
+      reason: reason.trim(),
+      requestedEffectiveDate: type === 'CANCELLATION' ? requestedEffectiveDate : null,
+      decision: null,
+      completedAt: null,
+      createdAt: at,
+      updatedAt: at,
+      customerEmail: s.customer?.email,
+      customer: { fullName: s.customer?.fullName || s.customer?.name || 'Customer', email: s.customer?.email || '', phone: s.customer?.phone || '' },
+      reconciliationItemId: null,
+      updates: [{ id: newReference('UPD'), author: 'CUSTOMER', authorName: s.customer?.fullName || 'Customer', message: reason.trim(), visibleToCustomer: true, statusFrom: null, statusTo: 'SUBMITTED', documents: srNamed(files), createdAt: at }],
+    };
+    srSave(s, request);
+    return srToCustomer(request);
+  }),
+  listMine: () => call((s) => s.serviceRequests.filter((entry) => entry.customerEmail === s.customer?.email).map((entry) => srSummary(srToCustomer(entry)))),
+  get: (reference) => call((s) => srToCustomer(srMine(s, reference))),
+  reply: (reference, { message, files }) => call((s) =>
+    srToCustomer(srMove(s, srMine(s, reference), 'REPLY', { author: 'CUSTOMER', authorName: s.customer?.fullName, message: message.trim(), visibleToCustomer: true, documents: srNamed(files) }))),
+  withdraw: (reference, reason) => call((s) =>
+    srToCustomer(srMove(s, srMine(s, reference), 'WITHDRAW', { author: 'CUSTOMER', authorName: s.customer?.fullName, message: reason?.trim() || 'The customer withdrew the request.', visibleToCustomer: true }))),
+  insurer: {
+    list: (status) => call((s) => s.serviceRequests
+      .filter((entry) => entry.insurer === insurerName() && (!status || entry.status === status))
+      .sort((a, b) => Number(isOpen(b.status)) - Number(isOpen(a.status)) || a.createdAt.localeCompare(b.createdAt))
+      .map((entry) => ({ ...srSummary(srToInsurer(entry)), customerName: entry.customer.fullName }))),
+    get: (reference) => call((s) => srToInsurer(srOwn(s, reference))),
+    review: (reference) => call((s) => srToInsurer(srMove(s, srOwn(s, reference), 'REVIEW', srInsurerEntry(`${insurerName()} is looking at your request.`)))),
+    requestInformation: (reference, message) => call((s) => srToInsurer(srMove(s, srOwn(s, reference), 'REQUEST_INFORMATION', srInsurerEntry(message.trim())))),
+    postUpdate: (reference, { message, visibleToCustomer, files }) => call((s) =>
+      srToInsurer(srMove(s, srOwn(s, reference), 'UPDATE', { ...srInsurerEntry(message.trim(), visibleToCustomer), documents: srNamed(files) }))),
+    decline: (reference, reason) => call((s) => {
+      const at = new Date().toISOString();
+      return srToInsurer(srMove(s, srOwn(s, reference), 'DECLINE', srInsurerEntry(reason.trim()), {
+        decision: { outcome: 'DECLINED', note: reason.trim(), refundAmount: null, effectiveDate: null, decidedAt: at },
+      }));
+    }),
+    approve: (reference, { note, refundAmount, effectiveDate }) => call((s) => {
+      const request = srOwn(s, reference);
+      const cancellation = request.type === 'CANCELLATION';
+      if (cancellation && (refundAmount === undefined || !effectiveDate)) throw srRefused('State the refund, zero if none is due, and the day the cover ends.');
+      return srToInsurer(srMove(s, request, 'APPROVE', srInsurerEntry(note.trim()), {
+        decision: { outcome: 'APPROVED', note: note.trim(), refundAmount: cancellation ? refundAmount : null, effectiveDate: cancellation ? effectiveDate : null, decidedAt: new Date().toISOString() },
+      }));
+    }),
+    complete: (reference, { note, files }) => call((s) => {
+      let request = srOwn(s, reference);
+      const at = new Date().toISOString();
+      if (request.type === 'CANCELLATION') {
+        if (request.status !== 'APPROVED') throw srRefused('Approve the cancellation with its refund and end date before you complete it.');
+        if (request.decision?.effectiveDate && lusakaToday() < request.decision.effectiveDate) {
+          throw srRefused(`The cover ends on ${request.decision.effectiveDate}. Complete the cancellation on or after that day.`);
+        }
+        s.updatePolicy(request.policyNumber, () => ({ status: 'Cancelled' }));
+      } else if (canMove('APPROVE', request.status)) {
+        request = { ...request, status: 'APPROVED', decision: { outcome: 'APPROVED', note: note.trim(), refundAmount: null, effectiveDate: null, decidedAt: at } };
+      }
+      const from = srOwn(s, reference).status;
+      const done = srMove(s, request, 'COMPLETE', { ...srInsurerEntry(note.trim()), documents: srNamed(files) }, { completedAt: at });
+      done.updates[done.updates.length - 1].statusFrom = from;
+      srSave(s, done);
+      return srToInsurer(done);
+    }),
+  },
+};
+
+export const support = {
+  contact: () => call((s) => ({
+    helpDesk: { email: null, phone: null, hours: null },
+    references: [
+      ...s.serviceRequests.filter((entry) => entry.customerEmail === s.customer?.email && isOpen(entry.status))
+        .map((entry) => ({ type: 'SERVICE_REQUEST', reference: entry.reference, status: entry.status, createdAt: entry.createdAt })),
+      ...mine(s.policies).filter(canAskAbout).map((policy) => ({ type: 'POLICY', reference: policy.policyNumber, status: policy.status, createdAt: policy.issuedAt || policy.receivedAt || new Date().toISOString() })),
+    ],
+  })),
+  findRecord: () => call(() => { throw new Error('Finding a record by reference needs the InsurShield API.'); }),
 };

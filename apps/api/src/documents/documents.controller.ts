@@ -34,6 +34,7 @@ const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
   INSURER_LOGO: { kind: 'insurer-logo' as const, insurerId: 'unfiled' },
   NCD_EVIDENCE: { kind: 'ncd-evidence' as const, applicationNumber: 'unfiled' },
   INSURER_EVIDENCE: { kind: 'insurer-evidence' as const, insurerId: 'unfiled' },
+  SERVICE_REQUEST_DOCUMENT: { kind: 'service-request' as const, reference: 'unfiled' },
 };
 
 /**

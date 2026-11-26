@@ -4,13 +4,17 @@ import { ApiException } from '../common/errors/api.exception.js';
 import { openRenewal, renewalState } from './domain/renewal.js';
 import { toPolicyResponse, type PolicyResponse } from './dto/policy.response.js';
 import { PoliciesRepository, type PolicyWithParties } from './policies.repository.js';
+import { SettingsService } from '../settings/settings.service.js';
+import type { RenewalProduct } from './dto/policy.response.js';
 import type { CustomerPrincipal } from './customer-principal.js';
+import type { Transaction } from '../db/database.module.js';
 
 @Injectable()
 export class PoliciesService {
   constructor(
     private readonly repository: PoliciesRepository,
     private readonly documents: DocumentsService,
+    private readonly settings: SettingsService,
   ) {}
 
   async list(customerId: string): Promise<PolicyResponse[]> {
@@ -48,26 +52,60 @@ export class PoliciesService {
     });
   }
 
+  async assertRenewalAvailable(tx: Transaction, customerId: string, policyNumber: string, now: Date): Promise<void> {
+    // Serializes submissions using different idempotency keys against the same policy.
+    const policy = await this.repository.lockOwned(tx, customerId, policyNumber);
+    if (!policy) throw ApiException.notFound('Policy', policyNumber);
+    if (policy.status !== 'ACTIVE') {
+      throw ApiException.conflict('POLICY_NOT_RENEWABLE', 'Only an issued policy can be renewed. You can still start a new quote.');
+    }
+    const existing = openRenewal(await this.repository.renewalsOf([policyNumber], tx), now);
+    if (existing) {
+      throw ApiException.conflict('RENEWAL_IN_PROGRESS', `A renewal for this policy already exists as ${existing.id}.`);
+    }
+  }
+
   private async responses(rows: PolicyWithParties[]): Promise<PolicyResponse[]> {
     const renewals = await this.repository.renewalsOf(rows.map((row) => row.policy.policyNumber));
     const now = new Date();
+    const { value: renewal } = await this.settings.effective('RENEWAL_POLICY', now);
+    const bought = [...new Set(rows.flatMap((row) => (row.policy.productVersionId ? [row.policy.productVersionId] : [])))];
+    const current = await this.repository.currentVersionsFor(bought, now);
 
     const responses: PolicyResponse[] = [];
     for (const row of rows) {
       const { policy } = row;
+      const state = renewalState(
+        policy.policyEndDate,
+        renewals.filter((entry) => entry.renewalOfPolicyNumber === policy.policyNumber),
+        now,
+        renewal.windowDays,
+      );
       responses.push(
         toPolicyResponse(
           row,
-          renewalState(
-            policy.policyEndDate,
-            renewals.filter((renewal) => renewal.renewalOfPolicyNumber === policy.policyNumber),
-            now,
-          ),
+          { ...state, renewable: state.renewable && policy.status === 'ACTIVE' },
           policy.quoteDocumentId ? await this.documents.record(policy.quoteDocumentId) : null,
           policy.certificateDocumentId ? await this.documents.record(policy.certificateDocumentId) : null,
+          renewalProductOf(policy.productVersionId, current),
         ),
       );
     }
     return responses;
   }
+}
+
+/**
+ * The product a renewal starts from (quote-flow step 12): the newest version
+ * of the product bought that a customer may buy today. A policy from before
+ * product selection has none to carry over.
+ */
+function renewalProductOf(
+  productVersionId: string | null,
+  current: ReadonlyMap<string, { id: string; name: string; versionNumber: number }>,
+): RenewalProduct | null {
+  if (!productVersionId) return null;
+  const version = current.get(productVersionId);
+  if (!version) return { available: false, reason: 'This product is no longer offered. Compare current products to renew.' };
+  return { available: true, productVersionId: version.id, name: version.name, versionNumber: version.versionNumber, termsChanged: version.id !== productVersionId };
 }

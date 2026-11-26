@@ -1,6 +1,10 @@
+import { RENEWAL_REMINDERS, RenewalReminders } from './renewal-reminders.js';
 import { Module, type OnModuleInit } from '@nestjs/common';
 import { AccountRepository } from './account.repository.js';
 import { AccountService } from './account.service.js';
+import { AccountDataController } from './account-data.controller.js';
+import { AccountDataRepository } from './account-data.repository.js';
+import { AccountDataService } from './account-data.service.js';
 import { ClaimsRepository } from './claims.repository.js';
 import { ClaimsService } from './claims.service.js';
 import { CustomerController } from './customer.controller.js';
@@ -25,19 +29,22 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
 
 @Module({
   imports: [SettingsModule],
-  controllers: [CustomerController, QuoteRequestDraftsController],
+  controllers: [CustomerController, QuoteRequestDraftsController, AccountDataController],
   providers: [
     QuoteRequestsService,
     QuoteRequestsRepository,
     QuoteAvailabilityService,
     PoliciesService,
     PoliciesRepository,
+    RenewalReminders,
     ClaimsService,
     ClaimsRepository,
     NcdService,
     NcdRepository,
     AccountService,
     AccountRepository,
+    AccountDataRepository,
+    AccountDataService,
     IdempotencyService,
     QuoteRequestDraftsService,
     QuoteRequestDraftsRepository,
@@ -53,6 +60,7 @@ import { UnderwritingInspectionsService } from './underwriting-inspections.servi
     QuoteWorkflowService,
     UnderwritingInspectionsRepository,
     UnderwritingInspectionsService,
+    RenewalReminders,
   ],
 })
 export class CustomerModule implements OnModuleInit {
@@ -60,6 +68,7 @@ export class CustomerModule implements OnModuleInit {
     private readonly runner: JobRunner,
     private readonly draftPurge: QuoteRequestDraftPurge,
     private readonly workflow: QuoteWorkflowService,
+    private readonly reminders: RenewalReminders,
   ) {}
 
   onModuleInit(): void {
@@ -69,6 +78,10 @@ export class CustomerModule implements OnModuleInit {
       await this.workflow.sweep();
     });
     this.runner.onStart(() => this.workflow.schedule(new Date()));
+    this.runner.register(RENEWAL_REMINDERS, async () => {
+      await this.reminders.run();
+    });
+    this.runner.onStart(() => this.reminders.schedule(new Date()));
     this.runner.register(QUOTE_STAFF_EMAIL, (job) =>
       this.workflow.sendStaffEmail(job.key, job.payload as { to: string; subject: string; body: string }),
     );

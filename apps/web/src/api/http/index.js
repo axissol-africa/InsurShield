@@ -22,6 +22,8 @@ export const auth = {
 };
 
 export const account = {
+  export: () => apiClient.get('/account/export'),
+  documents: () => apiClient.get('/account/documents'),
   close: () => apiClient.delete('/account'),
 };
 
@@ -65,7 +67,11 @@ const productPath = (id, productVersionId) =>
   `/insurer/quote-requests/${encodeURIComponent(id)}/products/${encodeURIComponent(productVersionId)}`;
 
 export const quotes = {
-  submitRequest: (request, idempotencyKey = newIdempotencyKey()) => apiClient.post('/quote-requests', request, { headers: { 'Idempotency-Key': idempotencyKey } }),
+  submitRequest: (request, idempotencyKey = newIdempotencyKey()) => {
+    const body = { ...request };
+    delete body.customer;
+    return apiClient.post('/quote-requests', body, { headers: { 'Idempotency-Key': idempotencyKey } });
+  },
   listMine: () => apiClient.get('/quote-requests'),
   get: (id) => apiClient.get(`/quote-requests/${id}`),
   requote: (id) => apiClient.post(`/quote-requests/${id}/requote`),
@@ -282,4 +288,49 @@ export const settlements = {
   listForInsurer: () => apiClient.get('/insurer/settlements'),
   getForInsurer: (id) => apiClient.get(`/insurer/settlements/${encodeURIComponent(id)}`),
   exportCsv: (id) => apiClient.get(`/insurer/settlements/${encodeURIComponent(id)}/export`, { responseType: 'text' }),
+};
+
+/**
+ * Service requests about a policy the customer holds. Files are uploaded first
+ * and attached by id, like every other document.
+ */
+const attach = async (files = [], uploaded) => {
+  const ids = [];
+  for (const file of files) {
+    let id = uploaded?.get(file);
+    if (!id) {
+      id = await uploadedDocumentId(file, 'document', 'SERVICE_REQUEST_DOCUMENT');
+      uploaded?.set(file, id);
+    }
+    ids.push(id);
+  }
+  return ids;
+};
+const serviceRequestPath = (reference) => `/service-requests/${encodeURIComponent(reference)}`;
+const insurerServiceRequestPath = (reference) => `/insurer/service-requests/${encodeURIComponent(reference)}`;
+
+export const serviceRequests = {
+  submit: async ({ files, ...request }, { key = newIdempotencyKey(), uploaded } = {}) =>
+    apiClient.post('/service-requests', { ...request, documentIds: await attach(files, uploaded) }, { headers: { 'Idempotency-Key': key } }),
+  listMine: () => apiClient.get('/service-requests'),
+  get: (reference) => apiClient.get(serviceRequestPath(reference)),
+  reply: async (reference, { message, files }) => apiClient.post(`${serviceRequestPath(reference)}/reply`, { message, documentIds: await attach(files) }),
+  withdraw: (reference, reason) => apiClient.post(`${serviceRequestPath(reference)}/withdraw`, reason ? { reason } : {}),
+  insurer: {
+    list: (status) => apiClient.get('/insurer/service-requests', { params: status ? { status } : {} }),
+    get: (reference) => apiClient.get(insurerServiceRequestPath(reference)),
+    review: (reference) => apiClient.post(`${insurerServiceRequestPath(reference)}/review`),
+    requestInformation: (reference, message) => apiClient.post(`${insurerServiceRequestPath(reference)}/information-requests`, { message }),
+    postUpdate: async (reference, { message, visibleToCustomer, files }) =>
+      apiClient.post(`${insurerServiceRequestPath(reference)}/updates`, { message, visibleToCustomer, documentIds: await attach(files) }),
+    decline: (reference, reason) => apiClient.post(`${insurerServiceRequestPath(reference)}/decline`, { reason }),
+    approve: (reference, decision) => apiClient.post(`${insurerServiceRequestPath(reference)}/approve`, decision),
+    complete: async (reference, { note, files }) => apiClient.post(`${insurerServiceRequestPath(reference)}/complete`, { note, documentIds: await attach(files) }),
+  },
+};
+
+/** The hand-over to the external help desk, and the look-up its agents use. */
+export const support = {
+  contact: () => apiClient.get('/support/contact'),
+  findRecord: (reference, reason) => apiClient.get(`/admin/records/${encodeURIComponent(reference.trim())}`, { params: { reason } }),
 };

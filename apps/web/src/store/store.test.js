@@ -464,3 +464,39 @@ describe('a browser that already holds an unanswered request', () => {
     expect(answeredByInsurers(already)).toBe(already);
   });
 });
+
+describe('renewing a policy', () => {
+  const policy = (renewalProduct) => ({
+    policyNumber: 'POL-REN-1',
+    customerEmail: DEMO_CUSTOMER_ACCOUNT.email,
+    vehicleDetails: { plateNumber: 'BAA 1234' },
+    vehicleValue: 250000,
+    coverage: 'Comprehensive',
+    policyDates: { endDate: '2099-01-31' },
+    renewalProduct,
+  });
+
+  it('starts from the product the server offers for the renewal', () => {
+    state().setPolicies([policy({ available: true, productVersionId: 'pv-2', name: 'Motor Plus', versionNumber: 2, termsChanged: true })]);
+    expect(state().renewFromPolicy('POL-REN-1')).toBe(true);
+    expect(state().selectedProductVersionIds).toEqual(['pv-2']);
+    expect(state().renewalOfPolicyNumber).toBe('POL-REN-1');
+    expect(state().vehicleValue).toBe(250000);
+  });
+
+  it('carries the use the policy was quoted on', () => {
+    state().setPolicies([{ ...policy(null), vehicleUsage: 'Commercial' }]);
+    state().renewFromPolicy('POL-REN-1');
+    expect(state().vehicleUsage).toBe('Commercial');
+  });
+
+  it('starts with nothing chosen when the product is gone or predates product selection', () => {
+    state().setPolicies([policy({ available: false, reason: 'This product is no longer offered.' })]);
+    state().renewFromPolicy('POL-REN-1');
+    expect(state().selectedProductVersionIds).toEqual([]);
+
+    state().setPolicies([policy(null)]);
+    state().renewFromPolicy('POL-REN-1');
+    expect(state().selectedProductVersionIds).toEqual([]);
+  });
+});

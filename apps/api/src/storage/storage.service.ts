@@ -20,7 +20,8 @@ export type DocumentScope =
   | { kind: 'claim-attachment'; claimNumber: string }
   | { kind: 'insurer-logo'; insurerId: string }
   | { kind: 'ncd-evidence'; applicationNumber: string }
-  | { kind: 'insurer-evidence'; insurerId: string };
+  | { kind: 'insurer-evidence'; insurerId: string }
+  | { kind: 'service-request'; reference: string };
 
 /**
  * Private object storage for every uploaded document.
@@ -92,6 +93,7 @@ export class StorageService implements OnModuleInit {
       'insurer-logo': () => `insurer-logos/${(scope as { insurerId: string }).insurerId}`,
       'ncd-evidence': () => `ncd/${(scope as { applicationNumber: string }).applicationNumber}`,
       'insurer-evidence': () => `insurer-evidence/${(scope as { insurerId: string }).insurerId}`,
+      'service-request': () => `service-requests/${(scope as { reference: string }).reference}`,
     }[scope.kind]();
 
     return `${prefix}/${unique}-${safeName}`;

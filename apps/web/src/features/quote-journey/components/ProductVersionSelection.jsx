@@ -138,6 +138,7 @@ export default function ProductVersionSelection({
   vehicleUsage,
   coverageDurationId,
   selectedProductVersionIds = [],
+  selectedProductVersions,
   onSelectionChange,
   onLoadStateChange,
   productRequirementAnswers = {},
@@ -148,49 +149,65 @@ export default function ProductVersionSelection({
   onRequirementDocumentChange,
 }) {
   const [products, setProducts] = useState([]);
-  const [loadedCoverType, setLoadedCoverType] = useState(null);
+  const [directory, setDirectory] = useState(null);
   const [error, setError] = useState('');
   const [estimates, setEstimates] = useState({});
   const [selectionError, setSelectionError] = useState('');
   const coverType = coverTypeFor(insuranceType);
-  const ready = loadedCoverType === coverType && !error;
-  const loading = loadedCoverType !== coverType && !error;
-  const failed = loadedCoverType === coverType && Boolean(error);
+  const selectionKey = JSON.stringify(selectedProductVersionIds);
+  const loadKey = `${coverType}:${selectionKey}`;
+  const current = directory?.coverType === coverType ? directory : null;
+  const ready = Boolean(current?.checked && selectedProductVersionIds.every((id) => current.checked.has(id)));
+  const failed = !ready && current?.failedKey === loadKey;
+  const loading = !ready && !failed;
 
   useEffect(() => {
+    onLoadStateChange?.(loading ? 'loading' : failed ? 'error' : 'ready');
+  }, [failed, loading, onLoadStateChange]);
+
+  useEffect(() => {
+    if (!loading) return;
     let cancelled = false;
-    onLoadStateChange?.('loading');
-    api.products
-      .directory({ coverType, limit: 100 })
-      .then((records) => {
+    const listing = current?.checked ? Promise.resolve(products) : api.products.directory({ coverType, limit: 100 });
+    listing
+      .then(async (records) => {
         if (cancelled) return;
-        const available = Array.isArray(records) ? records : [];
+        const available = Array.isArray(records) ? [...records] : [];
+        const checked = new Set(current?.checked || available.map((product) => product.version.id));
+        // A bounded directory page cannot establish that a renewal is unavailable.
+        const missingIds = [...new Set(JSON.parse(selectionKey))].filter((id) => !checked.has(id));
+        const resolved = await Promise.all(missingIds.map((productVersionId) =>
+          api.products.directory({ coverType, productVersionId, limit: 1 }),
+        ));
+        if (cancelled) return;
+        available.push(...resolved.flat());
         setProducts(available);
-        setLoadedCoverType(coverType);
+        setDirectory({ coverType, checked: new Set([...checked, ...missingIds]) });
         setError('');
-        onLoadStateChange?.('ready');
       })
       .catch((caught) => {
         if (cancelled) return;
-        setProducts([]);
-        setLoadedCoverType(coverType);
+        setDirectory({ coverType, checked: current?.checked, failedKey: loadKey });
         setError(caught.message || 'The available insurance products could not be loaded. Please try again.');
-        onLoadStateChange?.('error');
       });
     return () => {
       cancelled = true;
     };
-  }, [coverType, onLoadStateChange]);
+  }, [coverType, current, loading, loadKey, products, selectionKey]);
 
   const availableIds = useMemo(() => new Set(products.map((product) => product.version?.id).filter(Boolean)), [products]);
 
   useEffect(() => {
     if (!ready) return;
     const validIds = selectedProductVersionIds.filter((id) => availableIds.has(id));
-    if (validIds.length !== selectedProductVersionIds.length) {
+    // A selection made outside this list (a renewal starting from the product
+    // bought last year) arrives as ids alone; fill in the products so their
+    // requirements are asked for.
+    const missingDetails = selectedProductVersions !== undefined && validIds.some((id) => !selectedProductVersions.some((entry) => entry?.version?.id === id));
+    if (validIds.length !== selectedProductVersionIds.length || missingDetails) {
       onSelectionChange(validIds, products.filter((product) => validIds.includes(product.version.id)));
     }
-  }, [availableIds, onSelectionChange, products, ready, selectedProductVersionIds]);
+  }, [availableIds, onSelectionChange, products, ready, selectedProductVersionIds, selectedProductVersions]);
 
   const selectedProducts = useMemo(
     () => products.filter((product) => selectedProductVersionIds.includes(product.version?.id)),

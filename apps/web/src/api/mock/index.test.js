@@ -23,6 +23,21 @@ const asPlatformAdmin = (id, name) => useStore.getState().startStaffSession({
 });
 
 describe('mock api adapter', () => {
+  it('finds an eligible selected version beyond the page limit while retaining availability filters', async () => {
+    const records = Array.from({ length: 101 }, (_, index) => ({
+      id: `product-${index}`, insurerId: initial.insurersList[0].id, coverType: 'COMPREHENSIVE',
+      versions: [{ id: `version-${index}`, status: 'APPROVED', coverType: 'COMPREHENSIVE', effectiveFrom: '2020-01-01', allowedDurations: ['Q4'] }],
+    }));
+    localStorage.setItem('insurshield.mock.products.v1', JSON.stringify(records));
+    expect(await mock.products.directory()).toHaveLength(100);
+    const query = { coverType: 'COMPREHENSIVE', productVersionId: 'version-100', limit: 1 };
+    expect(await mock.products.directory(query)).toMatchObject([{ version: { id: 'version-100', allowedDurations: ['Q4'] } }]);
+    expect(await mock.products.directory({ ...query, coverType: 'THIRD_PARTY' })).toEqual([]);
+    records[100].versions[0].status = 'WITHDRAWN';
+    localStorage.setItem('insurshield.mock.products.v1', JSON.stringify(records));
+    expect(await mock.products.directory(query)).toEqual([]);
+  });
+
   it('signs in and reports the session', async () => {
     await expect(mock.auth.login('nobody@example.com', 'x')).rejects.toThrow('Incorrect');
     const { customer } = await signIn();
@@ -282,4 +297,47 @@ describe('mock api adapter', () => {
     expect(await mock.insurers.list({ status: 'deleted' })).toEqual([]);
     expect((await mock.insurers.directory()).map((insurer) => insurer.id)).not.toContain('4');
   });
+
+  it('works a cancellation from request to a cancelled policy, keeping internal notes from the customer', async () => {
+    await signIn();
+    useStore.setState({ policies: [{ policyNumber: 'POL-SR1', status: 'Active', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, insurer: 'Prestige Assurance', policyDates: { endDate: '2099-12-31' } }] });
+    const sent = await mock.serviceRequests.submit({ policyNumber: 'POL-SR1', type: 'CANCELLATION', reason: 'I sold the vehicle.', requestedEffectiveDate: '2000-01-01' }).catch((error) => error);
+    expect(sent.message).toMatch(/today or a later day/);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lusaka' }).format(new Date());
+    const created = await mock.serviceRequests.submit({ policyNumber: 'POL-SR1', type: 'CANCELLATION', reason: 'I sold the vehicle.', requestedEffectiveDate: today });
+
+    asInsurer();
+    const reference = created.reference;
+    await mock.serviceRequests.insurer.postUpdate(reference, { message: 'Check the sale date.', visibleToCustomer: false });
+    await expect(mock.serviceRequests.insurer.complete(reference, { note: 'Done.' })).rejects.toThrow(/Approve the cancellation/);
+    await mock.serviceRequests.insurer.approve(reference, { note: 'Pro rata.', refundAmount: 100, effectiveDate: today });
+    const done = await mock.serviceRequests.insurer.complete(reference, { note: 'Your cover has ended.' });
+    expect(done.status).toBe('COMPLETED');
+    expect(useStore.getState().policies[0].status).toBe('Cancelled');
+
+    const mine = await mock.serviceRequests.get(reference);
+    expect(mine.updates.map((update) => update.message)).not.toContain('Check the sale date.');
+    expect(mine.updates.at(-1)).toMatchObject({ statusFrom: 'APPROVED', statusTo: 'COMPLETED' });
+    expect(mine.decision).toMatchObject({ outcome: 'APPROVED', refundAmount: 100 });
+  });
+});
+
+it('exports only the signed-in customer without credentials, payment details or internal updates', async () => {
+  await signIn();
+  useStore.setState({
+    policies: [{ policyNumber: 'OWN', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, status: 'Active', paymentProof: { amount: 50, cardNumber: 'private-number' } }, { policyNumber: 'OTHER', customerEmail: 'other@example.com' }],
+    serviceRequests: [{ reference: 'SR-OWN', customerEmail: DEMO_CUSTOMER_ACCOUNT.email, updates: [{ message: 'Visible', visibleToCustomer: true }, { message: 'Internal', visibleToCustomer: false }] }],
+  });
+  const before = localStorage.getItem('insurshield-storage');
+  const data = await mock.account.export();
+  expect(data.policies.map((record) => record.policyNumber)).toEqual(['OWN']);
+  expect(data.serviceRequests[0].updates).toEqual([{ message: 'Visible', visibleToCustomer: true }]);
+  expect(JSON.stringify(data)).not.toMatch(/private-number|password|Internal|OTHER/);
+  expect(localStorage.getItem('insurshield-storage')).toBe(before);
+  await expect(mock.account.close()).rejects.toThrow('cover is in force');
+});
+
+it('refuses anonymous exports and document lists', async () => {
+  await expect(mock.account.export()).rejects.toThrow('Sign in');
+  await expect(mock.account.documents()).rejects.toThrow('Sign in');
 });

@@ -58,7 +58,7 @@ describe('the notification routes', () => {
     expect(body.nextCursor).toEqual(expect.any(String));
     // The template key and version are the platform's business, not the reader's.
     expect(Object.keys(body.items[0]).sort()).toEqual(
-      ['body', 'category', 'createdAt', 'entityId', 'entityType', 'id', 'read', 'subject'].sort(),
+      ['action', 'body', 'category', 'createdAt', 'entityId', 'entityType', 'id', 'read', 'subject'].sort(),
     );
   });
 

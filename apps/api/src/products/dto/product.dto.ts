@@ -10,6 +10,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   isISO8601,
   Matches,
   Max,
@@ -128,6 +129,7 @@ export class WithdrawProductVersionDto {
 
 /** A small public filter now; B12 will add customer product selection on top. */
 export class ProductDirectoryQueryDto {
+  @IsOptional() @IsUUID() productVersionId?: string;
   @IsOptional() @IsIn(INSURANCE_TYPES) coverType?: InsuranceType;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }

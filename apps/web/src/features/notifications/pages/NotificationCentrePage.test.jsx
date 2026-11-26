@@ -95,3 +95,26 @@ it('asks for older messages only while the server offers a cursor', async () => 
   expect(api.notifications.list).toHaveBeenLastCalledWith('2026-11-10T09:00:00.000Z');
   expect(screen.queryByRole('button', { name: 'Load older' })).not.toBeInTheDocument();
 });
+
+it('takes a renewal reminder to the renewal page rather than the policy', async () => {
+  api.notifications.list.mockResolvedValue({
+    items: [message({ subject: 'Your policy is due for renewal', category: 'POLICY', entityType: 'POLICY', entityId: 'POL-1', action: 'RENEW' })],
+    nextCursor: null,
+    unread: 1,
+  });
+  show();
+
+  expect(await screen.findByRole('link', { name: 'Renew' })).toHaveAttribute('href', '/renewal');
+  expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
+});
+
+it('opens a service request notice on that request', async () => {
+  api.notifications.list.mockResolvedValue({
+    items: [message({ subject: 'An update on your request', category: 'POLICY', entityType: 'SERVICE_REQUEST', entityId: 'SR-ABC123', action: null })],
+    nextCursor: null,
+    unread: 1,
+  });
+  show();
+
+  expect(await screen.findByRole('link', { name: 'Open' })).toHaveAttribute('href', '/service-requests/SR-ABC123');
+});

@@ -107,6 +107,9 @@ export const createJourneySlice = (set, get) => ({
     const state = get();
     const id = newReference('QR');
     const submittedAt = NOW();
+    const previousPolicy = state.renewalOfPolicyNumber
+      ? state.policies.find((entry) => entry.policyNumber === state.renewalOfPolicyNumber)
+      : null;
     const request = {
       id,
       status: selectedProducts.length ? 'Submitted' : 'GuidesReady',
@@ -116,6 +119,13 @@ export const createJourneySlice = (set, get) => ({
       expiresAt: addDays(submittedAt, REQUEST_VALIDITY_DAYS),
       requotedFromId: state.requotedFromId,
       renewalOfPolicyNumber: state.renewalOfPolicyNumber,
+      ...(previousPolicy ? {
+        renewalOf: {
+          policyNumber: previousPolicy.policyNumber,
+          insurer: previousPolicy.insurer,
+          endDate: previousPolicy.policyDates?.endDate ?? null,
+        },
+      } : {}),
       customer,
       insurers: [...new Map(selectedProducts.map((product) => [product.insurerId, product.insurerName])).values()],
       insurerIds: [...new Set(selectedProducts.map((product) => product.insurerId))],
@@ -209,6 +219,7 @@ export const createJourneySlice = (set, get) => ({
       documents: reusePhotos ? { ...state.documents } : { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
       photosCapturedAt: reusePhotos ? old.photosCapturedAt : null,
       requotedFromId: requestId,
+      renewalOfPolicyNumber: old.renewalOfPolicyNumber || null,
     });
     return true;
   },
@@ -231,9 +242,15 @@ export const createJourneySlice = (set, get) => ({
       policyStartDate: resumeDate > TODAY() ? resumeDate : TODAY(),
       vehicleDetails: policy.vehicleDetails || null,
       vehicleValue: policy.vehicleValue || policy.insuredValue || 0,
+      ...(policy.vehicleUsage ? { vehicleUsage: policy.vehicleUsage } : {}),
       insuranceType: /third/i.test(policy.coverage || '') ? 'ThirdParty' : 'Comprehensive',
       documents: { ...EMPTY_DOCUMENTS, whiteBook: state.documents.whiteBook },
       renewalOfPolicyNumber: policyNumber,
+      // The product the server says this renewal continues with, so the
+      // customer starts from it and can add others to compare.
+      ...(policy.renewalProduct?.available
+        ? { selectedProductVersionIds: [policy.renewalProduct.productVersionId], selectedProductVersions: [] }
+        : {}),
     });
     return true;
   },

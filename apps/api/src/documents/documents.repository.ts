@@ -1,9 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, exists, inArray, isNotNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Principal } from '../common/auth/auth.types.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
+  serviceRequestUpdates,
+  serviceRequests,
   claimNotifications,
   documents,
   inspectionPhotos,
@@ -19,6 +21,9 @@ export type NewDocument = typeof documents.$inferInsert;
 export type DocumentRow = typeof documents.$inferSelect;
 
 const ONE = { one: sql`1` };
+
+/** The document is attached to an entry on a service request. */
+const onServiceRequest = (): SQL => sql`${documents.id} = ANY(${serviceRequestUpdates.documentIds})`;
 
 @Injectable()
 export class DocumentsRepository {
@@ -59,6 +64,16 @@ export class DocumentsRepository {
     return document;
   }
 
+  listForCustomer(customerId: string, tx: Database | Transaction = this.db) {
+    return tx.select({
+      id: documents.id, name: documents.fileName, type: documents.mimeType, size: documents.sizeBytes,
+      kind: documents.kind, uploadedAt: documents.uploadedAt, scanStatus: documents.scanStatus,
+      deletionStartedAt: documents.deletionStartedAt, deletedAt: documents.deletedAt,
+    }).from(documents)
+      .where(or(eq(documents.uploadedByCustomerId, customerId), ...this.ownedByCustomer(customerId)))
+      .orderBy(desc(documents.uploadedAt), asc(documents.id));
+  }
+
   /** Locks in id order, so two requests naming the same documents cannot deadlock. */
   async lockForAttach(tx: Transaction, documentIds: string[]) {
     return await tx
@@ -69,7 +84,7 @@ export class DocumentsRepository {
         uploadedByStaffId: documents.uploadedByStaffId,
       })
       .from(documents)
-      .where(inArray(documents.id, documentIds))
+      .where(and(inArray(documents.id, documentIds), isNull(documents.deletionStartedAt), isNull(documents.deletedAt)))
       .orderBy(asc(documents.id))
       .for('update');
   }
@@ -98,6 +113,7 @@ export class DocumentsRepository {
             exists(tx.select(ONE).from(quoteRequests).where(eq(quoteRequests.whiteBookDocumentId, documents.id))),
             exists(tx.select(ONE).from(inspectionPhotos).where(eq(inspectionPhotos.documentId, documents.id))),
             exists(tx.select(ONE).from(claimAttachments).where(eq(claimAttachments.documentId, documents.id))),
+            exists(tx.select(ONE).from(serviceRequestUpdates).where(onServiceRequest())),
           ),
         ),
       );
@@ -164,6 +180,14 @@ export class DocumentsRepository {
           .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
           .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.customerId, customerId))),
       ),
+      // What the insurer sent the customer on their request; an internal attachment stays the insurer's.
+      exists(
+        db
+          .select(ONE)
+          .from(serviceRequestUpdates)
+          .innerJoin(serviceRequests, eq(serviceRequests.reference, serviceRequestUpdates.reference))
+          .where(and(onServiceRequest(), eq(serviceRequestUpdates.visibleToCustomer, true), eq(serviceRequests.customerId, customerId))),
+      ),
     ];
   }
 
@@ -221,6 +245,13 @@ export class DocumentsRepository {
           .from(inspectionPhotos)
           .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
           .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.insurerId, insurerId))),
+      ),
+      exists(
+        db
+          .select(ONE)
+          .from(serviceRequestUpdates)
+          .innerJoin(serviceRequests, eq(serviceRequests.reference, serviceRequestUpdates.reference))
+          .where(and(onServiceRequest(), eq(serviceRequests.insurerId, insurerId))),
       ),
     ];
   }

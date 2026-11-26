@@ -35,6 +35,8 @@ const ISSUING = ['INSURER_ADMIN', 'INSURER_USER'] as const;
 const PRODUCT_MANAGERS = ['INSURER_ADMIN'] as const;
 /** Reading a queue: whoever works it, plus the two roles whose whole job is reading. */
 const READS_REQUESTS = ['INSURER_ADMIN', 'QUOTE_OFFICER', 'SUPPORT', 'COMPLIANCE_READ_ONLY', 'INSURER_USER'] as const;
+/** Working a customer's service request: the administrator, support, and the legacy role. */
+const SERVICE_REQUEST_HANDLERS = ['INSURER_ADMIN', 'INSURER_USER', 'SUPPORT'] as const;
 const READS_CLAIMS = ['INSURER_ADMIN', 'CLAIMS_OFFICER', 'SUPPORT', 'COMPLIANCE_READ_ONLY', 'INSURER_USER'] as const;
 
 export const PERMISSIONS = {
@@ -63,6 +65,10 @@ export const PERMISSIONS = {
   'payment:make': ['customer'],
   'payment:read': ['customer'],
   'account:close': ['customer'],
+  'account:export': ['customer'],
+  'service-request:read': ['customer'],
+  'service-request:submit': ['customer'],
+  'support:contact': ['customer'],
 
   // ── Documents ─────────────────────────────────────────────────────
   // Deliberately wide. A customer uploads a white book, insurer staff upload a
@@ -84,6 +90,9 @@ export const PERMISSIONS = {
   'admin:customer-find': INSURSHIELD_ADMIN,
   'admin:customer-password-reset': INSURSHIELD_ADMIN,
   'admin:audit-read': INSURSHIELD_ADMIN,
+  'admin:service-request:read': INSURSHIELD_ADMIN,
+  // Looking a record up by its reference for a support case; every look-up is audited with the reason given.
+  'admin:record-find': INSURSHIELD_ADMIN,
   'approval:read': INSURSHIELD_ADMIN,
   'approval:decide': INSURSHIELD_ADMIN,
   // Money owed back to customers: InsurShield administrators only, every refund under a second approval.
@@ -142,6 +151,9 @@ export const PERMISSIONS = {
   'portal:queue:claim': QUOTING,
   'portal:queue:assign': QUOTING,
   'portal:policy:read': ANY_INSURER,
+  // Whoever reads the insurer's policies reads the requests about them; working them is for the decision 13 roles.
+  'portal:service-request:read': ANY_INSURER,
+  'portal:service-request:manage': SERVICE_REQUEST_HANDLERS,
   // What the insurer is paid: its administrator and its finance team.
   'portal:settlement:read': ['INSURER_ADMIN', 'FINANCE'],
   'portal:certificate:issue': ISSUING,

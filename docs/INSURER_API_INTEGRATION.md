@@ -34,6 +34,17 @@ InsurShield sends one standard motor-insurance request to each active insurer. E
 
 In the prototype, steps 3–5 happen inside the insurer portal: the paid quote appears under **Paid policies** and the insurer uploads the certificate there, which activates the policy in the shared local store. In production this must happen only from the backend after a verified payment callback and a signed insurer response; it must never be triggered by browser code.
 
+## Renewals and service requests
+
+Both are portal-only for now; nothing is sent to an insurer's own system.
+
+- A **renewal** is a new quote request like any other. The portal shows "Renewal of POL-…" with the previous insurer
+  and end date, and the insurer quotes, asks, inspects or declines it with the usual actions.
+- A **service request** is a customer asking about a policy the insurer issued: a correction, a replacement document,
+  a cancellation or help. The insurer's administrators, support staff and legacy insurer users work them under
+  **Service requests** in the portal; every insurer role that reads policies can read them. A new request is also
+  emailed to the insurer's staff who can work it.
+
 ## Versioned product terms and cover guides
 
 Each insurer manages its own customer-facing product terms before it receives a quote request. This is the product
@@ -97,6 +108,10 @@ reference implementation is `apps/api/src/common/json/canonical-json.ts`.
 - Callbacks for an insurer that has been deleted are refused.
 
 ## Required safeguards
+
+Renewals use the existing quote process. The prior policy reference is shown in the insurer portal. Policy
+service requests, responses and cancellation approvals use the portal during Batch 15. The partner API and
+webhook contract retain their existing message formats.
 
 - Authenticate server-to-server with OAuth client credentials or mTLS; never from the browser.
 - Sign webhook payloads and verify the signature, timestamp and insurer identity.

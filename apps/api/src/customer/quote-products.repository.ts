@@ -5,6 +5,8 @@ import {
   insurerQuotes,
   insurers,
   payments,
+  policies,
+  quoteRequestDrafts,
   quoteInformationRequests,
   quoteInternalNotes,
   quoteRequestProductVersions,
@@ -319,6 +321,49 @@ export class QuoteProductsRepository {
       )
       .where(and(eq(quoteRequestProductVersions.id, versionId), lte(insurerQuotes.validUntil, now), sql`NOT EXISTS (${confirmed})`));
     return lapsed !== undefined;
+  }
+
+  /** Called with the customer locked; retain every request with money taken or a policy. */
+  async lockUnpaidAccountRequests(tx: Transaction, customerId: string): Promise<string[]> {
+    const purchase = tx.select({ id: payments.id }).from(payments).where(and(
+      eq(payments.quoteRequestId, quoteRequests.id),
+      inArray(payments.status, ['CONFIRMED', 'REVERSED', ...OPEN_PAYMENT_STATUSES]),
+    ));
+    const policy = tx.select({ id: policies.policyNumber }).from(policies).where(eq(policies.quoteRequestId, quoteRequests.id));
+    const rows = await tx.select({ id: quoteRequests.id }).from(quoteRequests).where(and(
+      eq(quoteRequests.customerId, customerId),
+      inArray(quoteRequests.status, ['SUBMITTED', 'QUOTED']),
+      sql`NOT EXISTS (${purchase})`, sql`NOT EXISTS (${policy})`,
+    )).orderBy(asc(quoteRequests.id)).for('update', { noWait: true });
+    return rows.map((row) => row.id);
+  }
+
+  async lockAccountVersions(tx: Transaction, requestId: string): Promise<VersionRow[]> {
+    return tx.select(versionColumns).from(quoteRequestProductVersions)
+      .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestProductVersions.quoteRequestId))
+      .innerJoin(insurers, eq(insurers.id, quoteRequestProductVersions.insurerId))
+      .where(eq(quoteRequestProductVersions.quoteRequestId, requestId))
+      .orderBy(asc(quoteRequestProductVersions.productVersionId))
+      .for('update', { of: quoteRequestProductVersions, noWait: true });
+  }
+
+  async withdrawAccountRequest(tx: Transaction, requestId: string, at: Date): Promise<void> {
+    // Insurer commands can hold a quote before notifying the customer. Fail retryably instead of reversing their lock order.
+    await tx.select({ id: insurerQuotes.id }).from(insurerQuotes)
+      .where(and(eq(insurerQuotes.quoteRequestId, requestId), eq(insurerQuotes.status, 'ACTIVE')))
+      .orderBy(asc(insurerQuotes.id)).for('update', { noWait: true });
+    await tx.update(insurerQuotes).set({ status: 'WITHDRAWN', withdrawnAt: at, withdrawnReason: 'Customer closed their account.' })
+      .where(and(eq(insurerQuotes.quoteRequestId, requestId), eq(insurerQuotes.status, 'ACTIVE')));
+    await tx.update(quoteRequests).set({ status: 'EXPIRED', expiresAt: at, updatedAt: at })
+      .where(eq(quoteRequests.id, requestId));
+  }
+
+  /** Drafts have no status; expire them now, leaving documents for the retention workflow. */
+  async expireAccountDrafts(tx: Transaction, customerId: string, at: Date): Promise<number> {
+    const rows = await tx.update(quoteRequestDrafts).set({ expiresAt: at, updatedAt: at })
+      .where(and(eq(quoteRequestDrafts.customerId, customerId), gt(quoteRequestDrafts.expiresAt, at)))
+      .returning({ id: quoteRequestDrafts.id });
+    return rows.length;
   }
 
   /** An insurer's versions that decision 24 may still cancel, locked, with whether each was paid for. */

@@ -21,6 +21,9 @@ const CLASS_OF_KIND: Record<DocumentKind, DocumentRetentionClass> = {
   // than for as long as a quotation. The class is stored at upload, so putting
   // it in an existing class now could not be corrected later.
   INSURER_EVIDENCE: 'COMPLIANCE_EVIDENCE',
+  // Kept with the policy it is about: a replacement certificate or the
+  // customer's evidence for a change is evidence about that contract.
+  SERVICE_REQUEST_DOCUMENT: 'POLICY_EVIDENCE',
 };
 
 export function retentionClassOf(kind: DocumentKind): DocumentRetentionClass {

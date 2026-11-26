@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { BadgePercent, FileCheck2, FileText, HeartPulse, LayoutDashboard, LifeBuoy, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { BadgePercent, FileCheck2, FileText, HeartPulse, LayoutDashboard, LifeBuoy, MessageSquareText, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useStore, belongsToCustomer, DEMO_CUSTOMER_ACCOUNT } from '@/store';
 import { hydrateCustomer } from '@/api/sync';
 import { api } from '@/api';
@@ -10,11 +10,14 @@ import { requestIdentityTransition } from '@/app/identity';
 import { formatZMW, formatDate } from '@/domain/premiumEngine';
 import { requestStatus } from '@/domain/quoteValidity';
 import { coverPeriod } from '@/domain/coverPeriod';
+import { canAskAbout } from '@/domain/serviceRequests';
 import { downloadPolicyCertificate, downloadRtsaDisc } from '@/lib/policyDocuments';
 import { openDocument } from '@/lib/files';
 import Meta from '@/components/ui/Meta';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
+import AccountPortfolio from '../components/AccountPortfolio';
+import AccountPrivacy from '../components/AccountPrivacy';
 import ContactPreferences from '../components/ContactPreferences';
 import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
 import { needsCoverGuideSelection } from '@/store/shared';
@@ -36,6 +39,10 @@ const ISSUANCE_FAILED = 'Issuance failed';
 const QUOTE_REQUESTS_PER_PAGE = 5;
 
 const ACCOUNT_SECTION_COPY = {
+  documents: { title: 'Documents', description: 'Your protected documents and their availability.' },
+  renewals: { title: 'Renewals', description: 'Review cover dates and continue your renewal.' },
+  'service-requests': { title: 'Service requests', description: 'Track requests and respond to your insurer.' },
+  privacy: { title: 'Privacy', description: 'Download your data and understand account closure.' },
   overview: { title: 'Overview', description: 'Your insurance activity at a glance.' },
   certificates: { title: 'Certificates', description: 'Track paid quotes while insurers prepare the official policy certificate.' },
   policies: { title: 'Policies', description: 'View active cover, certificates and renewal details.' },
@@ -70,10 +77,18 @@ const openCertificate = (policy) =>
 export default function CustomerAccountPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, deleteCurrentAccount, requoteFromRequest, resetJourney } = useStore();
+  const { customer, policies, quoteRequests, claims, setActiveQuoteRequest, requoteFromRequest, resetJourney } = useStore();
 
   // Your records come from the server when one is configured; a no-op otherwise.
-  useEffect(() => { void hydrateCustomer(); }, []);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadState, setLoadState] = useState(env.apiMode === 'http' ? 'loading' : 'ready');
+  useEffect(() => {
+    let current = true;
+    hydrateCustomer().then((results) => {
+      if (current) setLoadState(results?.some((ok) => !ok) ? 'error' : 'ready');
+    }).catch(() => { if (current) setLoadState('error'); });
+    return () => { current = false; };
+  }, [loadAttempt]);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [readingGuide, setReadingGuide] = useState(null); // the policy whose cover guide is open
@@ -86,6 +101,7 @@ export default function CustomerAccountPage() {
   const myPolicies = policies.filter((policy) => mine(policy) && policy.status === 'Active');
   // Paid policies without a certificate: still being issued, or not issued and being refunded.
   const pendingPolicies = policies.filter((policy) => mine(policy) && ([AWAITING_CERTIFICATE, ISSUANCE_FAILED].includes(policy.status) || refundedAfterFailure(policy)));
+  const policyHistory = policies.filter((policy) => mine(policy) && !pendingPolicies.includes(policy));
   const myRequests = quoteRequests.filter(mine).sort((first, second) => requestDate(second) - requestDate(first));
   const myClaims = claims.filter(mine);
   const requestPageCount = Math.max(1, Math.ceil(myRequests.length / QUOTE_REQUESTS_PER_PAGE));
@@ -120,18 +136,14 @@ export default function CustomerAccountPage() {
   };
   const removeAccount = async () => {
     setAccountError('');
-    if (env.apiMode === 'http') {
-      try {
-        await api.account.close();
-        requestIdentityTransition({ landing: '/', userId: null, announce: true });
-      } catch (error) {
-        setConfirmingRemoval(false);
-        setAccountError(error instanceof Error ? error.message : 'We could not close your account. Please try again.');
-      }
-      return;
+    try {
+      await api.account.close();
+      setConfirmingRemoval(false);
+      if (env.apiMode === 'http') requestIdentityTransition({ landing: '/', userId: null, announce: true });
+    } catch (error) {
+      setConfirmingRemoval(false);
+      setAccountError(error instanceof Error ? error.message : 'We could not close your account. Please try again.');
     }
-    setConfirmingRemoval(false);
-    deleteCurrentAccount(); // CustomerRoute sends the visitor home once the session ends
   };
 
   const summary = [
@@ -164,8 +176,12 @@ export default function CustomerAccountPage() {
               </p>
             </section>
 
+            {loadState === 'loading' && <p role="status" className="mt-4">Loading your account…</p>}
+            {loadState === 'error' && <div role="alert" className="mt-4"><p>Some account records could not be refreshed. Displayed records may be out of date.</p><Button variant="outline" onClick={() => { setLoadState('loading'); setLoadAttempt((value) => value + 1); }}>Retry account</Button></div>}
             <MobileQuickActions onNewQuote={resetJourney} />
             <MobileAccountNavigation activeSection={activeSection} />
+            {['overview', 'documents', 'renewals', 'service-requests'].includes(activeSection) && <AccountPortfolio key={`${customer?.email}-${activeSection}`} section={activeSection} onOpenRequest={openRequest} />}
+            {activeSection === 'privacy' && <AccountPrivacy key={customer?.email} onClose={() => setConfirmingRemoval(true)} accountError={accountError} canClose={!isDemoAccount} />}
 
         {activeSection === 'overview' && <section aria-label="Account summary" className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
           {summary.map(([label, value, icon]) => (
@@ -302,17 +318,17 @@ export default function CustomerAccountPage() {
             <CardHeader className="grid-cols-[1fr_auto] items-center border-b">
               <div>
                 <CardTitle>Policies</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">Certificates and documents for cover that is active.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Certificates and documents for your current and past cover.</p>
               </div>
               {myPolicies.length > 0 && (
                 <Button asChild variant="ghost" size="sm"><Link to="/renewal">Renew</Link></Button>
               )}
             </CardHeader>
 
-            {myPolicies.length ? (
+            {policyHistory.length ? (
               <CardContent className="pt-5">
               <ul className="overflow-hidden rounded-xl border border-border">
-                {myPolicies.map((policy, index) => (
+                {policyHistory.map((policy, index) => (
                   <li key={policy.policyNumber} className={`p-4 sm:p-5 ${index === 0 ? '' : 'border-t border-border'}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -322,7 +338,7 @@ export default function CustomerAccountPage() {
                           {policy.vehicle}{policy.vehicleDetails?.plateNumber ? ` · ${policy.vehicleDetails.plateNumber}` : ''}
                         </p>
                       </div>
-                      <Badge variant="outline" className="shrink-0 border-primary/20 bg-primary/10 text-primary">Active</Badge>
+                      <Badge variant="outline" className="shrink-0 border-primary/20 bg-primary/10 text-primary">{policy.status}</Badge>
                     </div>
 
                     <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
@@ -367,6 +383,12 @@ export default function CustomerAccountPage() {
                           <span className="material-symbols-outlined text-[16px]" aria-hidden="true">open_in_new</span>
                           Quotation
                         </button>
+                      )}
+                      {canAskAbout(policy) && (
+                        <Link to={`/service-requests/new?policy=${encodeURIComponent(policy.policyNumber)}`} className={documentButton}>
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">edit_document</span>
+                          Request a change
+                        </Link>
                       )}
                     </div>
                   </li>
@@ -506,7 +528,7 @@ export default function CustomerAccountPage() {
                 {[customer?.fullName, customer?.email, customer?.phone].filter(Boolean).join(' · ')}
                 </p>
               </div>
-              <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmingRemoval(true)} className="text-primary hover:bg-primary/10 hover:text-primary">Close account</Button>
+              <Button type="button" variant="ghost" size="sm" asChild className="text-primary hover:bg-primary/10 hover:text-primary"><Link to="/account?section=privacy">Privacy</Link></Button>
             </CardHeader>
             {accountError && <CardContent className="pt-0"><p role="alert" className="text-sm text-primary">{accountError}</p></CardContent>}
           </Card>
@@ -531,7 +553,7 @@ export default function CustomerAccountPage() {
         consequences={[
           { text: 'You lose access to your quote requests and documents.' },
           { text: 'Your policies, claims and payment records are kept for regulatory retention.', kept: true },
-          { text: 'An account holding cover in force cannot be closed until that cover ends.', kept: true },
+          { text: 'Closure is blocked by cover in force, open service requests, payments in progress or refunds in progress.', kept: true },
         ]}
         confirmLabel="Close account"
         cancelLabel="Keep my account"
@@ -564,6 +586,10 @@ function AccountSidebar({ customer, counts, activeSection, onNewQuote }) {
     { id: 'certificates', label: 'Certificates', icon: FileCheck2, count: counts.certificates },
     { id: 'policies', label: 'Policies', icon: ShieldCheck, count: counts.policies },
     { id: 'quotes', label: 'Quote activity', icon: FileText, count: counts.quotes },
+    { id: 'documents', label: 'Documents', icon: FileText },
+    { id: 'renewals', label: 'Renewals', icon: RefreshCw },
+    { id: 'service-requests', label: 'Service requests', icon: MessageSquareText },
+    { id: 'privacy', label: 'Privacy', icon: ShieldCheck },
   ];
 
   return (
@@ -619,6 +645,9 @@ function AccountSidebar({ customer, counts, activeSection, onNewQuote }) {
             <Link to="/claims?action=ncd" className="flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               <BadgePercent className="size-4" aria-hidden="true" /> Apply for NCD
             </Link>
+            <Link to="/service-requests" className="flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+              <MessageSquareText className="size-4" aria-hidden="true" /> Service requests
+            </Link>
           </div>
         </div>
         <div className="mt-auto border-t border-border p-3">
@@ -653,6 +682,10 @@ function MobileAccountNavigation({ activeSection }) {
     ['policies', 'Policies'],
     ['quotes', 'Quotes'],
     ['claims', 'Claims & NCD', '/claims'],
+    ['documents', 'Documents'],
+    ['renewals', 'Renewals'],
+    ['service-requests', 'Service requests'],
+    ['privacy', 'Privacy'],
   ];
 
   return (

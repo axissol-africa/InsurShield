@@ -89,7 +89,27 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyProductSelectionIntegrityInvariants);
   await query(db, applyInternalNotesAppendOnlyInvariant);
   await query(db, applySettlementInvariants);
+  await query(db, applyServiceRequestInvariants);
+  await query(db, applyRetentionInvariants);
   return db;
+}
+
+/** Retention fences live in SQL; Drizzle supplies their columns and partial index. */
+async function applyRetentionInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0046_batch_15_retention_fences.sql', import.meta.url), 'utf8');
+  const invariants = migration.slice(migration.indexOf('CREATE FUNCTION public.retention_customer_held'), migration.indexOf('CREATE INDEX "documents_pending_deletion_idx"'));
+  for (const statement of invariants.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
+}
+
+/** The append-only trigger on service request updates, read from migration 0044 itself. */
+async function applyServiceRequestInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0044_batch_15_service_requests.sql', import.meta.url), 'utf8');
+  const triggers = migration.slice(migration.indexOf('-- What was said on a service request is never rewritten'));
+  for (const statement of triggers.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 /** The settlement and adjustment triggers, read from migration 0041 itself so the two cannot drift. */
@@ -1176,7 +1196,7 @@ describe('the final schema', () => {
     // when a product was assigned and when its owner was warned, and then
     // when a quote was withdrawn and when the customer chose one, and
     // finally when an inspection was decided.
-    expect(timestampColumns).toHaveLength(173);
+    expect(timestampColumns).toHaveLength(179);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

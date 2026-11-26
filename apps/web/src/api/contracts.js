@@ -253,6 +253,7 @@
  * @property {'QUOTE'|'PAYMENT'|'POLICY'|'CLAIM'|'NCD'|'INSPECTION'|'ACCOUNT'|'MARKETING'} category
  * @property {string} entityType             the kind of record this is about
  * @property {string} entityId               the record itself, for the link
+ * @property {'RENEW'|null} action           a step the notice asks for, beyond opening the record
  * @property {boolean} read
  * @property {string} createdAt
  */
@@ -327,3 +328,23 @@
  * @property {string|null} executedAt
  */
 export {};
+
+/**
+ * Account privacy operations (authenticated customer only).
+ * GET /account/export -> one JSON attachment, generated on demand, never persisted.
+ * Requires sign-in within 10 minutes; 403 REAUTHENTICATION_REQUIRED asks for sign-in again.
+ * Includes profile, consents, contactPreferences, vehicles, quoteRequests, masked payments,
+ * policies, serviceRequests (customer-visible updates only), claims, ncdApplications,
+ * inspections, notifications and documents. The client downloads the response unchanged.
+ * GET /account/documents -> AccountDocument[] (only the current customer's documents).
+ * @typedef {Object} AccountDocument
+ * @property {string} id
+ * @property {string} name
+ * @property {string} type
+ * @property {number} size
+ * @property {string} kind
+ * @property {string|null} uploadedAt
+ * @property {boolean} available
+ * @property {string|null} downloadPath Relative to the configured API prefix.
+ * Opening requests a fresh protected URL via GET /documents/:id.
+ */

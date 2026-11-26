@@ -11,6 +11,7 @@ import InsurerOnboardingForm from '@/features/admin/components/InsurerOnboarding
 import InsurerOnboardingReview from '@/features/admin/components/InsurerOnboardingReview';
 import AdminApprovalInbox from '@/features/admin/components/AdminApprovalInbox';
 import ReconciliationQueue from '@/features/admin/components/ReconciliationQueue';
+import RecordLookup from '@/features/admin/components/RecordLookup';
 import SettlementsPanel from '@/features/admin/components/SettlementsPanel';
 import ProductReviewQueue from '@/features/admin/components/ProductReviewQueue';
 import RuleSettingsWorkspace from '@/features/admin/components/RuleSettingsWorkspace';
@@ -355,7 +356,7 @@ export default function AdminDashboard() {
     { id: 'staff_management', label: 'Staff and teams', icon: 'groups', hint: 'Access control', matches: ['staff_management'] },
     { id: 'pia_config', label: 'PIA rate', icon: 'gavel', hint: `Floor ${piaRate}%`, matches: ['pia_config'] },
     { id: 'rule_settings', label: 'Rules and terms', icon: 'tune', hint: 'Rules and comparison fields', matches: ['rule_settings'] },
-    { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account lookup', matches: ['find_account'] },
+    { id: 'find_account', label: 'Find customer', icon: 'support_agent', hint: 'Account or reference', matches: ['find_account'] },
     { id: 'audit_log', label: 'Audit trail', icon: 'history', hint: 'Immutable history', matches: ['audit_log'] },
     { id: 'integrations', label: 'Integrations', icon: 'hub', hint: 'Delivery exceptions', matches: ['integrations'] },
   ];
@@ -459,7 +460,12 @@ export default function AdminDashboard() {
   } else if (view === 'integrations') {
     content = <IntegrationDeliveryPanel api={api} onBack={() => setView('dashboard')} />;
   } else if (view === 'find_account') {
-    content = <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} requestCustomerPasswordReset={api.admin.requestCustomerPasswordReset} onBack={() => setView('dashboard')} />;
+    content = (
+      <div className="space-y-6">
+        <FindCustomerAccount accounts={registeredAccounts} quoteRequests={quoteRequests} policies={policies} lookupCustomer={useServerDashboard ? api.admin.findCustomer : undefined} requestCustomerPasswordReset={api.admin.requestCustomerPasswordReset} onBack={() => setView('dashboard')} />
+        {useServerDashboard && <RecordLookup api={api} />}
+      </div>
+    );
   } else if (view === 'pia_config') {
     content = <PiaConfiguration piaRate={piaRate} onSave={async (rate) => api.config.setPia({ piaRatePercentage: rate })} onBack={() => setView('dashboard')} />;
   } else if (view === 'rule_settings') {

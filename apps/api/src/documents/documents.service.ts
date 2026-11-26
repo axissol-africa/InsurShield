@@ -42,6 +42,7 @@ export interface DocumentRecord {
    * link is withheld.
    */
   url?: string;
+  deletedAt?: string;
 }
 
 @Injectable()
@@ -217,7 +218,7 @@ export class DocumentsService {
     if (!document) throw ApiException.notFound('Document', documentId);
     // Asking for a document outright is refused outright. An embedded record
     // only loses its link, so one unscanned file cannot break a whole page.
-    if (document.scanStatus !== 'CLEAN') {
+    if (document.deletedAt || document.deletionStartedAt || document.scanStatus !== 'CLEAN') {
       throw new ApiException(
         'DOCUMENT_NOT_AVAILABLE',
         'That document is not available for download.',
@@ -237,6 +238,14 @@ export class DocumentsService {
       }),
     );
     return record;
+  }
+
+  async listCustomerDocuments(customerId: string, tx?: Transaction) {
+    const rows = await this.repository.listForCustomer(customerId, tx);
+    return rows.map(({ scanStatus, deletionStartedAt, deletedAt, ...record }) => ({
+      ...record,
+      available: scanStatus === 'CLEAN' && !deletionStartedAt && !deletedAt,
+    }));
   }
 
   /**
@@ -341,7 +350,8 @@ export class DocumentsService {
       type: document.mimeType,
       size: document.sizeBytes,
     };
-    if (document.scanStatus !== 'CLEAN') return described;
+    if (document.deletedAt) return { ...described, deletedAt: document.deletedAt.toISOString() };
+    if (document.deletionStartedAt || document.scanStatus !== 'CLEAN') return described;
     // Counted here rather than at the call sites, because this is the only
     // place a link comes into existence. `recordFor` writes its own entry.
     if (counted) noteLinkIssued(document.kind);

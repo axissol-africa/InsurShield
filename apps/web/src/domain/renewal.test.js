@@ -55,3 +55,20 @@ describe('renewal state', () => {
     expect(renewalLabel(renewalState({ policyDates: null }, NOW))).toBe('No cover period recorded');
   });
 });
+
+describe('Lusaka renewal calendar', () => {
+  it('counts the Lusaka midnight boundary rather than the browser day', () => {
+    expect(daysUntil('2026-10-24T22:01:00.000Z', new Date('2026-10-24T21:59:00.000Z'))).toBe(1);
+    expect(daysUntil('2027-01-01T00:00:00.000Z', new Date('2026-12-31T22:00:00.000Z'))).toBe(0);
+  });
+
+  it('keeps cover current through its last Lusaka day', () => {
+    const cover = { policyDates: { endDate: '2026-10-24T00:00:00.000+02:00' } };
+    expect(renewalState(cover, new Date('2026-10-24T21:59:59.999Z')).window).toBe('DUE');
+    expect(renewalState(cover, new Date('2026-10-24T22:00:00.000Z')).window).toBe('EXPIRED');
+  });
+
+  it('keeps invalid cover dates unknown', () => {
+    expect(daysUntil('not a date', NOW)).toBeNull();
+  });
+});

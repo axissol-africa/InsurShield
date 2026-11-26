@@ -26,7 +26,7 @@ export default function RenewalPage() {
   const mine = useMemo(
     () =>
       policies
-        .filter((policy) => policy.customerEmail === customer?.email || policy.customerPhone === customer?.phone)
+        .filter((policy) => policy.status === 'Active' && (policy.customerEmail === customer?.email || policy.customerPhone === customer?.phone))
         .slice()
         .sort(byRenewalUrgency),
     [policies, customer],
@@ -144,11 +144,12 @@ function PolicyCard({ policy, index, busy, disabled, onRenew }) {
 
       <div className={`mt-auto border-t p-5 ${style.emphasis ? 'border-primary/30 bg-primary/[0.04]' : 'border-line bg-canvas-2'}`}>
         <p className={`text-[13px] font-medium ${style.emphasis ? 'text-primary' : 'text-ink-muted'}`}>{renewalLabel(state)}</p>
+        {!inFlight && <RenewalProduct product={policy.renewalProduct} />}
 
         {inFlight ? (
           <div className="mt-4">
             <p className="text-[13px] leading-[1.55] text-ink-muted">
-              A renewal is already open as <span className="font-mono text-ink">{state.renewalRequestId}</span>.
+              A renewal already exists as <span className="font-mono text-ink">{state.renewalRequestId}</span>.
             </p>
             <Link
               to="/account"
@@ -174,6 +175,31 @@ function PolicyCard({ policy, index, busy, disabled, onRenew }) {
         )}
       </div>
     </motion.article>
+  );
+}
+
+/**
+ * The product a renewal starts from: the one bought, or its newer version when
+ * the insurer has changed the terms since. Nothing is said for a policy bought
+ * before customers chose products.
+ */
+function RenewalProduct({ product }) {
+  if (!product) return null;
+  if (!product.available) {
+    return <p className="mt-2 text-[13px] leading-[1.55] text-ink-muted">{product.reason}</p>;
+  }
+  return (
+    <p className="mt-2 text-[13px] leading-[1.55] text-ink-muted">
+      {product.termsChanged ? (
+        <>
+          Starts from <span className="font-medium text-ink">{product.name}</span>.{' '}
+          <span className="font-medium text-primary">The insurer has changed its terms since you bought it (now version {product.versionNumber}).</span>{' '}
+          Read the cover guide before you ask for a quote.
+        </>
+      ) : (
+        <>Starts from <span className="font-medium text-ink">{product.name}</span>, the product you have now. You can add others to compare.</>
+      )}
+    </p>
   );
 }
 

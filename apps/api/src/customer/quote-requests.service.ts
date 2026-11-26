@@ -1,3 +1,4 @@
+import { assertOpenCustomer } from '../db/customer-lock.js';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'node:crypto';
@@ -16,6 +17,7 @@ import type { CustomerPrincipal } from './customer-principal.js';
 import { QuoteWorkflowService } from './quote-workflow.service.js';
 import { resumedReplyDueAt } from './domain/quote-workflow.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
+import { PoliciesService } from './policies.service.js';
 import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
@@ -74,6 +76,7 @@ export class QuoteRequestsService {
     private readonly workflow: QuoteWorkflowService,
     private readonly versions: QuoteProductsRepository,
     private readonly underwriting: UnderwritingInspectionsService,
+    private readonly policies: PoliciesService,
   ) {}
 
   async list(customerId: string): Promise<QuoteRequestResponse[]> {
@@ -111,6 +114,7 @@ export class QuoteRequestsService {
     );
 
     const create = async (tx: Transaction) => {
+      await assertOpenCustomer(tx, customer.id);
       // Batch 12 is a clean cutover for new writes.  A browser that still
       // posts the old, generic request shape must reload rather than create a
       // request that would fan out to insurers the customer never chose.
@@ -119,6 +123,9 @@ export class QuoteRequestsService {
           'RELOAD_REQUIRED',
           'InsurShield has been updated; reload the page and choose the insurance products you want to compare.',
         );
+      }
+      if (dto.renewalOfPolicyNumber) {
+        await this.policies.assertRenewalAvailable(tx, customer.id, dto.renewalOfPolicyNumber, new Date());
       }
       const selectedVersions = await this.selectedVersions(
         tx,
@@ -166,6 +173,7 @@ export class QuoteRequestsService {
           ncdCode: ncd?.code ?? null,
           ncdPercentage: ncd?.percentage ?? null,
           photosCapturedAt: dto.photosCapturedAt ? new Date(dto.photosCapturedAt) : null,
+          renewalOfPolicyNumber: dto.renewalOfPolicyNumber ?? null,
         },
         insurerIds,
         shots,
@@ -189,6 +197,7 @@ export class QuoteRequestsService {
    */
   async requote(customer: CustomerPrincipal, id: string): Promise<QuoteRequestResponse> {
     return this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const original = await this.repository.lockOwned(tx, customer.id, id);
       if (!original) throw ApiException.notFound('Quote request', id);
 

@@ -451,7 +451,7 @@ export class ProductsService {
   }
 
   async directory(query: ProductDirectoryQueryDto) {
-    const records = await this.products.directory(new Date(), query.coverType, query.limit ?? 100);
+    const records = await this.products.directory(new Date(), query.coverType, query.limit ?? 100, undefined, query.productVersionId);
     const [comparisons, requirements] = await Promise.all([this.comparisonsFor(records), this.requirementsFor(records)]);
     return records.map((record) => this.toPublicVersion(record, comparisons.get(record.version.id), requirements.get(record.version.id)));
   }
