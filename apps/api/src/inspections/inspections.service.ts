@@ -12,6 +12,7 @@ import type { CustomerPrincipal } from '../customer/customer-principal.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import { UnderwritingInspectionsRepository } from '../customer/underwriting-inspections.repository.js';
 import { auditActor } from '../common/audit/audit.types.js';
+import { assertOpenCustomer } from '../db/customer-lock.js';
 
 /**
  * Scheduled vehicle inspections.
@@ -34,23 +35,29 @@ export class InspectionsService {
   async list(customerId: string) {
     const inspections = await this.repository.listForCustomer(customerId);
     const ids = inspections.map((inspection) => inspection.id);
-    const [photos, products] = await Promise.all([this.repository.photosOf(ids), this.underwriting.productsOf(ids)]);
+    const [photos, products, reports] = await Promise.all([
+      this.repository.photosOf(ids), this.underwriting.productsOf(ids), this.repository.reportsOf(ids),
+    ]);
+    const reportByInspection = new Map(reports.map(({ inspectionId, documentId }) => [inspectionId, documentId]));
     return Promise.all(
-      inspections.map(async (inspection) =>
-        toInspectionResponse(
+      inspections.map(async (inspection) => {
+        const reportId = reportByInspection.get(inspection.id);
+        return toInspectionResponse(
           inspection,
           await this.photoRecords(photos.filter((photo) => photo.inspectionId === inspection.id)),
           products
             .filter((product) => product.inspectionId === inspection.id)
             .map(({ productName, passed }) => ({ productName, passed })),
-        ),
-      ),
+          reportId ? await this.documents.record(reportId) : null,
+        );
+      }),
     );
   }
 
   async request(customer: CustomerPrincipal, dto: RequestInspectionDto) {
     const requestedAt = new Date();
     const inspection = await this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       let insurerName: string | null = null;
       if (dto.insurerId) {
         const insurer = await this.repository.findInsurerTakingNewBusiness(tx, dto.insurerId, requestedAt);
@@ -104,6 +111,7 @@ export class InspectionsService {
     const photos = await this.photoRecords(await this.repository.photosOfOwned(customer.id, id));
 
     const updated = await this.repository.transaction(async (tx) => {
+      await assertOpenCustomer(tx, customer.id);
       const inspection = await this.repository.lockOwned(tx, id, customer.id);
       if (!inspection) throw ApiException.notFound('Inspection', id);
 

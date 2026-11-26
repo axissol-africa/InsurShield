@@ -24,7 +24,7 @@ import { startApp, type TestApp } from './helpers.js';
  * signed payment provider callback, and the stand-in provider's three
  * development routes (absent in production, which refuses the stand-in).
  */
-const PUBLIC_ROUTES = 12;
+const PUBLIC_ROUTES = 11;
 /**
  * Served to guests too, but a signed-in caller is still held to a permission,
  * because the guard returns early only when there is no session.
@@ -102,6 +102,12 @@ describe('every route says who may reach it', () => {
   it('serves without a session only the routes meant to be public', () => {
     expect(routes.filter((route) => route.public)).toHaveLength(PUBLIC_ROUTES);
     expect(routes.filter((route) => route.optional)).toHaveLength(OPTIONAL_AUTH_ROUTES);
+  });
+
+  it('binds discount-code validation to an authenticated customer who can request quotes', () => {
+    expect(routes.find((route) => route.name.includes('CustomerController.validateNcdCode'))).toMatchObject({
+      public: false, optional: false, permission: 'quote-request:submit',
+    });
   });
 
   it('reaches every permission the table grants', () => {

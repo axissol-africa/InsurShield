@@ -118,3 +118,12 @@ it('opens a service request notice on that request', async () => {
 
   expect(await screen.findByRole('link', { name: 'Open' })).toHaveAttribute('href', '/service-requests/SR-ABC123');
 });
+
+it('opens an inspection notice on the right inspection', async () => {
+  api.notifications.list.mockResolvedValue({
+    items: [message({ subject: 'Your inspection report is ready', category: 'INSPECTION', entityType: 'INSPECTION', entityId: 'INS-ABC123' })],
+    nextCursor: null, unread: 1,
+  });
+  show();
+  expect(await screen.findByRole('link', { name: 'Open' })).toHaveAttribute('href', '/inspections?inspection=INS-ABC123');
+});

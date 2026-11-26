@@ -240,7 +240,7 @@ export const INSPECTION_STATUSES = [
 export type InspectionStatus = (typeof INSPECTION_STATUSES)[number];
 
 /** A customer-requested appointment, or one an insurer's product needs before it quotes or is paid. */
-export const INSPECTION_PURPOSES = ['GENERAL', 'UNDERWRITING'] as const;
+export const INSPECTION_PURPOSES = ['GENERAL', 'UNDERWRITING', 'AFTER_PAYMENT', 'CLAIM_ASSESSMENT'] as const;
 export type InspectionPurpose = (typeof INSPECTION_PURPOSES)[number];
 
 export const INSPECTION_RESULTS = ['PASSED', 'FAILED'] as const;
@@ -310,6 +310,7 @@ export const DOCUMENT_KINDS = [
   'QUOTATION',
   'CERTIFICATE',
   'INSPECTION_PHOTO',
+  'INSPECTION_REPORT',
   'WHITE_BOOK',
   'CLAIM_ATTACHMENT',
   'INSURER_LOGO',

@@ -1,4 +1,11 @@
+import NcdEvidence from '../components/NcdEvidence';
+import { discountLabel, isUsableNcd, ncdVehicleLabel } from '../ncd';
+import { Input } from '@/components/ui/primitives/input';
+import { Label } from '@/components/ui/primitives/label';
+import { NativeSelect } from '@/components/ui/primitives/native-select';
+import { Checkbox } from '@/components/ui/primitives/checkbox';
 import ClaimTimeline from '../components/ClaimTimeline';
+import { getIdentityBinding } from '@/app/identity';
 import { env } from '@/config/env';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -13,7 +20,7 @@ import { hydrateCustomer, hydrateDirectory } from '@/api/sync';
 import { formatZMW, formatDate, formatLusakaDate } from '@/domain/premiumEngine';
 import { daysUntil } from '@/domain/renewal';
 import { lusakaToday } from '@/domain/serviceRequests';
-import { NCD_TIERS as PUBLISHED_NCD_TIERS, ncdDiscountForYears } from '@/domain/insurers';
+import { NCD_TIERS as PUBLISHED_NCD_TIERS } from '@/domain/insurers';
 
 const CLAIM_TYPES = [
   'Accident / Collision', 'Theft', 'Fire Damage', 'Natural Disaster',
@@ -185,6 +192,7 @@ function SuccessBanner({ refNumber, onDone }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ClaimsPage() {
   const navigate = useNavigate();
+  const [now] = useState(Date.now);
   const [searchParams] = useSearchParams();
   const { claims, vehicleDetails, ncdApplications, customer, policies } = useStore();
   const insurers = useActiveInsurers();
@@ -200,7 +208,7 @@ export default function ClaimsPage() {
   const requestedAction = searchParams.get('action');
   const [mainTab, setMainTab] = useState(requestedAction === 'ncd' ? 'ncd' : 'claims');
   // Sub-view per tab: 'list' | 'new' | 'track' | 'detail' | 'success'
-  const [claimView, setClaimView] = useState(requestedAction === 'claim' ? 'new' : 'list');
+  const [claimView, setClaimView] = useState(searchParams.get('claim') ? 'detail' : requestedAction === 'claim' ? 'new' : 'list');
   const [ncdView, setNcdView] = useState(requestedAction === 'ncd' ? 'new' : 'list');
 
   const [selectedClaim, setSelectedClaim] = useState(null);
@@ -230,6 +238,19 @@ export default function ClaimsPage() {
     plateNumber: '', coverageType: '',
   });
 
+  const [ncdRules, setNcdRules] = useState(null);
+  const [ncdRulesError, setNcdRulesError] = useState('');
+  const [ncdRulesRetry, setNcdRulesRetry] = useState(0);
+  useEffect(() => {
+    if (mainTab !== 'ncd') return;
+    let active = true;
+    api.ncd.rules().then((rules) => { if (active) { setNcdRules(rules); setNcdRulesError(''); } })
+      .catch(() => { if (active) setNcdRulesError('NCD rules could not be loaded. Please try again.'); });
+    return () => { active = false; };
+  }, [mainTab, ncdRulesRetry]);
+  const ncdTiers = ncdRules ? ncdRules.tiers.map((tier) => ({ years: tier.yearsClaimFree, percentage: tier.percentage })) : env.apiMode === 'mock' ? NCD_TIERS : [];
+  const ncdPolicies = policies.filter((policy) => policy.status === 'Active' || (policy.status === 'Cancelled' && policy.issuedAt));
+
   // NCD form state
   const [ncdSubmitting, setNcdSubmitting] = useState(false);
   const [ncdDeclarationError, setNcdDeclarationError] = useState('');
@@ -237,6 +258,8 @@ export default function ClaimsPage() {
   const [ncdForm, setNcdForm] = useState({
     insurer: '', insurerId: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false,
   });
+  const selectedNcdTier = [...ncdTiers].sort((a, b) => b.years - a.years)
+    .find((tier) => tier.years <= Number(ncdForm.yearsClaimFree));
 
   const setClaimField = (k, v) => {
     setClaimForm(prev => ({ ...prev, [k]: v }));
@@ -324,17 +347,25 @@ export default function ClaimsPage() {
 
   const handleSubmitNcd = async (e) => {
     e.preventDefault();
+    if (ncdSubmitting) return;
+    if (env.apiMode === 'http' && (!ncdRules || !ncdPolicies.some((policy) => policy.policyNumber === ncdForm.policyNumber))) { setNcdError('Select one of your issued policies and load the current rules before applying.'); return; }
     if (!ncdForm.declaration) { setNcdDeclarationError('Please acknowledge the declaration before submitting.'); return; }
     setNcdDeclarationError('');
     setNcdSubmitting(true);
     setNcdError('');
     try {
-      const application = await api.ncd.apply({
-        insurerId: ncdForm.insurerId,
-        policyNumber: ncdForm.policyNumber,
-        fullName: ncdForm.fullName,
-        phone: ncdForm.phone,
-        yearsClaimFree: parseInt(ncdForm.yearsClaimFree, 10),
+      const application = await submitWithRetry({
+        operation: 'ncd-application',
+        fingerprint: JSON.stringify({ identity: getIdentityBinding() || customer?.email, ...ncdForm }),
+        prepare: async () => ({
+          ...(env.apiMode === 'mock' ? { insurerId: ncdForm.insurerId } : {}),
+          declaration: true,
+          policyNumber: ncdForm.policyNumber,
+          fullName: ncdForm.fullName,
+          phone: ncdForm.phone,
+          yearsClaimFree: parseInt(ncdForm.yearsClaimFree, 10),
+        }),
+        send: (payload, key) => api.ncd.apply(payload, key),
       });
       await hydrateCustomer();
       setSubmittedRef(application.applicationNumber);
@@ -833,8 +864,9 @@ export default function ClaimsPage() {
   }
 
   // ── Claim Detail (after tracking lookup) ──
-  if (mainTab === 'claims' && claimView === 'detail' && selectedClaim) {
-    const claim = allClaims.find(c => c.id === selectedClaim.id) || selectedClaim;
+  const linkedClaim = allClaims.find((claim) => claim.claimNumber === searchParams.get('claim'));
+  if (mainTab === 'claims' && claimView === 'detail' && (selectedClaim || linkedClaim)) {
+    const claim = allClaims.find(c => c.id === selectedClaim?.id) || selectedClaim || linkedClaim;
     const claimNumber = claim.claimNumber || claim.id;
     const received = claim.status !== 'Notified';
 
@@ -887,15 +919,15 @@ export default function ClaimsPage() {
         <ClaimsSubpageHeader eyebrow="No Claim Discount" title="Apply for a No Claim Discount" description="Tell us about your claim-free history. You’ll receive a reference number to track the insurer’s decision." onBack={() => setNcdView('list')} backLabel="Back to NCD applications" />
 
         {/* How it works */}
-        <Card className="mb-6 gap-0 border-border bg-muted/40 shadow-none"><CardHeader className="border-b"><CardTitle className="flex items-center gap-2"><span className="material-symbols-outlined text-[18px] text-primary">info</span>How NCD works</CardTitle></CardHeader><CardContent className="pt-5">
+        <Card className="mb-6 gap-0 border-border bg-muted/40 shadow-none"><CardHeader className="border-b"><CardTitle className="flex items-center gap-2"><span aria-hidden="true" className="material-symbols-outlined text-[18px] text-primary">info</span>How NCD works</CardTitle></CardHeader><CardContent className="pt-5">
           <h4 className="sr-only">
             How NCD Works
           </h4>
           <div className="space-y-2">
             {[
-              'Select the insurer you\'ve been with for at least 1 year with no claims.',
-              'Enter your policy number and how many years you\'ve been claim-free.',
-              'Submit — the insurer verifies your claim history (3–5 business days).',
+              env.apiMode === 'http' ? 'Select your issued policy.' : 'Select the insurer you have been with for at least 1 year with no claims.',
+              'Choose how many years you have been claim-free.',
+              'Submit — the insurer verifies your claim history.',
               'If approved, you receive a unique NCD code to use on your next quotation.',
               'The discount is applied only on quotes from that specific insurer.',
             ].map((step, i) => (
@@ -907,23 +939,34 @@ export default function ClaimsPage() {
           </div>
         </CardContent></Card>
 
+        {ncdRulesError && <div role="alert" className="mb-4"><p>{ncdRulesError}</p><Button variant="outline" onClick={() => setNcdRulesRetry((value) => value + 1)}>Retry NCD rules</Button></div>}
+        {!ncdRules && env.apiMode === 'http' && !ncdRulesError && <p role="status">Loading NCD rules…</p>}
+        {ncdRules && <p className="mb-4 text-sm text-muted-foreground">{ncdRules.provisional ? 'These rules are provisional and your insurer verifies each application. ' : ''}Approved codes are valid for {ncdRules.validityDays} days.</p>}
         <form onSubmit={handleSubmitNcd} className="space-y-5">
           <div className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-none sm:p-6">
             <h3 className="font-medium text-[15px] border-b pb-2">Contact & Application Details</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 sm:col-span-1">
-                <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Full Name *</label>
-                <input required value={ncdForm.fullName} onChange={e => setNcdField('fullName', e.target.value)} placeholder="e.g. Mwiza Banda"
+                <label htmlFor="ncd-full-name" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Full Name *</label>
+                <Input id="ncd-full-name" required value={ncdForm.fullName} onChange={e => setNcdField('fullName', e.target.value)} placeholder="e.g. Mwiza Banda"
                   className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Mobile Number *</label>
-                <input required type="tel" value={ncdForm.phone} onChange={e => setNcdField('phone', e.target.value)} placeholder="e.g. 0970 123 456"
+                <label htmlFor="ncd-phone" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Mobile Number *</label>
+                <Input id="ncd-phone" required type="tel" value={ncdForm.phone} onChange={e => setNcdField('phone', e.target.value)} placeholder="e.g. 0970 123 456"
                   className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
                 <p className="text-[11px] text-ink-muted mt-1">Used to verify and track this application.</p>
               </div>
             </div>
 
+            {env.apiMode === 'http' ? <div>
+              <label htmlFor="ncd-policy" className="mb-2 block text-sm font-medium">Issued policy *</label>
+              <NativeSelect id="ncd-policy" className="w-full" required value={ncdForm.policyNumber} onChange={(event) => setNcdField('policyNumber', event.target.value)}>
+                <option value="">Select your policy</option>
+                {ncdPolicies.map((policy) => <option key={policy.policyNumber} value={policy.policyNumber}>{policy.policyNumber} · {policy.insurer} · {policy.vehicle}</option>)}
+              </NativeSelect>
+              {!ncdPolicies.length && <p className="mt-2 text-sm text-muted-foreground">You need an issued policy to apply. Your policies will appear here when available.</p>}
+            </div> : <>
             <div>
               <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
               <div className="relative">
@@ -932,7 +975,7 @@ export default function ClaimsPage() {
                   <option value="">Select insurer you have been using...</option>
                   {insurers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                 </select>
-                <span className="material-symbols-outlined absolute right-3 top-3.5 text-ink-faint pointer-events-none">expand_more</span>
+                <span aria-hidden="true" className="material-symbols-outlined absolute right-3 top-3.5 text-ink-faint pointer-events-none">expand_more</span>
               </div>
               <p className="text-[11px] text-ink-muted mt-1">You must have been continuously insured with this company for a minimum of 1 year.</p>
             </div>
@@ -943,23 +986,26 @@ export default function ClaimsPage() {
                 className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 font-mono text-[15px] uppercase focus:ring-2 focus:ring-primary outline-none" />
             </div>
 
+            </>}
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-2 block">Years Continuously Insured Without a Claim *</label>
-              <div className="grid grid-cols-4 gap-2">
-                {NCD_TIERS.map(tier => (
-                  <div key={tier.years} onClick={() => setNcdField('yearsClaimFree', String(tier.years))}
-                    className={`p-3 rounded-lg border-2 cursor-pointer text-center transition-all ${ncdForm.yearsClaimFree === String(tier.years) ? 'bg-primary border-primary text-white' : 'border-line bg-white hover:border-primary/40'}`}>
+              <Label htmlFor="ncd-claim-free-years" className="mb-2 block">Claim-free years</Label>
+              <Input id="ncd-claim-free-years" type="number" min="1" max="99" step="1" required className="mb-3 max-w-32"
+                value={ncdForm.yearsClaimFree} onChange={(event) => setNcdField('yearsClaimFree', event.target.value)} />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {ncdTiers.map(tier => (
+                  <Button variant="outline" type="button" aria-pressed={ncdForm.yearsClaimFree === String(tier.years)} aria-label={`${tier.years} claim-free years, ${tier.percentage}%`} key={tier.years} onClick={() => setNcdField('yearsClaimFree', String(tier.years))}
+                    className={`h-auto flex-col gap-0 p-3 rounded-lg border-2 cursor-pointer text-center transition-all ${ncdForm.yearsClaimFree === String(tier.years) ? 'bg-primary border-primary text-white' : 'border-line bg-white hover:border-primary/40'}`}>
                     <p className="text-[20px] font-semibold">{tier.years}</p>
                     <p className="text-[10px] font-medium uppercase">yr{tier.years > 1 ? 's' : ''}</p>
                     <p className={`text-[12px] font-semibold mt-1 ${ncdForm.yearsClaimFree === String(tier.years) ? 'text-white' : 'text-primary'}`}>{tier.percentage}%</p>
-                  </div>
+                  </Button>
                 ))}
               </div>
-              {ncdForm.yearsClaimFree && (
+              {selectedNcdTier && (
                 <div className="mt-3 bg-primary/5 border border-primary/20 p-3 rounded-lg flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <span aria-hidden="true" className="material-symbols-outlined text-primary text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
                   <p className="text-[13px] text-primary">
-                    <strong>{NCD_TIERS.find(t => t.years === parseInt(ncdForm.yearsClaimFree))?.percentage}% discount</strong> may apply — subject to insurer verification.
+                    <strong>{selectedNcdTier.percentage}% discount</strong> may apply after the insurer verifies your history.
                   </p>
                 </div>
               )}
@@ -967,26 +1013,21 @@ export default function ClaimsPage() {
           </div>
 
           {/* Declaration */}
-          <div className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition-all ${ncdForm.declaration ? 'bg-primary/5 border-primary/40' : 'bg-card border-border hover:border-primary/40'}`}
-            onClick={() => { setNcdField('declaration', !ncdForm.declaration); setNcdDeclarationError(''); }}>
-            <div className={`w-6 h-6 rounded-lg border-2 flex-shrink-0 mt-0.5 flex items-center justify-center ${ncdForm.declaration ? 'bg-primary/50 border-primary' : 'border-line'}`}>
-              {ncdForm.declaration && <span className="material-symbols-outlined text-white text-[14px]">check</span>}
-            </div>
-            <p className="text-[13px] leading-relaxed text-ink">
-              <strong>I declare</strong> that I have been continuously insured with the selected company for the stated period and have not made any insurance claims during that time. I understand that false information may result in rejection and legal action.
-            </p>
-          </div>
+          <label htmlFor="ncd-declaration" className="flex cursor-pointer items-start gap-3 rounded-xl border-2 border-border p-4">
+            <Checkbox id="ncd-declaration" checked={ncdForm.declaration} onCheckedChange={(checked) => { setNcdField('declaration', checked === true); setNcdDeclarationError(''); }} />
+            <span className="text-sm leading-relaxed">{ncdRules?.declarationText || (env.apiMode === 'mock' ? 'I declare that I have been continuously insured with the selected company for the stated period and have not made any insurance claims during that time.' : 'Load the current declaration before submitting.')}</span>
+          </label>
 
           {ncdDeclarationError && <p className="text-[12px] font-medium text-primary">{ncdDeclarationError}</p>}
 
           {ncdError && <p role="alert" className="mt-5 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-[14px] text-primary">{ncdError}</p>}
-          <button type="submit" disabled={ncdSubmitting || !ncdForm.yearsClaimFree || !ncdForm.declaration}
+          <Button type="submit" disabled={(env.apiMode === 'http' && (!ncdRules || !ncdForm.policyNumber)) || ncdSubmitting || !ncdForm.yearsClaimFree || !ncdForm.declaration}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 font-medium text-white transition-colors duration-200 ease-out hover:bg-primary/90 disabled:cursor-not-allowed disabled:border disabled:border-dashed disabled:border-line-strong disabled:bg-canvas disabled:text-ink-faint disabled:hover:bg-canvas">
             {ncdSubmitting
-              ? <><span className="material-symbols-outlined animate-spin">sync</span> Submitting...</>
-              : <><span className="material-symbols-outlined">send</span> Submit NCD Application</>
+              ? <><span aria-hidden="true" className="material-symbols-outlined animate-spin">sync</span> Submitting...</>
+              : <><span aria-hidden="true" className="material-symbols-outlined">send</span> Submit NCD Application</>
             }
-          </button>
+          </Button>
         </form>
       </ClaimsWorkspace>
     );
@@ -1004,26 +1045,40 @@ export default function ClaimsPage() {
         <Card className="mb-5 gap-4 border-border shadow-none"><CardHeader className="grid-cols-[1fr_auto] items-start gap-3 border-b"><div><p className="font-mono text-lg font-medium text-primary sm:text-xl">{app.applicationNumber}</p><p className="mt-1 text-sm text-muted-foreground">{app.insurer}</p></div><Badge variant={statusInfo?.variant || 'muted'}>{app.status}</Badge></CardHeader><CardContent><dl className="space-y-3">
           <InfoRow label="Insurance Company" value={app.insurer} highlight />
           <InfoRow label="Policy Number" value={app.policyNumber} />
+          {app.vehicle && <InfoRow label="Policy vehicle" value={ncdVehicleLabel(app.vehicle)} />}
           <InfoRow label="Years Claim-Free" value={`${app.yearsClaimFree} year${app.yearsClaimFree > 1 ? 's' : ''}`} />
-          <InfoRow label="Potential Discount" value={`${ncdDiscountForYears(app.yearsClaimFree)}%`} highlight />
+          <InfoRow label="Potential Discount" value={discountLabel(app)} highlight />
           <InfoRow label="Submitted" value={formatDate(app.submittedAt)} />
         </dl></CardContent></Card>
 
+        <NcdEvidence key={`${app.id}-${app.verificationRevision ?? 0}`} application={app} onRefresh={hydrateCustomer} onUpdated={async (updated) => {
+          const current = useStore.getState();
+          const owner = customer?.id || customer?.email;
+          if (current.leaving || !owner || owner !== (current.customer?.id || current.customer?.email) ||
+              !current.ncdApplications.some((item) => item.id === updated.id)) return;
+          current.setNcdApplications(current.ncdApplications.map((item) => item.id === updated.id ? updated : item));
+          setSelectedNcdApp(updated);
+          await hydrateCustomer();
+        }} />
+        {app.expiresAt && <p className="mb-4 text-sm">{new Date(app.expiresAt).getTime() <= now ? 'Expired' : 'Expires'}: {formatDate(app.expiresAt)}</p>}
+        {app.codeStatus && <p className="mb-4 text-sm">Code status: {app.codeStatus}</p>}
+        {app.status === 'Rejected' && <p className="mb-4 text-sm">For help with the decision, contact {app.insurer} or <Link to="/support" className="font-medium text-primary underline">contact InsurShield support</Link>.</p>}
+        {app.status === 'Approved' && !isUsableNcd(app, now) && <p className="mb-4 text-sm">{app.codeStatus === 'Expired' || (app.expiresAt && new Date(app.expiresAt).getTime() <= now) ? 'This discount code has expired. Contact your insurer.' : app.codeStatus === 'Used' ? 'This discount code has already been used.' : app.codeStatus === 'Unavailable' ? 'This discount code is unavailable. Contact your insurer.' : 'Legacy approval. Ask your insurer to verify your policy before you request quotes with a discount.'}</p>}
         {/* Progress */}
         <Card className="mb-5 gap-0 border-border shadow-none"><CardHeader className="border-b"><CardTitle>Application progress</CardTitle></CardHeader><CardContent className="pt-5">
           <div className="relative">
             <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-canvas-2" />
             <div className="space-y-4">
               {NCD_APPLICATION_STATUSES.filter(s => s.id !== 'Rejected').map((status, idx) => {
-                const isDone = idx <= currentStatusIdx;
+                const isDone = app.status !== 'Rejected' && idx <= currentStatusIdx;
                 const isCurrent = idx === currentStatusIdx;
                 return (
                   <div key={status.id} className="relative flex items-center gap-4 pl-2">
                     <div className={`z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isDone ? 'bg-primary' : 'border-2 border-border bg-card'}`}>
-                      {isDone && <span className="material-symbols-outlined text-white text-[12px]">check</span>}
+                      {isDone && <span aria-hidden="true" className="material-symbols-outlined text-white text-[12px]">check</span>}
                     </div>
                     <div className={`text-[13px] ${isCurrent ? 'font-medium text-primary' : isDone ? 'text-ink' : 'text-ink-muted opacity-40'}`}>
-                      {status.label}
+                      {status.id}
                       {isCurrent && <span className="ml-2 text-[10px] bg-primary text-white px-2 py-0.5 rounded-full">CURRENT</span>}
                     </div>
                   </div>
@@ -1034,9 +1089,9 @@ export default function ClaimsPage() {
         </CardContent></Card>
 
         {/* Approved Code */}
-        {app.status === 'Approved' && app.approvedCode && (
+        {isUsableNcd(app, now) && (
           <Card className="gap-0 border-primary/30 bg-primary/5 text-center shadow-none"><CardContent className="p-5">
-            <span className="material-symbols-outlined text-primary text-4xl mb-2" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
+            <span aria-hidden="true" className="material-symbols-outlined text-primary text-4xl mb-2" style={{ fontVariationSettings: "'FILL' 1" }}>verified</span>
             <h3 className="font-semibold text-primary text-[18px] mb-1">NCD Approved!</h3>
             <p className="text-[13px] text-primary mb-3">Use this code when requesting a quotation from <strong>{app.insurer}</strong>.</p>
             <div className="mb-3 rounded-xl border border-primary/30 bg-card p-4">
@@ -1046,10 +1101,10 @@ export default function ClaimsPage() {
             </div>
             <div className="flex gap-3 justify-center">
               <Button type="button" variant="outline" onClick={() => navigator.clipboard?.writeText(app.approvedCode)} className="border-primary text-primary hover:bg-primary/5">
-                <span className="material-symbols-outlined text-[18px]">content_copy</span> Copy Code
+                <span aria-hidden="true" className="material-symbols-outlined text-[18px]">content_copy</span> Copy Code
               </Button>
               <Button type="button" onClick={() => navigate('/insurance-type')}>
-                <span className="material-symbols-outlined text-[18px]">request_quote</span> Get a Quote
+                <span aria-hidden="true" className="material-symbols-outlined text-[18px]">request_quote</span> Get a Quote
               </Button>
             </div>
           </CardContent></Card>
@@ -1062,7 +1117,7 @@ export default function ClaimsPage() {
   // MAIN LIST VIEW
   // ════════════════════════════════════════════════════════════════
   const myClaims = allClaims.filter(mine);
-  const myNcdApps = allNcdApps.filter(mine);
+  const myNcdApps = env.apiMode === 'http' ? allNcdApps : allNcdApps.filter(mine);
   const openClaim = (claim) => { setSelectedClaim(claim); setClaimView('detail'); };
   const openNcdApp = (app) => { setSelectedNcdApp(app); setNcdView('detail'); };
 
@@ -1165,7 +1220,7 @@ export default function ClaimsPage() {
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/15"><span className="material-symbols-outlined text-[26px]" aria-hidden="true">sell</span></span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[18px] font-semibold">Apply for a No Claim Discount</span>
-                <span className="mt-1 block text-[13px] text-white/85">One or more claim-free years can earn up to 40% off your next premium.</span>
+                <span className="mt-1 block text-[13px] text-white/85">Claim-free years may qualify for a discount, subject to insurer verification.</span>
               </span>
               <span className="material-symbols-outlined transition-transform group-hover:translate-x-1" aria-hidden="true">arrow_forward</span>
             </button>
@@ -1183,7 +1238,7 @@ export default function ClaimsPage() {
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><span className="material-symbols-outlined text-[20px]" aria-hidden="true">sell</span></span>
                           <span className="min-w-0 flex-1">
                             <span className="block font-medium text-ink">{app.yearsClaimFree} claim-free year{app.yearsClaimFree === 1 ? '' : 's'} <span className="font-mono text-[13px] text-ink-muted">· {app.applicationNumber}</span></span>
-                            <span className="mt-0.5 block text-[12px] text-ink-muted">{app.insurer} · policy {app.policyNumber}{app.approvedCode ? ` · code ${app.approvedCode}` : ''}</span>
+                            <span className="mt-0.5 block text-[12px] text-ink-muted">{app.insurer} · policy {app.policyNumber}{isUsableNcd(app, now) ? ` · code ${app.approvedCode}` : app.codeStatus ? ` · code ${app.codeStatus}` : ''}</span>
                             <Badge variant={status?.variant || 'muted'} className="mt-1.5 sm:hidden">{app.status}</Badge>
                           </span>
                           <Badge variant={status?.variant || 'muted'} className="hidden shrink-0 sm:inline-flex">{app.status}</Badge>
@@ -1203,14 +1258,14 @@ export default function ClaimsPage() {
           <Card className="min-w-0 gap-0 border-border shadow-none">
             <CardHeader className="border-b"><CardTitle>Discount scale</CardTitle><p className="text-sm text-muted-foreground">Subject to insurer verification.</p></CardHeader>
             <CardContent className="pt-5"><ul className="grid grid-cols-2 gap-3">
-              {NCD_TIERS.map(tier => (
+              {ncdTiers.map(tier => (
                 <li key={tier.years} className="rounded-xl border border-primary/15 bg-primary/5 p-3 text-center">
                   <p className="text-[24px] font-semibold text-primary">{tier.percentage}%</p>
                   <p className="text-[11px] font-medium uppercase text-ink-muted">{tier.years} claim-free yr{tier.years > 1 ? 's' : ''}</p>
                 </li>
               ))}
             </ul>
-            <p className="mt-4 text-xs leading-5 text-muted-foreground">Maximum 40% after four consecutive claim-free years. The approved code is applied when you next request quotes.</p></CardContent>
+            <p className="mt-4 text-xs leading-5 text-muted-foreground">The configured discount is confirmed by your insurer. Use an approved, unexpired code when you next request quotes.</p></CardContent>
           </Card>
         </div>
       )}

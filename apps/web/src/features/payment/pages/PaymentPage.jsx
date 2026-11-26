@@ -1,7 +1,11 @@
+import { env } from '@/config/env';
+import PaymentHeld from '../components/PaymentHeld';
+import { isHeldPayment } from '../paymentStatus';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/api';
 import { newIdempotencyKey } from '@/api/shared';
+import { getIdentityBinding } from '@/app/identity';
 import { useStore } from '@/store';
 import { COVER_TYPE_LABELS } from '@/domain/coverGuide';
 import { formatZMW } from '@/domain/premiumEngine';
@@ -27,7 +31,10 @@ export default function PaymentPage() {
   const [searchParams] = useSearchParams();
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { selectedQuote, insuranceType, quoteRequests, vehicleDetails, policyDates, customer, requoteFromRequest, recordPayment, paymentAttempt, setPaymentAttempt } = useStore();
+  const { selectedQuote, insuranceType, quoteRequests, vehicleDetails, policyDates, customer, requoteFromRequest, recordPayment, paymentReceipt, paymentAttempt, setPaymentAttempt } = useStore();
+  const pendingStart = paymentAttempt && !paymentAttempt.transactionId && paymentAttempt.insurerQuoteId === selectedQuote?.insurerQuoteId
+    ? paymentAttempt : null;
+  const lockedDetails = pendingStart?.payload;
   const [expiredAtPay, setExpiredAtPay] = useState(false);
   const [method, setMethod] = useState('momo');
   const [mobileNumber, setMobileNumber] = useState(customer?.phone || '');
@@ -40,10 +47,12 @@ export default function PaymentPage() {
   // The attempt being followed: only one for the quote on this page, whether just started or back from card checkout.
   const attempt = paymentAttempt?.transactionId && paymentAttempt.insurerQuoteId === selectedQuote?.insurerQuoteId ? paymentAttempt : null;
   const payment = attempt?.payment ?? null;
+  const unresolvedPayment = payment || paymentAttempt?.payment || paymentReceipt;
+  const heldReceipt = env.apiMode === 'http' && isHeldPayment(unresolvedPayment) ? unresolvedPayment : null;
   const waiting = Boolean(payment && OPEN.includes(payment.status));
 
   useEffect(() => {
-    if (!waiting) return undefined;
+    if ((!waiting && !heldReceipt) || !attempt?.transactionId) return undefined;
     let current = true;
     const timer = setInterval(async () => {
       try {
@@ -54,14 +63,16 @@ export default function PaymentPage() {
       }
     }, POLL_MS);
     return () => { current = false; clearInterval(timer); };
-  }, [waiting, attempt, setPaymentAttempt]);
+  }, [waiting, heldReceipt, attempt, setPaymentAttempt]);
 
   useEffect(() => {
-    if (payment?.status !== 'Confirmed') return;
+    if (payment?.status !== 'Confirmed' || (env.apiMode === 'http' && !payment.policyNumber)) return;
     recordPayment(payment);
     setPaymentAttempt(null);
     navigate(`/confirmation${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`, { replace: true });
   }, [payment, recordPayment, setPaymentAttempt, navigate, captureCode]);
+
+  if (heldReceipt) return <PaymentHeld receipt={heldReceipt} />;
 
   if (!selectedQuote) return (
     <JourneyLayout step={6} title="Choose a quote first" description="Choose an insurer from your comparison before paying.">
@@ -75,14 +86,14 @@ export default function PaymentPage() {
   const lines = payment?.breakdown ?? serverAmount?.breakdown ?? null;
   const addOns = selectedQuote.addOns || [];
   const addOnsTotal = addOns.reduce((sum, addOn) => sum + addOn.price, 0);
-  const total = payment?.amount ?? serverAmount?.expected ?? Math.round((selectedQuote.price + addOnsTotal + rtsaFee) * 100) / 100;
+  const total = payment?.amount ?? lockedDetails?.amount ?? serverAmount?.expected ?? Math.round((selectedQuote.price + addOnsTotal + rtsaFee) * 100) / 100;
   const validity = quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null);
   const requote = () => {
     if (selectedQuote.requestId) requoteFromRequest(selectedQuote.requestId);
     navigate(continuation('/quote-request'));
   };
 
-  if (validity.expired || expiredAtPay) return (
+  if (!payment && !pendingStart && (validity.expired || expiredAtPay)) return (
     <JourneyLayout step={6} title="This quote has expired" description="Request fresh quotes before paying. Your vehicle details will be carried over.">
       <Alert className="mb-6"><AlertDescription>{selectedQuote.name}'s quote {validity.validUntil ? `was valid until ${validity.label.replace('Expired on ', '')}` : 'is no longer valid'}.</AlertDescription></Alert>
       <div className="flex flex-wrap gap-3"><Button onClick={requote}>Get fresh quotes</Button><Button variant="outline" asChild><Link to={continuation('/quotes-comparison')}>See other quotes</Link></Button></div>
@@ -93,45 +104,60 @@ export default function PaymentPage() {
     event.preventDefault();
     if (processing || waiting) return;
     // Re-check at the moment of authorisation; a quote valid now stays purchasable while confirmation is pending.
-    if (quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null).expired) { setExpiredAtPay(true); return; }
+    if (!pendingStart && quoteValidity(selectedQuote.validUntil ? { validUntil: selectedQuote.validUntil } : null).expired) { setExpiredAtPay(true); return; }
     setProcessing(true);
     setPaymentError('');
     // A retry after a lost answer sends the same key, so the server finds the attempt it already started.
-    const retrying = paymentAttempt && !paymentAttempt.transactionId && paymentAttempt.insurerQuoteId === selectedQuote.insurerQuoteId;
-    const idempotencyKey = retrying ? paymentAttempt.idempotencyKey : newIdempotencyKey();
-    setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, transactionId: null, payment: null });
+    const idempotencyKey = pendingStart?.idempotencyKey || newIdempotencyKey();
+    const payload = lockedDetails ?? {
+      quoteRequestId: selectedQuote.requestId,
+      insurerQuoteId: selectedQuote.insurerQuoteId,
+      amount: total,
+      method: method === 'momo' ? 'Mobile money' : 'Card',
+      ...(method === 'momo' && { mobileNumber }),
+      ...(method === 'card' && { returnUrl: `${window.location.origin}${continuation('/payment')}` }),
+    };
+    const identity = getIdentityBinding() || customer?.id || customer?.email;
+    const stillOnAttempt = () => {
+      const current = useStore.getState();
+      const currentIdentity = getIdentityBinding() || current.customer?.id || current.customer?.email;
+      return !current.leaving && identity === currentIdentity && current.paymentAttempt?.idempotencyKey === idempotencyKey;
+    };
+    setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, payload, transactionId: null, payment: null });
     try {
-      const started = await api.payments.pay({
-        quoteRequestId: selectedQuote.requestId,
-        insurerQuoteId: selectedQuote.insurerQuoteId,
-        amount: total,
-        method: method === 'momo' ? 'Mobile money' : 'Card',
-        mobileNumber: method === 'momo' ? mobileNumber : undefined,
-        returnUrl: method === 'card' ? `${window.location.origin}${continuation('/payment')}` : undefined,
-      }, idempotencyKey);
+      const started = await api.payments.pay(payload, idempotencyKey);
+      if (!stillOnAttempt()) return;
       setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, transactionId: started.transactionId, payment: started });
       setServerAmount(null);
       setProcessing(false);
       // Card details are entered on the provider's own page, never here.
       if (started.checkoutUrl && OPEN.includes(started.status)) window.location.assign(started.checkoutUrl);
     } catch (caught) {
-      setProcessing(false);
+      if (!stillOnAttempt()) return;
       if (caught?.code === 'AMOUNT_MISMATCH' && caught.details?.expected) {
+        setProcessing(false);
         setPaymentAttempt(null);
         setServerAmount({ expected: caught.details.expected, breakdown: caught.details.breakdown ?? null });
         setPaymentError(`The amount to pay is now ${formatZMW(caught.details.expected)}. Check the summary and pay again.`);
         return;
       }
-      if (caught?.code === 'PAYMENT_IN_PROGRESS' && caught.details?.transactionId) {
+      const followExisting = ['PAYMENT_IN_PROGRESS', 'ALREADY_PAID'].includes(caught?.code) && caught.details?.transactionId;
+      if (followExisting) {
         // Another tab or device already started one: follow that one instead of starting another.
         const existing = await api.payments.status(caught.details.transactionId).catch(() => null);
+        if (!stillOnAttempt()) return;
         if (existing) {
           setPaymentAttempt({ insurerQuoteId: selectedQuote.insurerQuoteId, idempotencyKey, transactionId: existing.transactionId, payment: existing });
+          setProcessing(false);
           return;
         }
       }
       // Only a lost answer keeps the key for the retry; a refusal starts afresh.
-      if (caught?.code) setPaymentAttempt(null);
+      if (!followExisting && caught?.code && caught.code !== 'NETWORK' && !(caught.status >= 500)) {
+        setPaymentAttempt(null);
+        if (caught.code === 'QUOTE_EXPIRED') setExpiredAtPay(true);
+      }
+      setProcessing(false);
       setPaymentError(caught?.message || 'The payment could not be completed. Please try again.');
     }
   };
@@ -206,14 +232,14 @@ export default function PaymentPage() {
               </dl>
             )}
             <form onSubmit={handlePay} className="space-y-5">
-              <Tabs value={method} onValueChange={setMethod}>
+              <Tabs value={lockedDetails ? (lockedDetails.method === 'Card' ? 'card' : 'momo') : method} onValueChange={setMethod}>
                 <TabsList aria-label="Payment method" className="mb-3 w-full">
-                  <TabsTrigger value="momo" disabled={processing}>Mobile money</TabsTrigger>
-                  <TabsTrigger value="card" disabled={processing}>Card</TabsTrigger>
+                  <TabsTrigger value="momo" disabled={processing || !!lockedDetails}>Mobile money</TabsTrigger>
+                  <TabsTrigger value="card" disabled={processing || !!lockedDetails}>Card</TabsTrigger>
                 </TabsList>
                 <TabsContent value="momo" className="space-y-4">
-                  <div className="space-y-2"><Label htmlFor="payment-mobile">Mobile number</Label><Input id="payment-mobile" type="tel" required autoComplete="tel" value={mobileNumber} onChange={(event) => setMobileNumber(event.target.value)} /></div>
-                  <div className="space-y-2"><Label htmlFor="payment-network">Network</Label><NativeSelect id="payment-network" required className="w-full">{NETWORKS.map((network) => <option key={network}>{network}</option>)}</NativeSelect></div>
+                  <div className="space-y-2"><Label htmlFor="payment-mobile">Mobile number</Label><Input id="payment-mobile" type="tel" required autoComplete="tel" disabled={!!lockedDetails} value={lockedDetails?.mobileNumber ?? mobileNumber} onChange={(event) => setMobileNumber(event.target.value)} /></div>
+                  <div className="space-y-2"><Label htmlFor="payment-network">Network</Label><NativeSelect id="payment-network" required disabled={!!lockedDetails} className="w-full">{NETWORKS.map((network) => <option key={network}>{network}</option>)}</NativeSelect></div>
                   <p className="text-sm text-muted-foreground">You'll receive a prompt on this number to approve the payment.</p>
                 </TabsContent>
                 <TabsContent value="card" className="space-y-4">
@@ -221,7 +247,8 @@ export default function PaymentPage() {
                 </TabsContent>
               </Tabs>
               {paymentError && <Alert variant="destructive"><AlertDescription>{paymentError}</AlertDescription></Alert>}
-              <Button type="submit" size="lg" disabled={processing} className="w-full">{processing ? 'Starting payment…' : `Pay ${formatZMW(total)}`}</Button>
+              {lockedDetails && !processing && <p className="text-sm text-muted-foreground">Retry using the original details to recover this payment.</p>}
+              <Button type="submit" size="lg" disabled={processing} className="w-full">{processing ? 'Starting payment…' : lockedDetails ? 'Retry original payment' : `Pay ${formatZMW(total)}`}</Button>
               <p className="text-center text-xs text-muted-foreground">Test payments only: no real money is taken.</p>
             </form>
           </CardContent>

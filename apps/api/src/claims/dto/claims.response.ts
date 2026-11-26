@@ -1,4 +1,5 @@
 import type { DocumentRecord } from '../../documents/documents.service.js';
+import type { InspectionMethod } from '../../common/domain/enums.js';
 
 export interface ClaimTimelineUpdate {
   id: string;
@@ -17,5 +18,6 @@ export interface ClaimTimeline {
   responseDueOn: string | null;
   lateSubmission: boolean;
   insurerClaimReference: string | null;
+  inspection?: { id: string; status: string; method: InspectionMethod | null };
   updates: ClaimTimelineUpdate[];
 }

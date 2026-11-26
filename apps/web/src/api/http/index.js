@@ -208,6 +208,7 @@ export const policies = {
 };
 
 export const claims = {
+  requestInspection: (number, method) => apiClient.post(`/insurer/claims/${encodeURIComponent(number)}/inspection`, { method }),
   notify: (claim, idempotencyKey = newIdempotencyKey()) => apiClient.post('/claims', claim, { headers: { 'Idempotency-Key': idempotencyKey } }),
   listMine: () => apiClient.get('/claims'),
   listForInsurer: () => apiClient.get('/insurer/claims'),
@@ -220,14 +221,21 @@ export const claims = {
 };
 
 export const ncd = {
-  apply: (application) => apiClient.post('/ncd/applications', application),
+  rules: () => apiClient.get('/ncd/applications/rules'),
+  submitEvidence: (id, payload, key) => apiClient.post(`/ncd/applications/${id}/evidence`, payload, key ? { headers: { 'Idempotency-Key': key } } : undefined),
+  apply: (application, key) => apiClient.post('/ncd/applications', application, key ? { headers: { 'Idempotency-Key': key } } : undefined),
   listMine: () => apiClient.get('/ncd/applications'),
-  validateCode: (code) => apiClient.post('/ncd/codes/validate', { code }),
+  validateCode: (payload) => apiClient.post('/ncd/codes/validate', payload),
   listForInsurer: () => apiClient.get('/insurer/ncd/applications'),
-  decide: (id, status) => apiClient.post(`/insurer/ncd/applications/${id}/decision`, { status }),
+  decide: (id, status, note = '', verificationRevision = 0, key) => apiClient.post(`/insurer/ncd/applications/${id}/decision`, { status, note, verificationRevision }, key ? { headers: { 'Idempotency-Key': key } } : undefined),
 };
 
 export const inspections = {
+  reinspect: (id) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/reinspect`),
+  submitEvidence: (id, payload) => apiClient.post(`/inspections/${encodeURIComponent(id)}/evidence`, payload),
+  submitInsurerEvidence: (id, payload) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/evidence`, payload),
+  evidence: (id) => apiClient.get(`/insurer/inspections/${encodeURIComponent(id)}/evidence`),
+  attachReport: (id, documentId) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/report`, { documentId }),
   request: (inspection) => apiClient.post('/inspections', inspection),
   list: () => apiClient.get('/inspections'),
   update: (id, changes) => apiClient.patch(`/inspections/${id}`, changes),

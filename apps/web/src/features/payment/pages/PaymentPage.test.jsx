@@ -4,8 +4,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import PaymentPage, { POLL_MS } from './PaymentPage';
 import { useStore } from '@/store';
+import { env } from '@/config/env';
 import { api } from '@/api';
+import { ApiError } from '@/lib/apiClient';
 
+vi.mock('@/config/env', () => ({ env: { apiMode: 'mock' } }));
 vi.mock('@/api', () => ({ api: { payments: { pay: vi.fn(), status: vi.fn(), cancel: vi.fn() } } }));
 
 const BREAKDOWN = [{ kind: 'PREMIUM', code: 'PREMIUM', label: 'Premium', amount: 1200 }];
@@ -23,6 +26,7 @@ function showPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  env.apiMode = 'mock';
   useStore.setState({ selectedQuote: { name: 'Test insurer', coverage: 'Motor', price: 1200, insurerQuoteId: 'IQ-1', requestId: 'REQ-1' }, customer: { phone: '0971234567' }, vehicleDetails: null, policyDates: null, matchRtsaAnniversary: false, paymentAttempt: null, paymentReceipt: null });
 });
 
@@ -38,17 +42,32 @@ describe('Payment methods', () => {
     expect(await screen.findByLabelText('Mobile number')).toHaveValue('0971234567');
   });
 
-  it('retries a lost answer with the same key, so the server finds the attempt it started', async () => {
-    api.payments.pay.mockRejectedValueOnce(new Error('Please try again.')).mockResolvedValueOnce(attemptAs('Confirmed'));
+  it('retries a lost HTTP answer with the same key and original payer details', async () => {
+    api.payments.pay.mockRejectedValueOnce(new ApiError('Please try again.', { code: 'NETWORK' }))
+      .mockResolvedValueOnce(attemptAs('Confirmed'));
     showPage();
     fireEvent.click(screen.getByRole('button', { name: /^Pay / }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Please try again.');
     expect(screen.getByLabelText('Mobile number')).toHaveValue('0971234567');
-    fireEvent.click(screen.getByRole('button', { name: /^Pay / }));
+    expect(screen.getByLabelText('Mobile number')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry original payment' }));
     await waitFor(() => expect(screen.getByText('Confirmation destination')).toBeInTheDocument());
     expect(api.payments.pay).toHaveBeenLastCalledWith(expect.objectContaining({ amount: 1200, method: 'Mobile money', mobileNumber: '0971234567' }), expect.any(String));
-    const [first, second] = api.payments.pay.mock.calls.map((call) => call[1]);
-    expect(second).toBe(first);
+    const [first, second] = api.payments.pay.mock.calls;
+    expect(second).toEqual(first);
+  });
+
+  it('can recover a saved payment attempt after the original quote expired', async () => {
+    const payload = { insurerQuoteId: 'IQ-1', quoteRequestId: 'REQ-1', amount: 1200, method: 'Mobile money', mobileNumber: '0971234567' };
+    useStore.setState(state => ({
+      selectedQuote: { ...state.selectedQuote, validUntil: '2020-01-01' },
+      paymentAttempt: { insurerQuoteId: 'IQ-1', transactionId: null, payload, idempotencyKey: 'existing-attempt' },
+    }));
+    api.payments.pay.mockResolvedValueOnce(attemptAs('Pending'));
+    showPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry original payment' }));
+    await screen.findByRole('heading', { name: 'Waiting for your payment' });
+    expect(api.payments.pay).toHaveBeenCalledExactlyOnceWith(payload, 'existing-attempt');
   });
 
   it('starts a new attempt with a new key after the server refused one', async () => {
@@ -184,4 +203,58 @@ describe('Waiting for the provider', () => {
     showPage();
     expect(screen.getByRole('button', { name: /^Pay / })).toBeInTheDocument();
   });
+});
+
+
+it('holds an HTTP confirmed payment with no server policy rather than navigating or allowing another payment', async () => {
+  env.apiMode = 'http';
+  api.payments.pay.mockResolvedValueOnce(attemptAs('Confirmed', { policyNumber: null }));
+  showPage();
+  fireEvent.click(screen.getByRole('button', { name: /^Pay / }));
+  expect(await screen.findByRole('heading', { name: 'Payment held — awaiting resolution' })).toBeInTheDocument();
+  expect(screen.getByText(/Payment reference: TXN-1/)).toBeInTheDocument();
+  expect(screen.queryByText('Confirmation destination')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Pay / })).not.toBeInTheDocument();
+  expect(useStore.getState().paymentAttempt.payment).toMatchObject({ status: 'Confirmed', policyNumber: null });
+  expect(useStore.getState().paymentReceipt).toBeNull();
+});
+
+it.each(['attempt', 'receipt'])('keeps a held HTTP %s safe after reload without a selected quote', (source) => {
+  env.apiMode = 'http';
+  const payment = attemptAs('Confirmed', { policyNumber: null });
+  useStore.setState({ selectedQuote: null, paymentReceipt: source === 'receipt' ? payment : null,
+    paymentAttempt: source === 'attempt' ? { insurerQuoteId: 'IQ-1', transactionId: 'TXN-1', payment } : null });
+  showPage();
+  expect(screen.getByRole('heading', { name: 'Payment held — awaiting resolution' })).toBeInTheDocument();
+  expect(api.payments.pay).not.toHaveBeenCalled();
+});
+
+
+it.each(['Cancelled', 'Expired', 'Failed'])('treats a late captured %s payment as held, never as unpaid', (status) => {
+  env.apiMode = 'http';
+  useStore.setState({ paymentAttempt: { insurerQuoteId: 'IQ-1', transactionId: 'TXN-1', payment: attemptAs(status, { confirmedAt: '2026-11-26T10:00:00Z', policyNumber: null, failure: 'No money was taken.' }) } });
+  showPage();
+  expect(screen.getByRole('heading', { name: 'Payment held — awaiting resolution' })).toBeInTheDocument();
+  expect(screen.queryByText('No money was taken.')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Confirmation destination')).not.toBeInTheDocument();
+});
+
+it('shows a reversal even when the original capture time is still recorded', () => {
+  env.apiMode = 'http';
+  const payment = attemptAs('Reversed', { confirmedAt: new Date().toISOString(), failure: 'The payment was reversed by the provider.' });
+  useStore.setState({ paymentAttempt: { insurerQuoteId: 'IQ-1', transactionId: payment.transactionId, payment } });
+  showPage();
+  expect(screen.getByRole('heading', { name: 'Payment not completed' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('The payment was reversed by the provider.');
+  expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+});
+
+it('continues an HTTP confirmation when the server actually provides a policy number', async () => {
+  env.apiMode = 'http';
+  api.payments.pay.mockResolvedValueOnce(attemptAs('Confirmed', { policyNumber: 'POL-SERVER' }));
+  showPage();
+  fireEvent.click(screen.getByRole('button', { name: /^Pay / }));
+  expect(await screen.findByText('Confirmation destination')).toBeInTheDocument();
+  expect(useStore.getState().paymentReceipt.policyNumber).toBe('POL-SERVER');
 });

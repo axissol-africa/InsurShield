@@ -18,7 +18,10 @@ const openRows = () => within(screen.getByRole('table', { name: 'Open NCD applic
 const openRow = (name) => within(screen.getByRole('table', { name: 'Open NCD applications' })).getByRole('row', { name: new RegExp(name) });
 const review = async (user, name) => {
   await user.click(within(openRow(name)).getByRole('button', { name: `Review & decide ${name}’s application` }));
-  return screen.getByRole('dialog', { name: `Decide ${name}’s application` });
+  const dialog = screen.getByRole('dialog', { name: `Decide ${name}’s application` });
+  await user.click(within(dialog).getByRole('textbox', { name: 'Reason for decision' }));
+  await user.paste('Checked policy history');
+  return dialog;
 };
 
 beforeEach(() => {
@@ -31,11 +34,10 @@ describe('NcdTab', () => {
     render(<NcdTab applications={[submitted, reviewing, approved, rejected]} />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'NCD applications' })).toBeVisible();
-    expect(screen.getByText('3 awaiting a decision')).toBeVisible();
+    expect(screen.getByText('2 awaiting a decision')).toBeVisible();
     expect(screen.getByRole('tab', { name: /Open/ })).toHaveAttribute('aria-selected', 'true');
 
-    const [first, second, third] = openRows();
-    for (const text of ['Thandiwe Zulu', 'NCD-2026-0004', 'PA-2022-000333', '1 yr', 'Rejected', 'Reopenable — you can decide again.']) expect(first).toHaveTextContent(text);
+    const [second, third] = openRows();
     for (const text of ['Chanda Phiri', 'NCD-2026-0002', 'PA-2024-000111', '1 yr', '10%', 'Applied 7d ago', 'Under Review']) expect(second).toHaveTextContent(text);
     for (const text of ['Mwiza Banda', 'NCD-2026-0001', 'PA-2025-000777', '3 yrs', '30%', 'Applied 3d ago', 'Submitted']) expect(third).toHaveTextContent(text);
     expect(screen.queryByText('Bwalya Mumba')).not.toBeInTheDocument();
@@ -52,36 +54,28 @@ describe('NcdTab', () => {
     expect(within(table).queryByRole('button', { name: /Review/ })).not.toBeInTheDocument();
   });
 
-  it('keeps a rejected application in the work queue so it can be reopened', async () => {
-    const user = userEvent.setup();
-    render(<NcdTab applications={[rejected]} />);
-
-    expect(screen.getByText('1 awaiting a decision')).toBeVisible();
-    const dialog = await review(user, 'Thandiwe Zulu');
-    const decision = within(dialog).getByRole('radiogroup', { name: 'Your decision' });
-
-    expect(within(decision).getByRole('radio', { name: /^Approve/ })).toBeVisible();
-    expect(within(decision).getByRole('radio', { name: /^Keep under review/ })).toBeVisible();
-    expect(within(decision).queryByRole('radio', { name: /^Reject/ })).not.toBeInTheDocument();
-
-    await user.click(within(decision).getByRole('radio', { name: /^Approve/ }));
-    await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
-    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-4', 'Approved');
+  it('keeps a rejected application in the decided list with its reason', () => {
+    render(<NcdTab applications={[{ ...rejected, decisionNote: 'The policy has a recorded claim.' }]} />);
+    const table = screen.getByRole('table', { name: 'Decided NCD applications' });
+    expect(within(table).getByRole('row', { name: /Thandiwe Zulu/ })).toHaveTextContent('The policy has a recorded claim.');
+    expect(within(table).queryByRole('button', { name: /Review/ })).not.toBeInTheDocument();
   });
 
   it('puts what to check and every outcome on one surface, and sends nothing until a decision is confirmed', async () => {
     const user = userEvent.setup();
-    render(<NcdTab applications={[submitted]} />);
+    render(<NcdTab applications={[{ ...submitted, vehicle: { make: 'Toyota', model: 'Hilux', plateNumber: 'BBC567' }, declarationAcceptedAt: '2026-11-21T10:00:00.000Z' }]} />);
     const dialog = await review(user, 'Mwiza Banda');
 
     expect(dialog).toHaveTextContent('Check policy PA-2025-000777 in your own system');
+    expect(dialog).toHaveTextContent('Toyota Hilux · BBC567');
+    expect(dialog).toHaveTextContent(/Declaration accepted.*21 Nov 2026/);
     for (const text of ['PA-2025-000777', '3 years', '30%', 'Applied 3d ago']) expect(within(dialog).getAllByText(text, { exact: false })[0]).toBeVisible();
     expect(within(dialog).getByRole('link', { name: '0970123456' })).toHaveAttribute('href', 'tel:0970123456');
 
     const decision = within(dialog).getByRole('radiogroup', { name: 'Your decision' });
     expect(within(decision).getByRole('radio', { name: /^Approve.*Issues a 30% no-claim discount code/ })).not.toBeChecked();
     expect(within(decision).getByRole('radio', { name: /^Keep under review/ })).toBeVisible();
-    expect(within(decision).getByRole('radio', { name: /^Reject.*Closes the application without a discount.*reopen it later/ })).toBeVisible();
+    expect(within(decision).getByRole('radio', { name: /^Reject.*Closes the application.*receives your reason/ })).toBeVisible();
     expect(within(dialog).getByRole('button', { name: 'Confirm decision' })).toBeDisabled();
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -96,7 +90,7 @@ describe('NcdTab', () => {
 
     await user.click(within(dialog).getByRole('radio', { name: /^Approve/ }));
     await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
-    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-1', 'Approved');
+    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-1', 'Approved', 'Checked policy history', 0, expect.any(String));
     expect(hydrateInsurerPortal).toHaveBeenCalledOnce();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -108,14 +102,14 @@ describe('NcdTab', () => {
     let dialog = await review(user, 'Mwiza Banda');
     await user.click(within(dialog).getByRole('radio', { name: /^Keep under review/ }));
     await user.click(within(dialog).getByRole('button', { name: 'Mark under review' }));
-    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-1', 'Under Review');
+    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-1', 'Under Review', 'Checked policy history', 0, expect.any(String));
 
     dialog = await review(user, 'Mwiza Banda');
     // A new review starts undecided, whatever was chosen last time.
     expect(within(dialog).getByRole('button', { name: 'Confirm decision' })).toBeDisabled();
     await user.click(within(dialog).getByRole('radio', { name: /^Reject/ }));
     await user.click(within(dialog).getByRole('button', { name: 'Reject application' }));
-    expect(api.ncd.decide).toHaveBeenLastCalledWith('NCD-1', 'Rejected');
+    expect(api.ncd.decide).toHaveBeenLastCalledWith('NCD-1', 'Rejected', 'Checked policy history', 0, expect.any(String));
   });
 
   it('does not offer to keep reviewing an application that is already under review', async () => {
@@ -123,7 +117,7 @@ describe('NcdTab', () => {
     render(<NcdTab applications={[reviewing]} />);
     const dialog = await review(user, 'Chanda Phiri');
 
-    expect(within(dialog).getAllByRole('radio')).toHaveLength(2);
+    expect(within(dialog).getAllByRole('radio')).toHaveLength(3);
     expect(within(dialog).queryByRole('radio', { name: /^Keep under review/ })).not.toBeInTheDocument();
   });
 
@@ -142,6 +136,7 @@ describe('NcdTab', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
     expect(api.ncd.decide).toHaveBeenCalledTimes(2);
+    expect(api.ncd.decide.mock.calls[0][4]).toBe(api.ncd.decide.mock.calls[1][4]);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
@@ -166,6 +161,30 @@ describe('NcdTab', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review & decide Mwiza Banda’s application' })).toHaveFocus());
+  });
+
+  it('requests verification with a reason and keeps verification requests in the open queue', async () => {
+    const user = userEvent.setup();
+    render(<NcdTab applications={[{ ...submitted, discountPercentage: 17, status: 'Verification Required', decisionNote: 'Upload policy history', evidence: [{ id: 'DOC-1', name: 'history.pdf', url: '/documents/signed' }] }]} />);
+    expect(openRow('Mwiza Banda')).toHaveTextContent('17% discount');
+    expect(openRow('Mwiza Banda')).toHaveTextContent('Upload policy history');
+    expect(screen.getByRole('link', { name: 'history.pdf' })).toHaveAttribute('rel', 'noopener noreferrer');
+    const dialog = await review(user, 'Mwiza Banda');
+    await user.clear(within(dialog).getByRole('textbox', { name: 'Reason for decision' }));
+    expect(within(dialog).queryByRole('radio', { name: /^Approve/ })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('radio', { name: /^Reject/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Reject application' }));
+    expect(api.ncd.decide).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Enter a reason');
+  });
+
+  it('sends the Verification Required wire status and reason', async () => {
+    const user = userEvent.setup();
+    render(<NcdTab applications={[submitted]} />);
+    const dialog = await review(user, 'Mwiza Banda');
+    await user.click(within(dialog).getByRole('radio', { name: /^Request verification evidence/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Request verification' }));
+    expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-1', 'Verification Required', 'Checked policy history', 0, expect.any(String));
   });
 
   it('says so when there are no applications', () => {
@@ -193,4 +212,14 @@ describe('NcdTab', () => {
       expect(decided).toHaveTextContent('NCD-20-BWALYA');
     });
   });
+});
+
+
+it('submits the verification revision displayed in the row', async () => {
+  const user = userEvent.setup();
+  render(<NcdTab applications={[{ ...submitted, verificationRevision: 7 }]} />);
+  const dialog = await review(user, submitted.fullName);
+  await user.click(within(dialog).getByRole('radio', { name: /^Approve/ }));
+  await user.click(within(dialog).getByRole('button', { name: 'Approve & issue code' }));
+  expect(api.ncd.decide).toHaveBeenCalledExactlyOnceWith('NCD-1', 'Approved', 'Checked policy history', 7, expect.any(String));
 });

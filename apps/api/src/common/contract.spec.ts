@@ -93,7 +93,7 @@ describe('contract vocabulary', () => {
     ['coverage duration', fromContract.coverageDuration, { '1q': 'Q1', '2q': 'Q2', '3q': 'Q3', '4q': 'Q4' }],
     ['payment method', fromContract.paymentMethod, { 'Mobile money': 'MOBILE_MONEY', Card: 'CARD' }],
     ['insurer status', fromContract.insurerStatus, { Active: 'ACTIVE', Inactive: 'INACTIVE', Deleted: 'DELETED' }],
-    ['NCD decision', fromContract.ncdDecision, { 'Under Review': 'UNDER_REVIEW', Approved: 'APPROVED', Rejected: 'REJECTED' }],
+    ['NCD decision', fromContract.ncdDecision, { 'Under Review': 'UNDER_REVIEW', 'Verification Required': 'VERIFICATION_REQUIRED', Approved: 'APPROVED', Rejected: 'REJECTED' }],
   ] as const)('reads each %s wire string as its stored value', (_label, map, pairs) => {
     for (const [wire, stored] of Object.entries(pairs)) {
       expect(map(wire), wire).toBe(stored);
@@ -157,7 +157,10 @@ describe('contract vocabulary', () => {
     // status -- an evidence gate, and cancelling the insurer's open work -- so
     // each has its own route and neither can be reached through this one.
     expect(CONTRACT_VALUES.insurerStatusChange).toEqual(['INACTIVE', 'DELETED', 'Inactive', 'Deleted']);
-    expect(CONTRACT_VALUES.ncdDecision).toEqual(['UNDER_REVIEW', 'APPROVED', 'REJECTED', 'Under Review', 'Approved', 'Rejected']);
+    expect(CONTRACT_VALUES.ncdDecision).toEqual([
+      'UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'APPROVED', 'REJECTED',
+      'Under Review', 'Verification Required', 'Approved', 'Rejected',
+    ]);
     // InsurShield's own roles first, then the insurer ones, as the role lists group them.
     expect(CONTRACT_VALUES.staffRole).toEqual([
       'SUPER_ADMIN', 'ADMIN',
@@ -176,6 +179,8 @@ describe('contract vocabulary', () => {
     [SetInsurerStatusDto, 'INACTIVE', 'INACTIVE'],
     [SetInsurerStatusDto, 'DELETED', 'DELETED'],
     [NcdDecisionDto, 'Under Review', 'UNDER_REVIEW'],
+    [NcdDecisionDto, 'Verification Required', 'VERIFICATION_REQUIRED'],
+    [NcdDecisionDto, 'VERIFICATION_REQUIRED', 'VERIFICATION_REQUIRED'],
     [NcdDecisionDto, 'Approved', 'APPROVED'],
     [NcdDecisionDto, 'Rejected', 'REJECTED'],
     [NcdDecisionDto, 'UNDER_REVIEW', 'UNDER_REVIEW'],
@@ -183,6 +188,7 @@ describe('contract vocabulary', () => {
     [NcdDecisionDto, 'REJECTED', 'REJECTED'],
   ])('normalizes %s status input %s before it reaches a service', async (Dto, input, stored) => {
     const dto = statusDto(Dto, input);
+    if (dto instanceof NcdDecisionDto) dto.note = 'Reviewed the application.';
 
     expect(await validate(dto)).toEqual([]);
     expect(dto.status).toBe(stored);
@@ -195,10 +201,10 @@ describe('contract vocabulary', () => {
     [SetInsurerStatusDto, 'Active', 'Status must be Inactive or Deleted.'],
     [SetInsurerStatusDto, 'SUSPENDED', 'Status must be Inactive or Deleted.'],
     [SetInsurerStatusDto, 'PENDING', 'Status must be Inactive or Deleted.'],
-    [NcdDecisionDto, 'Submitted', 'Decision must be Under Review, Approved or Rejected.'],
-    [NcdDecisionDto, 'Verification Required', 'Decision must be Under Review, Approved or Rejected.'],
+    [NcdDecisionDto, 'Submitted', 'Decision must be Under Review, Verification Required, Approved or Rejected.'],
   ])('refuses unsupported %s status input %s', async (Dto, input, message) => {
     const dto = statusDto(Dto, input);
+    if (dto instanceof NcdDecisionDto) dto.note = 'Reviewed the application.';
 
     const [error] = await validate(dto);
     expect(error.constraints?.isIn).toBe(message);

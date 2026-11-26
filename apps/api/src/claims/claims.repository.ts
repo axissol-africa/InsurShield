@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, exists, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, isNull, notInArray, or, sql } from 'drizzle-orm';
 import type { Principal } from '../common/auth/auth.types.js';
 import {
   DATABASE,
@@ -11,9 +11,11 @@ import {
   claimNotifications,
   claimUpdates,
   insurers,
+  inspections,
   policies,
 } from '../db/schema.js';
 import { servicesExistingBusinessWhere } from '../common/insurer-standing.js';
+import { CLOSED_INSPECTION_STATUSES } from '../inspections/domain/underwriting.js';
 
 export type LifecycleClaim = typeof claimNotifications.$inferSelect;
 
@@ -94,6 +96,21 @@ export class ClaimsRepository {
       .from(claimAttachments)
       .where(eq(claimAttachments.claimNumber, claimNumber))
       .orderBy(asc(claimAttachments.id));
+  }
+
+  async latestInspection(tx: Transaction, claim: LifecycleClaim) {
+    const [inspection] = await tx.select({ id: inspections.id, status: inspections.status, method: inspections.method })
+      .from(inspections).where(and(eq(inspections.claimNumber, claim.claimNumber),
+        eq(inspections.insurerId, claim.insurerId), eq(inspections.purpose, 'CLAIM_ASSESSMENT')))
+      .orderBy(desc(inspections.createdAt), desc(inspections.id)).limit(1);
+    return inspection ?? null;
+  }
+
+  async hasOpenInspection(tx: Transaction, claimNumber: string) {
+    const [inspection] = await tx.select({ id: inspections.id }).from(inspections)
+      .where(and(eq(inspections.claimNumber, claimNumber), notInArray(inspections.status, [...CLOSED_INSPECTION_STATUSES])))
+      .limit(1);
+    return Boolean(inspection);
   }
 
   async append(

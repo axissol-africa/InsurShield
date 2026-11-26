@@ -1,6 +1,6 @@
 import { toContract } from '../../common/contract.js';
 import { ngweeToKwacha } from '../../common/money.js';
-import { FAILURE_WORDING, isOpenPayment } from '../domain/payment.js';
+import { FAILURE_WORDING, isOpenPayment, isRefundablePayment } from '../domain/payment.js';
 import type { PaymentView } from '../payments.repository.js';
 
 export interface PaymentLineResponse {
@@ -25,8 +25,9 @@ export interface PaymentResponse {
   /** The masked wallet the approval prompt went to. */
   payer: string | null;
   initiatedAt: string | null;
-  /** Until then the price is held; after it, an attempt still waiting is stopped. */
+  /** Until then the price is held; an unresolved NCD attempt retains its reservation. */
   pendingUntil: string | null;
+  /** Also populated for a verified late NCD capture on an ended attempt awaiting refund handling. */
   confirmedAt: string | null;
   /** Card only, and only while the attempt is open. */
   checkoutUrl: string | null;
@@ -63,6 +64,8 @@ export function toPaymentResponse(view: PaymentView): PaymentResponse {
 }
 
 function failureText(view: PaymentView): string {
+  if (isRefundablePayment(view)) return 'The provider reported a late charge after this attempt ended. See notifications for refund updates.';
+  if (view.failureCode === 'CAPTURE_MISMATCH') return 'The provider reported a late charge with unexpected payment details. Our team is reviewing it.';
   if (view.status === 'REVERSED') return 'The payment was reversed by the provider. Our team will contact you.';
   if (view.status === 'CANCELLED') return FAILURE_WORDING.CANCELLED;
   if (view.status === 'EXPIRED') return FAILURE_WORDING[view.failureCode ?? 'EXPIRED'] ?? FAILURE_WORDING.EXPIRED;

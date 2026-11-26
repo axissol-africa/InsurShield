@@ -313,7 +313,7 @@ describe('quote comparison', () => {
           selectedProducts: [product('pv-3', 'Prestige Assurance', { status: 'QUOTED', statusLabel: 'Quote ready' })],
           productQuotes: [{
             id: 'IQ-3', productVersionId: 'pv-3', insurer: { id: 'Prestige Assurance', name: 'Prestige Assurance' },
-            premium: 9000, excess: 2500, validityDays: 7, sentAt: new Date().toISOString(),
+            premium: 9000, ncdPercentage: 20, excess: 2500, validityDays: 7, sentAt: new Date().toISOString(),
             validUntil: new Date(Date.now() + 5 * 86_400_000).toISOString(),
             conditions: [
               { code: 'TRACKER', text: 'Fit a tracker within 14 days.', purchaseCritical: true },
@@ -325,6 +325,8 @@ describe('quote comparison', () => {
       renderPage();
 
       const card = within(screen.getByRole('list', { name: 'Insurer quotes' })).getByRole('listitem');
+      expect(within(card).getByText('ZMW 9,000.00')).toBeVisible();
+      expect(within(card).getByText('Includes 20% No Claim Discount')).toBeVisible();
       expect(within(card).getByText('ZMW 2,500.00')).toBeVisible();
       expect(within(card).getByText('Park in a garage at night.')).toBeVisible();
       const choose = within(card).getByRole('button', { name: 'Continue to payment' });

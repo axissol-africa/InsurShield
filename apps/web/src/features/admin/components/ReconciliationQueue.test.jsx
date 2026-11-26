@@ -57,6 +57,41 @@ describe('ReconciliationQueue', () => {
     });
   });
 
+  it('submits a refund for an expired payment the server marked refundable', async () => {
+    const lateCapture = item({
+      kind: 'REFUND_REQUIRED', policyNumber: null,
+      payment: { ...item().payment, status: 'EXPIRED', refundable: true, requiresExternalRefund: false },
+    });
+    const client = api([lateCapture]);
+    render(<ReconciliationQueue api={client} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Propose a refund' }));
+    const form = screen.getByRole('form', { name: 'Propose a refund' });
+    expect(within(form).getByLabelText('Amount (ZMW) *')).toHaveValue(1234.56);
+    await userEvent.selectOptions(within(form).getByLabelText('Reason *'), 'OTHER');
+    const reason = 'The provider captured the charge after the attempt expired.';
+    await userEvent.type(within(form).getByLabelText('What happened, for the approver *'), reason);
+    await userEvent.click(within(form).getByRole('button', { name: 'Send for approval' }));
+
+    expect(client.admin.reconciliation.proposeRefund).toHaveBeenCalledExactlyOnceWith('TXN-1', {
+      amount: 1234.56, reasonCode: 'OTHER', reason, reconciliationItemId: lateCapture.id,
+    });
+    expect(screen.queryByRole('form', { name: 'Propose a refund' })).not.toBeInTheDocument();
+  });
+
+  it('hides the refund action and external refund guidance for an ineligible expired payment', async () => {
+    const client = api([item({
+      kind: 'AMOUNT_MISMATCH', policyNumber: null,
+      payment: { ...item().payment, status: 'EXPIRED', refundable: false, requiresExternalRefund: false },
+    })]);
+    render(<ReconciliationQueue api={client} />);
+
+    const card = (await screen.findByRole('heading', { name: 'Wrong amount taken' })).closest('[data-slot="card"]');
+    expect(within(card).queryByRole('button', { name: 'Propose a refund' })).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Refund it outside InsurShield/)).not.toBeInTheDocument();
+    expect(client.admin.reconciliation.proposeRefund).not.toHaveBeenCalled();
+  });
+
   it('offers no second refund while one is in flight, and resolves only with an outcome and a note', async () => {
     const client = api([item({ refunds: [{ id: 'r1', amount: 1234.56, status: 'PROPOSED', failureReason: null }] })]);
     render(<ReconciliationQueue api={client} />);
@@ -73,7 +108,7 @@ describe('ReconciliationQueue', () => {
   });
 
   it('explains that a payment from before the provider is refunded outside InsurShield', async () => {
-    render(<ReconciliationQueue api={api([item({ payment: { transactionId: 'TXN-OLD', status: 'CONFIRMED', amount: 100, refunded: 0, refundable: false } })])} />);
+    render(<ReconciliationQueue api={api([item({ payment: { transactionId: 'TXN-OLD', status: 'CONFIRMED', amount: 100, refunded: 0, refundable: false, requiresExternalRefund: true } })])} />);
     expect(await screen.findByText(/Refund it outside InsurShield/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Propose a refund' })).not.toBeInTheDocument();
   });

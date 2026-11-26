@@ -41,6 +41,12 @@ export class AccountService {
       if (await this.repository.hasOutstandingClaimEvidence(tx, customerId)) {
         throw ApiException.conflict('CLAIM_EVIDENCE_OUTSTANDING', 'Send the requested evidence for your claim before closing this account.');
       }
+      if (await this.repository.hasOutstandingNcdEvidence(tx, customerId)) {
+        throw ApiException.conflict('NCD_EVIDENCE_OUTSTANDING', 'Send the requested evidence for your No Claim Discount application before closing this account.');
+      }
+      if (await this.repository.hasOpenLaterInspection(tx, customerId)) {
+        throw ApiException.conflict('INSPECTION_IN_PROGRESS', 'Complete the open policy or claim inspection before closing this account.');
+      }
       if (await this.repository.hasOpenPayment(tx, customerId)) {
         throw ApiException.conflict('PAYMENT_IN_PROGRESS', 'Wait for your payment to finish before closing this account.');
       }

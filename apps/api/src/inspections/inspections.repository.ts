@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { inspectionPhotos, inspections, insurers } from '../db/schema.js';
+import { inspectionPhotos, inspectionReports, inspections, insurers } from '../db/schema.js';
 import { takesNewBusinessWhere } from '../common/insurer-standing.js';
 
 export type NewInspection = typeof inspections.$inferInsert;
@@ -53,6 +53,12 @@ export class InspectionsRepository {
       .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
       .where(and(eq(inspections.id, inspectionId), eq(inspections.customerId, customerId)))
       .orderBy(...PHOTO_ORDER);
+  }
+
+  reportsOf(inspectionIds: string[]) {
+    if (inspectionIds.length === 0) return Promise.resolve([]);
+    return this.db.select({ inspectionId: inspectionReports.inspectionId, documentId: inspectionReports.documentId })
+      .from(inspectionReports).where(inArray(inspectionReports.inspectionId, inspectionIds));
   }
 
   async findInsurerTakingNewBusiness(tx: Transaction, insurerId: string, now: Date) {

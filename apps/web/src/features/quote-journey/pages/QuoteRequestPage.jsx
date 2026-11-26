@@ -19,6 +19,8 @@ import ProductVersionSelection from '@/features/quote-journey/components/Product
 import { INSPECTION_SHOTS, missingInspectionShots } from '@/domain/inspection';
 import { isMobileDevice } from '@/lib/device';
 import { captureApi } from '@/api/capture';
+import { api } from '@/api';
+import { Label } from '@/components/ui/primitives/label';
 
 const fileDataUrl = (file) =>
   new Promise((resolve, reject) => {
@@ -92,12 +94,38 @@ export default function QuoteRequestPage() {
     setProductRequirementDocument,
     setProductRequirementResponses,
     requotedFromId,
+    renewalOfPolicyNumber,
     setVehicleDetails,
     setVehicleValue,
     setVehicleUsage,
     setInsuranceType,
   } = useStore();
   const [handoffOpen, setHandoffOpen] = useState(false);
+  const [ncdCode, setNcdCode] = useState('');
+  const selectedInsurers = [...new Set(selectedProductVersions.map((entry) => entry.insurer?.id).filter(Boolean))].sort();
+  const ncdPayload = {
+    code: ncdCode.trim(), insurerIds: selectedInsurers,
+    vehicleDetails: vehicleDetails ? {
+      plateNumber: vehicleDetails.plateNumber, make: vehicleDetails.make, model: vehicleDetails.model,
+      year: String(vehicleDetails.year), registrationCountry: vehicleDetails.registrationCountry || undefined,
+      chassisNumber: vehicleDetails.chassisNumber || undefined,
+    } : undefined,
+    renewalOfPolicyNumber: renewalOfPolicyNumber || undefined,
+  };
+  const [ncdCheck, setNcdCheck] = useState(null);
+  const ncdContext = JSON.stringify(ncdPayload);
+  const ncdIsCurrent = ncdCheck?.context === ncdContext;
+  const ncdResult = ncdIsCurrent ? ncdCheck.result : null;
+  const checkNcdCode = async () => {
+    setNcdCheck({ context: ncdContext, pending: true });
+    try {
+      const result = await api.ncd.validateCode(ncdPayload);
+      setNcdCheck({ context: ncdContext, result });
+      if (result.valid) setSendError('');
+    } catch {
+      setNcdCheck({ context: ncdContext, failed: true });
+    }
+  };
   const priorPolicyStartDate = useRef(policyStartDate);
   const resumedCaptureCode = useRef('');
 
@@ -267,10 +295,17 @@ export default function QuoteRequestPage() {
       section?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    if (ncdPayload.code && !ncdResult?.valid) {
+      setSendError('Check your No Claim Discount code or clear it before sending the quote request.');
+      document.getElementById('quote-ncd-code')?.focus();
+      return;
+    }
     setSending(true);
     setSendError('');
     try {
-      await submitQuoteRequest({ customer: contact, policyDates, selectedProductVersionIds });
+      await submitQuoteRequest({ customer: contact, policyDates, selectedProductVersionIds,
+        ...(ncdResult?.valid ? { ncdCode: ncdPayload.code } : {}),
+      });
       navigate(`/quotes-comparison${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`);
     } catch (error) {
       setSendError(error.message || 'Your request could not be sent. Please try again.');
@@ -493,6 +528,20 @@ export default function QuoteRequestPage() {
                 <FieldError show={showErrors} message={errors.products} />
                 <div id="section-requirements" tabIndex={-1}>
                   <FieldError show={showErrors} message={errors.requirements} />
+                </div>
+                <div className="mt-5 space-y-2 border-t border-border pt-4">
+                  <Label htmlFor="quote-ncd-code">No Claim Discount code (optional)</Label>
+                  <p className="text-sm text-muted-foreground">Choose a product from the insurer that issued your code.</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input id="quote-ncd-code" className="max-w-xs" value={ncdCode} maxLength={40}
+                      onChange={(event) => setNcdCode(event.target.value)} autoComplete="off" spellCheck={false} />
+                    <Button type="button" variant="outline" disabled={!selectedInsurers.length || ncdPayload.code.length < 3 || ncdCheck?.pending}
+                      onClick={checkNcdCode}>{ncdCheck?.pending ? 'Checking…' : 'Check code'}</Button>
+                    {ncdCode && <Button type="button" variant="ghost" onClick={() => { setNcdCode(''); setSendError(''); }}>Clear</Button>}
+                  </div>
+                  {ncdResult?.valid && <p role="status" className="text-sm font-medium text-primary">{ncdResult.percentage}% discount verified for the issuing insurer.</p>}
+                  {ncdResult?.valid === false && <p role="alert" className="text-sm text-destructive">This code cannot be used for this vehicle, policy or insurer selection.</p>}
+                  {ncdIsCurrent && ncdCheck.failed && <p role="alert" className="text-sm text-destructive">Could not check your code. Try again or clear it to continue.</p>}
                 </div>
               </CardContent>
             </Card>

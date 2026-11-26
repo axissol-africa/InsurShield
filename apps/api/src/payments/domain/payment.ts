@@ -93,7 +93,10 @@ export const PAYMENT_EVENT_MOVES: Partial<Record<PaymentEventType, { from: reado
 export type EventFit = 'apply' | 'already-applied' | 'conflict' | 'unhandled';
 
 /** Whether an event fits the payment as it now stands. A repeat of what already happened changes nothing. */
-export function eventFit(type: PaymentEventType, current: PaymentStatus): EventFit {
+export function eventFit(type: PaymentEventType, current: PaymentStatus, reservedNcd = false, confirmedAt: Date | null = null): EventFit {
+  // A late NCD capture must enter the confirmed-money refund workflow, never issue a policy.
+  if (reservedNcd && type === 'payment.confirmed' && ['FAILED', 'EXPIRED', 'CANCELLED'].includes(current)) return 'apply';
+  if (reservedNcd && confirmedAt && type === 'payment.reversed' && ['FAILED', 'EXPIRED', 'CANCELLED'].includes(current)) return 'apply';
   const move = PAYMENT_EVENT_MOVES[type];
   if (!move) return 'unhandled';
   if (move.from.includes(current)) return 'apply';
@@ -108,3 +111,10 @@ export const FAILURE_WORDING: Record<string, string> = {
   REFUSED: 'The payment provider could not start this payment. No money was taken.',
   NEVER_SENT: 'This payment was never completed. No money was taken.',
 };
+
+/** A terminal NCD attempt can still carry captured money that must be refunded. */
+export function isRefundablePayment(payment: { status: PaymentStatus; reservedNcdCode: string | null; confirmedAt: Date | null }): boolean {
+  return payment.status === 'CONFIRMED' || (
+    payment.reservedNcdCode !== null && payment.confirmedAt !== null && ['FAILED', 'EXPIRED', 'CANCELLED'].includes(payment.status)
+  );
+}

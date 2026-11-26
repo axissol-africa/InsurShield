@@ -283,7 +283,7 @@ export class DocumentsService {
     principal: Principal,
     documentIds: string[],
     kind: DocumentKind,
-    { requireClean = false }: { requireClean?: boolean } = {},
+    { requireClean = false, mimeTypes }: { requireClean?: boolean; mimeTypes?: readonly string[] } = {},
   ): Promise<void> {
     // PostgreSQL reads a UUID in any letter case as the same id.
     if (new Set(documentIds.map((id) => id.toLowerCase())).size !== documentIds.length) {
@@ -302,6 +302,7 @@ export class DocumentsService {
       (document) =>
         document.kind === kind &&
         (!requireClean || document.scanStatus === 'CLEAN') &&
+        (!mimeTypes || mimeTypes.includes(document.mimeType)) &&
         !referenced.has(document.id) &&
         (principal.kind === 'customer'
           ? document.uploadedByCustomerId === principal.id

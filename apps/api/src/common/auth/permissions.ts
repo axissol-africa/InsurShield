@@ -1,3 +1,4 @@
+import type { InspectionPurpose } from '../domain/enums.js';
 import { INSURER_ROLES, INSURSHIELD_ROLES } from '../domain/enums.js';
 import type { Principal, StaffRoleName } from './auth.types.js';
 
@@ -145,8 +146,8 @@ export const PERMISSIONS = {
   'portal:note:read': READS_REQUESTS,
   'portal:note:write': QUOTING,
   'portal:queue:read': READS_REQUESTS,
-  'portal:inspection:read': READS_REQUESTS,
-  'portal:inspection:manage': QUOTING,
+  'portal:inspection:read': [...READS_REQUESTS, 'CLAIMS_OFFICER'],
+  'portal:inspection:manage': [...QUOTING, 'CLAIMS_OFFICER'],
   // Claiming is taking the work for yourself. Assigning it to someone else, or
   // changing its priority, is the administrator's; the service enforces that.
   'portal:queue:claim': QUOTING,
@@ -175,4 +176,11 @@ export type Permission = keyof typeof PERMISSIONS;
 export function holds(principal: Principal, permission: Permission): boolean {
   const grantees: readonly Grantee[] = PERMISSIONS[permission];
   return grantees.includes(principal.kind === 'customer' ? 'customer' : principal.role);
+}
+
+/** Shared inspection routes still enforce the permissions of the work the inspection serves. */
+export function holdsInspectionPermission(principal: Principal, purpose: InspectionPurpose, action: 'read' | 'manage'): boolean {
+  return holds(principal, purpose === 'CLAIM_ASSESSMENT'
+    ? action === 'read' ? 'portal:claim:read' : 'portal:claim:update'
+    : action === 'read' ? 'portal:request:read' : 'portal:quote:send');
 }

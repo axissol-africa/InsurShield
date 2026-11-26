@@ -135,9 +135,14 @@ export class UnderwritingInspectionsService {
     id: string,
     event: InspectionEvent,
     input: InspectionAction,
+    scope?: (inspection: Inspection) => boolean,
   ): Promise<Inspection | null> {
     const inspection = await this.inspections.lockForInsurer(tx, id, insurerId);
-    if (!inspection) return null;
+    if (!inspection || (scope && !scope(inspection))) return null;
+    const later = inspection.purpose === 'AFTER_PAYMENT' || inspection.purpose === 'CLAIM_ASSESSMENT';
+    if (later && event === 'APPROVE' && isOpenInspection(inspection.status) && inspection.status !== 'REPORT_READY') {
+      throw ApiException.conflict('INSPECTION_NOT_READY', 'Publish the inspection report before approving this inspection.');
+    }
     const to = nextInspectionStatus(inspection.status, inspection.method, event);
     if (!to) {
       throw ApiException.conflict(

@@ -307,3 +307,31 @@ describe('QuoteRequestForm', () => {
     expect(screen.getByRole('button', { name: 'Send replacement quote' })).toBeVisible();
   });
 });
+
+describe('issuer final NCD quotation', () => {
+  it.each([false, true])('sends applyNcd=%s without changing the final insurer price', async (applyNcd) => {
+    const user = userEvent.setup();
+    const { onSubmit, fileInput } = show({ request: { ...request, ncdPercentage: 17 } });
+    const checkbox = screen.getByRole('checkbox', { name: /My final quotation includes the verified 17%/ });
+    expect(checkbox).not.toBeChecked();
+    if (applyNcd) await user.click(checkbox);
+    await user.type(screen.getByLabelText(/Premium on your quotation/), '10650');
+    await user.upload(fileInput, quotation());
+    await screen.findByText('quote.pdf');
+    await user.click(send());
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ premium: 10650, applyNcd }));
+    expect(screen.getByText(/final insurer price you enter remains the price paid/)).toBeVisible();
+  });
+
+  it('omits the NCD control and payload property without an issuer percentage', async () => {
+    const user = userEvent.setup();
+    const { onSubmit, fileInput } = show();
+    expect(screen.queryByRole('checkbox', { name: /final quotation includes/ })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Premium on your quotation/), '10650');
+    await user.upload(fileInput, quotation());
+    await screen.findByText('quote.pdf');
+    await user.click(send());
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('applyNcd');
+  });
+});

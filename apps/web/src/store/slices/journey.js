@@ -103,7 +103,7 @@ export const createJourneySlice = (set, get) => ({
    * Save the customer's verified details, then let them compare published
    * cover guides before choosing which insurers receive the quote request.
    */
-  submitQuoteRequest: ({ customer, policyDates, rtsaAnniversaryFee = 0, selectedProducts = [] }) => {
+  submitQuoteRequest: ({ customer, policyDates, rtsaAnniversaryFee = 0, selectedProducts = [], ncd = null }) => {
     const state = get();
     const id = newReference('QR');
     const submittedAt = NOW();
@@ -129,6 +129,7 @@ export const createJourneySlice = (set, get) => ({
       customer,
       insurers: [...new Map(selectedProducts.map((product) => [product.insurerId, product.insurerName])).values()],
       insurerIds: [...new Set(selectedProducts.map((product) => product.insurerId))],
+      ...(ncd?.valid ? { ncdIssuingInsurerId: ncd.insurerId, ncdPercentage: ncd.percentage } : {}),
       insurerQuotes: {},
       productQuotes: [],
       selectedProducts,

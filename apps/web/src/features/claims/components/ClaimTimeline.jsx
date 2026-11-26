@@ -1,3 +1,4 @@
+import ClaimInspection from '@/features/inspections/components/ClaimInspection';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/api';
 import { newIdempotencyKey } from '@/api/shared';
@@ -98,6 +99,7 @@ export default function ClaimTimeline({ claimNumber, insurer = false, revision, 
           {detail.responseDueOn && <div>Response due: {detail.responseDueOn}</div>}
           {detail.lateSubmission && <div>Late notification — insurer review required</div>}
         </div>
+        <ClaimInspection key={claimNumber} claimNumber={claimNumber} status={detail.status} inspection={detail.inspection} staff={insurer} />
         <ol aria-label="Claim updates" className="space-y-3">
           {detail.updates.map((update) => <li key={update.id} className="border-l-2 border-primary/30 pl-3 text-sm">
             <p className="font-medium">{update.status} · {update.actorKind}</p>

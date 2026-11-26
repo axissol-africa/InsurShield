@@ -1,8 +1,12 @@
 import { act, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useStore } from '@/store';
+import { env } from '@/config/env';
 import PolicyConfirmationPage from './PolicyConfirmationPage';
+
+vi.mock('@/config/env', () => ({ env: { apiMode: 'mock' } }));
+beforeEach(() => { env.apiMode = 'mock'; useStore.setState({ paymentAttempt: null }); });
 
 afterEach(() => vi.useRealTimers());
 
@@ -31,6 +35,7 @@ it.each([true, false])('confirms the selected cover without a contradictory cata
 
 it('records the policy under the number the payment service issued, not one derived from the request id', async () => {
   vi.useFakeTimers();
+  env.apiMode = 'http';
   useStore.setState({
     selectedQuote: { requestId: 'REQ-SERVER-123456', name: 'Test insurer', coverage: 'Motor', price: 1200 },
     quoteRequests: [],
@@ -94,4 +99,42 @@ it('shows and persists the RTSA fee that was charged by the payment service', as
   expect(useStore.getState().policies).toEqual(expect.arrayContaining([
     expect.objectContaining({ premium: 1200, insurancePremium: 1200, rtsaAnniversaryFee: 500 }),
   ]));
+});
+
+
+it.each([true, false])('does not fabricate an HTTP policy on direct confirmation navigation (quote present: %s)', async (withQuote) => {
+  vi.useFakeTimers();
+  env.apiMode = 'http';
+  useStore.setState({ selectedQuote: withQuote ? { requestId: 'REQ-HELD', name: 'Insurer', price: 1200 } : null,
+    paymentReceipt: { transactionId: 'TX-HELD', status: 'Confirmed', policyNumber: null, amount: 1200 },
+    policies: [], ncdCodeValidated: true, ncdCodeUsed: false, insurerReviews: [] });
+  const view = render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  expect(screen.getByRole('heading', { name: 'Payment held — awaiting resolution' })).toBeInTheDocument();
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  expect(useStore.getState().policies).toEqual([]);
+  expect(useStore.getState().ncdCodeUsed).toBe(false);
+  view.unmount();
+  render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  expect(screen.getByRole('heading', { name: 'Payment held — awaiting resolution' })).toBeInTheDocument();
+  expect(useStore.getState().policies).toEqual([]);
+});
+
+it('does not create an HTTP policy without a confirmed receipt', async () => {
+  vi.useFakeTimers(); env.apiMode = 'http';
+  useStore.setState({ selectedQuote: { requestId: 'REQ-UNPAID', price: 1200 }, paymentReceipt: null, policies: [], insurerReviews: [] });
+  render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  expect(screen.getByRole('heading', { name: 'Nothing to confirm yet' })).toBeInTheDocument();
+  expect(useStore.getState().policies).toEqual([]);
+});
+
+
+it.each(['Cancelled', 'Expired', 'Failed'])('does not create a policy for a late captured %s receipt on direct navigation', async (status) => {
+  vi.useFakeTimers(); env.apiMode = 'http';
+  useStore.setState({ selectedQuote: { requestId: 'REQ-LATE', price: 1200 }, paymentReceipt: { status, confirmedAt: '2026-11-26T10:00:00Z', policyNumber: null, transactionId: 'TX-LATE', amount: 1200 }, policies: [], insurerReviews: [] });
+  render(<MemoryRouter><PolicyConfirmationPage /></MemoryRouter>);
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  expect(screen.getByRole('heading', { name: 'Payment held — awaiting resolution' })).toBeInTheDocument();
+  expect(useStore.getState().policies).toEqual([]);
 });

@@ -21,7 +21,8 @@ import { PoliciesService } from './policies.service.js';
 import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 import { unacceptedCriticalConditions } from '../insurer-portal/domain/quote-content.js';
 import { addDays, coverPeriod, REQUEST_VALIDITY_DAYS, rtsaAnniversaryStart } from './domain/cover-period.js';
-import { ncdCodeRefusal, normaliseNcdCode } from './domain/ncd-code.js';
+import { ncdCodeRefusal, ncdVehicleMatches, normaliseNcdCode } from './domain/ncd-code.js';
+import { findBoundNcdCode } from './ncd-code-ownership.js';
 import {
   CHOOSE_A_COVER_PERIOD,
   CHOOSE_A_COVER_TYPE,
@@ -149,7 +150,7 @@ export class QuoteRequestsService {
         await this.documents.assertOwnedOfKind(tx, customer, dto.whiteBookDocumentId, 'WHITE_BOOK');
       }
       const vehicle = await this.createVehicle(tx, dto.vehicleDetails);
-      const ncd = await this.usableNcdCode(tx, customer.id, dto.ncdCode);
+      const ncd = await this.usableNcdCode(tx, customer.id, dto, vehicle, insurerIds);
       return this.distribute(
         tx,
         {
@@ -374,7 +375,8 @@ export class QuoteRequestsService {
       actor,
     );
     if (selectedVersions.length > 0) {
-      await this.queueSelectedProductDeliveries(tx, row, insurerIds, selectedVersions, productRequirements);
+      const ncd = created.ncdCode ? await findBoundNcdCode(tx, created.ncdCode, created.customerId) : undefined;
+      await this.queueSelectedProductDeliveries(tx, row, insurerIds, selectedVersions, productRequirements, ncd);
     }
     const [response] = await this.responses([row], tx);
     const action = request.requotedFromId
@@ -433,6 +435,7 @@ export class QuoteRequestsService {
     insurerIds: string[],
     selectedVersions: AvailableProductVersion[],
     productRequirements: ValidatedProductRequirements,
+    ncd?: { insurerId: string; percentage: number },
   ): Promise<void> {
     // A Drizzle transaction uses one connection. Queue sequentially so each
     // durable delivery and its runner job is ordered on that connection.
@@ -459,6 +462,7 @@ export class QuoteRequestsService {
           vehicleUsage: row.request.vehicleUsage,
           insuranceType: row.request.insuranceType,
           coverageDuration: row.request.coverageDuration,
+          ...(ncd?.insurerId === insurerId ? { ncdPercentage: ncd.percentage } : {}),
           policyDates:
             row.request.policyStartDate && row.request.policyEndDate
               ? {
@@ -709,13 +713,15 @@ export class QuoteRequestsService {
   }
 
   /** The customer's own code behind `ncdCode`, if it is still usable. */
-  private async usableNcdCode(tx: Transaction, customerId: string, code: string | undefined) {
-    if (!code?.trim()) return null;
-    const found = await this.repository.findNcdCodeIssuedTo(tx, normaliseNcdCode(code), customerId);
-    if (!found || ncdCodeRefusal(found, new Date())) {
+  private async usableNcdCode(tx: Transaction, customerId: string, dto: SubmitQuoteRequestDto, vehicle: VehicleRow, insurerIds: string[]) {
+    if (!dto.ncdCode?.trim()) return null;
+    const found = await findBoundNcdCode(tx, normaliseNcdCode(dto.ncdCode), customerId);
+    if (!found || ncdCodeRefusal(found, new Date()) || !insurerIds.includes(found.insurerId)
+      || !ncdVehicleMatches(found.sourceVehicle, vehicle)
+      || (dto.renewalOfPolicyNumber && dto.renewalOfPolicyNumber !== found.sourcePolicyNumber)) {
       throw ApiException.conflict(
         'INVALID_NCD_CODE',
-        'This No Claim Discount code is not available for this quote request.',
+        'This No Claim Discount code cannot be used for this vehicle, policy, or selection of insurers. Check your application or continue without the code.',
       );
     }
     return { code: found.code, percentage: found.percentage };

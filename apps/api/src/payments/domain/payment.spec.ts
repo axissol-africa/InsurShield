@@ -1,6 +1,7 @@
 import type { QuoteAddOn } from '../../db/schema.js';
 import {
   eventFit,
+  isRefundablePayment,
   isQuoteExpired,
   maskMsisdn,
   paymentBreakdown,
@@ -112,5 +113,19 @@ describe('a provider event', () => {
     ['refund.completed', 'CONFIRMED', 'unhandled'],
   ] as const)('%s on a %s payment: %s', (type, status, fit) => {
     expect(eventFit(type, status)).toBe(fit);
+  });
+});
+
+
+describe('late reserved NCD captures', () => {
+  it.each(['FAILED', 'EXPIRED', 'CANCELLED'] as const)('admits %s captures only with reservation evidence', (status) => {
+    expect(eventFit('payment.confirmed', status, true)).toBe('apply');
+    expect(eventFit('payment.confirmed', status)).toBe('conflict');
+    expect(eventFit('payment.reversed', status, true, new Date())).toBe('apply');
+    expect(eventFit('payment.reversed', status, true)).toBe('conflict');
+    expect(isRefundablePayment({ status: 'REVERSED', reservedNcdCode: 'NCD', confirmedAt: new Date() })).toBe(false);
+    expect(isRefundablePayment({ status, reservedNcdCode: 'NCD', confirmedAt: new Date() })).toBe(true);
+    expect(isRefundablePayment({ status, reservedNcdCode: null, confirmedAt: new Date() })).toBe(false);
+    expect(isRefundablePayment({ status, reservedNcdCode: 'NCD', confirmedAt: null })).toBe(false);
   });
 });

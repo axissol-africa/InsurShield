@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { INSURER_ROLES, INSURSHIELD_ROLES } from '../domain/enums.js';
-import { PERMISSIONS, holds, type Grantee, type Permission } from './permissions.js';
+import { PERMISSIONS, holds, holdsInspectionPermission, type Grantee, type Permission } from './permissions.js';
 
 const ALL = Object.keys(PERMISSIONS) as Permission[];
 /**
@@ -163,5 +163,35 @@ describe('holds', () => {
 
     expect(holds(financeStaff, 'portal:policy:read')).toBe(true);
     expect(holds(financeStaff, 'portal:quote:send')).toBe(false);
+  });
+});
+
+
+describe('inspection purpose permissions', () => {
+  const staff = (role: 'CLAIMS_OFFICER' | 'QUOTE_OFFICER' | 'SUPPORT' | 'INSURER_ADMIN' | 'FINANCE') =>
+    ({ kind: 'staff', id: 'staff', email: 'staff@example.test', insurerId: 'insurer', role } as const);
+
+  it('opens the shared inspection routes to claims officers without granting quote permissions', () => {
+    expect(holds(staff('CLAIMS_OFFICER'), 'portal:inspection:read')).toBe(true);
+    expect(holds(staff('CLAIMS_OFFICER'), 'portal:inspection:manage')).toBe(true);
+    expect(holds(staff('CLAIMS_OFFICER'), 'portal:quote:send')).toBe(false);
+  });
+
+  it.each(['read', 'manage'] as const)('separates claim and quote inspections for %s', (action) => {
+    expect(holdsInspectionPermission(staff('CLAIMS_OFFICER'), 'CLAIM_ASSESSMENT', action)).toBe(true);
+    expect(holdsInspectionPermission(staff('QUOTE_OFFICER'), 'CLAIM_ASSESSMENT', action)).toBe(false);
+    for (const purpose of ['GENERAL', 'UNDERWRITING', 'AFTER_PAYMENT'] as const) {
+      expect(holdsInspectionPermission(staff('CLAIMS_OFFICER'), purpose, action)).toBe(false);
+      expect(holdsInspectionPermission(staff('QUOTE_OFFICER'), purpose, action)).toBe(true);
+    }
+  });
+
+  it('retains read-only support and no finance inspection access', () => {
+    for (const purpose of ['GENERAL', 'UNDERWRITING', 'AFTER_PAYMENT', 'CLAIM_ASSESSMENT'] as const) {
+      expect(holdsInspectionPermission(staff('SUPPORT'), purpose, 'read')).toBe(true);
+      expect(holdsInspectionPermission(staff('SUPPORT'), purpose, 'manage')).toBe(false);
+      expect(holdsInspectionPermission(staff('FINANCE'), purpose, 'read')).toBe(false);
+      expect(holdsInspectionPermission(staff('INSURER_ADMIN'), purpose, 'manage')).toBe(true);
+    }
   });
 });

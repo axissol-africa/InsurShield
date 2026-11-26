@@ -1,7 +1,15 @@
+import { holdsInspectionPermission } from '../common/auth/permissions.js';
+import { INSPECTION_PURPOSES } from '../common/domain/enums.js';
+import { IdempotencyService, idempotencyKey } from '../common/idempotency/idempotency.service.js';
+import { ncdCodeRefusal, ncdVehicleMatches } from '../customer/domain/ncd-code.js';
+import { ncdTierForYears } from '../customer/domain/ncd-policy.js';
+import { lockOpenCustomer } from '../db/customer-lock.js';
+import { NcdService } from '../customer/ncd.service.js';
+import { SettingsService } from '../settings/settings.service.js';
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { DocumentsService } from '../documents/documents.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
-import { INSURER_UNAVAILABLE, insurerUnavailable, takesNewBusiness } from '../common/insurer-standing.js';
+import { INSURER_UNAVAILABLE, insurerUnavailable, servicesExistingBusiness, takesNewBusiness } from '../common/insurer-standing.js';
 import { kwachaToNgwee, ngweeToKwacha } from '../common/money.js';
 import { isRequestOpen } from '../common/domain/quote-request.js';
 import type { Principal } from '../common/auth/auth.types.js';
@@ -17,7 +25,6 @@ import {
   addDays,
   canDecideNcd,
   ncdDecidedAt,
-  ncdPercentage,
   newNcdCode,
 } from './domain/portal.js';
 import { InsurerPortalRepository, type NewNcdCode } from './insurer-portal.repository.js';
@@ -25,7 +32,6 @@ import {
   toAcknowledgement,
   toExtension,
   toIssuedPolicy,
-  toNcdApplication,
   toNcdApproval,
   toNcdDecision,
   toPortalClaim,
@@ -92,6 +98,9 @@ export class InsurerPortalService {
     private readonly workflow: QuoteWorkflowService,
     private readonly inspectionRecords: UnderwritingInspectionsRepository,
     private readonly underwriting: UnderwritingInspectionsService,
+    private readonly ncd: NcdService,
+    private readonly settings: SettingsService,
+    private readonly idempotency: IdempotencyService,
   ) {}
 
   /**
@@ -331,8 +340,21 @@ export class InsurerPortalService {
 
     await this.documents.assertAttachable(tx, principal, [dto.documentId], 'QUOTATION');
 
+    let ncdPercentage: number | null = null;
+    if (dto.applyNcd === true) {
+      const context = await this.portal.quoteNcdContext(tx, input.requestId, input.insurerId);
+      const code = context?.code;
+      if (!context || !code || ncdCodeRefusal(code, new Date()) || code.insurerId !== input.insurerId ||
+          !ncdVehicleMatches(code.sourceVehicle, context.request.vehicle) ||
+          (context.request.sourcePolicyNumber && context.request.sourcePolicyNumber !== code.sourcePolicyNumber)) {
+        throw ApiException.conflict('INVALID_NCD_CODE', 'This request has no valid No Claim Discount code for this insurer, vehicle and source policy.');
+      }
+      ncdPercentage = code.percentage;
+    }
+
     const validityDays = dto.validityDays ?? delivery.quoteValidityDays;
     return {
+      ncdPercentage,
       quoteRequestId: input.requestId,
       insurerId: input.insurerId,
       productVersionId: input.productVersionId,
@@ -699,7 +721,8 @@ export class InsurerPortalService {
   /** Every inspection this insurer carries out, newest first, with the products each one serves. */
   async listInspections(principal: Principal) {
     const insurerId = this.insurerOf(principal);
-    const rows = await this.inspectionRecords.listForInsurer(insurerId);
+    const purposes = INSPECTION_PURPOSES.filter((purpose) => holdsInspectionPermission(principal, purpose, 'read'));
+    const rows = await this.inspectionRecords.listForInsurer(insurerId, purposes);
     const products = await this.inspectionRecords.productsOf(rows.map((row) => row.id));
     return rows.map((row) => ({
       id: row.id,
@@ -709,6 +732,8 @@ export class InsurerPortalService {
       method: row.method,
       stage: row.stage,
       quoteRequestId: row.quoteRequestId,
+      policyNumber: row.policyNumber,
+      claimNumber: row.claimNumber,
       vehiclePlate: row.vehiclePlate,
       vehicleLabel: row.vehicleLabel,
       customer: row.customer,
@@ -733,10 +758,15 @@ export class InsurerPortalService {
     const result = await this.portal.transaction(async (tx) => {
       const standing = await this.portal.insurerStanding(tx, staff.insurerId);
       if (!standing) throw ApiException.notFound('Insurer', staff.insurerId);
-      if (!takesNewBusiness(standing, new Date())) {
-        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
-      }
-      return this.underwriting.act(tx, staff.insurerId, auditActor(principal), staff.id, id, event, input);
+      return this.underwriting.act(tx, staff.insurerId, auditActor(principal), staff.id, id, event, input, (inspection) => {
+        if (!holdsInspectionPermission(principal, inspection.purpose, 'manage')) return false;
+        const later = inspection.purpose === 'AFTER_PAYMENT' || inspection.purpose === 'CLAIM_ASSESSMENT';
+        if (later ? !servicesExistingBusiness(standing) : !takesNewBusiness(standing, new Date())) {
+          throw ApiException.conflict(INSURER_UNAVAILABLE, later
+            ? 'This insurer is no longer available to service inspections.' : insurerUnavailable(standing.name));
+        }
+        return true;
+      });
     });
     if (!result) {
       throw await this.absent(principal, { type: 'INSPECTION', label: 'Inspection' }, id, await this.inspectionRecords.exists(id));
@@ -1173,8 +1203,7 @@ export class InsurerPortalService {
   // ── No-claim discount ───────────────────────────────────────────
 
   async listNcdApplications(principal: Principal) {
-    const applications = await this.portal.listNcdApplications(this.insurerOf(principal));
-    return applications.map(toNcdApplication);
+    return this.ncd.listForInsurer(this.insurerOf(principal));
   }
 
   /**
@@ -1182,15 +1211,39 @@ export class InsurerPortalService {
    * is created in the same transaction as the decision, so an approved
    * application can never exist without one.
    */
-  async decideNcdApplication(principal: Principal, applicationId: string, dto: NcdDecisionDto) {
+  async decideNcdApplication(principal: Principal, applicationId: string, dto: NcdDecisionDto, key?: string) {
     const insurerId = this.insurerOf(principal);
+    const note = dto.note?.trim();
+    if (!note || note.length > 2000) throw new ApiException('BAD_REQUEST', 'A decision note of 1 to 2000 characters is required.');
     if (dto.status !== 'APPROVED' && dto.percentage !== undefined) {
       throw new ApiException('BAD_REQUEST', 'A discount percentage can be set only when approving an NCD application.');
     }
     const alreadyDecided = () =>
-      ApiException.conflict('ALREADY_DECIDED', 'This application has already been approved and its code issued.');
+      ApiException.conflict('ALREADY_DECIDED', 'This application has already been approved or rejected.');
 
-    const { decision, applicationNumber } = await this.portal.transaction(async (tx) => {
+    const commandKey = idempotencyKey(key);
+    // A replay must still belong to this insurer even though its mutation callback is skipped.
+    if (key !== undefined) {
+      await this.portal.transaction(async (tx) => {
+        if (!(await this.portal.ncdApplicationCustomer(tx, applicationId, insurerId))) {
+          throw await this.absent(principal, { type: 'NCD_APPLICATION', label: 'NCD application' },
+            applicationId, await this.portal.ncdApplicationExists(applicationId, tx));
+        }
+      });
+    }
+
+    const { value: { decision, applicationNumber } } = await this.idempotency.execute(
+      `staff:${principal.id}:insurer:${insurerId}`, `POST /insurer/ncd/applications/${applicationId}/decision`,
+      commandKey, dto, async (tx) => {
+      // Customer before application, matching closure and customer evidence submission.
+      const requiresCustomer = dto.status === 'VERIFICATION_REQUIRED' || dto.status === 'APPROVED';
+      const observed = requiresCustomer
+        ? await this.portal.ncdApplicationCustomer(tx, applicationId, insurerId) : undefined;
+      if (observed?.customerId && !(await lockOpenCustomer(tx, observed.customerId))) {
+        throw ApiException.conflict('NCD_CUSTOMER_UNAVAILABLE', 'The customer is no longer available for this action.');
+      }
+      const standing = await this.portal.insurerStanding(tx, insurerId);
+      if (!standing || !servicesExistingBusiness(standing)) throw ApiException.notFound('Insurer', insurerId);
       const application = await this.portal.lockNcdApplication(tx, applicationId, insurerId);
       if (!application) {
         throw await this.absent(
@@ -1200,7 +1253,29 @@ export class InsurerPortalService {
           await this.portal.ncdApplicationExists(applicationId, tx),
         );
       }
+      if (dto.status === 'VERIFICATION_REQUIRED' && application.sourcePolicyNumber &&
+          (dto.verificationRevision === undefined || key === undefined)) {
+        throw new ApiException('NCD_REVISION_REQUIRED', 'Send the current verificationRevision and a stable Idempotency-Key when requesting evidence.');
+      }
+      if (dto.verificationRevision !== undefined && dto.verificationRevision !== application.verificationRevision) {
+        throw ApiException.conflict('NCD_REVISION_CHANGED', 'This application changed. Refresh it before recording a decision.');
+      }
       if (!canDecideNcd(application.status)) throw alreadyDecided();
+      if (application.status === 'UNDER_REVIEW' && dto.status === 'UNDER_REVIEW') {
+        throw ApiException.conflict('NCD_REVIEW_ALREADY_STARTED', 'This application is already under review.');
+      }
+
+      if (application.status === 'VERIFICATION_REQUIRED' && dto.status !== 'REJECTED') {
+        throw ApiException.conflict('NCD_EVIDENCE_OUTSTANDING', 'The customer must submit the requested evidence before another decision.');
+      }
+      if (dto.status === 'APPROVED' || dto.status === 'VERIFICATION_REQUIRED') {
+        if (!(await this.portal.hasVerifiedNcdSource(tx, application))) {
+          throw ApiException.conflict('NCD_POLICY_UNVERIFIED', 'This application has no validated source policy and declaration.');
+        }
+      }
+      if (requiresCustomer && application.customerId !== observed?.customerId) {
+        throw ApiException.conflict('NCD_CUSTOMER_UNAVAILABLE', 'The application customer changed. Refresh before continuing.');
+      }
 
       const decidedOn = new Date();
       const decidedAt = ncdDecidedAt(dto.status, decidedOn);
@@ -1209,6 +1284,8 @@ export class InsurerPortalService {
         const decided = await this.portal.decideNcdApplication(tx, applicationId, insurerId, application.status, {
           status: dto.status,
           decidedAt,
+          decisionNote: note,
+          ...(dto.status === 'VERIFICATION_REQUIRED' ? { verificationRevision: application.verificationRevision + 1 } : {}),
         });
         if (!decided) throw alreadyDecided();
         await this.audit.transition(tx, {
@@ -1217,14 +1294,15 @@ export class InsurerPortalService {
           entityId: applicationId,
           fromStatus: application.status,
           toStatus: decided.status,
-          note: 'Insurer recorded an NCD decision.',
+          note,
           correlationId: applicationNumber,
         });
 
         if (application.customerId) {
           await this.notifications.notify(tx, {
             customerId: application.customerId,
-            key: 'ncd.decided',
+            key: dto.status === 'VERIFICATION_REQUIRED' ? 'ncd.verification_requested'
+              : dto.status === 'UNDER_REVIEW' ? 'ncd.review_started' : 'ncd.decided',
             entity: { type: 'NCD_APPLICATION', id: applicationNumber },
             values: { insurer: await this.portal.insurerName(tx, insurerId) },
           });
@@ -1236,21 +1314,28 @@ export class InsurerPortalService {
       // and follows the same rule as a quote. Declining stays open to an insurer
       // that may no longer sell: answering an application it already holds is
       // servicing, and leaving it undecidable would strand the customer.
-      const standing = await this.portal.insurerStanding(tx, insurerId);
-      if (!standing) throw ApiException.notFound('Insurer', insurerId);
       if (!takesNewBusiness(standing, decidedOn)) {
         throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
       }
 
-      const percentage = ncdPercentage(application.yearsClaimFree, dto.percentage);
+      const effective = await this.settings.effective('NCD_POLICY', decidedOn, tx);
+      const percentage = ncdTierForYears(effective.value.tiers, application.yearsClaimFree)?.percentage;
+      if (percentage === undefined) throw ApiException.conflict('NCD_INELIGIBLE', 'No configured NCD tier is eligible for these claim-free years.');
+      if (dto.percentage !== undefined && dto.percentage !== percentage) {
+        throw new ApiException('BAD_REQUEST', 'The percentage must equal the configured eligible NCD tier.');
+      }
       const code = await this.insertUnusedNcdCode(tx, {
         insurerId,
         percentage,
         yearsClaimFree: application.yearsClaimFree,
+        issuedAt: decidedOn,
+        expiresAt: addDays(decidedOn, effective.value.validityDays),
+        issuedRuleVersion: effective.version,
       });
       const approved = await this.portal.decideNcdApplication(tx, applicationId, insurerId, application.status, {
         status: 'APPROVED',
         decidedAt,
+        decisionNote: note,
         approvedCodeId: code,
       });
       // Rolling back here also removes the code inserted above, so a lost race leaves no code behind.
@@ -1270,9 +1355,17 @@ export class InsurerPortalService {
         entityId: applicationId,
         fromStatus: application.status,
         toStatus: approved.status,
-        note: 'Insurer approved the NCD application.',
+        note,
         correlationId: applicationNumber,
       });
+      if (application.customerId) {
+        await this.notifications.notify(tx, {
+          customerId: application.customerId,
+          key: 'ncd.decided',
+          entity: { type: 'NCD_APPLICATION', id: applicationNumber },
+          values: { insurer: await this.portal.insurerName(tx, insurerId) },
+        });
+      }
       return { decision: toNcdApproval(approved, { code, percentage }), applicationNumber };
     });
 

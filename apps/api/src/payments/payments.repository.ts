@@ -1,11 +1,13 @@
 import { lockOpenCustomer } from '../db/customer-lock.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   insurerQuotes,
   insurers,
   ncdCodes,
+  ncdApplications,
+  vehicles,
   paymentCallbacks,
   payments,
   policies,
@@ -14,7 +16,8 @@ import {
   reconciliationItems,
 } from '../db/schema.js';
 import { OPEN_PAYMENT_STATUSES, type PaymentProviderName, type PaymentStatus } from '../common/domain/enums.js';
-import { ncdCodeIssuedTo } from '../customer/ncd-code-ownership.js';
+import { findBoundNcdCode, ncdCodeIssuedTo } from '../customer/ncd-code-ownership.js';
+import { ncdCodeRefusal, ncdVehicleMatches } from '../customer/domain/ncd-code.js';
 
 export type NewPayment = typeof payments.$inferInsert;
 export type NewPolicy = typeof policies.$inferInsert;
@@ -124,6 +127,7 @@ export class PaymentsRepository {
       .select({
         id: insurerQuotes.id,
         unpayableAt: insurerQuotes.unpayableAt,
+        ncdPercentage: insurerQuotes.ncdPercentage,
         status: insurerQuotes.status,
         validUntil: insurerQuotes.validUntil,
         premiumMinor: insurerQuotes.premiumMinor,
@@ -241,6 +245,7 @@ export class PaymentsRepository {
       .select({
         id: quoteRequests.id,
         vehicleId: quoteRequests.vehicleId,
+        renewalOfPolicyNumber: quoteRequests.renewalOfPolicyNumber,
         insuranceType: quoteRequests.insuranceType,
         policyStartDate: quoteRequests.policyStartDate,
         policyEndDate: quoteRequests.policyEndDate,
@@ -299,6 +304,7 @@ export class PaymentsRepository {
           eq(ncdCodes.code, code),
           eq(ncdCodes.insurerId, owner.insurerId),
           isNull(ncdCodes.redeemedAt),
+          isNull(ncdCodes.revokedAt),
           ncdCodeIssuedTo(owner.customerId),
         ),
       )
@@ -306,20 +312,66 @@ export class PaymentsRepository {
     return redeemed.length === 1;
   }
 
-  /** Whether the code could still be redeemed for this insurer and customer right now. */
-  async ncdRedeemable(tx: Transaction, code: string, owner: { insurerId: string; customerId: string }): Promise<boolean> {
-    const [found] = await tx
-      .select({ code: ncdCodes.code })
-      .from(ncdCodes)
-      .where(
-        and(
-          eq(ncdCodes.code, code),
-          eq(ncdCodes.insurerId, owner.insurerId),
-          isNull(ncdCodes.redeemedAt),
-          ncdCodeIssuedTo(owner.customerId),
-        ),
-      );
-    return found !== undefined;
+  async lockNcdCode(tx: Transaction, code: string) {
+    const [locked] = await tx.select().from(ncdCodes).where(eq(ncdCodes.code, code)).for('update');
+    return locked;
+  }
+
+  /** Lock the code before checking its binding so redemption and revocation cannot race this decision. */
+  async ncdUsable(
+    tx: Transaction, code: string, owner: { insurerId: string; customerId: string },
+    request: { vehicleId: string; renewalOfPolicyNumber: string | null },
+    at: Date,
+    ncdPercentage: number | null,
+    confirmation?: {
+      reservedNcdCode: string | null;
+      pendingUntil: Date | null;
+    },
+  ): Promise<false | 'IGNORE' | 'APPLY'> {
+    const locked = await this.lockNcdCode(tx, code);
+    if (!locked) return false;
+    if (locked.insurerId !== owner.insurerId) return ncdPercentage === null ? 'IGNORE' : false;
+    const bound = await findBoundNcdCode(tx, code, owner.customerId);
+    if (!bound) {
+      if (!confirmation || ncdPercentage !== null || confirmation.reservedNcdCode !== null || locked.redeemedAt || locked.revokedAt) return false;
+      // Only genuinely unbound, pre-Batch16 applications retain the old callback contract.
+      const [legacy] = await tx
+        .select({ id: ncdApplications.id })
+        .from(ncdApplications)
+        .where(
+          and(
+            eq(ncdApplications.approvedCodeId, code),
+            eq(ncdApplications.customerId, owner.customerId),
+            eq(ncdApplications.insurerId, owner.insurerId),
+            isNull(ncdApplications.sourcePolicyNumber),
+            isNull(ncdApplications.sourceVehicleId),
+          ),
+        );
+      return legacy ? 'APPLY' : false;
+    }
+    if (ncdPercentage === null) return confirmation?.reservedNcdCode ? false : 'IGNORE';
+    if (ncdPercentage !== bound.percentage) return false;
+    if (!confirmation) {
+      // Confirmation releases the open index and creates reconciliation atomically
+      // under this code lock. An already-reserved retry keeps its confirmation rights.
+      const [reserved] = await tx.select({ id: payments.id }).from(payments)
+        .leftJoin(reconciliationItems, and(
+          eq(reconciliationItems.paymentId, payments.id),
+          inArray(reconciliationItems.kind, ['AMOUNT_MISMATCH', 'REFUND_REQUIRED']),
+          ne(reconciliationItems.status, 'RESOLVED'),
+        ))
+        .where(and(
+          eq(payments.reservedNcdCode, code),
+          or(inArray(payments.status, [...OPEN_PAYMENT_STATUSES]), isNotNull(reconciliationItems.id)),
+        )).limit(1);
+      if (reserved) return false;
+    }
+    const priceHeld = confirmation?.reservedNcdCode === code && confirmation.pendingUntil !== null && at <= confirmation.pendingUntil;
+    if (ncdCodeRefusal(priceHeld ? { ...bound, expiresAt: null } : bound, confirmation ? at : new Date())) return false;
+    if (confirmation && confirmation.reservedNcdCode !== code) return false;
+    if (request.renewalOfPolicyNumber && request.renewalOfPolicyNumber !== bound.sourcePolicyNumber) return false;
+    const [vehicle] = await tx.select().from(vehicles).where(eq(vehicles.id, request.vehicleId));
+    return vehicle !== undefined && ncdVehicleMatches(bound.sourceVehicle, vehicle) ? 'APPLY' : false;
   }
 
   async isNcdCodeIssuedBy(tx: Transaction, code: string, insurerId: string): Promise<boolean> {

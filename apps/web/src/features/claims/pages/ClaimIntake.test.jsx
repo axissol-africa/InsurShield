@@ -8,7 +8,7 @@ import { api } from '@/api';
 import { env } from '@/config/env';
 vi.mock('@/config/env', () => ({ env: { apiMode: 'http' } }));
 vi.mock('@/api/sync', () => ({ hydrateCustomer: vi.fn(), hydrateDirectory: vi.fn() }));
-vi.mock('@/api/idempotency', () => ({ submitWithRetry: async ({ prepare, send }) => send(await prepare(), 'key') }));
+vi.mock('@/api/idempotency', () => ({ clearPendingCommands: vi.fn(), submitWithRetry: async ({ prepare, send }) => send(await prepare(), 'key') }));
 vi.mock('@/api', () => ({ api: { claims: { notify: vi.fn(), intakeRules: vi.fn() }, documents: { upload: vi.fn() } } }));
 const customer = { fullName: 'Mwiza Banda', email: 'mwiza@example.com', phone: '0970123456' };
 beforeEach(() => {

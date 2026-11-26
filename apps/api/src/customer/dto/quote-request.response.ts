@@ -12,6 +12,7 @@ export interface InsurerQuoteResponse {
   id: string;
   productVersionId: string | null;
   premium: number;
+  ncdPercentage?: number;
   notes: string | null;
   insurerReference: string | null;
   validityDays: number;
@@ -130,6 +131,7 @@ export function toQuoteRequestResponse(
       id: quote.id,
       productVersionId: quote.productVersionId,
       premium: ngweeToKwacha(quote.premiumMinor),
+      ...(quote.ncdPercentage == null ? {} : { ncdPercentage: quote.ncdPercentage }),
       notes: quote.notes,
       insurerReference: quote.insurerReference,
       validityDays: quote.validityDays,

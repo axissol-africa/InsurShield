@@ -7,6 +7,7 @@ import { INSPECTION_SHOTS } from '@/domain/inspection';
 import { submitQuoteRequest } from '../submitRequest';
 import QuoteRequestPage from './QuoteRequestPage';
 import { captureApi } from '@/api/capture';
+import { api } from '@/api';
 
 vi.mock('@/api/capture', () => ({ captureApi: { get: vi.fn() } }));
 vi.mock('../submitRequest', () => ({ submitQuoteRequest: vi.fn() }));
@@ -161,5 +162,32 @@ describe('quote request requirements', () => {
         selectedProductVersionIds: ['PV-TEST'],
       }),
     );
+  });
+
+  it('sends a verified discount code only for the vehicle and insurers that were checked', async () => {
+    const validate = vi.spyOn(api.ncd, 'validateCode').mockResolvedValue({ valid: true, percentage: 23 });
+    const vehicleDetails = { ...useStore.getState().vehicleDetails, chassisNumber: 'TEST-NCD-CHASSIS' };
+    useStore.setState({
+      vehicleDetails,
+      selectedProductVersions: [{ insurer: { id: 'insurer-1' }, version: { id: 'PV-TEST' } }],
+      documents: {
+        whiteBook: 'data:application/pdf;base64,AA==',
+        ...Object.fromEntries(INSPECTION_SHOTS.map((shot) => [shot.key, 'data:image/jpeg;base64,AA=='])),
+      },
+    });
+    try {
+      const user = userEvent.setup();
+      renderPage();
+      await user.type(screen.getByLabelText(/No Claim Discount code/), 'NCD-TEST');
+      await user.click(screen.getByRole('button', { name: 'Check code' }));
+      expect(await screen.findByText(/23% discount verified/)).toBeVisible();
+      expect(validate).toHaveBeenCalledWith(expect.objectContaining({ code: 'NCD-TEST', insurerIds: ['insurer-1'],
+        vehicleDetails: expect.objectContaining({ chassisNumber: 'TEST-NCD-CHASSIS' }) }));
+      await user.click(screen.getByRole('checkbox', { name: /I confirm/ }));
+      await user.click(screen.getByRole('button', { name: /Request quotes for/ }));
+      expect(submitQuoteRequest).toHaveBeenCalledWith(expect.objectContaining({ ncdCode: 'NCD-TEST' }));
+    } finally {
+      validate.mockRestore();
+    }
   });
 });

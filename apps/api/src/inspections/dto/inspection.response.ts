@@ -1,6 +1,7 @@
 import { toContract } from '../../common/contract.js';
 import type { DocumentRecord } from '../../documents/documents.service.js';
 import type { InspectionWithInsurer } from '../inspections.repository.js';
+import { isLaterInspection, LATER_INSPECTION_PHOTO_SLOTS } from '../domain/later-inspection.js';
 
 export interface InspectionPhotoResponse {
   slot: string;
@@ -16,6 +17,7 @@ export function toInspectionResponse(
   inspection: InspectionWithInsurer,
   photos: InspectionPhotoResponse[],
   products: InspectedProductResponse[] = [],
+  report: DocumentRecord | null = null,
 ) {
   return {
     id: inspection.id,
@@ -41,5 +43,12 @@ export function toInspectionResponse(
     result: inspection.result,
     resultReason: inspection.resultReason,
     products,
+    ...(isLaterInspection(inspection.purpose) && {
+      policyNumber: inspection.policyNumber,
+      claimNumber: inspection.claimNumber,
+      predecessorId: inspection.predecessorId,
+      requiredPhotoSlots: inspection.method === 'SELF_CAPTURE' ? LATER_INSPECTION_PHOTO_SLOTS : [],
+      report,
+    }),
   };
 }

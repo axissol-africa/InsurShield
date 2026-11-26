@@ -50,6 +50,7 @@ export default function ClaimsTab({ claims }) {
   const [query, setQuery] = useState('');
   const [filterId, setFilterId] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
+  const linkedClaim = new URLSearchParams(window.location.search).get('claim');
   const lastOpenedId = useRef(null);
   const search = useRef(null);
   // Held here, not in the claim's detail: looking at another claim and coming
@@ -68,14 +69,14 @@ export default function ClaimsTab({ claims }) {
   const trimmed = query.trim().toLowerCase();
   const filter = FILTERS.find((candidate) => candidate.id === filterId);
   const visible = claims.filter((claim) => filter.matches(claim) && (!trimmed || matchesQuery(claim, trimmed))).sort(callsFirst);
-  const selected = claims.find((claim) => claim.id === selectedId) || null;
+  const selected = claims.find((claim) => claim.id === selectedId) || (selectedId === null ? claims.find((claim) => claimNumber(claim) === linkedClaim) : null) || null;
   const notReceived = claims.filter((claim) => claim.status === NEW).length;
 
   // On a phone the claim replaces the list, so coming back has to put the
   // person where they were rather than at the top of the page. A claim marked
   // received under "New" is no longer listed; the search is the next thing to use.
   useEffect(() => {
-    if (selectedId !== null || !lastOpenedId.current) return;
+    if (selectedId || !lastOpenedId.current) return;
     (document.getElementById(lastOpenedId.current) ?? search.current)?.focus();
   }, [selectedId]);
 
@@ -142,7 +143,7 @@ export default function ClaimsTab({ claims }) {
             <ClaimDetail
               key={selected.id}
               claim={selected}
-              onBack={() => setSelectedId(null)}
+              onBack={() => setSelectedId('')}
               onMarkReceived={(acknowledgement) => markReceived(selected, acknowledgement)}
               saving={marking.pending(selected.id)}
               error={marking.error(selected.id)}

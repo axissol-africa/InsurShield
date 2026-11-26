@@ -8,9 +8,10 @@ import { newReference } from '../common/domain/reference.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { takesNewBusiness } from '../common/insurer-standing.js';
 import type { Transaction } from '../db/database.module.js';
+import { LaterInspectionsService } from '../inspections/later-inspections.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { SettingsService } from '../settings/settings.service.js';
-import { eventFit, isOpenPayment, isQuoteExpired } from './domain/payment.js';
+import { eventFit, isOpenPayment, isQuoteExpired, isRefundablePayment } from './domain/payment.js';
 import { RefundsService } from './refunds.service.js';
 import { PaymentsRepository, type PaymentRow } from './payments.repository.js';
 import { PAYMENT_PROVIDER, type PaymentEvent, type PaymentProvider, type StatusResult } from './provider/payment-provider.js';
@@ -57,6 +58,7 @@ export class PaymentEventsService {
     private readonly settings: SettingsService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     private readonly refunds: RefundsService,
+    private readonly laterInspections: LaterInspectionsService,
   ) {}
 
   /**
@@ -135,7 +137,8 @@ export class PaymentEventsService {
       });
       return 'UNMATCHED';
     }
-    const fit = eventFit(event.type, payment.status);
+    if (event.type === 'payment.confirmed' && payment.status !== 'CONFIRMED' && isRefundablePayment(payment)) return 'ALREADY_APPLIED';
+    const fit = eventFit(event.type, payment.status, payment.reservedNcdCode !== null, payment.confirmedAt);
     if (fit === 'already-applied') return 'ALREADY_APPLIED';
     if (fit !== 'apply') {
       await this.openItem(tx, {
@@ -183,17 +186,30 @@ export class PaymentEventsService {
    * kept as confirmed and a refund is owed (rule 9, decision 24).
    */
   private async confirmed(tx: Transaction, payment: PaymentRow, event: PaymentEvent, at: Date, callbackId: string | null): Promise<EventOutcome> {
-    await this.move(
-      tx,
-      payment,
-      'CONFIRMED',
-      { confirmedAt: at, providerPaymentId: payment.providerPaymentId, providerReference: event.reference },
-      'The provider confirmed the payment.',
-    );
+    // Match initiation's request-before-code lock order. A start must observe either
+    // the open attempt or its unresolved capture, never a gap between those holds.
+    const reservedRequest = payment.reservedNcdCode ? await this.payments.lockRequest(tx, payment.quoteRequestId) : undefined;
+    if (payment.reservedNcdCode) await this.payments.lockNcdCode(tx, payment.reservedNcdCode);
+    const lateCapture = payment.reservedNcdCode !== null && !isOpenPayment(payment.status);
+    const amountMatches = event.amountMinor === payment.amountMinor &&
+      (lateCapture ? event.currency === payment.currency : (event.currency ?? payment.currency) === payment.currency);
+    // Terminal attempts retain their status to avoid displacing a confirmed retry. Only a
+    // verified matching capture sets the evidence that makes such an attempt refundable.
+    if (!lateCapture || amountMatches) {
+      await this.move(
+        tx,
+        payment,
+        lateCapture ? payment.status : 'CONFIRMED',
+        { confirmedAt: at, providerPaymentId: payment.providerPaymentId, providerReference: event.reference },
+        'The provider confirmed the payment.',
+      );
+    }
     const quote = await this.payments.lockQuote(tx, payment.insurerQuoteId);
     if (!quote) throw new Error(`Payment ${payment.id} has no quote`);
-    const amountMatches = event.amountMinor === payment.amountMinor && (event.currency ?? payment.currency) === payment.currency;
     if (!amountMatches) {
+      if (lateCapture) {
+        await this.payments.move(tx, payment.id, [payment.status], { failureCode: 'CAPTURE_MISMATCH' });
+      }
       await this.openItem(tx, {
         kind: 'AMOUNT_MISMATCH',
         paymentId: payment.id,
@@ -206,8 +222,18 @@ export class PaymentEventsService {
       return 'AMOUNT_MISMATCH';
     }
 
+    if (lateCapture) {
+      await this.openItem(tx, {
+        kind: 'REFUND_REQUIRED', paymentId: payment.id, paymentCallbackId: callbackId,
+        insurerId: quote.insurerId, amountMinor: payment.amountMinor,
+        reason: 'The provider captured an NCD payment after it had ended. Refund the capture; no policy was issued.',
+      });
+      await this.tellCustomer(tx, payment, 'payment.held');
+      return 'REFUND_REQUIRED';
+    }
+
     const standing = await this.payments.insurerStanding(tx, quote.insurerId);
-    const request = await this.payments.lockRequest(tx, payment.quoteRequestId);
+    const request = reservedRequest ?? await this.payments.lockRequest(tx, payment.quoteRequestId);
     if (!request) throw new Error(`Payment ${payment.id} has no request`);
     const unusable =
       (await this.payments.policyForRequest(tx, payment.quoteRequestId)) !== undefined
@@ -220,7 +246,9 @@ export class PaymentEventsService {
               ? 'The insurer no longer takes new business.'
               : isQuoteExpired(quote.validUntil, at) && payment.pendingUntil && at > payment.pendingUntil
                 ? 'The payment was confirmed after its price stopped being held.'
-                : request.ncdCode && !(await this.redeemNcd(tx, request.ncdCode, quote.insurerId, payment.customerId, at))
+                : quote.ncdPercentage !== null && !request.ncdCode
+                  ? 'The discounted quote no longer has its no-claim discount code.'
+                : request.ncdCode && !(await this.redeemNcd(tx, request.ncdCode, quote.insurerId, payment, request, at, quote.ncdPercentage))
                   ? "The request's no-claim discount code was already used on another request."
                   : null;
     if (unusable) {
@@ -257,6 +285,7 @@ export class PaymentEventsService {
       receivedAt: at,
       issuanceDueAt: new Date(at.getTime() + deadline.hours * HOUR_MS),
     });
+    await this.laterInspections.openAfterPayment(tx, policy.policyNumber, at, payment.transactionId);
     await this.audit.write(tx, {
       actor: PROVIDER,
       action: 'policy.created',
@@ -299,16 +328,26 @@ export class PaymentEventsService {
   }
 
   /** A code discounts only its own insurer's quote, so another insurer's code stays unspent. */
-  private async redeemNcd(tx: Transaction, code: string, insurerId: string, customerId: string, at: Date): Promise<boolean> {
-    if (await this.payments.redeemNcdCode(tx, code, { insurerId, customerId }, at)) return true;
+  private async redeemNcd(
+    tx: Transaction, code: string, insurerId: string,
+    payment: PaymentRow,
+    request: { vehicleId: string; renewalOfPolicyNumber: string | null },
+    at: Date,
+    ncdPercentage: number | null,
+  ): Promise<boolean> {
+    const owner = { insurerId, customerId: payment.customerId };
+    const use = await this.payments.ncdUsable(tx, code, owner, request, at, ncdPercentage, payment);
+    if (!use) return false;
+    if (use === 'IGNORE') return true;
+    if (await this.payments.redeemNcdCode(tx, code, owner, at)) return true;
     return !(await this.payments.isNcdCodeIssuedBy(tx, code, insurerId));
   }
 
   /**
    * Asks the provider where an open attempt stands and applies the answer as
    * a callback would. At its pending deadline an attempt the provider has not
-   * settled is stopped; one the provider cannot be asked about is handed to a
-   * person an hour later.
+   * settled is stopped, except an NCD reservation stays held while the provider
+   * still reports pending. An unreachable provider is escalated an hour later.
    */
   async refresh(paymentId: string, now = new Date()): Promise<void> {
     const before = await this.payments.viewById(paymentId);
@@ -370,6 +409,14 @@ export class PaymentEventsService {
       }
       await this.payments.move(tx, payment.id, [payment.status], { lastStatusCheckAt: now });
       if (isOpenPayment(payment.status) && payment.pendingUntil && now >= payment.pendingUntil) {
+        if (payment.reservedNcdCode && answer.status === 'PENDING') {
+          await this.openItem(tx, {
+            kind: 'PENDING_TOO_LONG', paymentId: payment.id, amountMinor: payment.amountMinor,
+            insurerId: await this.insurerOf(tx, payment),
+            reason: 'The provider still reports this NCD payment pending. Its reservation remains held until a definitive outcome.',
+          });
+          return;
+        }
         await this.move(tx, payment, 'EXPIRED', { failureCode: 'EXPIRED', failureReason: 'No outcome by the pending deadline.' }, 'Nothing was settled by the pending deadline.');
         await this.tellCustomer(tx, payment, 'payment.expired');
       }

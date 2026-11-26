@@ -79,6 +79,42 @@ payment-stage inspection tests continue to pass.
   protects policies through the last reporting day and accounts for open service requests. Submission of new service
   requests and claim updates checks that the insurer can still service the policy.
 
+## Part 2 delivery details
+
+- Customers apply using an issued policy on their account. The API resolves the insurer and vehicle from that policy
+  and records the accepted declaration version and time. The insurer can start review, request evidence, approve,
+  or reject with a reason. The customer supplies scanned evidence against the current request. The insurer receives
+  it in the application, and the account keeps the outcome and any approved code. Customers receive notices
+  about application and evidence receipt, review, requests for evidence, and the outcome. Insurers specify the
+  evidence and any due date in the request note. A rejected customer can contact their insurer or the help desk.
+- Approval uses the highest applicable claim-free year threshold and validity period in the effective `NCD_POLICY`.
+  Codes are issued for the same customer, source policy, vehicle and insurer. A fresh quote can use a new snapshot
+  of the same vehicle when the plate, chassis and country match. A renewal must refer to the source policy.
+- The issuing insurer receives the verified percentage. It confirms whether its final quotation includes the discount,
+  and customers can see that in comparison. Payment uses the insurer's final premium. Paying a quote that includes NCD
+  reserves the code before contacting the provider. Confirmed issue redeems it in the policy transaction. Existing
+  payment and callback retries keep their recorded result. When checkout loses the response, it retries with the same
+  payment details and key. Pending provider outcomes and unresolved captures keep the code reserved until resolved.
+- Unbound codes from before this batch remain visible in historical records. A customer needs a new verified application
+  to use a discount on a new quote or start a new discounted payment. Payments already underway keep their prior terms
+  and reconciliation path. Production approval of the tier and validity settings remains in the release gate.
+
+## Part 3 delivery details
+
+- A confirmed payment creates one initial inspection when the purchased product snapshot requires inspection after
+  payment. Quotes and payment-stage checks follow their existing rules. The policy and its certificate workflow
+  keep their existing states. Insurers record later inspection outcomes while the financial consequences of a
+  failed after-payment inspection await approval under BR-007.
+- The servicing insurer can open an assessment on a verified claim it owns. The claim cannot be decided while its
+  inspection is open. The customer can track the assessment and submit evidence from their inspections page.
+- Photos supplied for an assessment are separate from original quote photos and any approved after-payment
+  inspection for the policy. The insurer only sees prior-condition photos dated before the Lusaka incident day,
+  since the claim records a date without a time. Reports and filed photos remain linked to their original
+  inspection. A repeat creates a new record while preserving the previous outcome and evidence.
+- Self-capture needs the six inspection views before a report can be published. A physical inspection must be booked
+  before publication. An insurer can record unusable evidence and request another attempt for a claim. After a
+  failed paid inspection, a new attempt follows the purchased product's published reinspection rule.
+
 ## Verification and rollout
 
 - Additive catalog-backed migrations and fresh plus legacy adoption tests per part. Preserve existing nullable legacy

@@ -16,7 +16,6 @@ const DESTINATION = {
   POLICY: '/account',
   CLAIM: '/account',
   NCD_APPLICATION: '/account',
-  INSPECTION: '/account',
 };
 
 /** Where a notice that asks for a step takes the reader, ahead of its record. */
@@ -27,6 +26,7 @@ const ACTION = {
 /** Records with a page of their own, reached by their reference. */
 const RECORD_PAGE = {
   SERVICE_REQUEST: (id) => `/service-requests/${encodeURIComponent(id)}`,
+  INSPECTION: (id) => `/inspections?inspection=${encodeURIComponent(id)}`,
 };
 
 const linkFor = (item) => {

@@ -1,9 +1,16 @@
 import { useRef, useState } from 'react';
 import { BadgePercent, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { submitWithRetry } from '@/api/idempotency';
+import { getIdentityBinding } from '@/app/identity';
+import { useStore } from '@/store';
 import { api } from '@/api';
 import { timeAgo } from '@/lib/time';
-import { ncdDiscountForYears } from '@/domain/insurers';
+import { formatLusakaDate } from '@/domain/premiumEngine';
+import { applicationDiscount, discountLabel, isUsableNcd, ncdVehicleLabel } from '@/features/claims/ncd';
+import { NcdEvidenceLinks } from '@/features/claims/components/NcdEvidence';
+import { Textarea } from '@/components/ui/primitives/textarea';
+import { env } from '@/config/env';
 import { isOpenNcdApplication, waitingLongestFirst } from '@/features/insurer-portal/portal';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
 import { useWorkList } from '@/features/insurer-portal/hooks/useWorkList';
@@ -21,20 +28,18 @@ const years = (count, unit = 'yr') => `${count} ${unit}${count === 1 ? '' : 's'}
 const applicationNumber = (application) => application.applicationNumber || application.id;
 const reviewButtonId = (application) => `ncd-review-${application.id}`;
 const applied = (application) => (application.submittedAt ? `Applied ${timeAgo(application.submittedAt)}` : null);
-const isReopenableNcdApplication = (application) => isOpenNcdApplication(application) || application.status === 'Rejected';
 /** The discount the claimed years would give; a rejected application carries none, so none is shown beside it. */
-const discountNote = (application) => (application.status === 'Rejected' ? null : `${ncdDiscountForYears(application.yearsClaimFree)}% discount`);
+const discountNote = (application) => (application.status === 'Rejected' ? null : `${discountLabel(application)} discount`);
 
 /**
- * What the insurer can decide, each with what it does. Approval is final;
- * rejection remains reopenable if the insurer later needs to check again.
- * An application already under review is not offered that outcome again.
+ * Keep the decision choices aligned with the server while evidence is outstanding.
  */
 const decisionsFor = (application) => [
+  { value: 'Verification Required', title: 'Request verification evidence', description: 'Specify the documents the customer should upload and any due date in your reason.', confirm: 'Request verification', done: 'Verification requested', doneDetail: 'The customer can upload evidence from their application.' },
   {
     value: 'Approved',
     title: 'Approve',
-    description: `Issues a ${ncdDiscountForYears(application.yearsClaimFree)}% no-claim discount code to ${application.fullName}. This cannot be undone here.`,
+    description: `Issues ${applicationDiscount(application) === null ? 'an insurer-verified' : `a ${discountLabel(application)}`} no-claim discount code to ${application.fullName}. This cannot be undone here.`,
     confirm: 'Approve & issue code',
     done: 'Application approved',
     doneDetail: 'The discount code is listed under Decided.',
@@ -50,12 +55,13 @@ const decisionsFor = (application) => [
   {
     value: 'Rejected',
     title: 'Reject',
-    description: 'Closes the application without a discount code. You can reopen it later if your records change.',
+    description: 'Closes the application. The customer receives your reason and can apply again if their circumstances change.',
     confirm: 'Reject application',
     done: 'Application rejected',
-    doneDetail: 'It remains available to review again if needed.',
+    doneDetail: 'The outcome is listed under Decided.',
   },
-].filter((decision) => decision.value !== application.status);
+].filter((decision) => decision.value !== application.status &&
+  (application.status !== 'Verification Required' || decision.value === 'Rejected'));
 
 const applicationColumns = [
   {
@@ -81,16 +87,22 @@ const applicationColumns = [
   },
 ];
 
-const Outcome = ({ application }) => (
+const Outcome = ({ application }) => {
+  const [now] = useState(Date.now);
+  return (
   <div className="flex min-w-32 flex-col items-start whitespace-normal">
     <StatusBadge status={application.status} />
-    {application.approvedCode
+    {application.decisionNote && <Detail>{application.decisionNote}</Detail>}
+    {application.expiresAt && <Detail>{new Date(application.expiresAt).getTime() <= now ? 'Expired' : 'Expires'}: {new Date(application.expiresAt).toLocaleDateString()}</Detail>}
+    {application.status === 'Approved' && (!application.approvedCode || (env.apiMode === 'http' && application.discountPercentage == null)) && <Detail>Legacy approval — bound discount/code unavailable.</Detail>}
+    <NcdEvidenceLinks evidence={application.evidence} />
+    {application.codeStatus && <Detail>Code status: {application.codeStatus}</Detail>}
+    {isUsableNcd(application, now)
       ? <Detail>Code issued: <span className="font-mono font-medium text-foreground">{application.approvedCode}</span></Detail>
-      : application.status === 'Rejected'
-        ? <Detail>Reopenable — you can decide again.</Detail>
-        : isReopenableNcdApplication(application) && applied(application) && <Detail>{applied(application)}</Detail>}
+      : isOpenNcdApplication(application) && applied(application) && <Detail>{applied(application)}</Detail>}
   </div>
 );
+};
 
 /** One application on a phone: the same facts as a table row, stacked, with its action full width underneath. */
 function ApplicationCard({ application, children }) {
@@ -118,24 +130,33 @@ function ApplicationCard({ application, children }) {
  * insurer has to check its own records before any outcome.
  */
 export default function NcdTab({ applications }) {
-  const open = applications.filter(isReopenableNcdApplication).sort(waitingLongestFirst((application) => application.submittedAt));
-  const decided = applications.filter((application) => !isReopenableNcdApplication(application));
+  const open = applications.filter(isOpenNcdApplication).sort(waitingLongestFirst((application) => application.submittedAt));
+  const decided = applications.filter((application) => !isOpenNcdApplication(application));
   const [list, setList] = useWorkList('open', 'decided', open.length > 0);
   const lists = useRef(null);
+  const [note, setNote] = useState('');
+  const [noteError, setNoteError] = useState('');
   const [reviewingId, setReviewingId] = useState(null);
   const reviewing = open.find((application) => application.id === reviewingId);
   const deciding = usePortalAction(
-    (application, status) => thenReloadPortal(() => api.ncd.decide(application.id, status)),
+    (application, status, reason) => thenReloadPortal(() => submitWithRetry({
+      operation: `ncd-decision-${application.id}`,
+      fingerprint: JSON.stringify({ identity: getIdentityBinding() || useStore.getState().staffSession, id: application.id, status, reason, verificationRevision: application.verificationRevision ?? 0 }),
+      prepare: async () => ({ status, note: reason, verificationRevision: application.verificationRevision ?? 0 }),
+      send: (payload, key) => api.ncd.decide(application.id, payload.status, payload.note, payload.verificationRevision, key),
+    })),
     'That decision could not be saved. Please try again.',
   );
 
   const startReview = (application) => {
     deciding.clearError();
+    setNote(''); setNoteError('');
     setReviewingId(application.id);
   };
 
   const decide = async (decision) => {
-    if (!(await deciding.run(reviewing, decision.value))) return;
+    if (!note.trim()) { setNoteError('Enter a reason for this decision.'); return; }
+    if (!(await deciding.run(reviewing, decision.value, note.trim()))) return;
     setReviewingId(null);
     toast.success(decision.done, { description: decision.doneDetail });
   };
@@ -209,7 +230,7 @@ export default function NcdTab({ applications }) {
           description={<>Check policy <span className="font-mono text-foreground">{reviewing.policyNumber}</span> in your own system before you decide.</>}
           options={decisionsFor(reviewing)}
           pending={deciding.pending}
-          error={deciding.error}
+          error={noteError || deciding.error}
           onDecide={decide}
           onClose={() => setReviewingId(null)}
           // Back to the application's own button, or to the list when a decision has taken it out of the open list.
@@ -219,8 +240,13 @@ export default function NcdTab({ applications }) {
             <Fact label="Applicant" value={<>{reviewing.fullName}<ContactLinks phone={reviewing.phone} email={reviewing.email} className="mt-1" /></>} />
             <Fact label="Application" value={<><span className="font-mono">{applicationNumber(reviewing)}</span>{applied(reviewing) && <Detail>{applied(reviewing)}</Detail>}</>} />
             <Fact label="Claim-free period claimed" value={years(reviewing.yearsClaimFree, 'year')} />
-            <Fact label="Discount if approved" value={`${ncdDiscountForYears(reviewing.yearsClaimFree)}%`} />
+            <Fact label="Discount if approved" value={`${discountLabel(reviewing)}`} />
+            <Fact label="Policy vehicle" value={reviewing.vehicle ? ncdVehicleLabel(reviewing.vehicle) : 'Vehicle details unavailable'} />
+            <Fact label="Declaration accepted" value={reviewing.declarationAcceptedAt ? formatLusakaDate(reviewing.declarationAcceptedAt) : 'Declaration unavailable'} />
           </dl>
+          {reviewing.decisionNote && <p className="whitespace-pre-wrap text-sm">Previous reason: {reviewing.decisionNote}</p>}
+          <NcdEvidenceLinks evidence={reviewing.evidence} />
+          <label className="block text-sm font-medium">Reason for decision<Textarea required maxLength={2000} value={note} disabled={deciding.pending} onChange={(event) => { setNote(event.target.value); setNoteError(''); }} /></label>
         </DecisionDialog>
       )}
     </div>

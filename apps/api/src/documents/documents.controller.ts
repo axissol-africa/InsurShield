@@ -29,6 +29,7 @@ const SCOPE_FOR_KIND: Record<DocumentKind, DocumentScope> = {
   QUOTATION: { kind: 'quotation' as const, quoteRequestId: 'unfiled', insurerId: 'unfiled' },
   CERTIFICATE: { kind: 'certificate' as const, policyNumber: 'unfiled' },
   INSPECTION_PHOTO: { kind: 'inspection-shot' as const, quoteRequestId: 'unfiled', shotKey: 'unfiled' },
+  INSPECTION_REPORT: { kind: 'inspection-photo' as const, inspectionId: 'unfiled', slot: 'report' },
   WHITE_BOOK: { kind: 'white-book' as const, quoteRequestId: 'unfiled' },
   CLAIM_ATTACHMENT: { kind: 'claim-attachment' as const, claimNumber: 'unfiled' },
   INSURER_LOGO: { kind: 'insurer-logo' as const, insurerId: 'unfiled' },

@@ -1,3 +1,4 @@
+import { clearPendingCommands } from '@/api/idempotency';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { createSessionSlice } from './slices/session';
@@ -32,3 +33,12 @@ export const useStore = create(
     { name: STORAGE_KEY, version: STORAGE_VERSION, merge, migrate, partialize, storage: storeStorage },
   ),
 );
+
+// Mock sessions and explicit local sign-outs also cross the pending-command boundary.
+const commandIdentity = (state) => JSON.stringify([
+  state.customer?.id, state.customer?.email,
+  state.staffSession?.id, state.staffSession?.insurerId, state.staffSession?.role, state.staffSession?.name,
+]);
+useStore.subscribe((state, previous) => {
+  if (((previous.customer || previous.staffSession) && commandIdentity(state) !== commandIdentity(previous)) || (state.leaving && !previous.leaving)) clearPendingCommands();
+});

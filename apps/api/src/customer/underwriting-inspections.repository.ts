@@ -8,7 +8,7 @@ import {
   insurerProductVersions,
   quoteRequestProductVersions,
 } from '../db/schema.js';
-import type { InspectionStatus } from '../common/domain/enums.js';
+import type { InspectionPurpose, InspectionStatus } from '../common/domain/enums.js';
 
 export type NewInspection = typeof inspections.$inferInsert;
 export type NewInspectionLink = typeof inspectionRequestProducts.$inferInsert;
@@ -20,6 +20,8 @@ const inspectionColumns = {
   customerId: inspections.customerId,
   insurerId: inspections.insurerId,
   quoteRequestId: inspections.quoteRequestId,
+  policyNumber: inspections.policyNumber,
+  claimNumber: inspections.claimNumber,
   method: inspections.method,
   stage: inspections.stage,
   vehiclePlate: inspections.vehiclePlate,
@@ -122,12 +124,13 @@ export class UnderwritingInspectionsRepository {
   }
 
   /** Every inspection this insurer carries out, newest first, with the customer to contact. */
-  listForInsurer(insurerId: string) {
+  listForInsurer(insurerId: string, purposes: readonly InspectionPurpose[]) {
+    if (purposes.length === 0) return Promise.resolve([]);
     return this.db
       .select({ ...inspectionColumns, customer: { fullName: customers.fullName, phone: customers.phone, email: customers.email } })
       .from(inspections)
       .innerJoin(customers, eq(customers.id, inspections.customerId))
-      .where(eq(inspections.insurerId, insurerId))
+      .where(and(eq(inspections.insurerId, insurerId), inArray(inspections.purpose, [...purposes])))
       .orderBy(desc(inspections.createdAt), asc(inspections.id));
   }
 

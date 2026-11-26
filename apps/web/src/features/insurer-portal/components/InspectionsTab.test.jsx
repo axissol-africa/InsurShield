@@ -64,3 +64,23 @@ describe('InspectionsTab', () => {
     expect(finished.queryByRole('button')).not.toBeInTheDocument();
   });
 });
+
+it('requires a published report before passing a claim assessment', async () => {
+  const api = fakeApi([{ ...photos, purpose: 'CLAIM_ASSESSMENT', claimNumber: 'CL-1' }]);
+  api.inspections.evidence = vi.fn().mockResolvedValue({ preLoss: [], postLoss: [], report: null });
+  render(<InspectionsTab api={api} />);
+  expect(await screen.findByRole('button', { name: 'Pass' })).toBeDisabled();
+  expect(screen.getByRole('link', { name: 'Claim CL-1' })).toHaveAttribute('href', '/insurer?view=claims&claim=CL-1');
+});
+
+it('shows the API refusal when purchased terms prevent another attempt', async () => {
+  const user = userEvent.setup();
+  const api = fakeApi([{ ...physical, purpose: 'AFTER_PAYMENT', status: 'FAILED', statusLabel: 'Failed', policyNumber: 'POL-1' }]);
+  api.inspections.evidence = vi.fn().mockResolvedValue({ preLoss: [], postLoss: [], report: null });
+  api.inspections.reinspect = vi.fn().mockRejectedValue(new Error('The purchased product does not allow another attempt after a failed inspection.'));
+  render(<InspectionsTab api={api} />);
+  await user.click(await screen.findByRole('button', { name: 'Start new attempt' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('purchased product does not allow');
+  expect(api.inspections.reinspect).toHaveBeenCalledWith('INS-1');
+  expect(screen.getByRole('region', { name: 'Finished inspections' })).toHaveTextContent('Failed');
+});

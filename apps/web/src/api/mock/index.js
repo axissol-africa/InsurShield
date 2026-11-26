@@ -1,3 +1,4 @@
+import { rememberInspectionDocument, requestClaimInspection, submitInspectionEvidence, inspectionEvidence, publishInspectionReport, reinspect } from './inspectionEvidence';
 import { claimIntakeRules, findClaim, timeline, recordUpdate, updateClaim, submitEvidence } from './claims';
 /**
  * Mock adapter: the same functions as `api/http`, served from browser storage.
@@ -10,7 +11,7 @@ import { claimIntakeRules, findClaim, timeline, recordUpdate, updateClaim, submi
 import { accountDocuments, exportAccount } from './account';
 import { env } from '@/config/env';
 import { useStore, belongsToCustomer } from '@/store';
-import { demoCoverGuides } from '@/domain/insurers';
+import { NCD_TIERS, ncdDiscountForYears, demoCoverGuides } from '@/domain/insurers';
 import { newIdempotencyKey, wait } from '../shared';
 import { documentToRecord } from '@/lib/files';
 import { canAskCustomer, canDecline, CUSTOMER_STATUS_LABELS, openQuestion, PROTOTYPE_DECLINE_REASONS } from '@/domain/quoteWorkflow';
@@ -460,7 +461,12 @@ export const account = {
  * can attach it by `id` either way.
  */
 export const documents = {
-  upload: (file) => call(async () => ({ ...(await documentToRecord(file)), id: newReference('DOC') })),
+  upload: (file, kind) => call(async () => {
+    const record = { ...(await documentToRecord(file)), id: newReference('DOC') };
+    if (['INSPECTION_PHOTO', 'INSPECTION_REPORT', 'CLAIM_ATTACHMENT'].includes(kind)) rememberInspectionDocument(record, kind);
+    if (kind === 'NCD_EVIDENCE') ncdDocuments.set(record.id, record);
+    return record;
+  }),
   get: (id) => call(() => ({ id })),
 };
 
@@ -474,11 +480,20 @@ export const vehicles = {
   })),
 };
 
+const mockFinalQuote = (s, request, { applyNcd, ...quote }) => {
+  if (!applyNcd) return quote;
+  const insurer = s.insurersList.find((entry) => entry.name === insurerName());
+  if (!insurer || request?.ncdIssuingInsurerId !== insurer.id || request.ncdPercentage == null) {
+    throw new Error('The verified discount is unavailable for this quote.');
+  }
+  return { ...quote, ncdPercentage: request.ncdPercentage };
+};
+
 export const quotes = {
   // The journey state already holds the vehicle, value and photos, so the
   // payload's extra fields are redundant here — the store builds the same
   // record the backend would return.
-  submitRequest: ({ customer, policyDates, selectedProductVersionIds }) => call((s) => {
+  submitRequest: ({ customer, policyDates, selectedProductVersionIds, ncdCode }) => call((s) => {
     const selectedIds = [...new Set(selectedProductVersionIds || [])];
     if (selectedIds.length < 1 || selectedIds.length > 5) {
       throw new Error('Choose one to five published insurance products.');
@@ -489,11 +504,16 @@ export const quotes = {
     if (selectedProducts.length !== selectedIds.length) {
       throw new Error('One or more selected products are no longer available. Reload the product list and try again.');
     }
+    const discount = ncdCode ? mockNcdValidation(s, {
+      code: ncdCode, insurerIds: selectedProducts.map((entry) => entry.insurer.id), renewalOfPolicyNumber: s.renewalOfPolicyNumber,
+    }) : null;
+    if (discount?.valid === false) throw new Error('This code cannot be used for this quote request.');
     const rtsaAnniversaryFee = s.matchRtsaAnniversary ? MOCK_RTSA_ANNIVERSARY_FEE : 0;
     const id = s.submitQuoteRequest({
       customer,
       policyDates,
       rtsaAnniversaryFee,
+      ncd: discount,
       selectedProducts: selectedProducts.map(selectedProductSnapshot),
     });
     return state().quoteRequests.find((r) => r.id === id);
@@ -501,8 +521,19 @@ export const quotes = {
   listMine: () => call((s) => mine(s.quoteRequests)),
   get: (id) => call((s) => s.quoteRequests.find((r) => r.id === id) || null),
   requote: (id) => call((s) => ({ ok: s.requoteFromRequest(id) })),
-  listForInsurer: () => call((s) => s.quoteRequests.filter((r) => r.insurers?.includes(insurerName()))),
-  reply: (id, quote) => call((s) => { s.addInsurerQuote(id, insurerName(), quote); return state().quoteRequests.find((r) => r.id === id); }),
+  listForInsurer: () => call((s) => {
+    const name = insurerName();
+    const insurerId = s.insurersList.find((insurer) => insurer.name === name)?.id;
+    return s.quoteRequests.filter((request) => request.insurers?.includes(name))
+      .map(({ ncdIssuingInsurerId, ncdPercentage, ...request }) => ({
+        ...request, ...(ncdIssuingInsurerId && ncdIssuingInsurerId === insurerId ? { ncdPercentage } : {}),
+      }));
+  }),
+  reply: (id, quote) => call((s) => {
+    const request = s.quoteRequests.find((r) => r.id === id);
+    s.addInsurerQuote(id, insurerName(), mockFinalQuote(s, request, quote));
+    return state().quoteRequests.find((r) => r.id === id);
+  }),
   extend: (id, extraDays, productVersionId) => call((s) => { s.extendInsurerQuote(id, insurerName(), extraDays, productVersionId); return state().quoteRequests.find((r) => r.id === id); }),
   declineReasons: () => call(() => PROTOTYPE_DECLINE_REASONS),
   decline: (id, productVersionId, { reasonCode, customerNote, internalNote }) => call((s) => {
@@ -558,7 +589,7 @@ export const quotes = {
     const current = request.productQuotes?.find((entry) => entry.productVersionId === productVersionId);
     if (!current) throw new Error('There is no current quote for this product to change.');
     if (request.selection?.insurerQuoteId === current.id) throw new Error('The customer has chosen this quote. It can change only if they choose another.');
-    s.addInsurerQuote(id, insurerName(), { ...quote, productVersionId });
+    s.addInsurerQuote(id, insurerName(), mockFinalQuote(s, request, { ...quote, productVersionId }));
     return state().quoteRequests.find((entry) => entry.id === id).productQuotes.find((entry) => entry.productVersionId === productVersionId);
   }),
   select: (id, insurerQuoteId, acceptedConditionCodes = [], addOnCodes = []) => call((s) => {
@@ -1125,6 +1156,7 @@ function ownIssuingPolicy(s, policyNumber) {
 }
 
 export const claims = {
+  requestInspection: (number, method) => call(() => requestClaimInspection(number, method)),
   // The backend issues the claim number; in mock mode it is minted here so a
   // page gets the same record either way.
   notify: (claim) => call((s) => {
@@ -1152,22 +1184,61 @@ export const claims = {
   }),
 };
 
+const ncdRules = {
+  tiers: NCD_TIERS.map(({ years, percentage }) => ({ yearsClaimFree: years, percentage })),
+  validityDays: 365,
+  provisional: true,
+  declarationText: 'I declare that I have been continuously insured with the selected company for the stated period and have not made any insurance claims during that time. I understand that false information may result in rejection and legal action.',
+};
+const ncdDocuments = new Map();
+const mockNcdValidation = (s, { code, insurerIds, renewalOfPolicyNumber }) => {
+  const approved = mine(s.ncdApplications).find((a) => a.approvedCode === code.trim().toUpperCase());
+  const carrier = approved && s.insurersList.find((insurer) => insurer.name === approved.insurer);
+  if (!carrier || approved.codeStatus !== 'Available' || !insurerIds.includes(carrier.id)
+    || (renewalOfPolicyNumber && renewalOfPolicyNumber !== approved.policyNumber)
+    || !approved.expiresAt || Date.parse(approved.expiresAt) <= Date.now()) return { valid: false };
+  return { valid: true, percentage: approved.discountPercentage, insurerId: carrier.id, expiresAt: approved.expiresAt };
+};
+const updateNcd = (id, changes) => {
+  state().setNcdApplications(state().ncdApplications.map((application) => application.id === id ? { ...application, ...changes } : application));
+  return state().ncdApplications.find((application) => application.id === id);
+};
+
 export const ncd = {
-  apply: (application) => call((s) => { s.addNcdApplication(application); return state().ncdApplications[0]; }),
-  listMine: () => call((s) => mine(s.ncdApplications)),
-  validateCode: (code) => call((s) => {
-    const approved = s.ncdApplications.find((a) => a.approvedCode === code);
-    return { valid: Boolean(approved) };
+  rules: () => call(() => ncdRules),
+  submitEvidence: (id, { verificationRevision, documentIds }) => call((s) => {
+    const application = mine(s.ncdApplications).find((item) => item.id === id);
+    if (!application || application.status !== 'Verification Required' || (application.verificationRevision ?? 0) !== verificationRevision) throw new Error('This application has changed. Refresh and review the latest verification request.');
+    if (!documentIds.length || documentIds.some((id) => !ncdDocuments.has(id))) throw new Error('Upload the requested evidence first.');
+    return updateNcd(id, { status: 'Under Review', evidence: [...(application.evidence || []), ...documentIds.map((id) => ncdDocuments.get(id))] });
   }),
+  apply: (application) => call((s) => { s.addNcdApplication({ ...application, insurer: application.insurer || insurerNameById(application.insurerId), discountPercentage: ncdDiscountForYears(application.yearsClaimFree), codeStatus: null, expiresAt: null, decisionNote: null, verificationRevision: 0, evidence: [] }); return state().ncdApplications[0]; }),
+  listMine: () => call((s) => mine(s.ncdApplications)),
+  validateCode: (payload) => call((s) => mockNcdValidation(s, payload)),
   listForInsurer: () => call((s) => s.ncdApplications.filter((a) => a.insurer === insurerName())),
-  decide: (id, status) => call((s) => {
+  decide: (id, status, note = '', verificationRevision) => call((s) => {
+    const application = s.ncdApplications.find((item) => item.id === id);
+    if (verificationRevision !== undefined && verificationRevision !== (application.verificationRevision ?? 0)) throw new Error('This application has changed. Refresh before deciding.');
     const code = status === 'Approved' ? `NCD-${Math.random().toString(36).slice(2, 7).toUpperCase()}` : null;
-    s.updateNcdApplicationStatus(id, status, code);
-    return state().ncdApplications.find((a) => a.id === id);
+    return updateNcd(id, { status, approvedCode: code, codeStatus: status === 'Approved' ? 'Available' : null, decisionNote: note,
+      verificationRevision: (application.verificationRevision ?? 0) + (status === 'Verification Required' ? 1 : 0),
+      discountPercentage: application.discountPercentage ?? ncdDiscountForYears(application.yearsClaimFree),
+      expiresAt: status === 'Approved' ? new Date(Date.now() + ncdRules.validityDays * 86400000).toISOString() : null,
+    });
   }),
 };
 
 export const inspections = {
+  submitEvidence: (id, payload) => call(() => submitInspectionEvidence(id, payload)),
+  submitInsurerEvidence: (id, payload) => call(() => submitInspectionEvidence(id, payload, true)),
+  evidence: (id) => call(() => inspectionEvidence(id)),
+  attachReport: (id, documentId) => call(() => publishInspectionReport(id, documentId)),
+  reinspect: (id) => call((s) => {
+    const inspection = s.inspections.find((item) => item.id === id);
+    const policy = s.policies.find((item) => item.policyNumber === inspection?.policyNumber);
+    const version = seededProducts(s).flatMap((product) => product.versions).find((item) => item.id === policy?.productVersionId);
+    return reinspect(id, version?.reinspectionAllowed === true);
+  }),
   request: (inspection) => call((s) => { s.addInspection(inspection); return state().inspections[0]; }),
   list: () => call((s) => mine(s.inspections)),
   update: (id, changes) => call((s) => { s.updateInspectionStatus(id, 'Requested', changes); return state().inspections.find((i) => i.id === id); }),
@@ -1200,6 +1271,7 @@ const toPortalInspection = (inspection) => ({
 const prototypeInspectionStep = (s, id, event, changes) => {
   const inspection = s.inspections.find((entry) => entry.id === id && entry.insurer === insurerName());
   if (!inspection) throw new Error('Inspection was not found.');
+  if (event === 'APPROVE' && ['AFTER_PAYMENT', 'CLAIM_ASSESSMENT'].includes(inspection.purpose) && !inspection.report) throw new Error('Publish the inspection report before approving.');
   const current = toPortalInspection(inspection);
   const next = nextPrototypeInspectionStatus(current.status, current.method, event);
   if (!next) throw new Error('Book the inspection before recording that step.');
@@ -1305,7 +1377,7 @@ export const admin = {
     const openClaims = s.claims.filter((claim) => claim.status === 'Notified').length;
     const submittedQuotes = s.quoteRequests.filter((request) => request.status === 'Submitted').length;
     const quotedRequests = s.quoteRequests.filter((request) => request.status === 'Quoted').length;
-    const openNcd = s.ncdApplications.filter((application) => ['Submitted', 'Under Review'].includes(application.status)).length;
+    const openNcd = s.ncdApplications.filter((application) => ['Submitted', 'Under Review', 'Verification Required'].includes(application.status)).length;
     const confirmed = s.policies.filter((policy) => policy.paymentProof?.status === 'Confirmed');
     return {
       policies: { total: s.policies.length, active: activePolicies, awaitingCertificate, expiringIn30Days: 0 },

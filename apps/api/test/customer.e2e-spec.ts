@@ -53,7 +53,7 @@ import {
 } from './builders.js';
 import { buildPayableQuote } from './builders/payments.js';
 import { lusakaDay } from '../src/common/domain/lusaka.js';
-import { buildApprovedNcdCode, buildNcdApplication, buildRenewalRequest } from './builders/customer.js';
+import { buildNcdApplication, buildRenewalRequest } from './builders/customer.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
 import {
   holdLocks,
@@ -199,6 +199,14 @@ const CLAIM_NOTIFIED_KEYS = [
 const NCD_APPLICATION_KEYS = [
   'applicationNumber',
   'approvedCode',
+  'codeStatus',
+  'decidedAt',
+  'decisionNote',
+  'declarationAcceptedAt',
+  'declarationVersion',
+  'discountPercentage',
+  'evidence',
+  'expiresAt',
   'fullName',
   'id',
   'insurer',
@@ -206,6 +214,8 @@ const NCD_APPLICATION_KEYS = [
   'policyNumber',
   'status',
   'submittedAt',
+  'vehicle',
+  'verificationRevision',
   'yearsClaimFree',
 ];
 const DOCUMENT_KEYS = ['id', 'name', 'size', 'type', 'url'];
@@ -1130,57 +1140,46 @@ describe('customer', () => {
     });
 
     describe('with a no-claim discount code', () => {
-      const submitWithCode = async (customer: Customer, code: string) => {
-        const response = await testApp.http
-          .post('/api/v1/quote-requests')
-          .set(await asCustomer(customer))
-          .send(submission(unique('BAH').toUpperCase(), { ncdCode: code }))
-          .expect(201);
-        return storedRequest(response.body.id);
-      };
-
-      it('records the customer’s own approved code, in any letter case', async () => {
+      it('stores the approved percentage for a new snapshot of the bound vehicle and informs only the issuing insurer', async () => {
         const customer = await buildCustomer(testApp.db);
-        const { insurer } = await buildInsurer(testApp.db);
-        const code = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.id }, { percentage: 15 });
-
-        const stored = await submitWithCode(customer, ` ${code.code.toLowerCase()} `);
-        expect(stored).toMatchObject({ ncdCode: code.code, ncdPercentage: 15 });
+        const fixture = await ncdPolicyFixture(customer, defaultInsurer, { percentage: 15 });
+        await buildNcdApplication(testApp.db, { customerId: customer.id, insurerId: defaultInsurer.insurer.id, approvedCode: fixture.code }, fixture.source);
+        const another = await productVersionForSelection(await buildInsurer(testApp.db), unique('NCD-OTHER'));
+        const response = await testApp.http.post('/api/v1/quote-requests').set(await asCustomer(customer))
+          .send(submission(fixture.vehicleDetails.plateNumber, {
+            ncdCode: ` ${fixture.code.code.toLowerCase()} `, vehicleDetails: fixture.vehicleDetails,
+            selectedProductVersionIds: [another.version.id, defaultSelection.version.id],
+          })).expect(201);
+        expect(await storedRequest(response.body.id)).toMatchObject({ ncdCode: fixture.code.code, ncdPercentage: 15 });
+        const deliveries = await testApp.db.select({ insurerId: integrationDeliveries.insurerId, payload: integrationDeliveries.requestPayload })
+          .from(integrationDeliveries).where(eq(integrationDeliveries.referenceId, response.body.id));
+        expect(deliveries).toHaveLength(2);
+        for (const delivery of deliveries) {
+          if (delivery.insurerId === defaultInsurer.insurer.id) expect(delivery.payload).toMatchObject({ ncdPercentage: 15 });
+          else expect(delivery.payload).not.toHaveProperty('ncdPercentage');
+          expect(delivery.payload).not.toHaveProperty('ncdCode');
+        }
       });
 
-      it('refuses another customer’s valid code exactly as it refuses an unknown one', async () => {
+      it('rejects a different owner, issuer, vehicle or a legacy code before creating a request', async () => {
         const customer = await buildCustomer(testApp.db);
-        const other = await buildCustomer(testApp.db);
-        const { insurer } = await buildInsurer(testApp.db);
-        const theirs = await buildApprovedNcdCode(testApp.db, { customerId: other.id, insurerId: insurer.id });
-        const unowned = await buildNcdCode(testApp.db, { insurerId: insurer.id });
-
-        for (const code of [theirs.code, unowned.code, 'NCD-NOBODY-HAS-THIS']) {
-          const response = await testApp.http
-            .post('/api/v1/quote-requests')
-            .set(await asCustomer(customer))
-            .send(submission(unique('BAH').toUpperCase(), { ncdCode: code }))
-            .expect(409);
+        const fixture = await ncdPolicyFixture(customer);
+        await buildNcdApplication(testApp.db, { customerId: customer.id, insurerId: defaultInsurer.insurer.id, approvedCode: fixture.code }, fixture.source);
+        const outsider = await buildCustomer(testApp.db);
+        const legacy = await buildNcdCode(testApp.db, { insurerId: defaultInsurer.insurer.id });
+        await buildNcdApplication(testApp.db, { customerId: customer.id, insurerId: defaultInsurer.insurer.id, approvedCode: legacy });
+        const original = submission(fixture.vehicleDetails.plateNumber, { ncdCode: fixture.code.code, vehicleDetails: fixture.vehicleDetails });
+        const mismatches = [
+          { customer: outsider, body: original },
+          { customer, body: { ...original, selectedProductVersionIds: [(await productVersionForSelection(await buildInsurer(testApp.db), unique('NCD'))).version.id] } },
+          { customer, body: { ...original, vehicleDetails: { ...fixture.vehicleDetails, chassisNumber: 'OTHER-CHASSIS' } } },
+          { customer, body: { ...original, ncdCode: legacy.code } },
+        ];
+        for (const item of mismatches) {
+          const response = await testApp.http.post('/api/v1/quote-requests').set(await asCustomer(item.customer)).send(item.body).expect(409);
           expect(response.body.code).toBe('INVALID_NCD_CODE');
         }
-        expect(await requestsOf(customer.id)).toEqual([]);
-      });
-
-      it('refuses the customer’s own code once it is redeemed or expired', async () => {
-        const customer = await buildCustomer(testApp.db);
-        const { insurer } = await buildInsurer(testApp.db);
-        const redeemed = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.id }, { redeemedAt: new Date() });
-        const expired = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.id }, { expiresAt: inDays(-1) });
-
-        for (const code of [redeemed.code, expired.code]) {
-          const response = await testApp.http
-            .post('/api/v1/quote-requests')
-            .set(await asCustomer(customer))
-            .send(submission(unique('BAH').toUpperCase(), { ncdCode: code }))
-            .expect(409);
-          expect(response.body.code).toBe('INVALID_NCD_CODE');
-        }
-        expect(await requestsOf(customer.id)).toEqual([]);
+        expect(await requestsOf(customer.id)).toHaveLength(1);
       });
     });
 
@@ -1885,91 +1884,129 @@ describe('customer', () => {
     });
   });
 
+  async function ncdPolicyFixture(
+    customer: Customer,
+    insurer = defaultInsurer,
+    overrides: Partial<typeof schema.ncdCodes.$inferInsert> = {},
+  ) {
+    const { policy } = await buildPurchasedPolicy(testApp.db, { customer, insurer });
+    const vehicleDetails = { plateNumber: 'NCD 9012', make: 'Toyota', model: 'Hilux', year: '2020', chassisNumber: 'CHASSIS-NCD-9012' };
+    await testApp.db.update(vehicles).set(vehicleDetails).where(eq(vehicles.id, policy.vehicleId));
+    await testApp.db.update(policies).set({ status: 'ACTIVE', issuedAt: inDays(-90) })
+      .where(eq(policies.policyNumber, policy.policyNumber));
+    const code = await buildNcdCode(testApp.db, { insurerId: insurer.insurer.id }, { expiresAt: inDays(90), ...overrides });
+    const source = { policyNumber: policy.policyNumber, sourcePolicyNumber: policy.policyNumber,
+      sourceVehicleId: policy.vehicleId, declarationAcceptedAt: inDays(-10), declarationVersion: '1' };
+    return { code, source, vehicleDetails };
+  }
+
   describe('NCD applications', () => {
-    it('lists the customer’s applications with known values and exactly the expected keys', async () => {
+    it('preserves legacy records and identifies codes requiring a new application', async () => {
       const customer = await buildCustomer(testApp.db);
       const { insurer } = await buildInsurer(testApp.db);
       const code = await buildNcdCode(testApp.db, { insurerId: insurer.id });
-      const approved = await buildNcdApplication(
-        testApp.db,
-        { customerId: customer.id, insurerId: insurer.id, approvedCode: code },
-        { policyNumber: 'PA-2023-0045', fullName: 'Mwiza Banda', phone: '0970123456', yearsClaimFree: 3, submittedAt: new Date('2026-09-01T08:00:00.123Z') },
-      );
-      const pending = await buildNcdApplication(
-        testApp.db,
-        { customerId: customer.id, insurerId: insurer.id },
-        { status: 'UNDER_REVIEW', submittedAt: new Date('2026-09-02T08:00:00.000Z') },
-      );
+      const approved = await buildNcdApplication(testApp.db, { customerId: customer.id, insurerId: insurer.id, approvedCode: code });
+      const pending = await buildNcdApplication(testApp.db, { customerId: customer.id, insurerId: insurer.id });
       await buildNcdApplication(testApp.db, { customerId: (await buildCustomer(testApp.db)).id, insurerId: insurer.id });
-
       const response = await testApp.http.get('/api/v1/ncd/applications').set(await asCustomer(customer)).expect(200);
-
-      expect(response.body.map((item: { id: string }) => item.id)).toEqual([pending.id, approved.id]);
-      const [, body] = response.body;
+      expect(response.body).toHaveLength(2);
+      const body = response.body.find((item: { id: string }) => item.id === approved.id);
       expect(Object.keys(body).sort()).toEqual(NCD_APPLICATION_KEYS);
-      expect(body).toEqual({
-        id: approved.id,
-        applicationNumber: approved.applicationNumber,
-        insurer: insurer.name,
-        policyNumber: 'PA-2023-0045',
-        fullName: 'Mwiza Banda',
-        phone: '0970123456',
-        yearsClaimFree: 3,
-        status: 'Approved',
-        approvedCode: code.code,
-        submittedAt: '2026-09-01T08:00:00.123Z',
-      });
-      expect(response.body[0]).toMatchObject({ status: 'Under Review', approvedCode: null });
+      expect(body).toMatchObject({ status: 'Approved', approvedCode: code.code, codeStatus: 'Unavailable', evidence: [] });
+      expect(response.body).toContainEqual(expect.objectContaining({ id: pending.id, status: 'Submitted', approvedCode: null }));
     });
 
-    it('applies to an active insurer and answers 404 for an inactive one', async () => {
+    it('binds an application, saves the declaration and gates concurrent or unauthorized applications', async () => {
       const customer = await buildCustomer(testApp.db);
-      const { insurer } = await buildInsurer(testApp.db);
-      const inactive = await buildInsurer(testApp.db, { insurer: { status: 'INACTIVE' } });
-      const application = { insurerId: insurer.id, policyNumber: ' PA-2023-0045 ', fullName: ' Mwiza Banda ', phone: ' 0970123456 ', yearsClaimFree: 3 };
-
-      const response = await testApp.http.post('/api/v1/ncd/applications').set(await asCustomer(customer)).send(application).expect(201);
-
-      expect(Object.keys(response.body).sort()).toEqual(NCD_APPLICATION_KEYS);
-      expect(response.body).toEqual({
-        id: expect.any(String),
-        applicationNumber: expect.stringMatching(/^NCDA-/),
-        insurer: insurer.name,
-        policyNumber: 'PA-2023-0045',
-        fullName: 'Mwiza Banda',
-        phone: '0970123456',
-        yearsClaimFree: 3,
-        status: 'Submitted',
-        approvedCode: null,
-        submittedAt: expect.stringMatching(ISO_MS),
-      });
+      const fixture = await ncdPolicyFixture(customer);
+      const other = await buildCustomer(testApp.db);
+      const anotherInsurer = (await buildInsurer(testApp.db)).insurer;
+      const application = { policyNumber: fixture.source.policyNumber, fullName: ' Mwiza Banda ', phone: ' 0970123456 ', yearsClaimFree: 3, declaration: true };
+      const route = '/api/v1/ncd/applications';
+      const session = await asCustomer(customer);
+      await testApp.http.post(route).set(await asCustomer(other)).send(application).expect(404);
+      await testApp.http.post(route).set(session).send({ ...application, insurerId: anotherInsurer.id }).expect(400);
+      await testApp.http.post(route).set(session).send({ ...application, declaration: false }).expect(400);
+      const rules = await testApp.http.get(route + '/rules').set(session).expect(200);
+      expect(rules.body).toMatchObject({ validityDays: 365, tiers: expect.arrayContaining([{ yearsClaimFree: 3, percentage: 30 }]), declarationText: expect.any(String) });
+      const submit = () => testApp.http.post(route).set(session).set('Idempotency-Key', 'one-ncd-application').send(application);
+      const [result, replay] = await Promise.all([submit(), submit()]);
+      expect(result.status).toBe(201);
+      expect(replay.body).toEqual(result.body);
+      await testApp.http.post(route).set(session).send(application).expect(409);
       const [stored] = await testApp.db.select().from(ncdApplications).where(eq(ncdApplications.customerId, customer.id));
-      expect(stored).toMatchObject({ id: response.body.id, insurerId: insurer.id, status: 'SUBMITTED' });
+      expect(stored).toMatchObject({ id: result.body.id, policyNumber: fixture.source.policyNumber, sourcePolicyNumber: fixture.source.policyNumber,
+        sourceVehicleId: fixture.source.sourceVehicleId, insurerId: defaultInsurer.insurer.id, status: 'SUBMITTED',
+        declarationAcceptedAt: expect.any(Date), declarationVersion: '1' });
+      expect(result.body).toMatchObject({ discountPercentage: 30, evidence: [], declarationAcceptedAt: expect.any(String),
+        declarationVersion: '1', vehicle: { plateNumber: fixture.vehicleDetails.plateNumber } });
+      const notices = await testApp.db.select().from(schema.notifications).where(and(
+        eq(schema.notifications.customerId, customer.id), eq(schema.notifications.templateKey, 'ncd.submitted'),
+      ));
+      expect(notices.map(({ channel }) => channel).sort((a, b) => a.localeCompare(b))).toEqual(['EMAIL', 'IN_APP']);
+    });
 
-      await testApp.http
-        .post('/api/v1/ncd/applications')
-        .set(await asCustomer(customer))
-        .send({ ...application, insurerId: inactive.insurer.id })
-        .expect(404);
+    it('shares evidence only on the customer’s current verification round and only with the assigned insurer', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const other = await buildCustomer(testApp.db);
+      const another = await buildInsurer(testApp.db);
+      const session = await asCustomer(customer);
+      const fixture = await ncdPolicyFixture(customer);
+      const application = await buildNcdApplication(testApp.db, { customerId: customer.id, insurerId: defaultInsurer.insurer.id }, fixture.source);
+      const insurerSession = await signIn(testApp.http, defaultInsurer.staff);
+      const decision = '/api/v1/insurer/ncd/applications/' + application.id + '/decision';
+      const firstRequest = { status: 'Verification Required', verificationRevision: 0, note: 'Please supply your prior claims statement.' };
+      await testApp.http.post(decision).set(insurerSession).set('Idempotency-Key', 'ncd-verification-one').send(firstRequest).expect(200);
+      const evidence = await buildDocument(testApp.db, { customerId: customer.id }, { kind: 'NCD_EVIDENCE' });
+      const route = '/api/v1/ncd/applications/' + application.id + '/evidence';
+      const payload = { verificationRevision: 1, documentIds: [evidence.id] };
+      await testApp.http.post(route).set(await asCustomer(other)).send(payload).expect(404);
+      const recorded = await testApp.http.post(route).set(session).set('Idempotency-Key', 'ncd-evidence-round-one').send(payload).expect(200);
+      expect(recorded.body).toMatchObject({ status: 'Under Review', evidence: [{ id: evidence.id, url: expect.any(String) }] });
+      await testApp.http.post(route).set(session).set('Idempotency-Key', 'ncd-evidence-round-one').send(payload).expect(200);
+      const notices = await testApp.db.select().from(schema.notifications).where(and(
+        eq(schema.notifications.customerId, customer.id), eq(schema.notifications.templateKey, 'ncd.evidence_submitted'),
+      ));
+      expect(notices.map(({ channel }) => channel).sort((a, b) => a.localeCompare(b))).toEqual(['EMAIL', 'IN_APP']);
+      const list = await testApp.http.get('/api/v1/insurer/ncd/applications').set(insurerSession).expect(200);
+      expect(list.body).toContainEqual(expect.objectContaining({ id: application.id, evidence: [expect.objectContaining({ id: evidence.id })] }));
+      await testApp.http.get('/api/v1/documents/' + evidence.id).set(insurerSession).expect(200);
+      await testApp.http.get('/api/v1/documents/' + evidence.id).set(await signIn(testApp.http, another.staff)).expect(404);
+      await testApp.http.post(decision).set(insurerSession).set('Idempotency-Key', 'stale-verification').send(firstRequest).expect(409);
+      await testApp.http.post(decision).set(insurerSession).set('Idempotency-Key', 'ncd-verification-two')
+        .send({ status: 'Verification Required', verificationRevision: 1, note: 'Please supply an updated statement.' }).expect(200);
+      await testApp.http.post(route).set(session).send(payload).expect(409);
     });
   });
 
   describe('POST /ncd/codes/validate', () => {
-    it('reveals only whether a code is usable, without signing in', async () => {
-      const { insurer } = await buildInsurer(testApp.db);
-      const expiresAt = inDays(90);
-      const usable = await buildNcdCode(testApp.db, { insurerId: insurer.id }, { percentage: 15, yearsClaimFree: 3, expiresAt });
-      const used = await buildNcdCode(testApp.db, { insurerId: insurer.id }, { redeemedAt: new Date() });
-      const expired = await buildNcdCode(testApp.db, { insurerId: insurer.id }, { expiresAt: inDays(-1) });
-
-      const valid = await testApp.http.post('/api/v1/ncd/codes/validate').send({ code: ` ${usable.code.toLowerCase()} ` }).expect(200);
-      expect(valid.body).toEqual({ valid: true });
-      for (const code of [
-        used.code,
-        expired.code,
-        'NCD-NOBODY-HAS-THIS',
+    it('returns the approved terms only to an eligible customer for the bound vehicle, policy and issuing insurer', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const other = await buildCustomer(testApp.db);
+      const bound = await ncdPolicyFixture(customer);
+      const link = (fixture: Awaited<ReturnType<typeof ncdPolicyFixture>>) => buildNcdApplication(testApp.db,
+        { customerId: customer.id, insurerId: defaultInsurer.insurer.id, approvedCode: fixture.code }, fixture.source);
+      await link(bound);
+      const session = await asCustomer(customer);
+      const route = '/api/v1/ncd/codes/validate';
+      const payload = { code: ` ${bound.code.code.toLowerCase()} `, vehicleDetails: bound.vehicleDetails, insurerIds: [defaultInsurer.insurer.id] };
+      await testApp.http.post(route).send(payload).expect(401);
+      const verified = await testApp.http.post(route).set(session).send(payload).expect(200);
+      expect(verified.body).toMatchObject({ valid: true, percentage: bound.code.percentage, insurerId: defaultInsurer.insurer.id });
+      for (const payloadOverride of [
+        { renewalOfPolicyNumber: 'OTHER-POLICY' },
+        { insurerIds: [randomUUID()] },
+        { vehicleDetails: { ...bound.vehicleDetails, chassisNumber: 'OTHER' } },
       ]) {
-        const response = await testApp.http.post('/api/v1/ncd/codes/validate').send({ code }).expect(200);
+        const response = await testApp.http.post(route).set(session).send({ ...payload, ...payloadOverride }).expect(200);
+        expect(response.body).toEqual({ valid: false });
+      }
+      const unauthorised = await testApp.http.post(route).set(await asCustomer(other)).send(payload).expect(200);
+      expect(unauthorised.body).toEqual({ valid: false });
+      for (const override of [{ expiresAt: inDays(-1) }, { redeemedAt: new Date() }, { revokedAt: new Date() }]) {
+        const unavailable = await ncdPolicyFixture(customer, defaultInsurer, override);
+        await link(unavailable);
+        const response = await testApp.http.post(route).set(session).send({ ...payload, code: unavailable.code.code }).expect(200);
         expect(response.body).toEqual({ valid: false });
       }
     });
