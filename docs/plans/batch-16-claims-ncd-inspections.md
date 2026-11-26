@@ -93,10 +93,27 @@ payment-stage inspection tests continue to pass.
 - The issuing insurer receives the verified percentage. It confirms whether its final quotation includes the discount,
   and customers can see that in comparison. Payment uses the insurer's final premium. Paying a quote that includes NCD
   reserves the code before contacting the provider. Confirmed issue redeems it in the policy transaction. Existing
-  payment and callback retries keep their recorded result.
+  payment and callback retries keep their recorded result. When checkout loses the response, it retries with the same
+  payment details and key. Pending provider outcomes and unresolved captures keep the code reserved until resolved.
 - Unbound codes from before this batch remain visible in historical records. A customer needs a new verified application
   to use a discount on a new quote or start a new discounted payment. Payments already underway keep their prior terms
   and reconciliation path. Production approval of the tier and validity settings remains in the release gate.
+
+## Part 3 delivery details
+
+- A confirmed payment creates one initial inspection when the purchased product snapshot requires inspection after
+  payment. Quotes and payment-stage checks follow their existing rules. The policy and its certificate workflow
+  keep their existing states. Insurers record later inspection outcomes while the financial consequences of a
+  failed after-payment inspection await approval under BR-007.
+- The servicing insurer can open an assessment on a verified claim it owns. The claim cannot be decided while its
+  inspection is open. The customer can track the assessment and submit evidence from their inspections page.
+- Photos supplied for an assessment are separate from original quote photos and any approved after-payment
+  inspection for the policy. The insurer only sees prior-condition photos dated before the Lusaka incident day,
+  since the claim records a date without a time. Reports and filed photos remain linked to their original
+  inspection. A repeat creates a new record while preserving the previous outcome and evidence.
+- Self-capture needs the six inspection views before a report can be published. A physical inspection must be booked
+  before publication. An insurer can record unusable evidence and request another attempt for a claim. After a
+  failed paid inspection, a new attempt follows the purchased product's published reinspection rule.
 
 ## Verification and rollout
 

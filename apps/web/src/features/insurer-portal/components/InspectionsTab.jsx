@@ -1,3 +1,5 @@
+import InspectionEvidencePanel from '@/features/inspections/components/InspectionEvidencePanel';
+import { laterInspection, inspectionPurpose, inspectionNextAction } from '@/domain/inspectionWorkflow';
 import { useEffect, useId, useState } from 'react';
 import { formatDate } from '@/domain/premiumEngine';
 import { usePortalAction } from '@/features/insurer-portal/hooks/usePortalAction';
@@ -14,13 +16,8 @@ const STAGE_LABELS = { BEFORE_QUOTATION: 'Product asks for it before quoting', B
 const METHOD_LABELS = { PHYSICAL: 'In person', SELF_CAPTURE: 'Customer photos' };
 
 /** The API's own words when it gives them, otherwise the caller's plain fallback. */
-const messageOf = (fallback) => (caught) => (caught?.code && caught?.message ? caught.message : fallback);
+const messageOf = (fallback) => (caught) => (caught?.message ? caught.message : fallback);
 
-/**
- * The inspections this insurer carries out. They are optional: the customer's
- * live photos are enough as a rule, so nothing here holds up a quote or a
- * purchase. A missed or cancelled appointment is booked again.
- */
 export default function InspectionsTab({ api, onChanged }) {
   const [inspections, setInspections] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -48,7 +45,7 @@ export default function InspectionsTab({ api, onChanged }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Inspections" description="Optional inspections for products whose terms ask for one. The customer's live photos are enough as a rule, so an inspection never holds up a quote or a purchase. If one fails, decide yourself whether to decline the product." />
+      <PageHeader title="Inspections" description="Arrange inspections, review evidence and publish reports for quotations, paid policies and claims. Each inspection shows its purpose and the next step." />
       {loadError && <p role="alert" className="text-sm text-destructive">{loadError}</p>}
       {inspections === null && !loadError && <p className="text-sm text-muted-foreground">Loading inspections…</p>}
       {inspections && (
@@ -83,7 +80,7 @@ function InspectionCard({ inspection, api, onChanged }) {
   }, messageOf('That step could not be saved. Please try again.'));
 
   return (
-    <Card className="gap-3">
+    <Card id={`inspection-${inspection.id}`} className="gap-3 scroll-mt-24">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle><h3>{inspection.vehicleLabel} <span className="font-mono text-sm text-muted-foreground">{inspection.vehiclePlate}</span></h3></CardTitle>
@@ -91,6 +88,9 @@ function InspectionCard({ inspection, api, onChanged }) {
         </div>
         <CardDescription>
           {inspection.id}
+          {laterInspection(inspection) && <> · {inspectionPurpose(inspection)}</>}
+          {inspection.policyNumber && <> · policy {inspection.policyNumber}</>}
+          {inspection.claimNumber && <> · <a className="underline" href={`/insurer?view=claims&claim=${encodeURIComponent(inspection.claimNumber)}`}>Claim {inspection.claimNumber}</a></>}
           {inspection.quoteRequestId && <> · request {inspection.quoteRequestId}</>}
           {inspection.stage && <> · {STAGE_LABELS[inspection.stage]}</>}
           {inspection.method && <> · {METHOD_LABELS[inspection.method]}</>}
@@ -112,6 +112,11 @@ function InspectionCard({ inspection, api, onChanged }) {
         {inspection.resultReason && <p><span className="text-muted-foreground">Reason: </span>{inspection.resultReason}</p>}
         {inspection.predecessorId && <p className="text-muted-foreground">Repeats {inspection.predecessorId}.</p>}
 
+        {laterInspection(inspection) && <>
+          <p className="text-sm">{inspectionNextAction(inspection, true)}</p>
+          <InspectionEvidencePanel key={inspection.id} inspection={inspection} staff api={api} onChanged={onChanged} />
+          {['FAILED', 'NO_SHOW', 'CANCELLED'].includes(inspection.status) && <Button variant="outline" disabled={act.pending} onClick={() => act.run(() => api.inspections.reinspect(inspection.id))}>Start new attempt</Button>}
+        </>}
         {!closed && (
           <div className="flex flex-wrap gap-2">
             {['REQUESTED', 'SCHEDULED'].includes(inspection.status) && inspection.method !== 'SELF_CAPTURE' && (
@@ -121,7 +126,7 @@ function InspectionCard({ inspection, api, onChanged }) {
               <Button type="button" size="sm" variant="outline" onClick={() => setStep('assign')}>Assign inspector</Button>
             )}
             {decidable && (
-              <Button type="button" size="sm" disabled={act.pending} onClick={() => act.run(() => api.inspections.approve(inspection.id))}>Pass</Button>
+              <Button type="button" size="sm" disabled={act.pending || (laterInspection(inspection) && inspection.status !== 'REPORT_READY')} onClick={() => act.run(() => api.inspections.approve(inspection.id))}>Pass</Button>
             )}
             {decidable && <Button type="button" size="sm" variant="destructive" onClick={() => setStep('fail')}>Fail</Button>}
             {['SCHEDULED', 'INSPECTOR_ASSIGNED'].includes(inspection.status) && (

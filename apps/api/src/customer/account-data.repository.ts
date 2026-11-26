@@ -160,6 +160,7 @@ export class AccountDataRepository {
     }).from(ncdApplications).innerJoin(insurers, eq(insurers.id, ncdApplications.insurerId)).where(eq(ncdApplications.customerId, id));
     const visits = await tx.select({
       id: inspections.id, insurer: insurers.name, status: inspections.status, purpose: inspections.purpose,
+      policyNumber: inspections.policyNumber, claimNumber: inspections.claimNumber, predecessorId: inspections.predecessorId,
       vehiclePlate: inspections.vehiclePlate, vehicle: inspections.vehicleLabel, preferredDate: inspections.preferredDate,
       preferredTime: inspections.preferredTime, preferredLocation: inspections.preferredLocation, scheduledDate: inspections.scheduledDate,
       location: inspections.location, result: inspections.result, resultReason: inspections.resultReason, createdAt: inspections.createdAt,

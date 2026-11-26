@@ -1,3 +1,8 @@
+import { InsurerPortalController } from './insurer-portal.controller.js';
+import { PATH_METADATA, HTTP_CODE_METADATA } from '@nestjs/common/constants.js';
+import { REQUIRED_PERMISSION } from '../common/auth/auth.guard.js';
+import { UnderwritingInspectionsService } from '../customer/underwriting-inspections.service.js';
+import type { InspectionPurpose, InspectionStatus, InspectionMethod, InsurerStatus } from '../common/domain/enums.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { NewNcdCode } from './insurer-portal.repository.js';
 import { InsurerPortalService } from './insurer-portal.service.js';
@@ -250,4 +255,121 @@ describe('NCD approvals', () => {
     expect(notifier.notify).not.toHaveBeenCalled();
   });
 
+});
+
+
+describe('inspection purpose and report gates', () => {
+  function fixture(purpose: InspectionPurpose, status: InspectionStatus = 'REPORT_READY', standing: InsurerStatus = 'ACTIVE', method: InspectionMethod = 'PHYSICAL') {
+    const row = { id: 'inspection-1', purpose, status, method, insurerId: 'insurer-1', customerId: 'customer-1',
+      quoteRequestId: null, policyNumber: purpose === 'AFTER_PAYMENT' || purpose === 'CLAIM_ASSESSMENT' ? 'policy-1' : null,
+      claimNumber: purpose === 'CLAIM_ASSESSMENT' ? 'claim-1' : null, predecessorId: 'inspection-0',
+      vehiclePlate: 'ABC 123', vehicleLabel: 'Toyota', scheduledDate: null, createdAt: new Date(), decidedAt: null };
+    const records = { lockForInsurer: vi.fn(async () => row), move: vi.fn(async () => true),
+      exists: vi.fn(async () => true), closeLinks: vi.fn(),
+      listForInsurer: vi.fn(async (_insurer: string, purposes: readonly InspectionPurpose[]) => purposes.includes(row.purpose) ? [row] : []),
+      productsOf: vi.fn(async () => []),
+    };
+    const events = { transition: vi.fn(), refusal: vi.fn() };
+    const notifier = { notify: vi.fn() };
+    const tx = {};
+    const repository = { transaction: async (work: (tx: unknown) => Promise<unknown>) => work(tx),
+      insurerStanding: async () => ({ name: 'Insurer', status: standing, licenceExpiry: null }) };
+    const underwriting = new UnderwritingInspectionsService(records as never, untouchable('versions') as never, events as never, notifier as never);
+    const service = new InsurerPortalService(repository as never, untouchable('documents') as never, untouchable('pia') as never,
+      always(0), events as never, notifier as never, untouchable('versions') as never, untouchable('workflow') as never,
+      records as never, underwriting, untouchable('ncd') as never, untouchable('settings') as never, untouchable('idempotency') as never);
+    return { service, records, events, notifier, tx };
+  }
+  const officer = (role: 'CLAIMS_OFFICER' | 'QUOTE_OFFICER' | 'SUPPORT') => ({ ...INSURER_USER, role });
+
+  it.each([
+    ['CLAIMS_OFFICER', 'AFTER_PAYMENT'], ['CLAIMS_OFFICER', 'UNDERWRITING'], ['QUOTE_OFFICER', 'CLAIM_ASSESSMENT'], ['SUPPORT', 'CLAIM_ASSESSMENT'],
+  ] as const)('refuses %s acting on %s after locking it', async (role, purpose) => {
+    const { service, records, tx } = fixture(purpose);
+    await expect(service.actOnInspection(officer(role), 'inspection-1', 'APPROVE', {})).rejects.toMatchObject({ status: 404 });
+    expect(records.lockForInsurer).toHaveBeenCalledWith(tx, 'inspection-1', 'insurer-1');
+    expect(records.move).not.toHaveBeenCalled();
+  });
+
+  it('does not act on a foreign inspection', async () => {
+    const { service, records } = fixture('CLAIM_ASSESSMENT');
+    records.lockForInsurer.mockResolvedValueOnce(undefined as never);
+    await expect(service.actOnInspection(officer('CLAIMS_OFFICER'), 'foreign', 'APPROVE', {})).rejects.toMatchObject({ status: 404 });
+    expect(records.move).not.toHaveBeenCalled();
+  });
+
+  it.each(['AFTER_PAYMENT', 'CLAIM_ASSESSMENT'] as const)('requires REPORT_READY to approve %s even for self capture', async (purpose) => {
+    for (const status of ['REQUESTED', 'SCHEDULED', 'COMPLETED'] as const) {
+      const { service, records } = fixture(purpose, status, 'ACTIVE', 'SELF_CAPTURE');
+      await expect(service.actOnInspection(INSURER_USER, 'inspection-1', 'APPROVE', {})).rejects.toMatchObject({ response: { code: 'INSPECTION_NOT_READY' } });
+      expect(records.move).not.toHaveBeenCalled();
+    }
+    const { service } = fixture(purpose);
+    await expect(service.actOnInspection(INSURER_USER, 'inspection-1', 'APPROVE', {})).resolves.toMatchObject({ status: 'APPROVED', result: 'PASSED' });
+  });
+
+  it('permits a later failed-evidence decision without a report and does not reopen it', async () => {
+    const { service, records } = fixture('CLAIM_ASSESSMENT', 'COMPLETED');
+    await expect(service.actOnInspection(officer('CLAIMS_OFFICER'), 'inspection-1', 'FAIL', { reason: 'Evidence unusable.' }))
+      .resolves.toMatchObject({ status: 'FAILED', result: 'FAILED' });
+    expect(records.closeLinks).not.toHaveBeenCalled();
+    const closed = fixture('CLAIM_ASSESSMENT', 'FAILED');
+    await expect(closed.service.actOnInspection(INSURER_USER, 'inspection-1', 'APPROVE', {})).rejects.toMatchObject({ response: { code: 'INSPECTION_CLOSED' } });
+  });
+
+  it('services later inspections for inactive insurers but preserves earlier new-business rules', async () => {
+    for (const purpose of ['AFTER_PAYMENT', 'CLAIM_ASSESSMENT'] as const) {
+      await expect(fixture(purpose, 'REPORT_READY', 'INACTIVE').service.actOnInspection(INSURER_USER, 'inspection-1', 'APPROVE', {}))
+        .resolves.toMatchObject({ status: 'APPROVED' });
+      await expect(fixture(purpose, 'REPORT_READY', 'DELETED').service.actOnInspection(INSURER_USER, 'inspection-1', 'APPROVE', {}))
+        .rejects.toMatchObject({ response: { code: 'INSURER_UNAVAILABLE' } });
+    }
+    await expect(fixture('UNDERWRITING', 'SCHEDULED', 'INACTIVE').service.actOnInspection(INSURER_USER, 'inspection-1', 'APPROVE', {}))
+      .rejects.toMatchObject({ response: { code: 'INSURER_UNAVAILABLE' } });
+  });
+
+  it('filters the list by role and preserves later links and predecessor', async () => {
+    const { service, records } = fixture('CLAIM_ASSESSMENT');
+    expect(await service.listInspections(officer('QUOTE_OFFICER'))).toEqual([]);
+    expect(await service.listInspections(officer('CLAIMS_OFFICER'))).toEqual([expect.objectContaining({ policyNumber: 'policy-1', claimNumber: 'claim-1', predecessorId: 'inspection-0' })]);
+    expect(records.listForInsurer).toHaveBeenLastCalledWith('insurer-1', ['CLAIM_ASSESSMENT']);
+  });
+});
+
+
+describe('later inspection route wiring', () => {
+  const state = { id: 'inspection-1', status: 'REQUESTED', statusLabel: 'Requested' };
+  const evidence = { preLoss: [], postLoss: [], report: null };
+  const later = {
+    startClaim: vi.fn(async () => state), addInsurerEvidence: vi.fn(async () => state),
+    insurerEvidence: vi.fn(async () => evidence), submitReport: vi.fn(async () => state), reinspect: vi.fn(async () => state),
+  };
+  const controller = new InsurerPortalController(untouchable('portal') as never, untouchable('insurers') as never, untouchable('integrations') as never, later as never);
+
+  it('passes the authenticated principal and validated payload to the later service', async () => {
+    expect(await controller.startClaimInspection('claim-1', { method: 'PHYSICAL' }, INSURER_USER)).toEqual(state);
+    expect(later.startClaim).toHaveBeenCalledWith(INSURER_USER, 'claim-1', 'PHYSICAL');
+    const photos: Parameters<InsurerPortalController['addInspectionEvidence']>[1]['photos'] = [];
+    await controller.addInspectionEvidence('inspection-1', { photos }, INSURER_USER);
+    expect(later.addInsurerEvidence).toHaveBeenCalledWith(INSURER_USER, 'inspection-1', photos);
+    expect(await controller.inspectionEvidence('inspection-1', INSURER_USER)).toEqual(evidence);
+    expect(later.insurerEvidence).toHaveBeenCalledWith(INSURER_USER, 'inspection-1');
+    await controller.publishInspectionReport('inspection-1', { documentId: 'document-1' }, INSURER_USER);
+    expect(later.submitReport).toHaveBeenCalledWith(INSURER_USER, 'inspection-1', 'document-1');
+    await controller.reinspect('inspection-1', INSURER_USER);
+    expect(later.reinspect).toHaveBeenCalledWith(INSURER_USER, 'inspection-1');
+  });
+
+  it.each([
+    ['startClaimInspection', 'claims/:claimNumber/inspection', 'portal:claim:update'],
+    ['addInspectionEvidence', 'inspections/:id/evidence', 'portal:inspection:manage'],
+    ['inspectionEvidence', 'inspections/:id/evidence', 'portal:inspection:read'],
+    ['publishInspectionReport', 'inspections/:id/report', 'portal:inspection:manage'],
+    ['reinspect', 'inspections/:id/reinspect', 'portal:inspection:manage'],
+  ] as const)('protects %s with the intended route permission', (method, path, permission) => {
+    const handler = InsurerPortalController.prototype[method];
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(path);
+    expect(Reflect.getMetadata(REQUIRED_PERMISSION, handler)).toBe(permission);
+    if (method !== 'inspectionEvidence') expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler)).toBe(201);
+  });
 });

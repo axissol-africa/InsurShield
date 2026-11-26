@@ -8,6 +8,7 @@ import { newReference } from '../common/domain/reference.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { takesNewBusiness } from '../common/insurer-standing.js';
 import type { Transaction } from '../db/database.module.js';
+import { LaterInspectionsService } from '../inspections/later-inspections.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { SettingsService } from '../settings/settings.service.js';
 import { eventFit, isOpenPayment, isQuoteExpired, isRefundablePayment } from './domain/payment.js';
@@ -57,6 +58,7 @@ export class PaymentEventsService {
     private readonly settings: SettingsService,
     @Inject(PAYMENT_PROVIDER) private readonly provider: PaymentProvider,
     private readonly refunds: RefundsService,
+    private readonly laterInspections: LaterInspectionsService,
   ) {}
 
   /**
@@ -184,6 +186,10 @@ export class PaymentEventsService {
    * kept as confirmed and a refund is owed (rule 9, decision 24).
    */
   private async confirmed(tx: Transaction, payment: PaymentRow, event: PaymentEvent, at: Date, callbackId: string | null): Promise<EventOutcome> {
+    // Match initiation's request-before-code lock order. A start must observe either
+    // the open attempt or its unresolved capture, never a gap between those holds.
+    const reservedRequest = payment.reservedNcdCode ? await this.payments.lockRequest(tx, payment.quoteRequestId) : undefined;
+    if (payment.reservedNcdCode) await this.payments.lockNcdCode(tx, payment.reservedNcdCode);
     const lateCapture = payment.reservedNcdCode !== null && !isOpenPayment(payment.status);
     const amountMatches = event.amountMinor === payment.amountMinor &&
       (lateCapture ? event.currency === payment.currency : (event.currency ?? payment.currency) === payment.currency);
@@ -227,7 +233,7 @@ export class PaymentEventsService {
     }
 
     const standing = await this.payments.insurerStanding(tx, quote.insurerId);
-    const request = await this.payments.lockRequest(tx, payment.quoteRequestId);
+    const request = reservedRequest ?? await this.payments.lockRequest(tx, payment.quoteRequestId);
     if (!request) throw new Error(`Payment ${payment.id} has no request`);
     const unusable =
       (await this.payments.policyForRequest(tx, payment.quoteRequestId)) !== undefined
@@ -279,6 +285,7 @@ export class PaymentEventsService {
       receivedAt: at,
       issuanceDueAt: new Date(at.getTime() + deadline.hours * HOUR_MS),
     });
+    await this.laterInspections.openAfterPayment(tx, policy.policyNumber, at, payment.transactionId);
     await this.audit.write(tx, {
       actor: PROVIDER,
       action: 'policy.created',

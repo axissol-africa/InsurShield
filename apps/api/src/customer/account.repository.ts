@@ -1,9 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, notInArray } from 'drizzle-orm';
 import { OPEN_PAYMENT_STATUSES, OPEN_REFUND_STATUSES, OPEN_SERVICE_REQUEST_STATUSES, type PolicyStatus } from '../common/domain/enums.js';
 import { currentOn } from '../common/domain/lusaka.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { claimNotifications, customers, ncdApplications, policies, payments, paymentRefunds, serviceRequests, reconciliationItems } from '../db/schema.js';
+import { claimNotifications, customers, inspections, ncdApplications, policies, payments, paymentRefunds, serviceRequests, reconciliationItems } from '../db/schema.js';
+import { CLOSED_INSPECTION_STATUSES } from '../inspections/domain/underwriting.js';
 
 /** A paid policy awaiting its certificate is already cover the customer bought. */
 const IN_FORCE: PolicyStatus[] = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'];
@@ -63,6 +64,14 @@ export class AccountRepository {
     const [application] = await tx.select({ id: ncdApplications.id }).from(ncdApplications)
       .where(and(eq(ncdApplications.customerId, customerId), eq(ncdApplications.status, 'VERIFICATION_REQUIRED'))).limit(1);
     return Boolean(application);
+  }
+
+  async hasOpenLaterInspection(tx: Transaction, customerId: string): Promise<boolean> {
+    const [inspection] = await tx.select({ id: inspections.id }).from(inspections).where(and(
+      eq(inspections.customerId, customerId), isNotNull(inspections.policyNumber),
+      notInArray(inspections.status, [...CLOSED_INSPECTION_STATUSES]),
+    )).limit(1);
+    return Boolean(inspection);
   }
 
   async hasOpenPayment(tx: Transaction, customerId: string): Promise<boolean> {

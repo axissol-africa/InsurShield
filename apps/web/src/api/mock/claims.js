@@ -1,3 +1,4 @@
+import { inspectionClosed } from '@/domain/inspectionWorkflow';
 import { useStore, belongsToCustomer } from '@/store';
 import { newIdempotencyKey } from '../shared';
 
@@ -14,7 +15,8 @@ export function findClaim(number, insurer = false) {
   return claim;
 }
 export function timeline(claim) {
-  return { revision: claim.updates?.at(-1)?.id || `${claim.claimNumber || claim.id}:${claim.receivedAt || claim.status !== 'Notified' ? 'acknowledged' : 'submitted'}`, claimNumber: claim.claimNumber || claim.id, status: claim.status, responseDueOn: claim.responseDueOn || null, lateSubmission: !!claim.lateSubmission, insurerClaimReference: claim.insurerClaimReference || null, updates: claim.updates || [] };
+  const inspection = useStore.getState().inspections.find((item) => item.purpose === 'CLAIM_ASSESSMENT' && item.claimNumber === (claim.claimNumber || claim.id));
+  return { inspection: inspection ? { id: inspection.id, status: inspection.status, method: inspection.method } : null, revision: claim.updates?.at(-1)?.id || `${claim.claimNumber || claim.id}:${claim.receivedAt || claim.status !== 'Notified' ? 'acknowledged' : 'submitted'}`, claimNumber: claim.claimNumber || claim.id, status: claim.status, responseDueOn: claim.responseDueOn || null, lateSubmission: !!claim.lateSubmission, insurerClaimReference: claim.insurerClaimReference || null, updates: claim.updates || [] };
 }
 export function recordUpdate(claim, status, actorKind, message, extra = {}) {
   const next = { ...claim, ...extra, status, updates: [...(claim.updates || []), { id: crypto.randomUUID(), status, actorKind, message, createdAt: new Date().toISOString(), evidenceRequest: extra.evidenceRequest || null, documents: extra.documents || [] }] };
@@ -23,6 +25,7 @@ export function recordUpdate(claim, status, actorKind, message, extra = {}) {
 }
 function applyUpdate(number, payload) {
   const claim = findClaim(number, true);
+  if (['APPROVE', 'DECLINE', 'CLOSE'].includes(payload.action) && useStore.getState().inspections.some((item) => item.claimNumber === number && item.purpose === 'CLAIM_ASSESSMENT' && !inspectionClosed(item))) throw new Error('Complete the open claim inspection before approving, declining or closing this claim.');
   const transitions = { START_REVIEW: ['Received by insurer', 'Under review'], REQUEST_EVIDENCE: ['Under review', 'Additional information required'], APPROVE: ['Under review', 'Approved'], DECLINE: ['Under review', 'Declined'] };
   const transition = payload.action === 'CLOSE' && ['Approved', 'Declined'].includes(claim.status) ? [claim.status, 'Closed'] : transitions[payload.action];
   if (!transition || transition[0] !== claim.status) throw new Error('This claim has changed. Refresh its updates.');

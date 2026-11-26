@@ -1,8 +1,11 @@
 import { and, eq } from 'drizzle-orm';
 import { notifications, paymentRefunds, payments, policies, reconciliationItems } from '../src/db/schema.js';
 import { PaymentJobs } from '../src/payments/payment-jobs.js';
+import { StandInPaymentProvider } from '../src/payments/provider/stand-in-payment-provider.js';
+import { PaymentEventsService } from '../src/payments/payment-events.service.js';
 import { RefundsService } from '../src/payments/refunds.service.js';
-import { buildCustomer, buildInsurer, buildPurchasedPolicy, buildStaffUser } from './builders.js';
+import { buildCustomer, buildInsurer, buildNcdCode, buildPayment, buildPurchasedPolicy, buildStaffUser } from './builders.js';
+import { buildPayableQuote } from './builders/payments.js';
 import { startApp, type TestApp } from './helpers.js';
 import { signIn } from './sessions.js';
 
@@ -70,6 +73,24 @@ describe('refunds and the reconciliation queue', () => {
     expect(approved.status).toBe(201);
     await testApp.app.get(RefundsService).submit(refundId);
   }
+
+  it('does not dispatch a queued approved refund after a known payment reversal', async () => {
+    const { payment, providerPaymentId } = await failedIssue();
+    const proposed = await propose(payment.transactionId);
+    expect(proposed.status).toBe(201);
+    expect((await admin(checker).post(`approvals/${proposed.body.approvalRequestId}/approve`)).status).toBe(201);
+    const provider = testApp.app.get(StandInPaymentProvider);
+    const signed = provider.sign({ eventId: `reversal-${payment.id}`, type: 'payment.reversed', providerPaymentId,
+      paymentId: payment.id, amountMinor: payment.amountMinor, currency: 'ZMW', reference: 'REVERSED', reason: null, occurredAt: new Date() });
+    expect((await testApp.app.get(PaymentEventsService).receiveCallback(provider.route, signed.rawBody, signed.headers)).outcome).toBe('REVERSED');
+    const dispatch = vi.spyOn(provider, 'refund');
+    try {
+      await testApp.app.get(RefundsService).submit(proposed.body.id);
+      await testApp.app.get(RefundsService).submit(proposed.body.id);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(await refundRow(proposed.body.id)).toMatchObject({ status: 'FAILED', providerRefundId: null });
+    } finally { dispatch.mockRestore(); }
+  });
 
   it('refunds in full after a second approval: the provider completes it, the failed policy is cancelled and the item resolved', async () => {
     const { payment, policy, item, customer, providerPaymentId } = await failedIssue();
@@ -183,6 +204,36 @@ describe('refunds and the reconciliation queue', () => {
   });
 
   describe('the queue', () => {
+    it.each([
+      ['verified late capture', 'EXPIRED', true, true, true, false],
+      ['expired without capture', 'EXPIRED', false, true, false, false],
+      ['reversed late capture', 'REVERSED', true, true, false, false],
+      ['legacy confirmed payment', 'CONFIRMED', true, false, false, true],
+    ] as const)('reports refund eligibility for a %s', async (_case, status, captured, hasProvider, refundable, requiresExternalRefund) => {
+      const { customer, insurer, quoteRequest, quote } = await buildPayableQuote(testApp.db);
+      const code = await buildNcdCode(testApp.db, { insurerId: insurer.insurer.id });
+      const payment = await buildPayment(testApp.db, {
+        customerId: customer.id, quoteRequestId: quoteRequest.id, insurerQuoteId: quote.id,
+      }, {
+        status,
+        confirmedAt: captured ? new Date() : null,
+        providerPaymentId: hasProvider ? `SI-test-${quote.id}` : null,
+        reservedNcdCode: hasProvider ? code.code : null,
+      });
+      const [entry] = await testApp.db.insert(reconciliationItems).values({
+        kind: 'REFUND_REQUIRED', paymentId: payment.id, insurerId: insurer.insurer.id,
+        reason: 'Review the provider’s report for this payment.',
+      }).returning();
+
+      const response = await admin(maker).get(`reconciliation/items?status=OPEN&insurerId=${insurer.insurer.id}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.items).toEqual([expect.objectContaining({
+        id: entry.id,
+        payment: { transactionId: payment.transactionId, status, amount: 1234.56, refunded: 0, refundable, requiresExternalRefund },
+      })]);
+    });
+
     it('lists items oldest first with their payment and refunds, a page at a time', async () => {
       const first = await failedIssue();
       const second = await failedIssue();

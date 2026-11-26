@@ -1,9 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { inArray } from 'drizzle-orm';
 import { AuditService } from '../common/audit/audit.service.js';
 import { auditActor } from '../common/audit/audit.types.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import { ngweeToKwacha } from '../common/money.js';
+import { DATABASE, type Database } from '../db/database.module.js';
+import { payments } from '../db/schema.js';
+import { isRefundablePayment } from './domain/payment.js';
 import type { AssignItemDto, ListItemsQuery, ResolveItemDto } from './dto/reconciliation.dto.js';
 import { RefundsRepository, type RefundRow } from './refunds.repository.js';
 import { toRefundResponse } from './refunds.service.js';
@@ -23,6 +27,7 @@ export class ReconciliationService {
   constructor(
     private readonly refunds: RefundsRepository,
     private readonly audit: AuditService,
+    @Inject(DATABASE) private readonly db: Database,
   ) {}
 
   async list(principal: StaffPrincipal, query: ListItemsQuery) {
@@ -38,9 +43,20 @@ export class ReconciliationService {
     const page = rows.slice(0, limit);
     const paymentIds = [...new Set(page.flatMap((row) => (row.item.paymentId ? [row.item.paymentId] : [])))];
     const refunds = await this.refunds.refundsOf(paymentIds);
+    const paymentRows = paymentIds.length ? await this.db.select({
+      id: payments.id,
+      transactionId: payments.transactionId,
+      status: payments.status,
+      amountMinor: payments.amountMinor,
+      providerPaymentId: payments.providerPaymentId,
+      reservedNcdCode: payments.reservedNcdCode,
+      confirmedAt: payments.confirmedAt,
+    }).from(payments).where(inArray(payments.id, paymentIds)) : [];
+    const paymentsById = new Map(paymentRows.map((payment) => [payment.id, payment]));
     const now = Date.now();
     return {
       items: page.map((row) => {
+        const payment = row.item.paymentId ? paymentsById.get(row.item.paymentId) : undefined;
         const own = refunds.filter((refund) => refund.paymentId === row.item.paymentId);
         return {
           id: row.item.id,
@@ -55,17 +71,17 @@ export class ReconciliationService {
           insurerId: row.item.insurerId,
           insurer: row.insurerName,
           policyNumber: row.item.policyNumber,
-          payment: row.transactionId
+          payment: payment
             ? {
-                transactionId: row.transactionId,
-                status: row.paymentStatus,
-                amount: ngweeToKwacha(row.paidMinor!),
+                transactionId: payment.transactionId,
+                status: payment.status,
+                amount: ngweeToKwacha(payment.amountMinor),
                 refunded: ngweeToKwacha(completedOf(own)),
-                // A payment from before the provider has nothing to refund against here.
-                refundable: Boolean(row.providerPaymentId),
+                refundable: Boolean(payment.providerPaymentId) && isRefundablePayment(payment),
+                requiresExternalRefund: payment.status === 'CONFIRMED' && !payment.providerPaymentId,
               }
             : null,
-          refunds: own.map((refund) => toRefundResponse(refund, row.transactionId!)),
+          refunds: payment ? own.map((refund) => toRefundResponse(refund, payment.transactionId)) : [],
           resolutionNote: row.item.resolutionNote,
           resolvedAt: row.item.resolvedAt?.toISOString() ?? null,
         };

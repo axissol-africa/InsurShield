@@ -4,6 +4,7 @@ import { ProviderRegistry } from '../common/providers/provider-registry.js';
 import type { Env } from '../config/env.js';
 import { JobRunner } from '../jobs/job-runner.service.js';
 import { ApprovalsModule } from '../approvals/approvals.module.js';
+import { InspectionsModule } from '../inspections/inspections.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { ReconciliationController } from './reconciliation.controller.js';
 import { ReconciliationService } from './reconciliation.service.js';
@@ -21,7 +22,7 @@ import { StandInPaymentController } from './provider/stand-in.controller.js';
 import { StandInPaymentProvider } from './provider/stand-in-payment-provider.js';
 
 @Module({
-  imports: [SettingsModule, ApprovalsModule],
+  imports: [SettingsModule, ApprovalsModule, InspectionsModule],
   controllers: [PaymentsController, StandInPaymentController, ReconciliationController],
   providers: [
     PaymentsService,

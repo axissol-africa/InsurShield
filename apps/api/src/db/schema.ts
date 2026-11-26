@@ -1969,6 +1969,8 @@ export const inspections = pgTable(
     // Batch 13: an inspection a chosen product needs before it is quoted or paid.
     purpose: inspectionPurpose('purpose').notNull().default('GENERAL'),
     quoteRequestId: text('quoteRequestId'),
+    policyNumber: text('policyNumber'),
+    claimNumber: text('claimNumber'),
     method: inspectionMethod('method'),
     stage: inspectionTiming('stage'),
     /** The inspection this one repeats, after a fail, a missed appointment or a cancellation. */
@@ -1981,6 +1983,11 @@ export const inspections = pgTable(
   },
   (t) => [
     index('inspections_customerId_createdAt_idx').on(t.customerId, t.createdAt),
+    uniqueIndex('inspections_policy_root_key').on(t.policyNumber).where(sql`${t.policyNumber} IS NOT NULL AND ${t.claimNumber} IS NULL AND ${t.predecessorId} IS NULL`),
+    uniqueIndex('inspections_open_claim_key').on(t.claimNumber).where(sql`${t.claimNumber} IS NOT NULL AND ${t.status} IN ('REQUESTED', 'SCHEDULED', 'INSPECTOR_ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REPORT_READY')`),
+    uniqueIndex('inspections_later_successor_key').on(t.predecessorId).where(sql`${t.policyNumber} IS NOT NULL AND ${t.predecessorId} IS NOT NULL`),
+    fk('inspections_policyNumber_fkey', [t.policyNumber], [policies.policyNumber], 'restrict'),
+    fk('inspections_claimNumber_fkey', [t.claimNumber], [claimNotifications.claimNumber], 'restrict'),
     index('inspections_status_idx').on(t.status),
     index('inspections_insurerId_status_idx').on(t.insurerId, t.status),
     index('inspections_quoteRequestId_idx').on(t.quoteRequestId),
@@ -1993,6 +2000,13 @@ export const inspections = pgTable(
       'inspections_underwriting_check',
       sql`${t.purpose} <> 'UNDERWRITING' OR (${t.quoteRequestId} IS NOT NULL AND ${t.method} IS NOT NULL AND ${t.stage} IS NOT NULL)`,
     ),
+    check('inspections_later_links_check', sql`
+      (${t.purpose}::text IN ('GENERAL', 'UNDERWRITING') AND ${t.policyNumber} IS NULL AND ${t.claimNumber} IS NULL)
+      OR (${t.purpose}::text = 'AFTER_PAYMENT' AND ${t.policyNumber} IS NOT NULL AND ${t.insurerId} IS NOT NULL
+        AND ${t.method} IS NOT NULL AND ${t.stage} = 'AFTER_PAYMENT' AND ${t.stage} IS NOT NULL
+        AND ${t.claimNumber} IS NULL AND ${t.quoteRequestId} IS NULL)
+      OR (${t.purpose}::text = 'CLAIM_ASSESSMENT' AND ${t.policyNumber} IS NOT NULL AND ${t.insurerId} IS NOT NULL
+        AND ${t.method} IS NOT NULL AND ${t.claimNumber} IS NOT NULL AND ${t.stage} IS NULL AND ${t.quoteRequestId} IS NULL)`),
     check('inspections_result_check', sql`(${t.result} IS NULL) = (${t.decidedAt} IS NULL)`),
   ],
 );
@@ -2042,6 +2056,20 @@ export const inspectionPhotos = pgTable(
     uniqueIndex('inspection_photos_inspectionId_slot_key').on(t.inspectionId, t.slot),
     fk('inspection_photos_inspectionId_fkey', [t.inspectionId], [inspections.id], 'cascade'),
     fk('inspection_photos_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+  ],
+);
+
+export const inspectionReports = pgTable(
+  'inspection_reports',
+  {
+    inspectionId: text('inspectionId').primaryKey(),
+    documentId: uuid('documentId').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('inspection_reports_documentId_key').on(t.documentId),
+    fk('inspection_reports_inspectionId_fkey', [t.inspectionId], [inspections.id], 'restrict'),
+    fk('inspection_reports_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
   ],
 );
 

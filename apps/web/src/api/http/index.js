@@ -208,6 +208,7 @@ export const policies = {
 };
 
 export const claims = {
+  requestInspection: (number, method) => apiClient.post(`/insurer/claims/${encodeURIComponent(number)}/inspection`, { method }),
   notify: (claim, idempotencyKey = newIdempotencyKey()) => apiClient.post('/claims', claim, { headers: { 'Idempotency-Key': idempotencyKey } }),
   listMine: () => apiClient.get('/claims'),
   listForInsurer: () => apiClient.get('/insurer/claims'),
@@ -230,6 +231,11 @@ export const ncd = {
 };
 
 export const inspections = {
+  reinspect: (id) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/reinspect`),
+  submitEvidence: (id, payload) => apiClient.post(`/inspections/${encodeURIComponent(id)}/evidence`, payload),
+  submitInsurerEvidence: (id, payload) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/evidence`, payload),
+  evidence: (id) => apiClient.get(`/insurer/inspections/${encodeURIComponent(id)}/evidence`),
+  attachReport: (id, documentId) => apiClient.post(`/insurer/inspections/${encodeURIComponent(id)}/report`, { documentId }),
   request: (inspection) => apiClient.post('/inspections', inspection),
   list: () => apiClient.get('/inspections'),
   update: (id, changes) => apiClient.patch(`/inspections/${id}`, changes),

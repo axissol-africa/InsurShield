@@ -174,11 +174,22 @@ export class RefundsService {
   async submit(refundId: string): Promise<void> {
     const refund = await this.refunds.findRefund(refundId);
     if (!refund || refund.status !== 'APPROVED') return;
-    const payment = await this.refunds.transaction((tx) => this.refunds.lockPayment(tx, refund.paymentId));
-    if (!payment?.providerPaymentId) {
-      await this.refunds.transaction((tx) => this.failRefund(tx, refund, 'The payment has no provider reference to refund against.', new Date()));
-      return;
-    }
+    const payment = await this.refunds.transaction(async (tx) => {
+      // Match callback lock order: payment first, then the refund it owns.
+      const lockedPayment = await this.refunds.lockPayment(tx, refund.paymentId);
+      const lockedRefund = await this.refunds.lockRefund(tx, refund.id);
+      if (!lockedRefund || lockedRefund.status !== 'APPROVED') return undefined;
+      if (!lockedPayment || !isRefundablePayment(lockedPayment)) {
+        await this.failRefund(tx, lockedRefund, 'The payment is no longer refundable; no instruction was sent to the provider.', new Date());
+        return undefined;
+      }
+      if (!lockedPayment.providerPaymentId) {
+        await this.failRefund(tx, lockedRefund, 'The payment has no provider reference to refund against.', new Date());
+        return undefined;
+      }
+      return { ...lockedPayment, providerPaymentId: lockedPayment.providerPaymentId };
+    });
+    if (!payment) return;
     // A provider that does not answer throws, and the job runner tries again later with the same key.
     const result = await this.provider.refund({
       providerPaymentId: payment.providerPaymentId,

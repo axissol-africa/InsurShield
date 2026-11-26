@@ -1,3 +1,5 @@
+import { holdsInspectionPermission } from '../common/auth/permissions.js';
+import { INSPECTION_PURPOSES } from '../common/domain/enums.js';
 import { IdempotencyService, idempotencyKey } from '../common/idempotency/idempotency.service.js';
 import { ncdCodeRefusal, ncdVehicleMatches } from '../customer/domain/ncd-code.js';
 import { ncdTierForYears } from '../customer/domain/ncd-policy.js';
@@ -719,7 +721,8 @@ export class InsurerPortalService {
   /** Every inspection this insurer carries out, newest first, with the products each one serves. */
   async listInspections(principal: Principal) {
     const insurerId = this.insurerOf(principal);
-    const rows = await this.inspectionRecords.listForInsurer(insurerId);
+    const purposes = INSPECTION_PURPOSES.filter((purpose) => holdsInspectionPermission(principal, purpose, 'read'));
+    const rows = await this.inspectionRecords.listForInsurer(insurerId, purposes);
     const products = await this.inspectionRecords.productsOf(rows.map((row) => row.id));
     return rows.map((row) => ({
       id: row.id,
@@ -729,6 +732,8 @@ export class InsurerPortalService {
       method: row.method,
       stage: row.stage,
       quoteRequestId: row.quoteRequestId,
+      policyNumber: row.policyNumber,
+      claimNumber: row.claimNumber,
       vehiclePlate: row.vehiclePlate,
       vehicleLabel: row.vehicleLabel,
       customer: row.customer,
@@ -753,10 +758,15 @@ export class InsurerPortalService {
     const result = await this.portal.transaction(async (tx) => {
       const standing = await this.portal.insurerStanding(tx, staff.insurerId);
       if (!standing) throw ApiException.notFound('Insurer', staff.insurerId);
-      if (!takesNewBusiness(standing, new Date())) {
-        throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(standing.name));
-      }
-      return this.underwriting.act(tx, staff.insurerId, auditActor(principal), staff.id, id, event, input);
+      return this.underwriting.act(tx, staff.insurerId, auditActor(principal), staff.id, id, event, input, (inspection) => {
+        if (!holdsInspectionPermission(principal, inspection.purpose, 'manage')) return false;
+        const later = inspection.purpose === 'AFTER_PAYMENT' || inspection.purpose === 'CLAIM_ASSESSMENT';
+        if (later ? !servicesExistingBusiness(standing) : !takesNewBusiness(standing, new Date())) {
+          throw ApiException.conflict(INSURER_UNAVAILABLE, later
+            ? 'This insurer is no longer available to service inspections.' : insurerUnavailable(standing.name));
+        }
+        return true;
+      });
     });
     if (!result) {
       throw await this.absent(principal, { type: 'INSPECTION', label: 'Inspection' }, id, await this.inspectionRecords.exists(id));

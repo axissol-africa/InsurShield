@@ -1,3 +1,4 @@
+import { rememberInspectionDocument, requestClaimInspection, submitInspectionEvidence, inspectionEvidence, publishInspectionReport, reinspect } from './inspectionEvidence';
 import { claimIntakeRules, findClaim, timeline, recordUpdate, updateClaim, submitEvidence } from './claims';
 /**
  * Mock adapter: the same functions as `api/http`, served from browser storage.
@@ -462,6 +463,7 @@ export const account = {
 export const documents = {
   upload: (file, kind) => call(async () => {
     const record = { ...(await documentToRecord(file)), id: newReference('DOC') };
+    if (['INSPECTION_PHOTO', 'INSPECTION_REPORT', 'CLAIM_ATTACHMENT'].includes(kind)) rememberInspectionDocument(record, kind);
     if (kind === 'NCD_EVIDENCE') ncdDocuments.set(record.id, record);
     return record;
   }),
@@ -1154,6 +1156,7 @@ function ownIssuingPolicy(s, policyNumber) {
 }
 
 export const claims = {
+  requestInspection: (number, method) => call(() => requestClaimInspection(number, method)),
   // The backend issues the claim number; in mock mode it is minted here so a
   // page gets the same record either way.
   notify: (claim) => call((s) => {
@@ -1226,6 +1229,16 @@ export const ncd = {
 };
 
 export const inspections = {
+  submitEvidence: (id, payload) => call(() => submitInspectionEvidence(id, payload)),
+  submitInsurerEvidence: (id, payload) => call(() => submitInspectionEvidence(id, payload, true)),
+  evidence: (id) => call(() => inspectionEvidence(id)),
+  attachReport: (id, documentId) => call(() => publishInspectionReport(id, documentId)),
+  reinspect: (id) => call((s) => {
+    const inspection = s.inspections.find((item) => item.id === id);
+    const policy = s.policies.find((item) => item.policyNumber === inspection?.policyNumber);
+    const version = seededProducts(s).flatMap((product) => product.versions).find((item) => item.id === policy?.productVersionId);
+    return reinspect(id, version?.reinspectionAllowed === true);
+  }),
   request: (inspection) => call((s) => { s.addInspection(inspection); return state().inspections[0]; }),
   list: () => call((s) => mine(s.inspections)),
   update: (id, changes) => call((s) => { s.updateInspectionStatus(id, 'Requested', changes); return state().inspections.find((i) => i.id === id); }),
@@ -1258,6 +1271,7 @@ const toPortalInspection = (inspection) => ({
 const prototypeInspectionStep = (s, id, event, changes) => {
   const inspection = s.inspections.find((entry) => entry.id === id && entry.insurer === insurerName());
   if (!inspection) throw new Error('Inspection was not found.');
+  if (event === 'APPROVE' && ['AFTER_PAYMENT', 'CLAIM_ASSESSMENT'].includes(inspection.purpose) && !inspection.report) throw new Error('Publish the inspection report before approving.');
   const current = toPortalInspection(inspection);
   const next = nextPrototypeInspectionStatus(current.status, current.method, event);
   if (!next) throw new Error('Book the inspection before recording that step.');

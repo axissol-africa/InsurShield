@@ -6,10 +6,12 @@ import { CurrentUser } from '../common/auth/current-user.decorator.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import type { CustomerPrincipal } from '../customer/customer-principal.js';
+import { AddLaterInspectionEvidenceDto } from './dto/later-inspection.dto.js';
+import { LaterInspectionsService } from './later-inspections.service.js';
 
 @Controller('inspections')
 export class InspectionsController {
-  constructor(private readonly inspections: InspectionsService) {}
+  constructor(private readonly inspections: InspectionsService, private readonly later: LaterInspectionsService) {}
 
   private scope(principal: Principal): CustomerPrincipal {
     if (principal.kind !== 'customer') {
@@ -39,5 +41,16 @@ export class InspectionsController {
     @CurrentUser() principal: Principal,
   ) {
     return this.inspections.update(this.scope(principal), id, dto);
+  }
+
+  @Needs('inspection:update')
+  @Post(':id/evidence')
+  @HttpCode(HttpStatus.OK)
+  addEvidence(
+    @Param('id') id: string,
+    @Body() dto: AddLaterInspectionEvidenceDto,
+    @CurrentUser() principal: Principal,
+  ) {
+    return this.later.addCustomerEvidence(this.scope(principal), id, dto.photos);
   }
 }

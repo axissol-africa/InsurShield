@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { getIdentityBinding } from '@/app/identity';
+import InspectionEvidencePanel from '../components/InspectionEvidencePanel';
+import InspectionDocuments from '../components/InspectionDocuments';
+import { laterInspection, inspectionStatus, inspectionPurpose, inspectionNextAction, inspectionClosed } from '@/domain/inspectionWorkflow';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { api } from '@/api';
 import { env } from '@/config/env';
-import { hydrateCustomer } from '@/api/sync';
 import { formatDate } from '@/domain/premiumEngine';
 import { fieldClass, labelClass } from '@/components/ui/field';
 import Badge from '@/components/ui/Badge';
@@ -39,15 +43,6 @@ const statusVariant = (status) => {
   return 'default';
 };
 
-const PHOTO_SLOTS = [
-  { id: 'front', label: 'Front view', icon: 'directions_car' },
-  { id: 'back', label: 'Rear view', icon: 'directions_car' },
-  { id: 'left', label: 'Left side', icon: 'directions_car' },
-  { id: 'right', label: 'Right side', icon: 'directions_car' },
-  { id: 'mileage', label: 'Dashboard and mileage', icon: 'speed' },
-  { id: 'engine', label: 'Engine bay', icon: 'settings' },
-];
-
 const TIMES = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00'];
 
 /**
@@ -70,14 +65,30 @@ const DEMO_INSPECTIONS = env.apiMode === 'mock' ? [
 
 export default function InspectionWorkflowPage() {
   const { inspections, vehicleDetails } = useStore();
+  const [params, setParams] = useSearchParams();
+  const claimFilter = params.get('claim');
+  const busy = useRef(false);
 
-  // Inspections come from the server when one is configured; a no-op otherwise.
-  useEffect(() => { void hydrateCustomer(); }, []);
-  const [view, setView] = useState('list'); // 'list' | 'request' | 'detail'
-  const [selectedInspection, setSelectedInspection] = useState(null);
+  const mounted = useRef(false);
+  const [loading, setLoading] = useState(env.apiMode === 'http');
+  const [loadError, setLoadError] = useState('');
+  const refresh = useCallback(async () => {
+    if (env.apiMode !== 'http') return;
+    const owner = getIdentityBinding();
+    const current = () => mounted.current && !useStore.getState().leaving && owner === getIdentityBinding();
+    setLoading(true);
+    try {
+      const records = await api.inspections.list();
+      if (current()) { useStore.getState().setInspections(records); setLoadError(''); }
+    } catch (error) {
+      if (current()) setLoadError(error.message || 'Inspections could not be loaded. Please refresh.');
+    } finally { if (current()) setLoading(false); }
+  }, []);
+  useEffect(() => { mounted.current = true; let active = true; Promise.resolve().then(() => { if (active) void refresh(); }); return () => { active = false; mounted.current = false; }; }, [refresh]);
+  const [view, setView] = useState(params.get('inspection') ? 'detail' : 'list'); // 'list' | 'request' | 'detail'
+  const [selectedInspection, setSelectedInspection] = useState(params.get('inspection') ? { id: params.get('inspection') } : null);
   const [submitting, setSubmitting] = useState(false);
   const [requestError, setRequestError] = useState('');
-  const [uploadedPhotos, setUploadedPhotos] = useState({});
 
   const [form, setForm] = useState({
     preferredDate: '',
@@ -88,10 +99,13 @@ export default function InspectionWorkflowPage() {
   });
   const setField = (key, value) => setForm((previous) => ({ ...previous, [key]: value }));
 
-  const allInspections = inspections.length > 0 ? inspections : DEMO_INSPECTIONS;
+  const allInspections = (inspections.length > 0 ? inspections : DEMO_INSPECTIONS).filter((item) => !claimFilter || item.claimNumber === claimFilter);
 
   const handleRequestInspection = async (event) => {
     event.preventDefault();
+    if (busy.current) return;
+    const owner = getIdentityBinding();
+    busy.current = true;
     setSubmitting(true);
     setRequestError('');
     try {
@@ -103,18 +117,15 @@ export default function InspectionWorkflowPage() {
         preferredLocation: form.preferredLocation || undefined,
         notes: form.additionalNotes || undefined,
       });
-      await hydrateCustomer();
+      if (useStore.getState().leaving || owner !== getIdentityBinding()) return;
+      await refresh();
       setView('list');
     } catch (error) {
       setRequestError(error.message || 'Your inspection request could not be sent. Please try again.');
     } finally {
+      busy.current = false;
       setSubmitting(false);
     }
-  };
-
-  const handlePhotoUpload = (slotId, event) => {
-    const file = event.target.files?.[0];
-    if (file) setUploadedPhotos((previous) => ({ ...previous, [slotId]: URL.createObjectURL(file) }));
   };
 
   if (view === 'request') {
@@ -168,10 +179,6 @@ export default function InspectionWorkflowPage() {
             </label>
           </Panel>
 
-          <Panel title="Photos" hint="Optional — sending them now shortens the visit.">
-            <PhotoGrid slots={PHOTO_SLOTS} photos={uploadedPhotos} onUpload={handlePhotoUpload} onRemove={(slotId) => setUploadedPhotos((previous) => ({ ...previous, [slotId]: null }))} />
-          </Panel>
-
           {requestError && (
             <p role="alert" className="flex items-start gap-2.5 rounded-[1px] border border-primary/30 bg-primary/[0.06] p-3.5 text-[14px] leading-[1.5] text-primary">
               <span className="material-symbols-outlined shrink-0 text-[20px]" aria-hidden="true">error</span>{requestError}
@@ -188,10 +195,16 @@ export default function InspectionWorkflowPage() {
   }
 
   if (view === 'detail' && selectedInspection) {
-    const inspection = allInspections.find((item) => item.id === selectedInspection.id) || selectedInspection;
-    const currentIndex = INSPECTION_STAGES.findIndex((stage) => stage.id === inspection.status);
+    const inspection = allInspections.find((item) => item.id === selectedInspection.id);
+    if (!inspection) return <Page width="max-w-4xl"><BackLink onClick={() => setView('list')}>All inspections</BackLink><p role={loadError ? 'alert' : 'status'}>{loading ? 'Loading inspection…' : loadError || 'This inspection is not available for your account.'}</p></Page>;
+    const stages = inspection.method === 'SELF_CAPTURE' ? INSPECTION_STAGES.filter((stage) => ['Requested', 'Report Ready', 'Approved'].includes(stage.id)) : INSPECTION_STAGES;
+    const currentIndex = stages.findIndex((stage) => stage.id.replaceAll(' ', '_').toUpperCase() === inspectionStatus(inspection));
     const facts = [
-      ['Vehicle', `${inspection.vehicle} · ${inspection.plate}`],
+      ['Vehicle', `${inspection.vehicleLabel || inspection.vehicle || ''} · ${inspection.vehiclePlate || inspection.plate || ''}`],
+      ['Purpose', inspectionPurpose(inspection)],
+      ...(inspection.stage ? [['Stage', inspection.stage.replaceAll('_', ' ')]] : []),
+      ...(inspection.policyNumber ? [['Policy', inspection.policyNumber]] : []),
+      ...(inspection.claimNumber ? [['Claim', <a className="underline" href={`/claims?claim=${encodeURIComponent(inspection.claimNumber)}`}>{inspection.claimNumber}</a>]] : []),
       ['Insurer', inspection.insurer],
       ['Scheduled', formatDate(inspection.scheduledDate, { long: true })],
       ...(inspection.inspectorName && inspection.inspectorName !== 'TBA'
@@ -214,8 +227,8 @@ export default function InspectionWorkflowPage() {
         <BackLink onClick={() => setView('list')}>All inspections</BackLink>
         <header className="mt-5 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-7">
           <div>
-            <Meta className="text-primary">Physical inspection</Meta>
-            <h1 className="mt-4 font-mono text-[30px] font-semibold leading-none tracking-[-0.02em] text-ink sm:text-[36px]">{inspection.id}</h1>
+            <Meta className="text-primary">{inspectionPurpose(inspection)}</Meta>
+            <h1 className="mt-4 break-all font-mono text-[30px] font-semibold leading-none tracking-[-0.02em] text-ink sm:text-[36px]">{inspection.id}</h1>
           </div>
           <Badge variant={statusVariant(inspection.status)}>{inspection.status}</Badge>
         </header>
@@ -239,16 +252,16 @@ export default function InspectionWorkflowPage() {
           </Panel>
 
           <Panel title="Progress">
-            {inspection.status === FAILED ? (
+            {inspectionClosed(inspection) && inspectionStatus(inspection) !== 'APPROVED' ? (
               <p className="text-[14px] leading-[1.6] text-ink-muted">
-                This inspection did not pass. Your insurer will contact you about what happens next.
+                {inspectionNextAction(inspection)}
               </p>
             ) : (
               <ol className="relative">
-                {INSPECTION_STAGES.map((stage, index) => {
+                {stages.map((stage, index) => {
                   const done = index <= currentIndex;
                   const current = index === currentIndex;
-                  const last = index === INSPECTION_STAGES.length - 1;
+                  const last = index === stages.length - 1;
                   return (
                     <li key={stage.id} aria-current={current ? 'step' : undefined} className="relative flex gap-3.5 pb-5 last:pb-0">
                       {/* The rail runs behind the markers, solid where the work is done. */}
@@ -268,14 +281,12 @@ export default function InspectionWorkflowPage() {
         </div>
 
         <div className="mt-5">
-          <Panel title="Inspection photos" hint="Anything you add here reaches the assessor before the visit.">
-            <PhotoGrid
-              slots={PHOTO_SLOTS}
-              photos={{ ...(inspection.photos || {}), ...uploadedPhotos }}
-              onUpload={handlePhotoUpload}
-              onRemove={(slotId) => setUploadedPhotos((previous) => ({ ...previous, [slotId]: null }))}
-            />
-          </Panel>
+          {laterInspection(inspection) ? <>
+            <p className="mb-4 text-sm">{inspectionNextAction(inspection)}</p>
+            <InspectionEvidencePanel key={inspection.id} inspection={inspection} onChanged={refresh} />
+          </> : <Panel title="Inspection photos" hint="Saved evidence supplied to the insurer.">
+            <InspectionDocuments label="Saved photos" items={Array.isArray(inspection.photos) ? inspection.photos : []} />
+          </Panel>}
         </div>
       </Page>
     );
@@ -291,7 +302,7 @@ export default function InspectionWorkflowPage() {
           </span>
           <h1 className="mt-5 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Vehicle inspections</h1>
           <p className="mt-3 max-w-xl text-[15px] leading-[1.6] text-ink-muted">
-            When an insurer wants its own assessor to see the vehicle, the visit is arranged and tracked here.
+            Track inspections for your quotations, paid policies and claims. Open an inspection to see its next step, evidence and report.
           </p>
         </div>
         <button type="button" onClick={() => setView('request')} className="inline-flex min-h-12 items-center gap-2 rounded-[1px] bg-primary px-5 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">
@@ -299,6 +310,8 @@ export default function InspectionWorkflowPage() {
         </button>
       </header>
 
+      {loading && <p role="status" className="mt-5">Loading inspections…</p>}
+      {loadError && <p role="alert" className="mt-5">{loadError}</p>}
       {allInspections.length === 0 ? (
         <EmptyState
           className="mt-7"
@@ -312,23 +325,23 @@ export default function InspectionWorkflowPage() {
             <li key={inspection.id} className="border-b border-dashed border-line last:border-b-0">
               <button
                 type="button"
-                onClick={() => { setSelectedInspection(inspection); setView('detail'); }}
-                className="group flex w-full items-center gap-4 p-5 text-left transition-colors duration-200 ease-out hover:bg-canvas-2"
+                onClick={() => { setSelectedInspection(inspection); setView('detail'); setParams({ ...(claimFilter ? { claim: claimFilter } : {}), inspection: inspection.id }); }}
+                className="group flex w-full flex-wrap items-center gap-4 p-5 text-left transition-colors duration-200 ease-out hover:bg-canvas-2"
               >
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center border border-dashed border-line-strong text-primary transition-colors duration-200 ease-out group-hover:border-primary">
                   <span className="material-symbols-outlined text-[22px]" aria-hidden="true">fact_check</span>
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <span className="font-mono text-[14px] font-medium tracking-[0.04em] text-primary">{inspection.id}</span>
-                    <span className="text-[15px] font-medium text-ink">{inspection.vehicle}</span>
-                    <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-ink-faint">{inspection.plate}</span>
+                    <span className="break-all font-mono text-[14px] font-medium tracking-[0.04em] text-primary">{inspection.id}</span>
+                    <span className="text-[15px] font-medium text-ink">{inspection.vehicleLabel || inspection.vehicle}</span>
+                    <span className="font-mono text-[12px] uppercase tracking-[0.1em] text-ink-faint">{inspection.vehiclePlate || inspection.plate}</span>
                   </span>
                   <span className="mt-1.5 block text-[13px] text-ink-muted">
-                    {inspection.insurer} · {formatDate(inspection.scheduledDate)}
+                    {inspection.insurer} · {inspectionPurpose(inspection)}{inspection.policyNumber ? ` · ${inspection.policyNumber}` : ''}{inspection.claimNumber ? ` · ${inspection.claimNumber}` : ''} · {formatDate(inspection.scheduledDate)}
                   </span>
                 </span>
-                <Badge variant={statusVariant(inspection.status)} className="hidden sm:inline-flex">{inspection.status}</Badge>
+                <Badge variant={statusVariant(inspection.status)} className="shrink-0">{inspection.statusLabel || inspection.status}</Badge>
                 <span className="material-symbols-outlined shrink-0 text-[20px] text-ink-faint transition-colors duration-200 ease-out group-hover:text-primary" aria-hidden="true">chevron_right</span>
               </button>
             </li>
@@ -367,33 +380,5 @@ function Panel({ title, hint, children }) {
       </div>
       {children}
     </section>
-  );
-}
-
-function PhotoGrid({ slots, photos, onUpload, onRemove }) {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      {slots.map((slot) => {
-        const photo = photos[slot.id];
-        return (
-          <div key={slot.id} className="relative">
-            <label className={`flex min-h-28 cursor-pointer flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[1px] border-2 border-dashed p-3 text-center transition-colors duration-200 ease-out ${photo ? 'border-primary/40 bg-primary/5' : 'border-line-strong bg-canvas-2 hover:border-primary/60'}`}>
-              {typeof photo === 'string' && photo.startsWith('blob:') ? (
-                <img src={photo} alt={slot.label} className="h-14 w-full object-cover" />
-              ) : (
-                <span className={`material-symbols-outlined text-2xl ${photo ? 'text-primary' : 'text-ink-faint'}`} aria-hidden="true">{photo ? 'check_circle' : slot.icon}</span>
-              )}
-              <span className={`text-[11px] font-medium leading-tight ${photo ? 'text-primary' : 'text-ink'}`}>{slot.label}</span>
-              <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => onUpload(slot.id, event)} />
-            </label>
-            {photo && (
-              <button type="button" onClick={() => onRemove(slot.id)} className="absolute right-2 top-2 inline-flex min-h-7 items-center gap-1 rounded-[1px] bg-white/95 px-2 text-[10px] font-medium text-primary shadow-sm hover:bg-white">
-                <span className="material-symbols-outlined text-[14px]" aria-hidden="true">delete</span>Remove
-              </button>
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }

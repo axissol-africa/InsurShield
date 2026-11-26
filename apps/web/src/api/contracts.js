@@ -391,3 +391,30 @@ export {};
  * Evidence: {verificationRevision, documentIds}; upload with kind NCD_EVIDENCE first.
  * Decision: {status: 'Under Review'|'Verification Required'|'Approved'|'Rejected', note: string}.
  */
+
+/**
+ * Later inspection contract (customer and insurer).
+ * @typedef {Object} LaterInspection
+ * @property {'AFTER_PAYMENT'|'CLAIM_ASSESSMENT'} purpose
+ * @property {string|null} policyNumber
+ * @property {string|null} claimNumber
+ * @property {'PHYSICAL'|'SELF_CAPTURE'} method
+ * @property {string|null} stage Existing product inspection stage, unchanged.
+ * @property {Array<{slot:string,document:DocumentRecord}>} photos Customer list evidence.
+ * @property {DocumentRecord|null} report Published, immutable report.
+ *
+ * claims.requestInspection(claimNumber, method) POSTs {method} to
+ * /insurer/claims/:claimNumber/inspection; returns {id,status,statusLabel}.
+ * inspections.submitEvidence(id, {photos:[{slot,documentId}]}) uses /inspections/:id/evidence;
+ * submitInsurerEvidence uses /insurer/inspections/:id/evidence.
+ * Slots: front, rear, left, right, dashboard, engine_bay.
+ * AFTER_PAYMENT uploads use INSPECTION_PHOTO / INSPECTION_REPORT;
+ * CLAIM_ASSESSMENT uploads use CLAIM_ATTACHMENT for photos and report.
+ * inspections.evidence(id) GETs /insurer/inspections/:id/evidence:
+ * {preLoss:[{slot,document,reference}],postLoss:[{slot,document,reference}],report:DocumentRecord|null}.
+ * attachReport(id, documentId) POSTs {documentId} to /insurer/inspections/:id/report.
+ * SELF_CAPTURE requires all six slots; PHYSICAL requires scheduling before publication.
+ * reinspect(id) POSTs /insurer/inspections/:id/reinspect; returns {id,status,statusLabel}.
+ * Claim timelines optionally include inspection:{id,status,method}, with a display status.
+ * Existing payment/certificate flows remain unchanged by inspection outcomes.
+ */

@@ -10,6 +10,7 @@ import {
   claimNotifications,
   documents,
   inspectionPhotos,
+  inspectionReports,
   inspections,
   inspectionShots,
   insurerQuotes,
@@ -84,6 +85,7 @@ export class DocumentsRepository {
         id: documents.id,
         kind: documents.kind,
         scanStatus: documents.scanStatus,
+        mimeType: documents.mimeType,
         uploadedByCustomerId: documents.uploadedByCustomerId,
         uploadedByStaffId: documents.uploadedByStaffId,
       })
@@ -116,6 +118,7 @@ export class DocumentsRepository {
             exists(tx.select(ONE).from(inspectionShots).where(eq(inspectionShots.documentId, documents.id))),
             exists(tx.select(ONE).from(quoteRequests).where(eq(quoteRequests.whiteBookDocumentId, documents.id))),
             exists(tx.select(ONE).from(inspectionPhotos).where(eq(inspectionPhotos.documentId, documents.id))),
+            exists(tx.select(ONE).from(inspectionReports).where(eq(inspectionReports.documentId, documents.id))),
             exists(tx.select(ONE).from(ncdEvidence).where(eq(ncdEvidence.documentId, documents.id))),
             exists(tx.select(ONE).from(claimAttachments).where(eq(claimAttachments.documentId, documents.id))),
             exists(tx.select(ONE).from(serviceRequestUpdates).where(onServiceRequest())),
@@ -137,7 +140,7 @@ export class DocumentsRepository {
     }
     const uploaded = eq(documents.uploadedByStaffId, principal.id);
     if (!principal.insurerId) return or(...always, uploaded);
-    return or(...always, uploaded, ...this.sentToInsurer(principal.insurerId, holds(principal, 'portal:ncd:read')));
+    return or(...always, uploaded, ...this.sentToInsurer(principal, principal.insurerId));
   }
 
   private ownedByCustomer(customerId: string): SQL[] {
@@ -190,6 +193,9 @@ export class DocumentsRepository {
           .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
           .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.customerId, customerId))),
       ),
+      exists(db.select(ONE).from(inspectionReports)
+        .innerJoin(inspections, eq(inspections.id, inspectionReports.inspectionId))
+        .where(and(eq(inspectionReports.documentId, documents.id), eq(inspections.customerId, customerId)))),
       // What the insurer sent the customer on their request; an internal attachment stays the insurer's.
       exists(
         db
@@ -201,10 +207,15 @@ export class DocumentsRepository {
     ];
   }
 
-  private sentToInsurer(insurerId: string, canReadNcd: boolean): SQL[] {
+  private sentToInsurer(principal: Principal, insurerId: string): SQL[] {
     const db = this.db;
+    const inspectionAccess = or(
+      inArray(inspections.purpose, ['GENERAL', 'UNDERWRITING']),
+      holds(principal, 'portal:request:read') ? eq(inspections.purpose, 'AFTER_PAYMENT') : undefined,
+      holds(principal, 'portal:claim:read') ? eq(inspections.purpose, 'CLAIM_ASSESSMENT') : undefined,
+    );
     return [
-      ...(canReadNcd ? [exists(
+      ...(holds(principal, 'portal:ncd:read') ? [exists(
         db.select(ONE).from(ncdEvidence)
           .innerJoin(ncdApplications, eq(ncdApplications.id, ncdEvidence.applicationId))
           .where(and(eq(ncdEvidence.documentId, documents.id), eq(ncdApplications.insurerId, insurerId))),
@@ -259,8 +270,11 @@ export class DocumentsRepository {
           .select(ONE)
           .from(inspectionPhotos)
           .innerJoin(inspections, eq(inspections.id, inspectionPhotos.inspectionId))
-          .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.insurerId, insurerId))),
+          .where(and(eq(inspectionPhotos.documentId, documents.id), eq(inspections.insurerId, insurerId), inspectionAccess)),
       ),
+      exists(db.select(ONE).from(inspectionReports)
+        .innerJoin(inspections, eq(inspections.id, inspectionReports.inspectionId))
+        .where(and(eq(inspectionReports.documentId, documents.id), eq(inspections.insurerId, insurerId), inspectionAccess))),
       exists(
         db
           .select(ONE)

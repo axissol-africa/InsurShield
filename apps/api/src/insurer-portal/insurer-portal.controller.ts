@@ -1,3 +1,5 @@
+import { LaterInspectionsService } from '../inspections/later-inspections.service.js';
+import { StartClaimInspectionDto, AddLaterInspectionEvidenceDto, PublishInspectionReportDto } from '../inspections/dto/later-inspection.dto.js';
 import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { InsurerPortalService } from './insurer-portal.service.js';
 import { InsurersService } from '../insurers/insurers.service.js';
@@ -39,6 +41,7 @@ export class InsurerPortalController {
     private readonly portal: InsurerPortalService,
     private readonly insurers: InsurersService,
     private readonly integrations: IntegrationsService,
+    private readonly laterInspections: LaterInspectionsService,
   ) {}
 
   // ── This insurer ────────────────────────────────────────────────
@@ -212,6 +215,40 @@ export class InsurerPortalController {
     @CurrentUser() principal: Principal,
   ) {
     return this.portal.addNote(principal, id, productVersionId, dto);
+  }
+
+  @Needs('portal:claim:update')
+  @Post('claims/:claimNumber/inspection')
+  @HttpCode(HttpStatus.CREATED)
+  startClaimInspection(@Param('claimNumber') claimNumber: string, @Body() dto: StartClaimInspectionDto, @CurrentUser() principal: Principal) {
+    return this.laterInspections.startClaim(principal, claimNumber, dto.method);
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/evidence')
+  @HttpCode(HttpStatus.CREATED)
+  addInspectionEvidence(@Param('id') id: string, @Body() dto: AddLaterInspectionEvidenceDto, @CurrentUser() principal: Principal) {
+    return this.laterInspections.addInsurerEvidence(principal, id, dto.photos);
+  }
+
+  @Needs('portal:inspection:read')
+  @Get('inspections/:id/evidence')
+  inspectionEvidence(@Param('id') id: string, @CurrentUser() principal: Principal) {
+    return this.laterInspections.insurerEvidence(principal, id);
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/report')
+  @HttpCode(HttpStatus.CREATED)
+  publishInspectionReport(@Param('id') id: string, @Body() dto: PublishInspectionReportDto, @CurrentUser() principal: Principal) {
+    return this.laterInspections.submitReport(principal, id, dto.documentId);
+  }
+
+  @Needs('portal:inspection:manage')
+  @Post('inspections/:id/reinspect')
+  @HttpCode(HttpStatus.CREATED)
+  reinspect(@Param('id') id: string, @CurrentUser() principal: Principal) {
+    return this.laterInspections.reinspect(principal, id);
   }
 
   // ── Inspections ─────────────────────────────────────────────────

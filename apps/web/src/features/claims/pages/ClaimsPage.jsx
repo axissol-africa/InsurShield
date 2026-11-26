@@ -208,7 +208,7 @@ export default function ClaimsPage() {
   const requestedAction = searchParams.get('action');
   const [mainTab, setMainTab] = useState(requestedAction === 'ncd' ? 'ncd' : 'claims');
   // Sub-view per tab: 'list' | 'new' | 'track' | 'detail' | 'success'
-  const [claimView, setClaimView] = useState(requestedAction === 'claim' ? 'new' : 'list');
+  const [claimView, setClaimView] = useState(searchParams.get('claim') ? 'detail' : requestedAction === 'claim' ? 'new' : 'list');
   const [ncdView, setNcdView] = useState(requestedAction === 'ncd' ? 'new' : 'list');
 
   const [selectedClaim, setSelectedClaim] = useState(null);
@@ -864,8 +864,9 @@ export default function ClaimsPage() {
   }
 
   // ── Claim Detail (after tracking lookup) ──
-  if (mainTab === 'claims' && claimView === 'detail' && selectedClaim) {
-    const claim = allClaims.find(c => c.id === selectedClaim.id) || selectedClaim;
+  const linkedClaim = allClaims.find((claim) => claim.claimNumber === searchParams.get('claim'));
+  if (mainTab === 'claims' && claimView === 'detail' && (selectedClaim || linkedClaim)) {
+    const claim = allClaims.find(c => c.id === selectedClaim?.id) || selectedClaim || linkedClaim;
     const claimNumber = claim.claimNumber || claim.id;
     const received = claim.status !== 'Notified';
 

@@ -93,7 +93,19 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applyRetentionInvariants);
   await query(db, applyClaimInvariants);
   await query(db, applyNcdInvariants);
+  await query(db, applyLaterInspectionInvariants);
   return db;
+}
+
+/** Later inspection report guards and evidence retention are SQL-only invariants. */
+async function applyLaterInspectionInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0049_batch_16_later_inspections.sql', import.meta.url), 'utf8');
+  const invariants = migration.slice(migration.indexOf('-- Later inspection invariants begin'), migration.indexOf('-- Later inspection invariants end'));
+  // The push schema already exposed this FK to 0046's reference-guard discovery.
+  await client.query('DROP TRIGGER "retention_documentId" ON inspection_reports');
+  for (const statement of invariants.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 /** The NCD migration adds holds and a reference guard after the table exists. */
@@ -1220,7 +1232,8 @@ describe('the final schema', () => {
     // finally when an inspection was decided.
     // Batch 15 adds account anonymisation and the two document deletion instants.
     // Batch 16 adds claim history, NCD declaration acceptance, code revocation and evidence creation.
-    expect(timestampColumns).toHaveLength(186);
+    // Later inspection reports add their creation instant.
+    expect(timestampColumns).toHaveLength(187);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

@@ -1,6 +1,6 @@
 import { lockOpenCustomer } from '../db/customer-lock.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   insurerQuotes,
@@ -312,6 +312,11 @@ export class PaymentsRepository {
     return redeemed.length === 1;
   }
 
+  async lockNcdCode(tx: Transaction, code: string) {
+    const [locked] = await tx.select().from(ncdCodes).where(eq(ncdCodes.code, code)).for('update');
+    return locked;
+  }
+
   /** Lock the code before checking its binding so redemption and revocation cannot race this decision. */
   async ncdUsable(
     tx: Transaction, code: string, owner: { insurerId: string; customerId: string },
@@ -323,7 +328,7 @@ export class PaymentsRepository {
       pendingUntil: Date | null;
     },
   ): Promise<false | 'IGNORE' | 'APPLY'> {
-    const [locked] = await tx.select().from(ncdCodes).where(eq(ncdCodes.code, code)).for('update');
+    const locked = await this.lockNcdCode(tx, code);
     if (!locked) return false;
     if (locked.insurerId !== owner.insurerId) return ncdPercentage === null ? 'IGNORE' : false;
     const bound = await findBoundNcdCode(tx, code, owner.customerId);
@@ -347,11 +352,18 @@ export class PaymentsRepository {
     if (ncdPercentage === null) return confirmation?.reservedNcdCode ? false : 'IGNORE';
     if (ncdPercentage !== bound.percentage) return false;
     if (!confirmation) {
-      // A confirmer may already be updating the payment while waiting for this code lock.
-      // Refuse its still-visible reservation instead of waiting on its unique-index entry.
-      const [reserved] = await tx.select({ id: payments.id }).from(payments).where(and(
-        eq(payments.reservedNcdCode, code), inArray(payments.status, [...OPEN_PAYMENT_STATUSES]),
-      )).limit(1);
+      // Confirmation releases the open index and creates reconciliation atomically
+      // under this code lock. An already-reserved retry keeps its confirmation rights.
+      const [reserved] = await tx.select({ id: payments.id }).from(payments)
+        .leftJoin(reconciliationItems, and(
+          eq(reconciliationItems.paymentId, payments.id),
+          inArray(reconciliationItems.kind, ['AMOUNT_MISMATCH', 'REFUND_REQUIRED']),
+          ne(reconciliationItems.status, 'RESOLVED'),
+        ))
+        .where(and(
+          eq(payments.reservedNcdCode, code),
+          or(inArray(payments.status, [...OPEN_PAYMENT_STATUSES]), isNotNull(reconciliationItems.id)),
+        )).limit(1);
       if (reserved) return false;
     }
     const priceHeld = confirmation?.reservedNcdCode === code && confirmation.pendingUntil !== null && at <= confirmation.pendingUntil;

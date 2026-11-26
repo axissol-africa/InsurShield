@@ -184,6 +184,10 @@ export class ClaimsService {
             'CLAIM_INVALID_TRANSITION',
             'This action is not available at the current claim status.',
           );
+        if ((action === 'APPROVE' || action === 'DECLINE' || action === 'CLOSE') &&
+            await this.claims.hasOpenInspection(tx, claimNumber)) {
+          throw ApiException.conflict('CLAIM_INSPECTION_OPEN', 'Complete or cancel the open inspection before deciding the claim.');
+        }
         if (action === 'SUBMIT_EVIDENCE') {
           await this.documents.assertAttachable(
             tx,
@@ -262,6 +266,7 @@ export class ClaimsService {
   ): Promise<ClaimTimeline> {
     const events = await this.claims.updates(tx, claim.claimNumber);
     const attachments = await this.claims.attachments(tx, claim.claimNumber);
+    const inspection = await this.claims.latestInspection(tx, claim);
     const updates: ClaimTimelineUpdate[] = [
       {
         id: `${claim.claimNumber}:submitted`,
@@ -315,6 +320,7 @@ export class ClaimsService {
       responseDueOn: claim.responseDueOn,
       lateSubmission: claim.lateSubmission,
       insurerClaimReference: claim.insurerClaimReference,
+      ...(inspection && { inspection: { ...inspection, status: toContract.inspectionStatus(inspection.status) } }),
       updates,
     };
   }

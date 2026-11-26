@@ -8,6 +8,7 @@ import {
   insurerProductVersions,
   insurerProducts,
   insurerQuotes,
+  inspections,
   ncdCodes,
   ncdApplications,
   vehicles,
@@ -131,7 +132,10 @@ describe('payments', () => {
    * A product-selection request where one insurer quoted each of the given
    * products. The database only takes a quote for a product the customer chose.
    */
-  async function productSelectionQuotes(quoteOverrides: Array<Partial<typeof insurerQuotes.$inferInsert>>) {
+  async function productSelectionQuotes(
+    quoteOverrides: Array<Partial<typeof insurerQuotes.$inferInsert>>,
+    inspectionRules: Array<Pick<typeof insurerProductVersions.$inferInsert, 'inspectionRule' | 'inspectionTiming' | 'inspectionMethod'>> = [],
+  ) {
     const customer = await buildCustomer(testApp.db);
     const insurer = await buildInsurer(testApp.db);
     const { quoteRequest } = await buildQuoteRequest(
@@ -153,7 +157,7 @@ describe('payments', () => {
           name: `Comprehensive ${index + 1}`,
           coverType: 'COMPREHENSIVE' as const,
           coverGuide: {},
-          inspectionRule: 'NOT_REQUIRED' as const,
+          ...(inspectionRules[index] ?? { inspectionRule: 'NOT_REQUIRED' as const }),
           rateBps: 500,
           allowedDurations: ['Q4' as const],
           effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
@@ -172,6 +176,8 @@ describe('payments', () => {
         coverType: selected.coverType,
         coverGuide: selected.coverGuide,
         inspectionRule: selected.inspectionRule,
+        inspectionTiming: selected.inspectionTiming,
+        inspectionMethod: selected.inspectionMethod,
         status: 'QUOTED' as const,
       })),
     );
@@ -910,6 +916,62 @@ describe('payments', () => {
     });
   });
 
+  describe('after-payment inspection creation', () => {
+    const required = { inspectionRule: 'REQUIRED', inspectionTiming: 'AFTER_PAYMENT', inspectionMethod: 'PHYSICAL' } as const;
+    const inspectionRows = (customerId: string) => testApp.db.select().from(inspections).where(eq(inspections.customerId, customerId));
+    async function selectedInspectionQuote(rules = [required] as Array<Pick<typeof insurerProductVersions.$inferInsert, 'inspectionRule' | 'inspectionTiming' | 'inspectionMethod'>>) {
+      const fixture = await productSelectionQuotes(rules.map(() => ({})), rules);
+      await testApp.http.post(`/api/v1/quote-requests/${fixture.quoteRequest.id}/selection`)
+        .set(await asCustomer(fixture.customer)).send({ insurerQuoteId: fixture.quote.id }).expect(200);
+      return fixture;
+    }
+
+    it('opens exactly one for the chosen snapshot across concurrent callbacks, status checks and payment replays', async () => {
+      const { customer, quote, quoteRequest, versions } = await selectedInspectionQuote();
+      const key = randomUUID();
+      const started = await pay(customer, bodyFor(quote, { mobileNumber: WALLET.waits }), key);
+      expect(started.status).toBe(201);
+      const payment = await paymentRow(started.body.transactionId);
+      // The historical selected terms must survive later edits to the source version.
+      await testApp.db.update(insurerProductVersions).set({ inspectionRule: 'NOT_REQUIRED', inspectionTiming: null, inspectionMethod: null })
+        .where(eq(insurerProductVersions.id, versions[0].id));
+      const event = providerEvent(payment.providerPaymentId!);
+      const held = await lockedBy('SELECT id FROM payments WHERE id = $1 FOR UPDATE', [payment.id]);
+      const receipts = await queueBehind(held, '%payments%for update', 2, [() => send(event), () => send({ ...event, eventId: randomUUID() })]);
+      expect(receipts.map((receipt) => receipt.body.outcome).sort((a, b) => a.localeCompare(b))).toEqual(['ALREADY_APPLIED', 'POLICY_CREATED']);
+      expect((await send(event)).body.replayed).toBe(true);
+      await testApp.app.get(PaymentEventsService).applyStatus(payment.id, {
+        status: 'CONFIRMED', amountMinor: payment.amountMinor, currency: payment.currency, reference: 'REPLAY', reason: null,
+      });
+      expect((await pay(customer, bodyFor(quote, { mobileNumber: WALLET.waits }), key)).body.transactionId).toBe(payment.transactionId);
+      const [policy] = await policiesFor([quoteRequest.id]);
+      expect(await inspectionRows(customer.id)).toEqual([expect.objectContaining({
+        policyNumber: policy.policyNumber, claimNumber: null, purpose: 'AFTER_PAYMENT', stage: 'AFTER_PAYMENT', insurerId: policy.insurerId,
+      })]);
+    });
+
+    it.each([
+      { inspectionRule: 'REQUIRED', inspectionTiming: 'BEFORE_PAYMENT', inspectionMethod: 'PHYSICAL' },
+      { inspectionRule: 'OPTIONAL', inspectionTiming: 'AFTER_PAYMENT', inspectionMethod: 'PHYSICAL' },
+      { inspectionRule: 'NOT_REQUIRED', inspectionTiming: null, inspectionMethod: null },
+    ] as const)('does not open for %j or another selected product', async (rule) => {
+      const { customer, quote } = await selectedInspectionQuote([rule, required]);
+      expect((await payAndSettle(customer, bodyFor(quote))).body.policyNumber).toBeTruthy();
+      expect(await inspectionRows(customer.id)).toEqual([]);
+    });
+
+    it.each(['mismatch', 'rejected'] as const)('does not open when the provider outcome is %s', async (outcome) => {
+      const { customer, quote, quoteRequest } = await selectedInspectionQuote();
+      const started = await pay(customer, bodyFor(quote, { mobileNumber: WALLET.waits }));
+      const payment = await paymentRow(started.body.transactionId);
+      const receipt = await send(providerEvent(payment.providerPaymentId!, outcome === 'mismatch'
+        ? { amountMinor: payment.amountMinor - 1 } : { type: 'payment.failed' }));
+      expect(receipt.body.outcome).toBe(outcome === 'mismatch' ? 'AMOUNT_MISMATCH' : 'FAILED');
+      expect(await policiesFor([quoteRequest.id])).toEqual([]);
+      expect(await inspectionRows(customer.id)).toEqual([]);
+    });
+  });
+
   describe('the no-claim discount code on the request', () => {
     const redeemedAtOf = async (code: string) => (await testApp.db.select().from(ncdCodes).where(eq(ncdCodes.code, code)))[0].redeemedAt;
 
@@ -951,6 +1013,62 @@ describe('payments', () => {
       await testApp.db.update(insurerQuotes).set({ ncdPercentage: codeRow.percentage }).where(eq(insurerQuotes.quoteRequestId, quoteRequestId));
       return policy;
     }
+
+    it.each(['AMOUNT_MISMATCH', 'REFUND_REQUIRED'] as const)('holds a code during unresolved %s capture, including a concurrent start', async (kind) => {
+      const customer = await buildCustomer(testApp.db);
+      const insurer = await buildInsurer(testApp.db);
+      const code = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.insurer.id });
+      const request = { ncdCode: code.code };
+      const one = await buildPayableQuote(testApp.db, { customer, insurer, request });
+      const two = await buildPayableQuote(testApp.db, { customer, insurer, request, quote: { ncdPercentage: code.percentage } });
+      await bindCode(code.code, one.quoteRequest.id, customer, insurer);
+      await testApp.db.update(quoteRequests).set({ vehicleId: one.quoteRequest.vehicleId }).where(eq(quoteRequests.id, two.quoteRequest.id));
+      const started = await pay(customer, bodyFor(one.quote, { mobileNumber: WALLET.waits }));
+      const payment = await paymentRow(started.body.transactionId);
+      if (kind === 'REFUND_REQUIRED') await testApp.db.update(insurerQuotes).set({ unpayableAt: new Date(), unpayableReason: 'INSURER_SUSPENDED' }).where(eq(insurerQuotes.id, one.quote.id));
+      const event = providerEvent(payment.providerPaymentId!, kind === 'AMOUNT_MISMATCH' ? { amountMinor: payment.amountMinor - 1 } : {});
+      const held = await lockedBy('SELECT code FROM ncd_codes WHERE code = $1 FOR UPDATE', [code.code]);
+      const [capture, competing] = await queueBehind(held, '%ncd_codes%for update', 2, [() => send(event), () => pay(customer, bodyFor(two.quote))]);
+      expect(capture.body.outcome).toBe(kind);
+      expect(competing.body.code).toBe('NCD_CODE_UNAVAILABLE');
+      expect((await pay(customer, bodyFor(two.quote))).body.code).toBe('NCD_CODE_UNAVAILABLE');
+      expect((await send(event)).body.replayed).toBe(true);
+      expect((await send({ ...event, eventId: randomUUID() })).body.outcome).toBe('ALREADY_APPLIED');
+      expect(await redeemedAtOf(code.code)).toBeNull();
+      const [item] = await itemsFor(payment.id);
+      await testApp.db.update(reconciliationItems).set({ status: 'IN_PROGRESS' }).where(eq(reconciliationItems.id, item.id));
+      expect((await pay(customer, bodyFor(two.quote))).body.code).toBe('NCD_CODE_UNAVAILABLE');
+      await testApp.db.update(reconciliationItems).set({ status: 'RESOLVED', outcome: 'REFUNDED', resolvedAt: new Date(), resolutionNote: 'Provider refund verified.' })
+        .where(eq(reconciliationItems.id, item.id));
+      expect((await pay(customer, bodyFor(two.quote))).status).toBe(201);
+    });
+
+    it('confirms an already-reserved retry concurrently with an older terminal late capture', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const insurer = await buildInsurer(testApp.db);
+      const code = await buildApprovedNcdCode(testApp.db, { customerId: customer.id, insurerId: insurer.insurer.id });
+      const request = { ncdCode: code.code };
+      const old = await buildPayableQuote(testApp.db, { customer, insurer, request });
+      const retry = await buildPayableQuote(testApp.db, { customer, insurer, request, quote: { ncdPercentage: code.percentage } });
+      await bindCode(code.code, old.quoteRequest.id, customer, insurer);
+      await testApp.db.update(quoteRequests).set({ vehicleId: old.quoteRequest.vehicleId }).where(eq(quoteRequests.id, retry.quoteRequest.id));
+      const first = await pay(customer, bodyFor(old.quote, { mobileNumber: WALLET.waits }));
+      const previous = await paymentRow(first.body.transactionId);
+      await testApp.db.update(payments).set({ status: 'EXPIRED' }).where(eq(payments.id, previous.id));
+      const started = await pay(customer, bodyFor(retry.quote, { mobileNumber: WALLET.waits }));
+      expect(started.status).toBe(201);
+      const current = await paymentRow(started.body.transactionId);
+      const late = providerEvent(previous.providerPaymentId!);
+      const confirmed = providerEvent(current.providerPaymentId!);
+      const held = await lockedBy('SELECT code FROM ncd_codes WHERE code = $1 FOR UPDATE', [code.code]);
+      const receipts = await queueBehind(held, '%ncd_codes%for update', 2, [() => send(late), () => send(confirmed)]);
+      expect(receipts.map((receipt) => receipt.body.outcome)).toEqual(['REFUND_REQUIRED', 'POLICY_CREATED']);
+      expect(await policiesFor([old.quoteRequest.id, retry.quoteRequest.id])).toEqual([expect.objectContaining({ paymentId: current.id })]);
+      expect(await itemsFor(previous.id)).toEqual([expect.objectContaining({ kind: 'REFUND_REQUIRED' })]);
+      expect(await redeemedAtOf(code.code)).not.toBeNull();
+      expect((await send(late)).body.replayed).toBe(true);
+      expect((await send(confirmed)).body.replayed).toBe(true);
+    });
 
     it('does not reserve or redeem a modern code for an ordinary same-issuer quote', async () => {
       const customer = await buildCustomer(testApp.db);

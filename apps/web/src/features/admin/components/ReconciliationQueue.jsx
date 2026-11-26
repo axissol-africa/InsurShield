@@ -116,7 +116,7 @@ function ItemCard({ item, me, api, onChanged }) {
   const open = item.status !== 'RESOLVED';
   const refundInFlight = item.refunds.some((refund) => ['PROPOSED', 'APPROVED', 'SUBMITTED'].includes(refund.status));
   const remaining = item.payment ? Math.round((item.payment.amount - item.payment.refunded) * 100) / 100 : 0;
-  const canRefund = open && item.payment?.status === 'CONFIRMED' && item.payment.refundable !== false && remaining > 0 && !refundInFlight;
+  const canRefund = open && item.payment?.refundable === true && remaining > 0 && !refundInFlight;
 
   const act = async (work, fallback) => {
     setPending(true);
@@ -162,7 +162,7 @@ function ItemCard({ item, me, api, onChanged }) {
             ))}
           </ul>
         )}
-        {open && item.payment?.refundable === false && <p className="text-muted-foreground">This payment was taken before payments went through a provider. Refund it outside InsurShield, then resolve the item.</p>}
+        {open && item.payment?.requiresExternalRefund && <p className="text-muted-foreground">This payment was taken before payments went through a provider. Refund it outside InsurShield, then resolve the item.</p>}
         {item.resolutionNote && <p><span className="text-muted-foreground">Resolution: </span>{item.resolutionNote}</p>}
 
         {open && (
