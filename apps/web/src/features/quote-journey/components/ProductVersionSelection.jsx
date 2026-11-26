@@ -1,3 +1,6 @@
+import { Button } from '@/components/ui/primitives/button';
+import { useInsurerReputation } from '@/features/reputation/hooks/useInsurerReputation';
+import { ReputationSummary } from '@/features/reputation/components/InsurerReputation';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/api';
 import { Link } from 'react-router-dom';
@@ -150,6 +153,7 @@ export default function ProductVersionSelection({
   onRequirementDocumentChange,
 }) {
   const [products, setProducts] = useState([]);
+  const reputation = useInsurerReputation(products.map((product) => product.insurer.id));
   const [directory, setDirectory] = useState(null);
   const [error, setError] = useState('');
   const [estimates, setEstimates] = useState({});
@@ -285,6 +289,12 @@ export default function ProductVersionSelection({
           <AlertDescription>There are no published products for this cover type right now. Please try again later.</AlertDescription>
         </Alert>
       )}
+      {ready && reputation.error && (
+        <div className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+          <span role="status">Insurer ratings and badges are temporarily unavailable.</span>
+          <Button type="button" variant="link" size="sm" onClick={reputation.reload}>Retry ratings and badges</Button>
+        </div>
+      )}
       {ready && products.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
           {products.map((product) => {
@@ -305,6 +315,7 @@ export default function ProductVersionSelection({
                     <div className="min-w-0 flex-1">
                       <CardTitle className="text-base">{product.version.name}</CardTitle>
                       <p className="mt-1 text-sm font-medium text-primary">{product.insurer.name}</p>
+                      <ReputationSummary reputation={reputation.items.find((item) => item.insurerId.toLowerCase() === product.insurer.id?.toLowerCase())} />
                       {product.insurer.id && <Link className="text-sm text-primary underline" to={`/insurers/${encodeURIComponent(product.insurer.id)}`} target="_blank" rel="noopener noreferrer">View insurer profile <span className="sr-only">for {product.insurer.name} (opens in a new tab)</span></Link>}
                     </div>
                     <Badge variant="outline">v{product.version.number}</Badge>

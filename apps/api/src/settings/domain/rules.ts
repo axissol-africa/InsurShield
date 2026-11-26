@@ -140,6 +140,14 @@ const schemas = {
     appealDecisionDays: z.number().int().min(1).max(3_660),
     privateRetentionDays: z.number().int().min(1).max(36_500),
   }),
+  REPUTATION_POLICY: z.strictObject({
+    ratingWindowDays: z.number().int().min(1).max(3_660),
+    minimumReviews: z.number().int().min(1).max(1_000_000),
+    badgeWindowDays: z.number().int().min(1).max(3_660),
+    badgeMinimumPolicies: z.number().int().min(1).max(1_000_000),
+    badgeThresholdBps: z.number().int().min(1).max(10_000),
+    badgeValidityHours: z.number().int().min(1).max(30 * 24),
+  }),
   ACCOUNT_RETENTION: z.object({ daysAfterClosure: z.number().int().min(30).max(36_500) }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
@@ -233,6 +241,8 @@ const defaults = {
   RENEWAL_POLICY: { windowDays: 60, reminderDays: [30, 14, 3] },
   // Provisional: open question 3 of the batch 15 plan, seven years after closure.
   ACCOUNT_RETENTION: { daysAfterClosure: 2_555 },
+  // Provisional until Product and Compliance approve the methodology under DEC-014.
+  REPUTATION_POLICY: { ratingWindowDays: 365, minimumReviews: 10, badgeWindowDays: 90, badgeMinimumPolicies: 30, badgeThresholdBps: 9_000, badgeValidityHours: 48 },
   REVIEW_POLICY: { submissionDays: 90, editDays: 30, appealDays: 30, appealDecisionDays: 14, privateRetentionDays: 365 },
   // Provisional servicing rules until the reporting period and coverage matrix are approved.
   CLAIM_REPORTING: {

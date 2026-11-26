@@ -123,6 +123,7 @@ export const PERMISSIONS = {
   'admin:product:read': INSURSHIELD_ADMIN,
   'admin:product:review': INSURSHIELD_ADMIN,
   'admin:review:moderate': INSURSHIELD_ADMIN,
+  'admin:badge:manage': INSURSHIELD_ADMIN,
   'admin:rule:read': INSURSHIELD_ADMIN,
   'admin:rule:manage': INSURSHIELD_ADMIN,
   'admin:rule:confirm': INSURSHIELD_ADMIN,

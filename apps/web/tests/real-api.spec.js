@@ -35,10 +35,35 @@ test('public insurer profile uses the live API and handles a profile that has no
   await expect(page.getByRole('heading', { name: 'Profile not available', exact: true })).toBeVisible();
 });
 
+test('the profile fetches live reputation and leaves provisional results out of public display', async ({ page }) => {
+  const id = '10000000-0000-4000-8000-000000000018';
+  await page.route(`${API_BASE_URL}/insurer-profiles/${id}`, (route) => route.fulfill({
+    headers: {
+      'access-control-allow-origin': 'http://127.0.0.1:5181',
+      'access-control-allow-credentials': 'true',
+    },
+    json: {
+      insurerId: id, name: 'Example Assurance', status: 'Active',
+      licence: { number: 'TEST-18', current: true, expiresAt: null },
+      profile: { brandName: 'Example Assurance', description: 'Motor cover.', serviceInformation: 'Contact our service desk.' },
+      products: [],
+    },
+  }));
+  const liveReputation = page.waitForResponse((response) =>
+    response.url().startsWith(`${API_BASE_URL}/insurer-reputation?`) && response.request().method() === 'GET',
+  );
+  await page.goto(`/insurers/${id}`);
+  const response = await liveReputation;
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toEqual({ items: [] });
+  await expect(page.getByText('No published ratings or performance badges are available.')).toBeVisible();
+});
+
 for (const size of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-  test(`customers can read a verified review and reply at ${size.width}px`, async ({ page }) => {
+  test(`customers can read reputation evidence and verified reviews at ${size.width}px`, async ({ page }) => {
     const id = '10000000-0000-4000-8000-000000000017';
     await page.setViewportSize(size);
+    const expiresAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
     const cors = {
       'access-control-allow-origin': 'http://127.0.0.1:5181',
       'access-control-allow-credentials': 'true',
@@ -58,9 +83,23 @@ for (const size of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) 
         response: { text: 'Thank you for the feedback.', publishedAt: '2026-11' } }],
       hasMore: false, page: 1,
     } }));
+    await page.route(`${API_BASE_URL}/insurer-reputation?*`, (route) => route.fulfill({ headers: cors, json: {
+      items: [{
+        insurerId: id,
+        rating: { average: 4.6, reviewCount: 12, minimumReviews: 10, periodStart: '2025-11-25T08:00:00Z',
+          periodEnd: '2026-11-25T08:00:00Z', method: 'Average of verified reviews', ruleVersion: 1 },
+        badges: [{ insurerId: id, code: 'ON_TIME_CERTIFICATES', label: 'On-time policy certificates', sampleCount: 30,
+          onTimeCount: 27, minimumPolicies: 30, thresholdBps: 9000, percentage: 90, periodStart: '2026-08-27T08:00:00Z',
+          periodEnd: '2026-11-25T08:00:00Z', awardedAt: '2026-11-25T08:00:00Z', expiresAt,
+          ruleVersion: 1, dataSource: 'Confirmed payments', method: 'Recorded certificate deadlines',
+          disclaimer: 'Past performance does not guarantee future results.' }],
+      }],
+    } }));
     await page.goto(`/insurers/${id}`);
     await expect(page.getByRole('heading', { name: 'Verified policy purchase reviews' })).toBeVisible();
     await expect(page.getByText('4 out of 5 stars')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Verified review rating' })).toContainText('4.6 out of 5 · 12 verified reviews');
+    await expect(page.getByRole('region', { name: 'On-time policy certificates' })).toContainText('27 of 30 eligible policies');
     await expect(page.getByText('Thank you for the feedback.')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
   });

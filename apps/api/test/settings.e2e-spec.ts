@@ -74,6 +74,37 @@ describe('versioned rule settings and comparison taxonomy', () => {
     }
   });
 
+  it('governs reputation policy defaults, validation, confirmation permissions and audited versions', async () => {
+    const settings = testApp.app.get(SettingsService);
+    const defaults = { ratingWindowDays: 365, minimumReviews: 10, badgeWindowDays: 90, badgeMinimumPolicies: 30, badgeThresholdBps: 9_000, badgeValidityHours: 48 };
+    const before = new Date('2001-11-25T21:59:59Z');
+    const effectiveAt = new Date('2001-11-25T22:00:00Z');
+    expect(await settings.effective('REPUTATION_POLICY', effectiveAt)).toEqual({ value: defaults, provisional: true, version: null });
+    await testApp.http.post('/api/v1/admin/settings/rules/REPUTATION_POLICY/versions').set(asAdmin)
+      .send({ value: { ...defaults, badgeThresholdBps: 10_001 }, effectiveFrom: '2001-11-26' })
+      .expect(400).expect(({ body }) => expect(body.code).toBe('RULE_VALUE_INVALID'));
+    const value = { ...defaults, badgeThresholdBps: 9_500 };
+    const created = await testApp.http.post('/api/v1/admin/settings/rules/REPUTATION_POLICY/versions').set(asAdmin)
+      .send({ value, effectiveFrom: '2001-11-26', effectiveUntil: '2001-11-26' }).expect(201);
+    expect(created.body).toMatchObject({ key: 'REPUTATION_POLICY', state: 'PROVISIONAL', value });
+    expect(await settings.effective('REPUTATION_POLICY', before)).toEqual({ value: defaults, provisional: true, version: null });
+    expect(await settings.effective('REPUTATION_POLICY', effectiveAt)).toEqual({ value, provisional: true, version: created.body.versionNumber });
+
+    const insurer = await buildInsurer(testApp.db, { staff: { role: 'INSURER_ADMIN' } });
+    const asInsurer = await signIn(testApp.http, insurer.staff);
+    const confirmPath = `/api/v1/admin/settings/rules/REPUTATION_POLICY/versions/${created.body.id}/confirm`;
+    await testApp.http.post(confirmPath).set(asInsurer).expect(403);
+    expect((await settings.effective('REPUTATION_POLICY', effectiveAt)).provisional).toBe(true);
+    const confirmed = await testApp.http.post(confirmPath).set(asAdmin).expect(201);
+    expect(confirmed.body).toMatchObject({ state: 'CONFIRMED', value, confirmedByStaffId: admin.id });
+    expect(await settings.effective('REPUTATION_POLICY', effectiveAt)).toEqual({ value, provisional: false, version: confirmed.body.versionNumber });
+    expect(await settings.effective('REPUTATION_POLICY', new Date('2001-11-26T22:00:00Z'))).toEqual({ value: defaults, provisional: true, version: null });
+    for (const [id, action] of [[created.body.id, 'rule_version.provisional_created'], [confirmed.body.id, 'rule_version.confirmed']]) {
+      const events = await testApp.db.select().from(auditLogs).where(eq(auditLogs.entityId, id));
+      expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ action, actorId: admin.id, correlationId: 'REPUTATION_POLICY' })]));
+    }
+  });
+
   it('validates a structured taxonomy and lets administrators disable, rather than erase, historic terms', async () => {
     const code = `OWN_DAMAGE_${randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()}`;
     const created = await testApp.http

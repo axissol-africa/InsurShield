@@ -364,3 +364,14 @@ export const reviewAppeals = {
   list: (options) => apiClient.get('/review-appeals', options),
   submit: (body) => apiClient.post('/review-appeals', body),
 };
+
+export const insurerReputation = {
+  list: (insurerIds, options = {}) => apiClient.get('/insurer-reputation', { ...options, params: { insurerIds: insurerIds.join(',') } }),
+};
+
+const badgeGovernancePath = (insurerId) => `/admin/insurer-reputation/${encodeURIComponent(insurerId)}/badge`;
+
+export const badgeGovernance = {
+  get: (insurerId) => apiClient.get(badgeGovernancePath(insurerId)),
+  update: (insurerId, decision) => apiClient.put(badgeGovernancePath(insurerId), decision),
+};

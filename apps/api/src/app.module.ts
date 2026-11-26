@@ -35,6 +35,7 @@ import { IntegrationsModule } from './integrations/integrations.module.js';
 import { ReviewsModule } from './reviews/reviews.module.js';
 import { InsurerProfilesModule } from './insurer-profiles/insurer-profiles.module.js';
 import { ReviewAppealsModule } from './review-appeals/review-appeals.module.js';
+import { ReputationModule } from './reputation/reputation.module.js';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { ReviewAppealsModule } from './review-appeals/review-appeals.module.js';
     ReviewsModule,
     InsurerProfilesModule,
     ReviewAppealsModule,
+    ReputationModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -1606,3 +1606,14 @@ export const reviewAppeals = {
   list: async () => [],
   submit: async () => { throw new Error('Review appeals require the connected service.'); },
 };
+
+export const insurerReputation = { list: async () => ({ items: [] }) };
+
+async function badgeGovernanceUnavailable() {
+  throw new Error('Badge governance requires a connected API.');
+}
+
+export const badgeGovernance = {
+  get: badgeGovernanceUnavailable,
+  update: badgeGovernanceUnavailable,
+};
