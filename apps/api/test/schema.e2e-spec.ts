@@ -1196,7 +1196,8 @@ describe('the final schema', () => {
     // when a product was assigned and when its owner was warned, and then
     // when a quote was withdrawn and when the customer chose one, and
     // finally when an inspection was decided.
-    expect(timestampColumns).toHaveLength(179);
+    // Batch 15 adds account anonymisation and the two document deletion instants.
+    expect(timestampColumns).toHaveLength(182);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }
