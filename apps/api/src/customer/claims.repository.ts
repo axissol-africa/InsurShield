@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import { claimAttachments, claimNotifications, customers, insurers, policies, serviceRequests, vehicles } from '../db/schema.js';
 
@@ -51,13 +51,20 @@ export class ClaimsRepository {
       make: vehicles.make,
       model: vehicles.model,
       year: vehicles.year,
-      cancellationDay: sql<string | null>`(${tx.select({ day: serviceRequests.effectiveDate }).from(serviceRequests)
-        .where(and(eq(serviceRequests.policyNumber, policies.policyNumber), eq(serviceRequests.type, 'CANCELLATION'),
-          eq(serviceRequests.status, 'COMPLETED'))).orderBy(asc(serviceRequests.effectiveDate)).limit(1)})::text`,
     }).from(policies).innerJoin(vehicles, eq(vehicles.id, policies.vehicleId))
       .where(and(eq(policies.customerId, customerId), eq(policies.policyNumber, policyNumber)))
       .for('share', { of: policies });
-    return record;
+    if (!record) return undefined;
+    if (record.policy.status !== 'CANCELLED') return { ...record, cancellationDay: null };
+
+    // Read after acquiring the policy lock so a cancellation completed while waiting is visible here.
+    const [cancellation] = await tx.select({ day: serviceRequests.effectiveDate })
+      .from(serviceRequests)
+      .where(and(eq(serviceRequests.policyNumber, policyNumber), eq(serviceRequests.type, 'CANCELLATION'),
+        eq(serviceRequests.status, 'COMPLETED')))
+      .orderBy(asc(serviceRequests.effectiveDate))
+      .limit(1);
+    return { ...record, cancellationDay: cancellation?.day ?? null };
   }
 
   /** A share lock prevents the final insurer removal check from racing a submission. */

@@ -48,3 +48,36 @@ it('retains prototype intake without a linked policy', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Prototype request received');
   expect(api.claims.notify).toHaveBeenCalledWith(expect.objectContaining({ policyNumber: undefined }), 'key');
 });
+
+it('uses the Lusaka reporting day even when the browser is in another time zone', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    vi.setSystemTime(new Date('2026-11-25T21:59:00Z'));
+    api.claims.intakeRules.mockResolvedValue({ reportingDays: 14, responseDays: 7, excludedTypes: { COMPREHENSIVE: [], THIRD_PARTY: [] }, requireAttachmentsFor: [], requirePoliceReportFor: [] });
+    const { container } = mount();
+    await screen.findByText(/Report within 14 days/);
+    const date = container.querySelector('input[type="date"]');
+    expect(date).toHaveAttribute('max', '2026-11-25');
+    fireEvent.change(date, { target: { value: '2026-11-11' } });
+    expect(screen.queryByLabelText(/Reason for Late Submission/)).not.toBeInTheDocument();
+    vi.setSystemTime(new Date('2026-11-25T22:00:00Z'));
+    fireEvent.change(date, { target: { value: '2026-11-12' } });
+    expect(date).toHaveAttribute('max', '2026-11-26');
+    fireEvent.change(date, { target: { value: '2026-11-11' } });
+    expect(screen.getByLabelText(/Reason for Late Submission/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('clears a late-reporting refusal when the incident date is corrected', async () => {
+  api.claims.notify.mockRejectedValueOnce(Object.assign(new Error('Explain the delay'), { code: 'CLAIM_LATE_REASON_REQUIRED' }));
+  const { container } = mount();
+  fireEvent.click(await screen.findByRole('button', { name: /POL-1/ }));
+  fireEvent.submit(container.querySelector('form'));
+  expect(await screen.findByLabelText(/Reason for Late Submission/)).toBeVisible();
+  fireEvent.change(container.querySelector('input[type="date"]'), { target: { value: new Date().toISOString().slice(0, 10) } });
+  expect(screen.queryByLabelText(/Reason for Late Submission/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Explain the delay')).not.toBeInTheDocument();
+  expect(screen.getByPlaceholderText('e.g. BAA 1234')).toHaveValue('BAA 1234');
+});

@@ -1777,6 +1777,37 @@ describe('customer', () => {
       expect(await claimsOf(customer.id)).toEqual([]);
     });
 
+    it('checks the effective cancellation day after waiting for concurrent completion', async () => {
+      const customer = await buildCustomer(testApp.db);
+      const { insurer, policy } = await issuedClaimPolicy(customer);
+      const session = await asCustomer(customer);
+      const reference = unique('SR');
+      const effectiveDate = lusakaDay(inDays(-5));
+      await testApp.db.insert(serviceRequests).values({
+        reference, policyNumber: policy.policyNumber, customerId: customer.id, insurerId: insurer.insurer.id,
+        type: 'CANCELLATION', status: 'APPROVED', reason: 'Vehicle sold', requestedEffectiveDate: effectiveDate,
+        decision: 'APPROVED', decidedByStaffId: insurer.staff.id, decidedAt: inDays(-6), effectiveDate, refundAmountMinor: 0,
+      });
+      const completedAt = inDays(-1);
+      const completing = await holdLocks(side.pool, async (db) => {
+        await db.update(policies).set({ status: 'CANCELLED', cancelledAt: completedAt })
+          .where(eq(policies.policyNumber, policy.policyNumber));
+        await db.update(serviceRequests).set({ status: 'COMPLETED', completedAt, completedByStaffId: insurer.staff.id })
+          .where(eq(serviceRequests.reference, reference));
+      });
+      const [uncovered] = await queueBehind(completing, '%"policies"%', 1, [async () =>
+        testApp.http.post('/api/v1/claims').set(session).send(claim(insurer.insurer.id, {
+          policyNumber: policy.policyNumber, incidentDate: lusakaDay(inDays(-3)),
+        })),
+      ]);
+      expect(uncovered.status).toBe(400);
+      expect(uncovered.body.code).toBe('CLAIM_OUTSIDE_COVER');
+      expect(await claimsOf(customer.id)).toEqual([]);
+      await testApp.http.post('/api/v1/claims').set(session).send(claim(insurer.insurer.id, {
+        policyNumber: policy.policyNumber, incidentDate: lusakaDay(inDays(-6)),
+      })).expect(201);
+    });
+
     describe('on a pool of two connections', () => {
       let small: TestApp;
       let pool: Pool;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateBasePremium, calculatePolicyDates, calculatePremium, formatDate, formatZMW, proratePremium, validateNcdCode } from './premiumEngine';
+import { calculateBasePremium, calculatePolicyDates, calculatePremium, formatDate, formatLusakaDate, formatZMW, proratePremium, validateNcdCode } from './premiumEngine';
 
 const insurer = { id: '1', name: 'Prestige Assurance', ratePercentage: 4.5, ncdAccepted: true };
 
@@ -101,6 +101,10 @@ describe('formatters', () => {
     expect(formatDate('2027-03-15')).toBe('15 Mar 2027');
     expect(formatDate('not a date')).toBe('—');
     expect(formatDate(null)).toBe('—');
+  });
+  it('uses the Lusaka day for a timestamp at the local midnight boundary', () => {
+    expect(formatLusakaDate('2026-11-25T21:59:00Z')).toBe('25 Nov 2026');
+    expect(formatLusakaDate('2026-11-25T22:00:00Z')).toBe('26 Nov 2026');
   });
 });
 

@@ -65,8 +65,9 @@ payment-stage inspection tests continue to pass.
 - `CLAIM_REPORTING` starts with 14 calendar days to report and 7 calendar days for the initial response target.
   Both are provisional. The setting also holds covered-type exclusions and evidence by claim type. The intake
   lookup exposes the effective settings and stores the rule version, late flag and response date with the claim.
-- `POST /claims` uses the policy's own insurer and vehicle. Coverage and dates are checked against the incident
-  day. A claim outside the reporting window still starts as a first notice, with a late reason and a visible
+- `POST /claims` uses the policy's own insurer and vehicle. Coverage is checked against the incident day, including
+  the effective date of a completed cancellation. The form previews the reporting window using Lusaka calendar days.
+  A claim outside the reporting window still starts as a first notice, with a late reason and a visible
   late-review flag for insurer review. Historical first notices remain readable and keep their original identifiers.
 - The customer and insurer share the claim timeline. A new verified claim needs the insurer's reference at
   acknowledgement. It can then progress through review, requested evidence, decision and closure. New evidence is

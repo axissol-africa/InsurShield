@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CircleCheck, FileText, Inbox, PhoneIncoming, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { api } from '@/api';
-import { formatZMW, formatDate } from '@/domain/premiumEngine';
+import { formatZMW, formatLusakaDate } from '@/domain/premiumEngine';
 import { cn } from '@/lib/cn';
 import { timeAgo } from '@/lib/time';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -239,7 +239,7 @@ function ClaimDetail({ claim, onBack, onMarkReceived, saving, error }) {
         <Separator />
 
         <FactGroup title="What happened">
-          <Fact label="Incident date" value={formatDate(claim.incidentDate)} />
+          <Fact label="Incident date" value={formatLusakaDate(claim.incidentDate)} />
           {claim.location && <Fact label="Location" value={claim.location} />}
           {claim.estimatedLoss && <Fact label="Estimated loss" value={<span className="tabular-nums">{formatZMW(parseFloat(claim.estimatedLoss))}</span>} />}
           {claim.lateReason && <Fact label="Late notification reason" value={claim.lateReason} />}

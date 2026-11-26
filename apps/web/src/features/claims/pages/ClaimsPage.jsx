@@ -10,7 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primit
 import { api } from '@/api';
 import { submitWithRetry } from '@/api/idempotency';
 import { hydrateCustomer, hydrateDirectory } from '@/api/sync';
-import { formatZMW, formatDate } from '@/domain/premiumEngine';
+import { formatZMW, formatDate, formatLusakaDate } from '@/domain/premiumEngine';
+import { daysUntil } from '@/domain/renewal';
+import { lusakaToday } from '@/domain/serviceRequests';
 import { NCD_TIERS as PUBLISHED_NCD_TIERS, ncdDiscountForYears } from '@/domain/insurers';
 
 const CLAIM_TYPES = [
@@ -144,7 +146,7 @@ function ClaimHandoff({ claim, contact, onDone }) {
             {[
               ['confirmation_number', `Claim number ${claim.claimNumber}`],
               ['directions_car', `Vehicle plate ${claim.plate}`],
-              ['event', `Incident date ${formatDate(claim.incidentDate)}`],
+              ['event', `Incident date ${formatLusakaDate(claim.incidentDate)}`],
               claim.policeReport ? ['local_police', `Police report ${claim.policeReportNumber || 'reference'}`] : null,
               ['badge', 'Your NRC or driver\'s licence'],
             ].filter(Boolean).map(([icon, text]) => (
@@ -236,19 +238,18 @@ export default function ClaimsPage() {
     insurer: '', insurerId: '', policyNumber: '', yearsClaimFree: '', phone: '', fullName: '', declaration: false,
   });
 
-  const setClaimField = (k, v) => setClaimForm(prev => ({ ...prev, [k]: v }));
+  const setClaimField = (k, v) => {
+    setClaimForm(prev => ({ ...prev, [k]: v }));
+    if (k === 'incidentDate' && refusal?.code === 'CLAIM_LATE_REASON_REQUIRED') {
+      setRefusal(null);
+      setClaimError('');
+    }
+  };
   const setNcdField = (k, v) => setNcdForm(prev => ({ ...prev, [k]: v }));
 
   // Preview the configured reporting window; server validation remains authoritative.
-  const getDaysSinceIncident = (dateStr) => {
-    if (!dateStr) return null;
-    const incident = new Date(dateStr);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    incident.setHours(0, 0, 0, 0);
-    return Math.floor((today - incident) / 86400000);
-  };
-  const daysSinceIncident = getDaysSinceIncident(claimForm.incidentDate);
+  const daysUntilIncident = daysUntil(claimForm.incidentDate);
+  const daysSinceIncident = daysUntilIncident === null ? null : -daysUntilIncident;
   const isLate = refusal?.code === 'CLAIM_LATE_REASON_REQUIRED' || (daysSinceIncident !== null && intakeRules && daysSinceIncident > intakeRules.reportingDays);
   const isSubmitBlocked = isLate && !claimForm.lateReason.trim();
 
@@ -624,7 +625,7 @@ export default function ClaimsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Date of Incident *</label>
-                <input required type="date" value={claimForm.incidentDate} max={new Date().toISOString().split('T')[0]}
+                <input required type="date" value={claimForm.incidentDate} max={lusakaToday()}
                   onChange={e => setClaimField('incidentDate', e.target.value)}
                   className={`w-full border rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none ${
  isLate ? 'bg-primary/[0.06] border-primary/30 text-primary focus:ring-red-400'
@@ -855,7 +856,7 @@ export default function ClaimsPage() {
           <Card className="gap-0 border-border shadow-none"><CardHeader className="border-b"><CardTitle>What you reported</CardTitle></CardHeader><CardContent className="pt-5">
             <dl className="mt-3 space-y-3">
               <InfoRow label="Vehicle" value={`${claim.vehicle || ''}${claim.plate ? ` · ${claim.plate}` : ''}`} />
-              <InfoRow label="Incident date" value={formatDate(claim.incidentDate)} />
+              <InfoRow label="Incident date" value={formatLusakaDate(claim.incidentDate)} />
               <InfoRow label="Location" value={claim.location} />
               {claim.estimatedLoss && <InfoRow label="Estimated loss" value={formatZMW(parseFloat(claim.estimatedLoss))} highlight />}
               <InfoRow label="Police report" value={claim.policeReport ? `Yes · ${claim.policeReportNumber || 'filed'}` : 'No'} />
@@ -1119,7 +1120,7 @@ export default function ClaimsPage() {
                         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><span className="material-symbols-outlined text-[20px]" aria-hidden="true">directions_car</span></span>
                         <span className="min-w-0 flex-1">
                           <span className="block font-medium text-ink">{claim.type || 'Claim'} <span className="font-mono text-[13px] text-ink-muted">· {claim.claimNumber || claim.id}</span></span>
-                          <span className="mt-0.5 block text-[12px] text-ink-muted">{claim.insurer} · incident {formatDate(claim.incidentDate)}</span>
+                          <span className="mt-0.5 block text-[12px] text-ink-muted">{claim.insurer} · incident {formatLusakaDate(claim.incidentDate)}</span>
                           <Badge variant={CLAIM_STATUSES[claim.status] || 'muted'} className="mt-1.5 sm:hidden">{claim.status}</Badge>
                         </span>
                         <Badge variant={CLAIM_STATUSES[claim.status] || 'muted'} className="hidden shrink-0 sm:inline-flex">{claim.status}</Badge>
