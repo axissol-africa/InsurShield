@@ -132,6 +132,14 @@ const schemas = {
     }),
   /** How long a closed account keeps its holder's name, phone and email before they are replaced. */
   CLAIM_REPORTING: claimReporting,
+  /** Review deadlines use Lusaka calendar days; private retention is configured in days. */
+  REVIEW_POLICY: z.object({
+    submissionDays: z.number().int().min(1).max(3_660),
+    editDays: z.number().int().min(1).max(3_660),
+    appealDays: z.number().int().min(1).max(3_660),
+    appealDecisionDays: z.number().int().min(1).max(3_660),
+    privateRetentionDays: z.number().int().min(1).max(36_500),
+  }),
   ACCOUNT_RETENTION: z.object({ daysAfterClosure: z.number().int().min(30).max(36_500) }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
@@ -225,6 +233,7 @@ const defaults = {
   RENEWAL_POLICY: { windowDays: 60, reminderDays: [30, 14, 3] },
   // Provisional: open question 3 of the batch 15 plan, seven years after closure.
   ACCOUNT_RETENTION: { daysAfterClosure: 2_555 },
+  REVIEW_POLICY: { submissionDays: 90, editDays: 30, appealDays: 30, appealDecisionDays: 14, privateRetentionDays: 365 },
   // Provisional servicing rules until the reporting period and coverage matrix are approved.
   CLAIM_REPORTING: {
     reportingDays: 14,

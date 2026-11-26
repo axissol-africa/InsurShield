@@ -1,0 +1,2 @@
+const LABELS = { PENDING: 'Awaiting moderation', PUBLISHED: 'Published', REJECTED: 'Not approved', REMOVED: 'Removed from publication', WITHDRAWN: 'Withdrawn', UPHELD: 'Original decision upheld', OVERTURNED: 'Original decision overturned', ACTIVE: 'Active', SUSPENDED: 'Suspended', COMPREHENSIVE: 'Comprehensive', THIRD_PARTY: 'Third party' };
+export const reviewLabel = (value) => LABELS[value] || (typeof value === 'string' && /^[A-Z][A-Z_]+$/.test(value) ? value.toLowerCase().replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()) : value);

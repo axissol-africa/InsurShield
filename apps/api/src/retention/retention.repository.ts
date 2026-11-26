@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, exists, isNull, lt, or, sql } from 'drizzle-orm';
 import {
   DATABASE,
   type Database,
@@ -12,6 +12,10 @@ import {
   customers,
   documents,
   staffUsers,
+  insurerReviews,
+  reviewRevisions,
+  reviewDecisions,
+  reviewAppeals,
 } from '../db/schema.js';
 import type { DocumentRetentionClass } from '../common/domain/enums.js';
 
@@ -21,6 +25,64 @@ export class RetentionRepository {
 
   transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
     return this.db.transaction(work);
+  }
+
+  private reviewExpired(now: Date, days: number, appealDays: number) {
+    // The latest case-wide closure/unpublication trigger protects related evidence too.
+    return sql`greatest(
+      ${insurerReviews.createdAt}, ${insurerReviews.withdrawnAt},
+      (SELECT max(r."retiredAt") FROM review_revisions r WHERE r."reviewId" = ${insurerReviews.id}),
+      (SELECT max(a."decidedAt") FROM review_appeals a JOIN review_decisions d ON d.id = a."decisionId"
+       JOIN review_revisions r ON r.id = d."revisionId" WHERE r."reviewId" = ${insurerReviews.id}),
+      (SELECT max(d."createdAt") FROM review_decisions d JOIN review_revisions r ON r.id = d."revisionId"
+       WHERE r."reviewId" = ${insurerReviews.id})
+    ) < ${now.toISOString()}::timestamptz - (${days} * interval '1 day')
+    AND NOT EXISTS (SELECT 1 FROM review_decisions d JOIN review_revisions r ON r.id = d."revisionId"
+      WHERE r."reviewId" = ${insurerReviews.id}
+      AND (d."createdAt" AT TIME ZONE 'Africa/Lusaka')::date + ${appealDays}::integer >= (${now.toISOString()}::timestamptz AT TIME ZONE 'Africa/Lusaka')::date)
+    AND NOT EXISTS (SELECT 1 FROM review_appeals a JOIN review_decisions d ON d.id = a."decisionId"
+      JOIN review_revisions r ON r.id = d."revisionId" WHERE r."reviewId" = ${insurerReviews.id} AND a."decidedAt" IS NULL)`;
+  }
+
+  private revisionCanPurge() {
+    // An approved reply stays attached while a removed review can still be restored.
+    return sql`${reviewRevisions.purgedAt} IS NULL AND (
+      (${reviewRevisions.retiredAt} IS NOT NULL AND ${reviewRevisions.status} IN ('REJECTED', 'REMOVED', 'SUPERSEDED'))
+      OR (${reviewRevisions.kind} = 'RESPONSE' AND ${reviewRevisions.status} IN ('PENDING', 'PUBLISHED')
+        AND NOT EXISTS (SELECT 1 FROM review_revisions parent
+          WHERE parent."reviewId" = ${reviewRevisions.reviewId} AND parent.kind = 'REVIEW' AND parent.status = 'PUBLISHED'))
+    )`;
+  }
+
+  async reviewCandidates(now: Date, days: number, appealDays: number) {
+    const revisions = this.db.select({ id: reviewRevisions.id }).from(reviewRevisions)
+      .where(and(eq(reviewRevisions.reviewId, insurerReviews.id), this.revisionCanPurge()));
+    return this.db.select({ id: insurerReviews.id }).from(insurerReviews).where(and(
+      isNull(insurerReviews.legalHoldAt), this.reviewExpired(now, days, appealDays),
+      or(exists(revisions), sql`EXISTS (SELECT 1 FROM review_appeals a JOIN review_decisions d ON d.id = a."decisionId"
+        JOIN review_revisions r ON r.id = d."revisionId" WHERE r."reviewId" = ${insurerReviews.id}
+        AND a."decidedAt" IS NOT NULL AND a."purgedAt" IS NULL)`),
+    )).orderBy(insurerReviews.id).limit(500);
+  }
+
+  async purgeReview(tx: Transaction, id: string, now: Date, days: number, appealDays: number) {
+    await tx.select({ id: insurerReviews.id }).from(insurerReviews).where(eq(insurerReviews.id, id)).for('update');
+    // Re-read after acquiring the lock: an appeal/hold may have committed while waiting.
+    const [eligible] = await tx.select({ id: insurerReviews.id }).from(insurerReviews).where(and(
+      eq(insurerReviews.id, id), isNull(insurerReviews.legalHoldAt), this.reviewExpired(now, days, appealDays),
+    ));
+    if (!eligible) return { revisions: 0, appeals: 0 };
+    const revisions = await tx.update(reviewRevisions).set({
+      rating: null, text: null, purgedAt: now,
+      status: sql`CASE WHEN ${reviewRevisions.status} IN ('PENDING', 'PUBLISHED') THEN 'REMOVED' ELSE ${reviewRevisions.status} END`,
+      retiredAt: sql`COALESCE(${reviewRevisions.retiredAt}, ${now.toISOString()}::timestamptz)`,
+    }).where(and(eq(reviewRevisions.reviewId, id), this.revisionCanPurge())).returning({ id: reviewRevisions.id });
+    const appeals = await tx.update(reviewAppeals).set({ reason: null, evidence: null, outcomeReason: 'Private content expired', purgedAt: now }).where(and(
+      isNull(reviewAppeals.purgedAt), sql`${reviewAppeals.decidedAt} IS NOT NULL`,
+      sql`${reviewAppeals.decisionId} IN (SELECT ${reviewDecisions.id} FROM ${reviewDecisions}
+        JOIN ${reviewRevisions} ON ${reviewRevisions.id} = ${reviewDecisions.revisionId} WHERE ${reviewRevisions.reviewId} = ${id})`,
+    )).returning({ id: reviewAppeals.id });
+    return { revisions: revisions.length, appeals: appeals.length };
   }
 
   async documentCandidates(

@@ -68,6 +68,7 @@ export const PERMISSIONS = {
   'payment:read': ['customer'],
   'account:close': ['customer'],
   'account:export': ['customer'],
+  'review:manage': ['customer'],
   'service-request:read': ['customer'],
   'service-request:submit': ['customer'],
   'support:contact': ['customer'],
@@ -121,6 +122,7 @@ export const PERMISSIONS = {
   'insurer:restore': SUPER_ADMIN_ONLY,
   'admin:product:read': INSURSHIELD_ADMIN,
   'admin:product:review': INSURSHIELD_ADMIN,
+  'admin:review:moderate': INSURSHIELD_ADMIN,
   'admin:rule:read': INSURSHIELD_ADMIN,
   'admin:rule:manage': INSURSHIELD_ADMIN,
   'admin:rule:confirm': INSURSHIELD_ADMIN,
@@ -136,6 +138,7 @@ export const PERMISSIONS = {
 
   // ── The insurer portal ────────────────────────────────────────────
   'portal:profile:read': ANY_INSURER,
+  'portal:review:manage': PRODUCT_MANAGERS,
   'portal:request:read': READS_REQUESTS,
   'portal:quote:send': QUOTING,
   'portal:quote:extend': QUOTING,

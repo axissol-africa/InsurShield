@@ -418,3 +418,32 @@ export {};
  * Claim timelines optionally include inspection:{id,status,method}, with a display status.
  * Existing payment/certificate flows remain unchanged by inspection outcomes.
  */
+
+/**
+ * Batch 17 — routes are relative to the configured API base URL (/api/v1).
+ * GET /reviews/customer/policies/:policyNumber -> PolicyReviewState
+ * POST/PATCH same route, { rating: integer 1..5, text?: string } -> PolicyReviewState
+ * DELETE same route, empty body -> PolicyReviewState
+ * Eligibility is authoritative server state; pending is the latest revision, including rejections.
+ * @typedef {'PENDING'|'PUBLISHED'|'REJECTED'|'REMOVED'|'WITHDRAWN'} ReviewStatus
+ * @typedef {{id:string,rating:number,text:string|null,status:ReviewStatus,decisionId:string|null,reason:string|null,decidedAt:string|null}} ReviewRevision
+ * @typedef {{canSubmit:boolean,canEdit:boolean,canWithdraw:boolean,review:null|{id:string,status:ReviewStatus,pending:ReviewRevision|null,published:ReviewRevision|null,withdrawnAt:string|null}}} PolicyReviewState
+ *
+ * GET /reviews/public/:insurerId?page=1 -> {items: PublicReview[],hasMore:boolean,page:number}
+ * Returns no items while the review policy is provisional. No aggregate ratings.
+ * @typedef {{id:string,rating:number,text:string|null,publishedAt:string,response:null|{text:string,publishedAt:string}}} PublicReview
+ *
+ * GET /insurer-profiles/:insurerId -> PublicInsurerProfile; null/404 until approved.
+ * @typedef {{brandName:string,description:string,serviceInformation:string,contactEmail:string|null,contactPhone:string|null,websiteUrl:string|null,logoUrl:string|null}} InsurerProfileContent
+ * @typedef {{insurerId:string,name:string,tradingName:string|null,status:string,licence:{number:string|null,expiresAt:string|null,current:boolean},revisionId:string,profile:InsurerProfileContent,products:Array<{productId:string,versionId:string,name:string,coverType:string}>,productsTruncated:boolean}} PublicInsurerProfile
+ * Mock mode returns no public profile/reviews and disables verified review writes;
+ * the existing prototype purchase rating remains separate.
+ */
+
+/**
+ * GET /review-appeals?page=&decisionId= -> ReviewAppeal[] (current principal only, 20 per page)
+ * POST /review-appeals {decisionId:string,reason:string,evidence?:string} -> ReviewAppeal
+ * Reason: 1–2000 characters; evidence: at most 10000 characters. Both are private.
+ * @typedef {{id:string,decisionId:string,party:string,reason:string|null,evidence:string|null,createdAt:string,dueAt:string,decidedAt:string|null,outcome:string|null,outcomeReason:string|null,purgedAt:string|null}} ReviewAppeal
+ * PublicReview.publishedAt and response.publishedAt are Lusaka calendar months (YYYY-MM).
+ */

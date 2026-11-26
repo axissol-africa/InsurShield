@@ -95,6 +95,22 @@ export class RetentionService {
         failures += 1;
       }
     }
+    const reviewRule = await this.settings.effective('REVIEW_POLICY', now);
+    if (!reviewRule.provisional) {
+      for (const review of await this.repository.reviewCandidates(now, reviewRule.value.privateRetentionDays, reviewRule.value.appealDays)) {
+        try {
+          await this.repository.transaction(async (tx) => {
+            const active = await this.settings.effective('REVIEW_POLICY', now, tx);
+            if (active.provisional) return;
+            const counts = await this.repository.purgeReview(tx, review.id, now, active.value.privateRetentionDays, active.value.appealDays);
+            if (counts.revisions + counts.appeals === 0) return;
+            await this.audit.write(tx, { actor: systemActor, action: 'review.private_content_purged', entityType: 'REVIEW', entityId: review.id, after: counts });
+          });
+        } catch {
+          failures += 1;
+        }
+      }
+    }
     if (failures > 0)
       throw new Error(
         `Retention sweep has ${failures} incomplete operations; retry required.`,

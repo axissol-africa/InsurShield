@@ -1,3 +1,6 @@
+import InsurerReviews from '@/features/reviews/staff/InsurerReviews';
+import StaffProfiles from '@/features/reviews/staff/StaffProfiles';
+import Appeals from '@/features/reviews/staff/Appeals';
 import { useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { BadgePercent, BookOpen, CheckCheck, ClipboardCheck, FileCheck2, FileText, Landmark, LayoutDashboard, MessageSquareText, MessageSquareWarning, PlugZap, UsersRound } from 'lucide-react';
@@ -31,7 +34,7 @@ import { SERVICE_REQUEST_HANDLER_ROLES } from '@/domain/serviceRequests';
 
 /** The portal demo signs in as this insurer; a real deployment takes the identity from authentication. */
 const DEFAULT_PORTAL_INSURER = 'Prestige Assurance';
-const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'service-requests', 'ncd', 'settlements', 'integrations', 'staff'];
+const SECTION_IDS = ['overview', 'inspections', 'guides', 'policies', 'claims', 'service-requests', 'ncd', 'settlements', 'integrations', 'staff', 'reviews', 'review-appeals', 'profile'];
 const QUOTE_QUEUE_ID = 'quote-requests';
 /** A confirmation that offers a next step stays long enough to be reached with a keyboard. */
 const NEXT_OFFER_MS = 20_000;
@@ -53,7 +56,8 @@ export default function InsurerDashboard() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedTab = searchParams.get('view');
-  const activeTab = SECTION_IDS.includes(requestedTab) ? requestedTab : 'overview';
+  const restrictedReviewView = ['reviews', 'review-appeals', 'profile'].includes(requestedTab) && staffSession?.staffRole !== 'INSURER_ADMIN';
+  const activeTab = SECTION_IDS.includes(requestedTab) && !restrictedReviewView ? requestedTab : 'overview';
 
   // A session may name the insurer separately from the staff member; the
   // prototype session puts the insurer in `name`.
@@ -118,6 +122,11 @@ export default function InsurerDashboard() {
     { id: 'ncd', label: 'NCD applications', shortLabel: 'NCD', icon: BadgePercent, badge: openNcd.length },
     ...(canReadSettlements ? [{ id: 'settlements', label: 'Settlements', icon: Landmark }] : []),
     ...(canManageStaff ? [{ id: 'integrations', label: 'Integration activity', shortLabel: 'Integrations', icon: PlugZap }] : []),
+    ...(canManageStaff ? [
+      { id: 'reviews', label: 'Customer reviews', icon: MessageSquareText },
+      { id: 'review-appeals', label: 'Review appeals', icon: MessageSquareWarning },
+      { id: 'profile', label: 'Public profile', icon: BookOpen },
+    ] : []),
     ...(canManageStaff ? [{ id: 'staff', label: 'Staff and teams', shortLabel: 'Staff', icon: UsersRound }] : []),
   ];
   // Each number is the way into the work it counts.
@@ -301,6 +310,12 @@ export default function InsurerDashboard() {
         />
       </>
     );
+  } else if (activeTab === 'reviews' && canManageStaff) {
+    content = <InsurerReviews />;
+  } else if (activeTab === 'review-appeals' && canManageStaff) {
+    content = <Appeals />;
+  } else if (activeTab === 'profile' && canManageStaff) {
+    content = <StaffProfiles />;
   } else if (activeTab === 'inspections') {
     content = <InspectionsTab api={api} onChanged={hydrateInsurerPortal} />;
   } else if (activeTab === 'guides') {

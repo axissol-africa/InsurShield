@@ -17,6 +17,7 @@ import Meta from '@/components/ui/Meta';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import CoverGuideReader from '@/components/cover-guide/CoverGuideReader';
 import AccountPortfolio from '../components/AccountPortfolio';
+import PolicyReview from '@/features/reviews/components/PolicyReview';
 import AccountPrivacy from '../components/AccountPrivacy';
 import ContactPreferences from '../components/ContactPreferences';
 import { documentButtonClass as documentButton } from '@/components/ui/documentButton';
@@ -391,6 +392,7 @@ export default function CustomerAccountPage() {
                         </Link>
                       )}
                     </div>
+                    {env.apiMode === 'http' && <PolicyReview key={`${customer?.email}:${policy.policyNumber}`} policyNumber={policy.policyNumber} />}
                   </li>
                 ))}
               </ul>

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { SettingsService } from '../src/settings/settings.service.js';
 import { auditLogs } from '../src/db/schema.js';
-import { buildStaffUser } from './builders.js';
+import { buildInsurer, buildStaffUser } from './builders.js';
 import { startApp, type TestApp } from './helpers.js';
 import { signIn, type SessionHeaders } from './sessions.js';
 
@@ -40,6 +41,37 @@ describe('versioned rule settings and comparison taxonomy', () => {
     ]));
     const events = await testApp.db.select().from(auditLogs).where(eq(auditLogs.entityId, confirmed.body.id));
     expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ action: 'rule_version.confirmed', actorId: admin.id })]));
+  });
+
+  it('governs review policy defaults, validation, confirmation permissions and audited versions', async () => {
+    const settings = testApp.app.get(SettingsService);
+    const defaults = { submissionDays: 90, editDays: 30, appealDays: 30, appealDecisionDays: 14, privateRetentionDays: 365 };
+    const before = new Date('2001-11-25T21:59:59Z');
+    const effectiveAt = new Date('2001-11-25T22:00:00Z');
+    expect(await settings.effective('REVIEW_POLICY', effectiveAt)).toEqual({ value: defaults, provisional: true, version: null });
+    await testApp.http.post('/api/v1/admin/settings/rules/REVIEW_POLICY/versions').set(asAdmin)
+      .send({ value: { ...defaults, privateRetentionDays: 0 }, effectiveFrom: '2001-11-26' })
+      .expect(400).expect(({ body }) => expect(body.code).toBe('RULE_VALUE_INVALID'));
+    const value = { ...defaults, privateRetentionDays: 730 };
+    const created = await testApp.http.post('/api/v1/admin/settings/rules/REVIEW_POLICY/versions').set(asAdmin)
+      .send({ value, effectiveFrom: '2001-11-26', effectiveUntil: '2001-11-26' }).expect(201);
+    expect(created.body).toMatchObject({ key: 'REVIEW_POLICY', state: 'PROVISIONAL', value });
+    expect(await settings.effective('REVIEW_POLICY', before)).toEqual({ value: defaults, provisional: true, version: null });
+    expect(await settings.effective('REVIEW_POLICY', effectiveAt)).toEqual({ value, provisional: true, version: created.body.versionNumber });
+
+    const insurer = await buildInsurer(testApp.db, { staff: { role: 'INSURER_ADMIN' } });
+    const asInsurer = await signIn(testApp.http, insurer.staff);
+    const confirmPath = `/api/v1/admin/settings/rules/REVIEW_POLICY/versions/${created.body.id}/confirm`;
+    await testApp.http.post(confirmPath).set(asInsurer).expect(403);
+    expect((await settings.effective('REVIEW_POLICY', effectiveAt)).provisional).toBe(true);
+    const confirmed = await testApp.http.post(confirmPath).set(asAdmin).expect(201);
+    expect(confirmed.body).toMatchObject({ state: 'CONFIRMED', value, confirmedByStaffId: admin.id });
+    expect(await settings.effective('REVIEW_POLICY', effectiveAt)).toEqual({ value, provisional: false, version: confirmed.body.versionNumber });
+    expect(await settings.effective('REVIEW_POLICY', new Date('2001-11-26T22:00:00Z'))).toEqual({ value: defaults, provisional: true, version: null });
+    for (const [id, action] of [[created.body.id, 'rule_version.provisional_created'], [confirmed.body.id, 'rule_version.confirmed']]) {
+      const events = await testApp.db.select().from(auditLogs).where(eq(auditLogs.entityId, id));
+      expect(events).toEqual(expect.arrayContaining([expect.objectContaining({ action, actorId: admin.id, correlationId: 'REVIEW_POLICY' })]));
+    }
   });
 
   it('validates a structured taxonomy and lets administrators disable, rather than erase, historic terms', async () => {

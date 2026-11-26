@@ -17,6 +17,7 @@ import NotificationCentrePage from '@/features/notifications/pages/NotificationC
 import RenewalPage from '@/features/policies/pages/RenewalPage';
 import ClaimsPage from '@/features/claims/pages/ClaimsPage';
 import SupportPage from '@/features/support/pages/SupportPage';
+import InsurerProfilePage from '@/features/reviews/pages/InsurerProfilePage';
 import ServiceRequestsPage from '@/features/service-requests/pages/ServiceRequestsPage';
 import NewServiceRequestPage from '@/features/service-requests/pages/NewServiceRequestPage';
 import ServiceRequestPage from '@/features/service-requests/pages/ServiceRequestPage';
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="vehicle-identification" element={<VehicleIdentificationPage />} />
           <Route path="vehicle-usage" element={<VehicleUsagePage />} />
           <Route path="support" element={<SupportPage />} />
+          <Route path="insurers/:insurerId" element={<InsurerProfilePage />} />
           {/* Phone side of the photo hand-off; the session code is the authorisation */}
           <Route path="capture/:code" element={<CapturePage />} />
 
