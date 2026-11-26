@@ -46,6 +46,19 @@ it('Retention retains a historical reference and tombstone while deleting eligib
   expect(document).toMatchObject({ deletedAt: now, fileName: 'Deleted document', checksumSha256: null, kind: 'QUOTATION', uploadedAt: old });
 });
 
+it('releases the aged evidence hold only when the claim is closed', async () => {
+  const { customer, insurer, policy } = await closedPurchase();
+  const record = await buildClaim(db, { customerId: customer.id, insurerId: insurer.insurer.id, policyNumber: policy.policyNumber });
+  const evidence = await buildDocument(db, { customerId: customer.id }, { kind: 'CLAIM_ATTACHMENT', uploadedAt: old });
+  await db.insert(schema.claimAttachments).values({ claimNumber: record.claimNumber, documentId: evidence.id });
+  expect(await claim(evidence.id)).toBeNull();
+  await db.update(schema.claimNotifications).set({ status: 'DECLINED' }).where(eq(schema.claimNotifications.claimNumber, record.claimNumber));
+  expect(await claim(evidence.id)).toBeNull();
+  await db.update(schema.claimNotifications).set({ status: 'CLOSED' }).where(eq(schema.claimNotifications.claimNumber, record.claimNumber));
+  expect(await claim(evidence.id)).not.toBeNull();
+  expect(await db.select().from(schema.claimAttachments).where(eq(schema.claimAttachments.claimNumber, record.claimNumber))).toHaveLength(1);
+});
+
 it('Retention holds awaiting issuance, live cover through the final Lusaka day, and unsettled payments', async () => {
   const built = await closedPurchase();
   await db.update(schema.policies).set({ status: 'AWAITING_INSURER_CERTIFICATE' }).where(eq(schema.policies.policyNumber, built.policy.policyNumber));

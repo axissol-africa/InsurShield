@@ -604,6 +604,7 @@ export class InsurerPortalRepository {
           eq(claimNotifications.claimNumber, claimNumber),
           eq(claimNotifications.insurerId, insurerId),
           eq(claimNotifications.status, 'NOTIFIED'),
+          receipt.insurerClaimReference ? undefined : isNull(claimNotifications.responseDueOn),
         ),
       )
       .returning(acknowledgementColumns);
@@ -612,7 +613,7 @@ export class InsurerPortalRepository {
 
   async findAcknowledgement(claimNumber: string, insurerId: string) {
     const [claim] = await this.db
-      .select(acknowledgementColumns)
+      .select({ ...acknowledgementColumns, responseDueOn: claimNotifications.responseDueOn })
       .from(claimNotifications)
       .where(and(eq(claimNotifications.claimNumber, claimNumber), eq(claimNotifications.insurerId, insurerId)));
     return claim;

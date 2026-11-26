@@ -1,3 +1,4 @@
+import { claimIntakeRules, findClaim, timeline, recordUpdate, updateClaim, submitEvidence } from './claims';
 /**
  * Mock adapter: the same functions as `api/http`, served from browser storage.
  *
@@ -1127,12 +1128,28 @@ export const claims = {
   // The backend issues the claim number; in mock mode it is minted here so a
   // page gets the same record either way.
   notify: (claim) => call((s) => {
+    const policy = claim.policyNumber ? mine(s.policies).find((entry) => entry.policyNumber === claim.policyNumber) : null;
+    if (claim.policyNumber && !policy) throw new Error('Choose one of your policies.');
+    if (policy) claim = { ...claim, insurer: policy.insurer, plate: policy.vehicleDetails?.plateNumber || policy.plate, vehicle: policy.vehicle };
     s.addClaim({ ...claim, claimNumber: claim.claimNumber ?? newReference('CLM'), insurer: claim.insurer ?? insurerNameById(claim.insurerId) });
     return state().claims[0];
   }),
   listMine: () => call((s) => mine(s.claims)),
   listForInsurer: () => call((s) => s.claims.filter((c) => c.insurer === insurerName())),
-  markReceived: (claimNumber) => call((s) => { s.markClaimReceived(claimNumber); return state().claims.find((c) => c.id === claimNumber); }),
+  intakeRules: () => call(() => {
+    const rule = ruleRecords().filter((entry) => entry.key === 'CLAIM_REPORTING' && entry.state === 'CONFIRMED' && entry.effectiveFrom <= today() && (!entry.effectiveUntil || entry.effectiveUntil >= today())).sort((a, b) => b.versionNumber - a.versionNumber)[0];
+    return rule ? { ...rule.value, provisional: false } : claimIntakeRules;
+  }),
+  timeline: (number) => call(() => timeline(findClaim(number))),
+  insurerTimeline: (number) => call(() => timeline(findClaim(number, true))),
+  update: (number, payload, key) => call(() => updateClaim(number, payload, key)),
+  submitEvidence: (number, payload, key) => call(() => submitEvidence(number, payload, key)),
+  markReceived: (number, acknowledgement = {}) => call(() => {
+    const claim = findClaim(number, true);
+    if (claim.status !== 'Notified') throw new Error('This claim has already been received.');
+    recordUpdate(claim, 'Received by insurer', 'INSURER', 'Claim received by insurer.', { insurerClaimReference: acknowledgement.insurerClaimReference, receivedAt: new Date().toISOString() });
+    return findClaim(number, true);
+  }),
 };
 
 export const ncd = {

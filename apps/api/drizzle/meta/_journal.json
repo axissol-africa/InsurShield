@@ -330,6 +330,13 @@
       "when": 1795616176044,
       "tag": "0046_batch_15_retention_fences",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1795672900678,
+      "tag": "0047_batch_16_claim_lifecycle",
+      "breakpoints": true
     }
   ]
 }

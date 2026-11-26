@@ -80,6 +80,7 @@ export class DocumentsRepository {
       .select({
         id: documents.id,
         kind: documents.kind,
+        scanStatus: documents.scanStatus,
         uploadedByCustomerId: documents.uploadedByCustomerId,
         uploadedByStaffId: documents.uploadedByStaffId,
       })

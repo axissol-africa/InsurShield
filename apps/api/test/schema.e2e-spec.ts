@@ -91,7 +91,17 @@ async function pushed(): Promise<ScratchDatabase> {
   await query(db, applySettlementInvariants);
   await query(db, applyServiceRequestInvariants);
   await query(db, applyRetentionInvariants);
+  await query(db, applyClaimInvariants);
   return db;
+}
+
+/** The new retention rules and claim history invariants are expressed in SQL. */
+async function applyClaimInvariants(client: ClientBase) {
+  const migration = await readFile(new URL('../drizzle/0047_batch_16_claim_lifecycle.sql', import.meta.url), 'utf8');
+  const invariants = migration.slice(migration.indexOf('-- Claim evidence remains held'), migration.indexOf('-- Claim update notification templates'));
+  for (const statement of invariants.split('--> statement-breakpoint')) {
+    if (statement.trim()) await client.query(statement);
+  }
 }
 
 /** Retention fences live in SQL; Drizzle supplies their columns and partial index. */
@@ -1196,7 +1206,9 @@ describe('the final schema', () => {
     // when a product was assigned and when its owner was warned, and then
     // when a quote was withdrawn and when the customer chose one, and
     // finally when an inspection was decided.
-    expect(timestampColumns).toHaveLength(179);
+    // Batch 15 adds account anonymisation and the two document deletion instants.
+    // Batch 16 adds the claim update history timestamp.
+    expect(timestampColumns).toHaveLength(183);
     for (const column of timestampColumns) {
       expect(column, column.name).toMatchObject({ type: 'timestamp with time zone', precision: 3 });
     }

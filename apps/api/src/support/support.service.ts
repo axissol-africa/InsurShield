@@ -27,14 +27,18 @@ export class SupportService {
     private readonly audit: AuditService,
   ) {}
 
+  helpDesk(): SupportContact['helpDesk'] {
+    return {
+      email: this.config.get('HELP_DESK_EMAIL', { infer: true }) ?? null,
+      phone: this.config.get('HELP_DESK_PHONE', { infer: true }) ?? null,
+      hours: this.config.get('HELP_DESK_HOURS', { infer: true }) ?? null,
+    };
+  }
+
   async contact(customer: CustomerPrincipal): Promise<SupportContact> {
     const records = await this.repository.openRecordsOf(customer.id);
     return {
-      helpDesk: {
-        email: this.config.get('HELP_DESK_EMAIL', { infer: true }) ?? null,
-        phone: this.config.get('HELP_DESK_PHONE', { infer: true }) ?? null,
-        hours: this.config.get('HELP_DESK_HOURS', { infer: true }) ?? null,
-      },
+      helpDesk: this.helpDesk(),
       references: records.map((record) => ({
         type: record.type,
         reference: record.reference,

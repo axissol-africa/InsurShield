@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, ne, notInArray, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimNotifications,
@@ -13,9 +13,10 @@ import {
   payments,
   policies,
   staffUsers,
+  serviceRequests,
 } from '../db/schema.js';
 import { takesNewBusinessWhere } from '../common/insurer-standing.js';
-import { OPEN_PAYMENT_STATUSES, type EvidenceReviewState, type InsurerStatus } from '../common/domain/enums.js';
+import { OPEN_PAYMENT_STATUSES, OPEN_SERVICE_REQUEST_STATUSES, type EvidenceReviewState, type InsurerStatus } from '../common/domain/enums.js';
 
 export type NewInsurer = Omit<typeof insurers.$inferInsert, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'status'>;
 export type InsurerChanges = Partial<NewInsurer>;
@@ -25,7 +26,7 @@ export type EvidenceRow = Awaited<ReturnType<InsurersRepository['findEvidence']>
 /** The secret may be written, but normal reads deliberately omit it. */
 export type NewIntegration = Omit<typeof insurerIntegrations.$inferInsert, 'insurerId'>;
 export type IntegrationRow = NonNullable<Awaited<ReturnType<InsurersRepository['findIntegration']>>>;
-export const DELETION_BLOCKER_KINDS = ['policy', 'claim', 'ncd application', 'inspection', 'payment'] as const;
+export const DELETION_BLOCKER_KINDS = ['policy', 'claim', 'ncd application', 'inspection', 'payment', 'service request'] as const;
 export type DeletionBlockerKind = (typeof DELETION_BLOCKER_KINDS)[number];
 
 // What an unauthenticated visitor may see; the credentials in insurer_integrations are never selected.
@@ -271,16 +272,25 @@ export class InsurersRepository {
   /**
    * A soft-deleted insurer can no longer sign in, so it cannot be left with
    * customer work that its staff still need to service. Historical completed
-   * NCD and inspection records do not block the transition; active policy and
-   * claim records do because the current schema has no terminal state for them.
+   * records do not block the transition. Issued policies remain serviceable
+   * through the last day of the reporting window in Lusaka.
    */
-  async deletionBlockers(tx: Transaction, insurerId: string): Promise<DeletionBlockerKind[]> {
-    const [policy, claim, ncd, inspection, payment] = await Promise.all([
-      tx.select({ id: policies.policyNumber }).from(policies).where(eq(policies.insurerId, insurerId)).limit(1),
+  async deletionBlockers(tx: Transaction, insurerId: string, today: string, reportingDays: number): Promise<DeletionBlockerKind[]> {
+    const [policy, claim, ncd, inspection, payment, service] = await Promise.all([
+      tx.select({ id: policies.policyNumber }).from(policies).where(and(
+        eq(policies.insurerId, insurerId),
+        or(
+          eq(policies.status, 'AWAITING_INSURER_CERTIFICATE'),
+          and(or(eq(policies.status, 'ACTIVE'), isNotNull(policies.issuedAt)), or(
+            isNull(policies.policyEndDate),
+            sql`(${policies.policyEndDate} AT TIME ZONE 'Africa/Lusaka')::date + ${reportingDays}::integer >= ${today}::date`,
+          )),
+        ),
+      )).limit(1),
       tx
         .select({ id: claimNotifications.claimNumber })
         .from(claimNotifications)
-        .where(eq(claimNotifications.insurerId, insurerId))
+        .where(and(eq(claimNotifications.insurerId, insurerId), ne(claimNotifications.status, 'CLOSED')))
         .limit(1),
       tx
         .select({ id: ncdApplications.id })
@@ -315,6 +325,8 @@ export class InsurersRepository {
           ),
         )
         .limit(1),
+      tx.select({ id: serviceRequests.reference }).from(serviceRequests)
+        .where(and(eq(serviceRequests.insurerId, insurerId), inArray(serviceRequests.status, OPEN_SERVICE_REQUEST_STATUSES))).limit(1),
     ]);
     return [
       ...(policy.length ? ['policy' as const] : []),
@@ -322,6 +334,7 @@ export class InsurersRepository {
       ...(ncd.length ? ['ncd application' as const] : []),
       ...(inspection.length ? ['inspection' as const] : []),
       ...(payment.length ? ['payment' as const] : []),
+      ...(service.length ? ['service request' as const] : []),
     ];
   }
 }

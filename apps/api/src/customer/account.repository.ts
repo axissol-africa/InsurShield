@@ -3,7 +3,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { OPEN_PAYMENT_STATUSES, OPEN_REFUND_STATUSES, OPEN_SERVICE_REQUEST_STATUSES, type PolicyStatus } from '../common/domain/enums.js';
 import { currentOn } from '../common/domain/lusaka.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { customers, policies, payments, paymentRefunds, serviceRequests, reconciliationItems } from '../db/schema.js';
+import { claimNotifications, customers, policies, payments, paymentRefunds, serviceRequests, reconciliationItems } from '../db/schema.js';
 
 /** A paid policy awaiting its certificate is already cover the customer bought. */
 const IN_FORCE: PolicyStatus[] = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'];
@@ -13,7 +13,8 @@ export class AccountRepository {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
   transaction<T>(work: (tx: Transaction) => Promise<T>): Promise<T> {
-    return this.db.transaction(work);
+    // After waiting for a creator's customer lock, read its committed request.
+    return this.db.transaction(work, { isolationLevel: 'read committed' });
   }
 
   /** Originating commands must lock the open customer before their own records. */
@@ -50,6 +51,12 @@ export class AccountRepository {
       .where(and(eq(serviceRequests.customerId, customerId), inArray(serviceRequests.status, OPEN_SERVICE_REQUEST_STATUSES)))
       .limit(1);
     return rows.length > 0;
+  }
+
+  async hasOutstandingClaimEvidence(tx: Transaction, customerId: string): Promise<boolean> {
+    const [claim] = await tx.select({ reference: claimNotifications.claimNumber }).from(claimNotifications)
+      .where(and(eq(claimNotifications.customerId, customerId), eq(claimNotifications.status, 'EVIDENCE_REQUIRED'))).limit(1);
+    return Boolean(claim);
   }
 
   async hasOpenPayment(tx: Transaction, customerId: string): Promise<boolean> {

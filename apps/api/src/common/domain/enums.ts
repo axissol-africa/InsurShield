@@ -76,6 +76,7 @@ export const RULE_SETTING_KEYS = [
   'SETTLEMENT_PERIOD',
   'RENEWAL_POLICY',
   'ACCOUNT_RETENTION',
+  'CLAIM_REPORTING',
 ] as const;
 export type RuleSettingKey = (typeof RULE_SETTING_KEYS)[number];
 
@@ -210,7 +211,9 @@ export type AdjustmentKind = (typeof ADJUSTMENT_KINDS)[number];
 export const PAYMENT_METHODS = ['MOBILE_MONEY', 'CARD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-export const CLAIM_STATUSES = ['NOTIFIED', 'RECEIVED_BY_INSURER'] as const;
+export const CLAIM_STATUSES = [
+  'NOTIFIED', 'RECEIVED_BY_INSURER', 'UNDER_REVIEW', 'EVIDENCE_REQUIRED', 'APPROVED', 'DECLINED', 'CLOSED',
+] as const;
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
 export const NCD_STATUSES = [

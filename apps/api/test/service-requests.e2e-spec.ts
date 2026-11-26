@@ -1,9 +1,9 @@
 import { and, eq } from 'drizzle-orm';
-import { auditLogs, jobs, notifications, paymentRefunds, policies, quoteRequests, reconciliationItems, serviceRequestUpdates, serviceRequests } from '../src/db/schema.js';
+import { auditLogs, insurers, jobs, notifications, paymentRefunds, policies, quoteRequests, reconciliationItems, serviceRequestUpdates, serviceRequests } from '../src/db/schema.js';
 import { lusakaDay } from '../src/common/domain/lusaka.js';
 import { ServiceRequestsService } from '../src/service-requests/service-requests.service.js';
 import { buildCustomer, buildDocument, buildInsurer, buildPurchasedPolicy, buildQuoteRequest, buildStaffUser, type BuiltInsurer } from './builders.js';
-import { openTestDatabase, startApp, type TestApp } from './helpers.js';
+import { holdLocks, openTestDatabase, queueBehind, startApp, type TestApp } from './helpers.js';
 import { signIn } from './sessions.js';
 
 const DAY_MS = 86_400_000;
@@ -97,6 +97,22 @@ describe('service requests', () => {
       const stranger = await buildCustomer(testApp.db);
       const tried = await (await as(stranger)).post('service-requests', { policyNumber: policy.policyNumber, type: 'ASSISTANCE', reason: 'Help me with this policy please.' });
       expect(tried.status).toBe(404);
+    });
+
+    it('refuses a new request when its insurer is removed during submission', async () => {
+      const { customer, policy, insurer } = await activePolicy();
+      await testApp.db.update(policies).set({ policyEndDate: new Date(Date.now() - 20 * DAY_MS) })
+        .where(eq(policies.policyNumber, policy.policyNumber));
+      const client = await as(customer);
+      const removal = await holdLocks(side.pool, async (db) => {
+        await db.update(insurers).set({ status: 'DELETED', deletedAt: new Date() }).where(eq(insurers.id, insurer.insurer.id));
+      });
+      const [reply] = await queueBehind(removal, 'select % from "insurers" where % for share', 1, [async () =>
+        client.post('service-requests', { policyNumber: policy.policyNumber, type: 'ASSISTANCE', reason: 'Please help with my existing policy.' }),
+      ]);
+      expect(reply.status).toBe(409);
+      expect(reply.body).toMatchObject({ code: 'SERVICE_REQUEST_INSURER_UNAVAILABLE', details: { reference: policy.policyNumber } });
+      expect(await testApp.db.select().from(serviceRequests).where(eq(serviceRequests.policyNumber, policy.policyNumber))).toEqual([]);
     });
 
     it('refuses a policy that is not in force, and a cancellation before the cover is issued', async () => {

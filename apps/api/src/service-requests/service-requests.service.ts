@@ -101,6 +101,9 @@ export class ServiceRequestsService {
       if (!policy) throw ApiException.notFound('Policy', dto.policyNumber);
       const problem = policyProblem(dto.type, policy.status);
       if (problem) throw ApiException.conflict(problem, POLICY_PROBLEMS[problem]);
+      if (!(await this.requests.lockServicingInsurer(tx, policy.insurerId))) {
+        throw ApiException.conflict('SERVICE_REQUEST_INSURER_UNAVAILABLE', 'This insurer no longer services policies on InsurShield. Contact support with your policy reference.', { reference: policy.policyNumber });
+      }
 
       let requestedEffectiveDate: string | null = null;
       if (dto.type === 'CANCELLATION') {

@@ -23,12 +23,13 @@ import { QuoteRequestDraftsRepository } from './quote-request-drafts.repository.
 import { QuoteRequestDraftsService } from './quote-request-drafts.service.js';
 import { QuoteProductsRepository } from './quote-products.repository.js';
 import { QuoteWorkflowService, QUOTE_STAFF_EMAIL, QUOTE_WORKFLOW_SWEEP } from './quote-workflow.service.js';
+import { SupportModule } from '../support/support.module.js';
 import { SettingsModule } from '../settings/settings.module.js';
 import { UnderwritingInspectionsRepository } from './underwriting-inspections.repository.js';
 import { UnderwritingInspectionsService } from './underwriting-inspections.service.js';
 
 @Module({
-  imports: [SettingsModule],
+  imports: [SettingsModule, SupportModule],
   controllers: [CustomerController, QuoteRequestDraftsController, AccountDataController],
   providers: [
     QuoteRequestsService,

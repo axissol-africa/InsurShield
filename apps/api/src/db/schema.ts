@@ -1821,6 +1821,9 @@ export const claimNotifications = pgTable(
     submittedAt: createdAt('submittedAt'),
     receivedAt: timestamptz('receivedAt'),
     insurerClaimReference: text('insurerClaimReference'),
+    responseDueOn: date('responseDueOn', { mode: 'string' }),
+    lateSubmission: boolean('lateSubmission').notNull().default(false),
+    intakeRuleVersion: integer('intakeRuleVersion'),
   },
   (t) => [
     index('claim_notifications_customerId_submittedAt_idx').on(t.customerId, t.submittedAt),
@@ -1832,15 +1835,37 @@ export const claimNotifications = pgTable(
   ],
 );
 
+export const claimUpdates = pgTable(
+  'claim_updates',
+  {
+    id: id(),
+    claimNumber: text('claimNumber').notNull(),
+    status: claimStatus('status').notNull(),
+    actorKind: text('actorKind').$type<'CUSTOMER' | 'INSURER'>().notNull(),
+    message: text('message').notNull(),
+    evidenceRequest: text('evidenceRequest'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    fk('claim_updates_claimNumber_fkey', [t.claimNumber], [claimNotifications.claimNumber], 'restrict'),
+    unique('claim_updates_claim_number_id_key').on(t.claimNumber, t.id),
+    index('claim_updates_claim_number_created_at_idx').on(t.claimNumber, t.createdAt),
+    check('claim_updates_actor_kind_check', sql`${t.actorKind} IN ('CUSTOMER', 'INSURER')`),
+  ],
+);
+
 export const claimAttachments = pgTable(
   'claim_attachments',
   {
     id: id(),
     claimNumber: text('claimNumber').notNull(),
     documentId: uuid('documentId').notNull(),
+    claimUpdateId: uuid('claimUpdateId'),
   },
   (t) => [
     uniqueIndex('claim_attachments_documentId_key').on(t.documentId),
+    index('claim_attachments_claim_number_idx').on(t.claimNumber),
+    fk('claim_attachments_claim_update_fkey', [t.claimNumber, t.claimUpdateId], [claimUpdates.claimNumber, claimUpdates.id], 'restrict'),
     fk(
       'claim_attachments_claimNumber_fkey',
       [t.claimNumber],

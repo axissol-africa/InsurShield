@@ -1117,7 +1117,7 @@ export class InsurerPortalService {
     const insurerId = this.insurerOf(principal);
 
     const acknowledged = await this.portal.transaction(async (tx) => {
-      const receipt = { receivedAt: new Date(), insurerClaimReference: dto.insurerClaimReference ?? undefined };
+      const receipt = { receivedAt: new Date(), insurerClaimReference: dto.insurerClaimReference?.trim() || undefined };
       const result = await this.portal.acknowledgeClaim(tx, claimNumber, insurerId, receipt);
       if (result) {
         await this.audit.write(tx, {
@@ -1163,6 +1163,9 @@ export class InsurerPortalService {
         claimNumber,
         await this.portal.claimExists(claimNumber),
       );
+    }
+    if (claim.status === 'NOTIFIED' && claim.responseDueOn !== null) {
+      throw new ApiException('CLAIM_INSURER_REFERENCE_REQUIRED', 'Enter your insurer claim reference before marking this claim received.');
     }
     return toAcknowledgement(claim);
   }

@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { servicesExistingBusinessWhere } from '../common/insurer-standing.js';
 import { PERMISSIONS } from '../common/auth/permissions.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
@@ -70,6 +71,12 @@ export class ServiceRequestsRepository {
       .where(and(eq(policies.policyNumber, policyNumber), eq(policies.customerId, customerId)))
       .for('update', { of: policies });
     return policy;
+  }
+
+  async lockServicingInsurer(tx: Transaction, insurerId: string): Promise<boolean> {
+    const [insurer] = await tx.select({ id: insurers.id }).from(insurers)
+      .where(and(eq(insurers.id, insurerId), isNull(insurers.deletedAt), ...servicesExistingBusinessWhere())).for('share');
+    return Boolean(insurer);
   }
 
   /** Whether a cancellation of this policy is already in hand. */

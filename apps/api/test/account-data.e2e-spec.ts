@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import {
-  auditLogs, authSessions, contactPreferences, insurerProducts, insurerProductVersions, marketingConsents, notifications, payments,
+  auditLogs, authSessions, claimUpdates, contactPreferences, insurerProducts, insurerProductVersions, marketingConsents, notifications, payments,
   quoteRequestProductRequirementAnswers, quoteRequestProductVersions, serviceRequests, serviceRequestUpdates,
 } from '../src/db/schema.js';
 import { buildClaim, buildCustomer, buildDocument, buildInspection, buildPurchasedPolicy, buildStaffUser, unique } from './builders.js';
@@ -31,6 +31,10 @@ describe('customer portfolio data export', () => {
     await app.db.update(payments).set({ payerMsisdnMasked: '097****123', checkoutUrl: 'https://checkout.invalid/private-token' }).where(eq(payments.id, payment.id));
     const parties = { customerId: customer.id, insurerId: insurer.insurer.id };
     const claim = await buildClaim(app.db, { ...parties, policyNumber: policy.policyNumber });
+    await app.db.insert(claimUpdates).values([
+      { claimNumber: claim.claimNumber, status: 'UNDER_REVIEW', actorKind: 'INSURER', message: 'Your claim is being reviewed.' },
+      { claimNumber: competingClaim.claimNumber, status: 'UNDER_REVIEW', actorKind: 'INSURER', message: 'Unrelated insurer update' },
+    ]);
     const ncd = await buildNcdApplication(app.db, parties);
     const inspection = await buildInspection(app.db, parties);
     const [product] = await app.db.insert(insurerProducts).values({
@@ -90,7 +94,7 @@ describe('customer portfolio data export', () => {
       })],
       payments: [expect.objectContaining({ transactionId: payment.transactionId, payerMasked: '097****123' })],
       policies: [expect.objectContaining({ policyNumber: policy.policyNumber })],
-      claims: [expect.objectContaining({ claimNumber: claim.claimNumber })],
+      claims: [expect.objectContaining({ claimNumber: claim.claimNumber, updates: [expect.objectContaining({ message: 'Your claim is being reviewed.' })] })],
       ncdApplications: [expect.objectContaining({ applicationNumber: ncd.applicationNumber })],
       inspections: [expect.objectContaining({ id: inspection.id })],
       notifications: [expect.objectContaining({ entityId: reference })],
@@ -104,7 +108,7 @@ describe('customer portfolio data export', () => {
     for (const secret of [
       other.email, otherDocument.id, competingPurchase.quotation.id, competingPurchase.quoteRequest.vehicleId,
       competingPurchase.quoteRequest.id, competingPurchase.policy.policyNumber, competingPurchase.payment.transactionId,
-      competingClaim.claimNumber, competingInspection.id, competingReference, 'Separate customer alert', 'Separate customer response',
+      competingClaim.claimNumber, 'Unrelated insurer update', competingInspection.id, competingReference, 'Separate customer alert', 'Separate customer response',
       internal.id, insurer.staff.id, 'Internal underwriting note', '192.0.2.50', 'private-token',
     ]) {
       expect(wire).not.toContain(secret);

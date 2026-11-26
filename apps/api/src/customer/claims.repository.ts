@@ -1,8 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { claimAttachments, claimNotifications, customers, insurers, policies } from '../db/schema.js';
-import { servicesExistingBusinessWhere } from '../common/insurer-standing.js';
+import { claimAttachments, claimNotifications, customers, insurers, policies, serviceRequests, vehicles } from '../db/schema.js';
 
 export type ClaimRow = typeof claimNotifications.$inferSelect;
 export type NewClaim = typeof claimNotifications.$inferInsert;
@@ -45,22 +44,34 @@ export class ClaimsRepository {
       .orderBy(asc(claimAttachments.id));
   }
 
-  /** An insurer a claim can be notified to: servicing continues until the insurer is removed. */
-  async findInsurer(tx: Transaction, insurerId: string): Promise<{ id: string; name: string } | undefined> {
-    const [insurer] = await tx
-      .select({ id: insurers.id, name: insurers.name })
-      .from(insurers)
-      .where(and(eq(insurers.id, insurerId), ...servicesExistingBusinessWhere()))
-      .for('share');
-    return insurer;
+  async lockOwnedPolicy(tx: Transaction, customerId: string, policyNumber: string) {
+    const [record] = await tx.select({
+      policy: policies,
+      plate: vehicles.plateNumber,
+      make: vehicles.make,
+      model: vehicles.model,
+      year: vehicles.year,
+    }).from(policies).innerJoin(vehicles, eq(vehicles.id, policies.vehicleId))
+      .where(and(eq(policies.customerId, customerId), eq(policies.policyNumber, policyNumber)))
+      .for('share', { of: policies });
+    if (!record) return undefined;
+    if (record.policy.status !== 'CANCELLED') return { ...record, cancellationDay: null };
+
+    // Read after acquiring the policy lock so a cancellation completed while waiting is visible here.
+    const [cancellation] = await tx.select({ day: serviceRequests.effectiveDate })
+      .from(serviceRequests)
+      .where(and(eq(serviceRequests.policyNumber, policyNumber), eq(serviceRequests.type, 'CANCELLATION'),
+        eq(serviceRequests.status, 'COMPLETED')))
+      .orderBy(asc(serviceRequests.effectiveDate))
+      .limit(1);
+    return { ...record, cancellationDay: cancellation?.day ?? null };
   }
 
-  async findOwnedPolicyNumber(tx: Transaction, customerId: string, policyNumber: string): Promise<string | undefined> {
-    const [policy] = await tx
-      .select({ policyNumber: policies.policyNumber })
-      .from(policies)
-      .where(and(eq(policies.policyNumber, policyNumber), eq(policies.customerId, customerId)));
-    return policy?.policyNumber;
+  /** A share lock prevents the final insurer removal check from racing a submission. */
+  async lockInsurer(tx: Transaction, insurerId: string) {
+    const [insurer] = await tx.select({ id: insurers.id, name: insurers.name, status: insurers.status, deletedAt: insurers.deletedAt })
+      .from(insurers).where(eq(insurers.id, insurerId)).for('share');
+    return insurer;
   }
 
   async insertClaim(tx: Transaction, claim: NewClaim): Promise<ClaimRow> {

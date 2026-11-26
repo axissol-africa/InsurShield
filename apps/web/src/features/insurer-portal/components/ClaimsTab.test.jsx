@@ -6,7 +6,7 @@ import { api } from '@/api';
 import { hydrateInsurerPortal } from '@/api/sync';
 import { toast } from 'sonner';
 
-vi.mock('@/api', () => ({ api: { claims: { markReceived: vi.fn() } } }));
+vi.mock('@/api', () => ({ api: { claims: { markReceived: vi.fn(), insurerTimeline: vi.fn().mockResolvedValue({ claimNumber: 'CLM-654321', status: 'Notified', updates: [] }) } } }));
 vi.mock('@/api/sync', () => ({ hydrateInsurerPortal: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('sonner', async (original) => ({ ...(await original()), toast: { success: vi.fn() } }));
 
@@ -126,11 +126,12 @@ describe('ClaimsTab', () => {
     });
     await open(user, 'CLM-654321');
 
+    if (!screen.getByLabelText('Insurer claim reference').value) await user.type(screen.getByLabelText('Insurer claim reference'), 'INS-123');
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     const saving = screen.getByRole('button', { name: 'Saving…' });
     expect(saving).toBeDisabled();
     expect(saving).toHaveAttribute('aria-busy', 'true');
-    expect(api.claims.markReceived).toHaveBeenCalledExactlyOnceWith('CLM-654321');
+    expect(api.claims.markReceived).toHaveBeenCalledExactlyOnceWith('CLM-654321', { insurerClaimReference: 'INS-123' });
 
     await act(async () => { finish(); });
     expect(hydrateInsurerPortal).toHaveBeenCalledOnce();
@@ -146,6 +147,7 @@ describe('ClaimsTab', () => {
     render(<ClaimsTab claims={[theft, collision]} />);
 
     await open(user, 'CLM-654321');
+    if (!screen.getByLabelText('Insurer claim reference').value) await user.type(screen.getByLabelText('Insurer claim reference'), 'INS-123');
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     await open(user, 'CLM-111222');
     await open(user, 'CLM-654321');
@@ -160,10 +162,12 @@ describe('ClaimsTab', () => {
     render(<ClaimsTab claims={[theft]} />);
     await open(user, 'CLM-654321');
 
+    if (!screen.getByLabelText('Insurer claim reference').value) await user.type(screen.getByLabelText('Insurer claim reference'), 'INS-123');
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('This claim could not be marked as received. Please try again.');
     expect(hydrateInsurerPortal).toHaveBeenCalledOnce();
     expect(toast.success).not.toHaveBeenCalled();
+    if (!screen.getByLabelText('Insurer claim reference').value) await user.type(screen.getByLabelText('Insurer claim reference'), 'INS-123');
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     expect(api.claims.markReceived).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -195,6 +199,7 @@ describe('ClaimsTab', () => {
     await user.click(screen.getByRole('radio', { name: /New/ }));
     await open(user, 'CLM-654321');
 
+    if (!screen.getByLabelText('Insurer claim reference').value) await user.type(screen.getByLabelText('Insurer claim reference'), 'INS-123');
     await user.click(screen.getByRole('button', { name: 'Mark as received' }));
     rerender(<ClaimsTab claims={[{ ...theft, status: 'Received by insurer', receivedAt: new Date().toISOString() }, collision]} />);
     await user.click(screen.getByRole('button', { name: 'Back to notifications' }));

@@ -7,7 +7,7 @@ const {
   customers, vehicles, consentRecords, marketingConsents, contactPreferences, quoteRequests,
   quoteRequestProductVersions, quoteRequestProductRequirementAnswers, quoteRequestProductRequirementDeclarations,
   quoteRequestProductRequirementDocuments, insurerQuotes, insurers, policies, payments, paymentRefunds,
-  serviceRequests, serviceRequestUpdates, claimNotifications, ncdApplications, inspections, notifications,
+  serviceRequests, serviceRequestUpdates, claimNotifications, claimUpdates, ncdApplications, inspections, notifications,
 } = tables;
 
 @Injectable()
@@ -144,8 +144,14 @@ export class AccountDataRepository {
       description: claimNotifications.description, estimatedLossMinor: claimNotifications.estimatedLossMinor, policeReport: claimNotifications.policeReport,
       policeReportNumber: claimNotifications.policeReportNumber, lateReason: claimNotifications.lateReason,
       submittedAt: claimNotifications.submittedAt, receivedAt: claimNotifications.receivedAt, insurerClaimReference: claimNotifications.insurerClaimReference,
+      responseDueOn: claimNotifications.responseDueOn, lateSubmission: claimNotifications.lateSubmission,
     }).from(claimNotifications).innerJoin(insurers, eq(insurers.id, claimNotifications.insurerId))
       .where(eq(claimNotifications.customerId, id)).orderBy(asc(claimNotifications.submittedAt));
+    const claimTimeline = await tx.select({
+      claimNumber: claimUpdates.claimNumber, status: claimUpdates.status, author: claimUpdates.actorKind,
+      message: claimUpdates.message, evidenceRequest: claimUpdates.evidenceRequest, createdAt: claimUpdates.createdAt,
+    }).from(claimUpdates).innerJoin(claimNotifications, eq(claimNotifications.claimNumber, claimUpdates.claimNumber))
+      .where(eq(claimNotifications.customerId, id)).orderBy(asc(claimUpdates.createdAt), asc(claimUpdates.id));
     const ncd = await tx.select({
       applicationNumber: ncdApplications.applicationNumber, policyNumber: ncdApplications.policyNumber, insurer: insurers.name,
       yearsClaimFree: ncdApplications.yearsClaimFree, status: ncdApplications.status, submittedAt: ncdApplications.submittedAt, decidedAt: ncdApplications.decidedAt,
@@ -161,6 +167,6 @@ export class AccountDataRepository {
       body: notifications.body, entityType: notifications.entityType, entityId: notifications.entityId, readAt: notifications.readAt,
       deliveryStatus: notifications.deliveryStatus, deliveredAt: notifications.deliveredAt, createdAt: notifications.createdAt,
     }).from(notifications).where(eq(notifications.customerId, id)).orderBy(asc(notifications.createdAt));
-    return { claims, ncdApplications: ncd, inspections: visits, notifications: notices };
+    return { claims, claimTimeline, ncdApplications: ncd, inspections: visits, notifications: notices };
   }
 }

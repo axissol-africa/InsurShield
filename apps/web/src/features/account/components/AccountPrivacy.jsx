@@ -50,7 +50,7 @@ export default function AccountPrivacy({ onClose, accountError, canClose = true 
     </CardContent></Card>
     <Card><CardHeader><CardTitle>Close your account</CardTitle></CardHeader><CardContent className="space-y-4 text-sm">
       <p>Closing your account signs you out and removes access to your documents. Drafts and open quote requests are withdrawn. Records needed for regulatory retention are kept; closing an account does not immediately erase them.</p>
-      <p>Closure is blocked while cover is in force, a service request is open, a payment is in progress, or a refund is in progress. The server checks these conditions when you request closure and explains any blocker.</p>
+      <p>Closure is blocked while cover is in force, a service request is open, a payment is in progress, a refund is in progress, or requested claim evidence is still outstanding. Submit the requested evidence from Claims before trying again. The server checks these conditions when you request closure and explains any blocker.</p>
       {canClose && <Button variant="outline" onClick={onClose}>Close account</Button>}
       {!canClose && <p>The shared demo account cannot be closed.</p>}
       {accountError && <p role="alert">{accountError}</p>}

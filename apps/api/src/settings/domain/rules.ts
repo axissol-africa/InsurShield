@@ -89,6 +89,15 @@ const paymentCharges = z.object({ charges: z.array(paymentCharge).max(20) }).sup
   }
 });
 
+const claimTypes = z.array(z.string().trim().min(2).max(60)).max(30);
+const claimReporting = z.object({
+  reportingDays: z.number().int().min(1).max(365),
+  responseDays: z.number().int().min(1).max(365),
+  excludedTypes: z.object({ COMPREHENSIVE: claimTypes, THIRD_PARTY: claimTypes }),
+  requireAttachmentsFor: claimTypes,
+  requirePoliceReportFor: claimTypes,
+});
+
 const schemas = {
   PIA_FLOOR: z.object({ rateBps: z.number().int().min(0).max(10_000) }),
   QUOTE_REPLY_DEADLINE: z.object({ days: z.number().int().min(1).max(90) }),
@@ -122,6 +131,7 @@ const schemas = {
       }
     }),
   /** How long a closed account keeps its holder's name, phone and email before they are replaced. */
+  CLAIM_REPORTING: claimReporting,
   ACCOUNT_RETENTION: z.object({ daysAfterClosure: z.number().int().min(30).max(36_500) }),
 } as const satisfies Record<RuleSettingKey, z.ZodType>;
 
@@ -215,6 +225,14 @@ const defaults = {
   RENEWAL_POLICY: { windowDays: 60, reminderDays: [30, 14, 3] },
   // Provisional: open question 3 of the batch 15 plan, seven years after closure.
   ACCOUNT_RETENTION: { daysAfterClosure: 2_555 },
+  // Provisional servicing rules until the reporting period and coverage matrix are approved.
+  CLAIM_REPORTING: {
+    reportingDays: 14,
+    responseDays: 7,
+    excludedTypes: { COMPREHENSIVE: [], THIRD_PARTY: ['Theft', 'Fire Damage', 'Natural Disaster', 'Windscreen Damage'] },
+    requireAttachmentsFor: ['Theft'],
+    requirePoliceReportFor: ['Theft'],
+  },
 } as const satisfies Record<RuleSettingKey, RuleValue>;
 
 /** Default values seed demonstrations only; a response always says whether its value is provisional. */
