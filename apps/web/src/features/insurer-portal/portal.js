@@ -14,7 +14,7 @@ export const EXTENSION_DAYS = 7;
 /** The element every portal screen renders into; the skip link and screen changes move focus to it. */
 export const PORTAL_CONTENT_ID = 'insurer-content';
 
-const OPEN_NCD_STATUSES = ['Submitted', 'Under Review'];
+const OPEN_NCD_STATUSES = ['Submitted', 'Under Review', 'Verification Required'];
 export const isOpenNcdApplication = (application) => OPEN_NCD_STATUSES.includes(application.status);
 
 /**

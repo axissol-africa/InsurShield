@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayNotEmpty,
@@ -187,21 +187,36 @@ export class NotifyClaimDto {
 }
 
 export class ApplyForNcdDto {
-  @IsUUID('4', { message: 'Choose the insurer that held the claim-free policy.' })
-  insurerId!: string;
+  @IsOptional() @IsUUID('4') insurerId?: string;
 
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString() @MinLength(2) @MaxLength(40) policyNumber!: string;
+
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString() @MinLength(2) @MaxLength(120) fullName!: string;
+
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
   @IsString() @MinLength(6) @MaxLength(24) phone!: string;
 
   @IsInt()
   @Min(1, { message: 'Enter at least one claim-free year.' })
-  @Max(20)
+  @Max(99)
   yearsClaimFree!: number;
+
+  @IsIn([true], { message: 'Accept the declaration before applying.' }) declaration!: boolean;
 }
 
 export class ValidateNcdCodeDto {
   @IsString() @MinLength(3) @MaxLength(40) code!: string;
+
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(5) @IsUUID('4', { each: true }) insurerIds!: string[];
+  @IsOptional() @IsString() @MaxLength(40) renewalOfPolicyNumber?: string;
+  @IsDefined() @ValidateNested() @Type(() => VehicleDetailsDto) vehicleDetails!: VehicleDetailsDto;
+}
+
+export class SubmitNcdEvidenceDto {
+  @IsInt() @Min(1) verificationRevision!: number;
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(8) @ArrayUnique() @IsUUID('4', { each: true }) documentIds!: string[];
 }
 
 export class RequestInspectionDto {

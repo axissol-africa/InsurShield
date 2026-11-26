@@ -45,6 +45,9 @@ export class QuoteConditionDto {
 }
 
 export class SubmitQuoteDto {
+  /** Record an explicitly applied, server-validated NCD without changing the manual premium. */
+  @IsOptional() @IsBoolean() applyNcd?: boolean;
+
   /** Required when this request contains customer-selected product versions. */
   @IsOptional()
   @IsUUID('4', { message: 'Choose the product version this quote answers.' })
@@ -209,10 +212,17 @@ export class AcknowledgeClaimDto {
 }
 
 export class NcdDecisionDto {
+  /** The current revision displayed with the application, not the next revision. */
+  @IsOptional() @IsInt() @Min(0) verificationRevision?: number;
+
   @Transform(({ value }) => (typeof value === 'string' ? (fromContract.ncdDecision(value) ?? value) : value))
-  @IsIn(CONTRACT_VALUES.ncdDecision, { message: 'Decision must be Under Review, Approved or Rejected.' })
+  @IsIn(CONTRACT_VALUES.ncdDecision, { message: 'Decision must be Under Review, Verification Required, Approved or Rejected.' })
   status!: NcdDecisionStatus;
 
-  /** Set when approving to override the automatic percentage. */
-  @IsOptional() @IsInt() @Min(0) @Max(50, { message: 'NCD percentage cannot exceed 50%.' }) percentage?: number;
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(2000)
+  note!: string;
+
+  /** If supplied, must equal the configured eligible tier. */
+  @IsOptional() @IsInt() @Min(0) @Max(100) percentage?: number;
 }

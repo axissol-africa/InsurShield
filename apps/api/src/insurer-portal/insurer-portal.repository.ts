@@ -1,5 +1,6 @@
+import { findBoundNcdCode } from '../customer/ncd-code-ownership.js';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, exists, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
@@ -29,6 +30,7 @@ export type NewNcdCode = typeof ncdCodes.$inferInsert;
 
 const replyColumns = {
   id: insurerQuotes.id,
+  ncdPercentage: insurerQuotes.ncdPercentage,
   quoteRequestId: insurerQuotes.quoteRequestId,
   insurerId: insurerQuotes.insurerId,
   productVersionId: insurerQuotes.productVersionId,
@@ -96,6 +98,7 @@ export class InsurerPortalRepository {
         submittedAt: quoteRequests.submittedAt,
         expiresAt: quoteRequests.expiresAt,
         vehicleValueMinor: quoteRequests.vehicleValueMinor,
+        ncdPercentage: sql<number | null>`case when ${ncdCodes.code} is not null then ${quoteRequests.ncdPercentage} end`,
         vehicleUsage: quoteRequests.vehicleUsage,
         insuranceType: quoteRequests.insuranceType,
         coverageDuration: quoteRequests.coverageDuration,
@@ -120,6 +123,10 @@ export class InsurerPortalRepository {
       .innerJoin(quoteRequests, eq(quoteRequests.id, quoteRequestRecipients.quoteRequestId))
       .innerJoin(customers, eq(customers.id, quoteRequests.customerId))
       .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
+      .leftJoin(ncdCodes, and(eq(ncdCodes.code, quoteRequests.ncdCode), eq(ncdCodes.insurerId, insurerId),
+        isNotNull(ncdCodes.expiresAt), exists(this.db.select({ id: ncdApplications.id }).from(ncdApplications)
+          .where(and(eq(ncdApplications.approvedCodeId, ncdCodes.code), eq(ncdApplications.customerId, quoteRequests.customerId),
+            eq(ncdApplications.insurerId, insurerId), isNotNull(ncdApplications.sourcePolicyNumber))))))
       .leftJoin(previousPolicies, eq(previousPolicies.policyNumber, quoteRequests.renewalOfPolicyNumber))
       .leftJoin(previousInsurers, eq(previousInsurers.id, previousPolicies.insurerId))
       .leftJoin(
@@ -293,6 +300,20 @@ export class InsurerPortalRepository {
         ),
       );
     return quote !== undefined;
+  }
+
+  async quoteNcdContext(tx: Transaction, requestId: string, insurerId: string) {
+    const [request] = await tx.select({
+      customerId: quoteRequests.customerId, code: quoteRequests.ncdCode,
+      sourcePolicyNumber: quoteRequests.renewalOfPolicyNumber, vehicle: vehicles,
+    }).from(quoteRequests)
+      .innerJoin(quoteRequestRecipients, eq(quoteRequestRecipients.quoteRequestId, quoteRequests.id))
+      .innerJoin(vehicles, eq(vehicles.id, quoteRequests.vehicleId))
+      .where(and(eq(quoteRequests.id, requestId), eq(quoteRequestRecipients.insurerId, insurerId)));
+    if (!request?.code) return undefined;
+    // Keep redemption/revocation from changing the checked code until the quote commits.
+    await tx.select({ code: ncdCodes.code }).from(ncdCodes).where(eq(ncdCodes.code, request.code)).for('share');
+    return { request, code: await findBoundNcdCode(tx, request.code, request.customerId) };
   }
 
   async insertQuote(tx: Transaction, quote: NewInsurerQuote) {
@@ -621,34 +642,29 @@ export class InsurerPortalRepository {
 
   // ── No-claim discount ───────────────────────────────────────────
 
-  listNcdApplications(insurerId: string) {
-    return this.db
-      .select({
-        id: ncdApplications.id,
-        applicationNumber: ncdApplications.applicationNumber,
-        policyNumber: ncdApplications.policyNumber,
-        fullName: ncdApplications.fullName,
-        phone: ncdApplications.phone,
-        yearsClaimFree: ncdApplications.yearsClaimFree,
-        status: ncdApplications.status,
-        approvedCode: ncdApplications.approvedCodeId,
-        submittedAt: ncdApplications.submittedAt,
-        decidedAt: ncdApplications.decidedAt,
-      })
+  async ncdApplicationCustomer(tx: Transaction, applicationId: string, insurerId: string) {
+    const [application] = await tx.select({ customerId: ncdApplications.customerId })
       .from(ncdApplications)
-      .where(eq(ncdApplications.insurerId, insurerId))
-      .orderBy(desc(ncdApplications.submittedAt), asc(ncdApplications.id));
+      .where(and(eq(ncdApplications.id, applicationId), eq(ncdApplications.insurerId, insurerId)));
+    return application;
+  }
+
+  async hasVerifiedNcdSource(tx: Transaction, application: typeof ncdApplications.$inferSelect) {
+    if (!application.customerId || !application.sourcePolicyNumber || !application.sourceVehicleId ||
+        !application.declarationAcceptedAt || !application.declarationVersion) return false;
+    const [policy] = await tx.select({ policyNumber: policies.policyNumber }).from(policies)
+      .where(and(eq(policies.policyNumber, application.sourcePolicyNumber),
+        eq(policies.customerId, application.customerId), eq(policies.insurerId, application.insurerId),
+        eq(policies.vehicleId, application.sourceVehicleId), isNotNull(policies.issuedAt),
+        inArray(policies.status, ['ACTIVE', 'CANCELLED'])))
+      .for('share');
+    return policy !== undefined;
   }
 
   /** Locks the insurer's application, so it is decided one request at a time. */
   async lockNcdApplication(tx: Transaction, applicationId: string, insurerId: string) {
     const [application] = await tx
-      .select({
-        applicationNumber: ncdApplications.applicationNumber,
-        status: ncdApplications.status,
-        yearsClaimFree: ncdApplications.yearsClaimFree,
-        customerId: ncdApplications.customerId,
-      })
+      .select()
       .from(ncdApplications)
       .where(and(eq(ncdApplications.id, applicationId), eq(ncdApplications.insurerId, insurerId)))
       .for('update');
@@ -671,7 +687,7 @@ export class InsurerPortalRepository {
     applicationId: string,
     insurerId: string,
     from: NcdStatus,
-    decision: { status: NcdStatus; decidedAt: Date | null; approvedCodeId?: string },
+    decision: { status: NcdStatus; decidedAt: Date | null; approvedCodeId?: string; decisionNote: string; verificationRevision?: number },
   ) {
     const [decided] = await tx
       .update(ncdApplications)

@@ -209,12 +209,14 @@ describe('mock api adapter', () => {
   });
 
   it('decides NCD applications and validates approved codes', async () => {
-    const application = await mock.ncd.apply({ insurer: 'Prestige Assurance', policyNumber: 'PA-1', fullName: 'A', phone: '1', yearsClaimFree: 2 });
+    await signIn();
+    const issuer = initial.insurersList.find((insurer) => insurer.name === 'Prestige Assurance');
+    const application = await mock.ncd.apply({ insurer: issuer.name, policyNumber: 'PA-1', fullName: 'A', phone: DEMO_CUSTOMER_ACCOUNT.phone, yearsClaimFree: 2 });
     asInsurer();
     const approved = await mock.ncd.decide(application.id, 'Approved');
     expect(approved.approvedCode).toMatch(/^NCD-/);
-    expect(await mock.ncd.validateCode(approved.approvedCode)).toEqual({ valid: true });
-    expect(await mock.ncd.validateCode('NCD-NOPE')).toEqual({ valid: false });
+    expect(await mock.ncd.validateCode({ code: approved.approvedCode, insurerIds: [issuer.id] })).toMatchObject({ valid: true, insurerId: issuer.id, percentage: 20 });
+    expect(await mock.ncd.validateCode({ code: 'NCD-NOPE', insurerIds: [issuer.id] })).toEqual({ valid: false });
   });
 
   it('keeps insurer product versions immutable through draft, review and approval', async () => {
@@ -340,4 +342,20 @@ it('exports only the signed-in customer without credentials, payment details or 
 it('refuses anonymous exports and document lists', async () => {
   await expect(mock.account.export()).rejects.toThrow('Sign in');
   await expect(mock.account.documents()).rejects.toThrow('Sign in');
+});
+
+
+describe('NCD verification prototype', () => {
+  it('returns matching rule and evidence contracts and refuses stale revisions', async () => {
+    await signIn();
+    const application = await mock.ncd.apply({ insurer: 'Prestige Assurance', policyNumber: 'PA-1', fullName: DEMO_CUSTOMER_ACCOUNT.fullName, phone: DEMO_CUSTOMER_ACCOUNT.phone, yearsClaimFree: 2, declaration: true });
+    expect(await mock.ncd.rules()).toMatchObject({ tiers: expect.arrayContaining([{ yearsClaimFree: 2, percentage: 20 }]), validityDays: 365, provisional: true });
+    asInsurer();
+    const requested = await mock.ncd.decide(application.id, 'Verification Required', 'Provide policy history');
+    expect(requested).toMatchObject({ verificationRevision: 1, decisionNote: 'Provide policy history', discountPercentage: 20 });
+    const document = await mock.documents.upload(new File(['proof'], 'proof.pdf', { type: 'application/pdf' }), 'NCD_EVIDENCE');
+    await expect(mock.ncd.submitEvidence(application.id, { verificationRevision: 0, documentIds: [document.id] })).rejects.toThrow('changed');
+    const updated = await mock.ncd.submitEvidence(application.id, { verificationRevision: 1, documentIds: [document.id] });
+    expect(updated).toMatchObject({ status: 'Under Review', evidence: [document] });
+  });
 });

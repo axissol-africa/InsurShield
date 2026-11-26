@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({
 
 vi.mock('@/lib/apiClient', () => ({ apiClient: transport }));
 
-import { account, admin, auth, claims, insurers, integrations, payments, policies, products, quotes, serviceRequests, settings } from './index';
+import { account, admin, auth, claims, insurers, integrations, ncd, payments, policies, products, quotes, serviceRequests, settings } from './index';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -270,4 +270,19 @@ it('uses claim timeline, evidence, acknowledgement and rule contracts', () => {
   expect(transport.post).toHaveBeenCalledWith('/insurer/claims/CLM%2F1/updates', { expectedRevision: 'CLM/1:acknowledged', action: 'START_REVIEW', message: 'Reviewing' }, { headers: { 'Idempotency-Key': 'update-key' } });
   expect(transport.post).toHaveBeenCalledWith('/claims/CLM%2F1/evidence', { expectedRevision: 'event-1', documentIds: ['DOC-1'] }, { headers: { 'Idempotency-Key': 'evidence-key' } });
   expect(transport.post).toHaveBeenCalledWith('/insurer/claims/CLM%2F1/received', { insurerClaimReference: 'INS-1' });
+});
+
+
+describe('NCD HTTP contract', () => {
+  it('reads rules and sends declaration, revision and decision note', () => {
+    const application = { policyNumber: 'POL-1', fullName: 'Customer', phone: '0970123456', yearsClaimFree: 2, declaration: true };
+    ncd.rules();
+    ncd.apply(application, 'apply-key');
+    ncd.submitEvidence('NCD-1', { verificationRevision: 2, documentIds: ['DOC-1'] }, 'evidence-key');
+    ncd.decide('NCD-1', 'Verification Required', 'Provide policy history', 3, 'decision-key');
+    expect(transport.get).toHaveBeenCalledWith('/ncd/applications/rules');
+    expect(transport.post).toHaveBeenCalledWith('/ncd/applications', application, { headers: { 'Idempotency-Key': 'apply-key' } });
+    expect(transport.post).toHaveBeenCalledWith('/ncd/applications/NCD-1/evidence', { verificationRevision: 2, documentIds: ['DOC-1'] }, { headers: { 'Idempotency-Key': 'evidence-key' } });
+    expect(transport.post).toHaveBeenCalledWith('/insurer/ncd/applications/NCD-1/decision', { status: 'Verification Required', note: 'Provide policy history', verificationRevision: 3 }, { headers: { 'Idempotency-Key': 'decision-key' } });
+  });
 });

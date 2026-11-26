@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { InsurerPortalService } from './insurer-portal.service.js';
 import { InsurersService } from '../insurers/insurers.service.js';
 import {
@@ -342,7 +342,8 @@ export class InsurerPortalController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: NcdDecisionDto,
     @CurrentUser() principal: Principal,
+    @Headers('idempotency-key') key?: string,
   ) {
-    return this.portal.decideNcdApplication(principal, id, dto);
+    return this.portal.decideNcdApplication(principal, id, dto, key);
   }
 }

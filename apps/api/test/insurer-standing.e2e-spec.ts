@@ -8,7 +8,7 @@ import {
   takesNewBusiness,
   takesNewBusinessWhere,
 } from '../src/common/insurer-standing.js';
-import { insurers, policies } from '../src/db/schema.js';
+import { insurers, policies, vehicles } from '../src/db/schema.js';
 import { buildCustomer, buildDocument, buildInsurer, buildQuoteRequest, buildPurchasedPolicy, type Row } from './builders.js';
 import { buildNcdApplication } from './builders/customer.js';
 import { buildPiaConfig } from './builders/admin.js';
@@ -239,15 +239,19 @@ describe('an insurer that may no longer trade', () => {
     it('refuses to issue a code from an insurer whose licence has expired', async () => {
       const lapsed = await buildInsurer(testApp.db, { insurer: { licenceExpiry: EXPIRED } });
       const customer = await buildCustomer(testApp.db);
+      const { policy } = await buildPurchasedPolicy(testApp.db, { customer, insurer: lapsed });
+      await testApp.db.update(policies).set({ issuedAt: new Date(), status: 'ACTIVE' }).where(eq(policies.policyNumber, policy.policyNumber));
+      await testApp.db.update(vehicles).set({ chassisNumber: 'NCD-LAPSED-CHASSIS' }).where(eq(vehicles.id, policy.vehicleId));
       const application = await buildNcdApplication(testApp.db, {
         customerId: customer.id,
         insurerId: lapsed.insurer.id,
-      });
+      }, { policyNumber: policy.policyNumber, sourcePolicyNumber: policy.policyNumber, sourceVehicleId: policy.vehicleId,
+        declarationAcceptedAt: new Date(), declarationVersion: '1' });
 
       const response = await testApp.http
         .post(`/api/v1/insurer/ncd/applications/${application.id}/decision`)
         .set(await signIn(testApp.http, lapsed.staff))
-        .send({ status: 'APPROVED' });
+        .send({ status: 'APPROVED', note: 'Reviewed the application.' });
 
       expect(response.status).toBe(409);
       expect(response.body.code).toBe('INSURER_UNAVAILABLE');
@@ -264,7 +268,7 @@ describe('an insurer that may no longer trade', () => {
       const response = await testApp.http
         .post(`/api/v1/insurer/ncd/applications/${application.id}/decision`)
         .set(await signIn(testApp.http, lapsed.staff))
-        .send({ status: 'REJECTED' });
+        .send({ status: 'REJECTED', note: 'The application could not be verified.' });
 
       expect(response.status).toBe(200);
     });
@@ -294,18 +298,24 @@ describe('an insurer that may no longer trade', () => {
         insurer: { licenceExpiry: EXPIRED },
       });
 
+      const { policy } = await buildPurchasedPolicy(testApp.db, { customer, insurer: lapsed });
+      await testApp.db.update(policies).set({ issuedAt: new Date(), status: 'ACTIVE' }).where(eq(policies.policyNumber, policy.policyNumber));
+      await testApp.db.update(vehicles).set({ chassisNumber: 'NCD-LAPSED-CHASSIS' }).where(eq(vehicles.id, policy.vehicleId));
+
       const response = await testApp.http
         .post('/api/v1/ncd/applications')
         .set(await asCustomer(customer))
         .send({
           insurerId: lapsed.insurer.id,
-          policyNumber: 'PA-2023-0045',
+          policyNumber: policy.policyNumber,
+          declaration: true,
           fullName: 'Mwiza Banda',
           phone: '0970123456',
           yearsClaimFree: 3,
         });
 
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('INSURER_UNAVAILABLE');
     });
 
     it('refuses an inspection request to an insurer whose licence has expired', async () => {

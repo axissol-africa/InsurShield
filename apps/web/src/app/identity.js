@@ -1,3 +1,4 @@
+import { clearPendingCommands } from '@/api/idempotency';
 import { env } from '@/config/env';
 
 export const IDENTITY_STORAGE_KEY = 'insurshield-identity';
@@ -11,10 +12,12 @@ export const getIdentityBinding = () => (live() ? storage()?.getItem(IDENTITY_ST
 
 export const setIdentityBinding = (userId) => {
   if (!live() || !userId) return;
+  if (getIdentityBinding() !== userId) clearPendingCommands();
   storage()?.setItem(IDENTITY_STORAGE_KEY, userId);
 };
 
 export const clearIdentityBinding = () => {
+  clearPendingCommands();
   if (live()) storage()?.removeItem(IDENTITY_STORAGE_KEY);
 };
 

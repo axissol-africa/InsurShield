@@ -3,7 +3,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { OPEN_PAYMENT_STATUSES, OPEN_REFUND_STATUSES, OPEN_SERVICE_REQUEST_STATUSES, type PolicyStatus } from '../common/domain/enums.js';
 import { currentOn } from '../common/domain/lusaka.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
-import { claimNotifications, customers, policies, payments, paymentRefunds, serviceRequests, reconciliationItems } from '../db/schema.js';
+import { claimNotifications, customers, ncdApplications, policies, payments, paymentRefunds, serviceRequests, reconciliationItems } from '../db/schema.js';
 
 /** A paid policy awaiting its certificate is already cover the customer bought. */
 const IN_FORCE: PolicyStatus[] = ['AWAITING_INSURER_CERTIFICATE', 'ACTIVE'];
@@ -57,6 +57,12 @@ export class AccountRepository {
     const [claim] = await tx.select({ reference: claimNotifications.claimNumber }).from(claimNotifications)
       .where(and(eq(claimNotifications.customerId, customerId), eq(claimNotifications.status, 'EVIDENCE_REQUIRED'))).limit(1);
     return Boolean(claim);
+  }
+
+  async hasOutstandingNcdEvidence(tx: Transaction, customerId: string): Promise<boolean> {
+    const [application] = await tx.select({ id: ncdApplications.id }).from(ncdApplications)
+      .where(and(eq(ncdApplications.customerId, customerId), eq(ncdApplications.status, 'VERIFICATION_REQUIRED'))).limit(1);
+    return Boolean(application);
   }
 
   async hasOpenPayment(tx: Transaction, customerId: string): Promise<boolean> {

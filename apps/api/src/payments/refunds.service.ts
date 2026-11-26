@@ -12,6 +12,7 @@ import type { Transaction } from '../db/database.module.js';
 import { JobsRepository } from '../jobs/jobs.repository.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PAYMENT_PROVIDER, type PaymentEvent, type PaymentProvider } from './provider/payment-provider.js';
+import { isRefundablePayment } from './domain/payment.js';
 import { RefundsRepository, type RefundRow } from './refunds.repository.js';
 
 type StaffPrincipal = Extract<Principal, { kind: 'staff' }>;
@@ -59,7 +60,7 @@ export class RefundsService {
       await lockCustomerForFinance(tx, customerId);
       const payment = await this.refunds.lockPaymentByTransaction(tx, transactionId);
       if (!payment) throw ApiException.notFound('Payment', transactionId);
-      if (payment.status !== 'CONFIRMED') {
+      if (!isRefundablePayment(payment)) {
         throw ApiException.conflict('PAYMENT_NOT_REFUNDABLE', 'Only a confirmed payment can be refunded.');
       }
       if (!payment.providerPaymentId) {
@@ -129,7 +130,7 @@ export class RefundsService {
       throw ApiException.conflict('REFUND_NOT_PROPOSED', 'This refund is no longer waiting for approval.');
     }
     const payment = await this.refunds.lockPayment(tx, refund.paymentId);
-    if (!payment || payment.status !== 'CONFIRMED') {
+    if (!payment || !isRefundablePayment(payment)) {
       throw ApiException.conflict('PAYMENT_NOT_REFUNDABLE', 'The payment is no longer confirmed, so it cannot be refunded.');
     }
     const remaining = payment.amountMinor - (await this.refunds.refundedMinor(tx, payment.id));

@@ -220,11 +220,13 @@ export const claims = {
 };
 
 export const ncd = {
-  apply: (application) => apiClient.post('/ncd/applications', application),
+  rules: () => apiClient.get('/ncd/applications/rules'),
+  submitEvidence: (id, payload, key) => apiClient.post(`/ncd/applications/${id}/evidence`, payload, key ? { headers: { 'Idempotency-Key': key } } : undefined),
+  apply: (application, key) => apiClient.post('/ncd/applications', application, key ? { headers: { 'Idempotency-Key': key } } : undefined),
   listMine: () => apiClient.get('/ncd/applications'),
-  validateCode: (code) => apiClient.post('/ncd/codes/validate', { code }),
+  validateCode: (payload) => apiClient.post('/ncd/codes/validate', payload),
   listForInsurer: () => apiClient.get('/insurer/ncd/applications'),
-  decide: (id, status) => apiClient.post(`/insurer/ncd/applications/${id}/decision`, { status }),
+  decide: (id, status, note = '', verificationRevision = 0, key) => apiClient.post(`/insurer/ncd/applications/${id}/decision`, { status, note, verificationRevision }, key ? { headers: { 'Idempotency-Key': key } } : undefined),
 };
 
 export const inspections = {

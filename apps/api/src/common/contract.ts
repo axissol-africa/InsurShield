@@ -107,11 +107,12 @@ const INSURER_STATUS_CHANGE: Record<InsurerStatusChange, string> = {
 };
 
 /** The only NCD statuses an insurer can choose as a decision. */
-export const NCD_DECISION_STATUSES = ['UNDER_REVIEW', 'APPROVED', 'REJECTED'] as const satisfies readonly NcdStatus[];
+export const NCD_DECISION_STATUSES = ['UNDER_REVIEW', 'VERIFICATION_REQUIRED', 'APPROVED', 'REJECTED'] as const satisfies readonly NcdStatus[];
 export type NcdDecisionStatus = (typeof NCD_DECISION_STATUSES)[number];
 
 const NCD_DECISION_STATUS: Record<NcdDecisionStatus, string> = {
   UNDER_REVIEW: NCD_STATUS.UNDER_REVIEW,
+  VERIFICATION_REQUIRED: NCD_STATUS.VERIFICATION_REQUIRED,
   APPROVED: NCD_STATUS.APPROVED,
   REJECTED: NCD_STATUS.REJECTED,
 };

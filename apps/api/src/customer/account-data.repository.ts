@@ -155,6 +155,8 @@ export class AccountDataRepository {
     const ncd = await tx.select({
       applicationNumber: ncdApplications.applicationNumber, policyNumber: ncdApplications.policyNumber, insurer: insurers.name,
       yearsClaimFree: ncdApplications.yearsClaimFree, status: ncdApplications.status, submittedAt: ncdApplications.submittedAt, decidedAt: ncdApplications.decidedAt,
+      declarationAcceptedAt: ncdApplications.declarationAcceptedAt, declarationVersion: ncdApplications.declarationVersion,
+      decisionNote: ncdApplications.decisionNote,
     }).from(ncdApplications).innerJoin(insurers, eq(insurers.id, ncdApplications.insurerId)).where(eq(ncdApplications.customerId, id));
     const visits = await tx.select({
       id: inspections.id, insurer: insurers.name, status: inspections.status, purpose: inspections.purpose,

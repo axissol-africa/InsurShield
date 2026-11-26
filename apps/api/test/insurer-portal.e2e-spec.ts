@@ -27,6 +27,7 @@ import {
   buildDocument,
   buildInsurer,
   buildInsurerQuote,
+  buildNcdCode,
   buildPurchasedPolicy,
   buildQuoteRequest,
   buildStaffUser,
@@ -36,7 +37,7 @@ import {
 } from './builders.js';
 import { buildClaimAttachment, buildInspectionShot } from './builders/documents.js';
 import { buildPiaConfig } from './builders/admin.js';
-import { buildNcdApplication } from './builders/customer.js';
+import { buildNcdApplication as buildLegacyNcdApplication } from './builders/customer.js';
 import {
   holdLocks,
   openTestDatabase,
@@ -49,6 +50,17 @@ import {
 } from './helpers.js';
 import { signIn } from './sessions.js';
 import { FAKE_STORAGE_ORIGIN } from './storage-fake.js';
+
+/** Modern NCD fixtures keep the verified source relationship; legacy cases opt into the original builder. */
+async function buildNcdApplication(...[db, input, overrides]: Parameters<typeof buildLegacyNcdApplication>) {
+  const customer = input.customerId ? (await db.select().from(schema.customers).where(eq(schema.customers.id, input.customerId)))[0] : undefined;
+  const { policy } = await buildPurchasedPolicy(db, { customer });
+  await db.update(policies).set({ insurerId: input.insurerId, status: 'ACTIVE', issuedAt: new Date() }).where(eq(policies.policyNumber, policy.policyNumber));
+  return buildLegacyNcdApplication(db, { ...input, customerId: policy.customerId }, {
+    policyNumber: policy.policyNumber, sourcePolicyNumber: policy.policyNumber, sourceVehicleId: policy.vehicleId,
+    declarationAcceptedAt: new Date(), declarationVersion: '1', ...overrides,
+  });
+}
 
 const DAY_MS = 86_400_000;
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -124,13 +136,23 @@ const CLAIM_KEYS = [
 const NCD_KEYS = [
   'applicationNumber',
   'approvedCode',
+  'codeStatus',
   'decidedAt',
+  'decisionNote',
+  'declarationAcceptedAt',
+  'declarationVersion',
+  'discountPercentage',
+  'evidence',
+  'expiresAt',
   'fullName',
   'id',
+  'insurer',
   'phone',
   'policyNumber',
   'status',
   'submittedAt',
+  'vehicle',
+  'verificationRevision',
   'yearsClaimFree',
 ];
 
@@ -164,10 +186,10 @@ describe('insurer portal', () => {
     testApp.http.get(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff));
 
   const post = async (insurer: BuiltInsurer, path: string, body: Record<string, unknown> = {}) =>
-    testApp.http.post(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff)).send(body);
+    testApp.http.post(`/api/v1/insurer/${path}`).set(await asStaff(insurer.staff)).set('Idempotency-Key', randomUUID()).send(path.startsWith('ncd/applications/') ? { note: 'History reviewed.', ...(body.status === 'VERIFICATION_REQUIRED' || body.status === 'Verification Required' ? { verificationRevision: 0 } : {}), ...body } : body);
 
   const postAs = (headers: Awaited<ReturnType<typeof asStaff>>, path: string, body: Record<string, unknown> = {}) =>
-    testApp.http.post(`/api/v1/insurer/${path}`).set(headers).send(body);
+    testApp.http.post(`/api/v1/insurer/${path}`).set(headers).set('Idempotency-Key', randomUUID()).send(path.startsWith('ncd/applications/') ? { note: 'History reviewed.', ...(body.status === 'VERIFICATION_REQUIRED' || body.status === 'Verification Required' ? { verificationRevision: 0 } : {}), ...body } : body);
 
   const upload = (insurer: BuiltInsurer, kind: 'QUOTATION' | 'CERTIFICATE') =>
     buildDocument(testApp.db, { staffId: insurer.staff.id }, { kind });
@@ -634,6 +656,13 @@ describe('insurer portal', () => {
         { insurerId: insurer.insurer.id },
         { submittedAt: new Date('2026-10-22T08:00:00.030Z') },
       );
+      const reviewedVehicle = async (id: string | null) => {
+        if (!id) throw new Error('Expected a verified vehicle in the fixture');
+        const [vehicle] = await testApp.db.select({
+          plateNumber: vehicles.plateNumber, make: vehicles.make, model: vehicles.model,
+        }).from(vehicles).where(eq(vehicles.id, id));
+        return vehicle;
+      };
 
       const response = await get(insurer, 'ncd/applications');
 
@@ -642,6 +671,9 @@ describe('insurer portal', () => {
       expect(response.body).toEqual([
         {
           id: fresh.id,
+          declarationAcceptedAt: fresh.declarationAcceptedAt?.toISOString(), declarationVersion: '1',
+          vehicle: await reviewedVehicle(fresh.sourceVehicleId),
+          insurer: insurer.insurer.name, decisionNote: null, discountPercentage: 30, evidence: [], expiresAt: null, verificationRevision: 0, codeStatus: null,
           applicationNumber: fresh.applicationNumber,
           policyNumber: fresh.policyNumber,
           fullName: fresh.fullName,
@@ -654,6 +686,9 @@ describe('insurer portal', () => {
         },
         {
           id: approved.id,
+          declarationAcceptedAt: approved.declarationAcceptedAt?.toISOString(), declarationVersion: '1',
+          vehicle: await reviewedVehicle(approved.sourceVehicleId),
+          insurer: insurer.insurer.name, decisionNote: null, discountPercentage: code.percentage, evidence: [], expiresAt: code.expiresAt?.toISOString() ?? null, verificationRevision: 0, codeStatus: 'Unavailable',
           applicationNumber: approved.applicationNumber,
           policyNumber: approved.policyNumber,
           fullName: approved.fullName,
@@ -676,14 +711,14 @@ describe('insurer portal', () => {
       expect(response.status).toBe(200);
       expect(sorted(response.body)).toEqual(['approvedCode', 'decidedAt', 'id', 'percentage', 'status']);
       expect(response.body).toMatchObject({ id: application.id, status: 'Approved', percentage: 40 });
-      expect(response.body.approvedCode).toMatch(/^NCD-[0-9A-Z]{5}$/);
+      expect(response.body.approvedCode).toMatch(/^NCD-[0-9A-Z]{20}$/);
       expect(response.body.decidedAt).toMatch(ISO_MS);
       const [code] = await codesOf(insurer.insurer.id);
       expect(code).toMatchObject({ code: response.body.approvedCode, percentage: 40, yearsClaimFree: 4, redeemedAt: null });
       expect((await applicationRow(application.id)).approvedCodeId).toBe(response.body.approvedCode);
     });
 
-    it('approves with the percentage the insurer chose', async () => {
+    it('refuses a percentage different from the configured tier', async () => {
       const insurer = await buildInsurer(testApp.db);
       const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
 
@@ -692,9 +727,9 @@ describe('insurer portal', () => {
         percentage: 15,
       });
 
-      expect(response.status).toBe(200);
-      expect(response.body.percentage).toBe(15);
-      expect((await codesOf(insurer.insurer.id))[0].percentage).toBe(15);
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('BAD_REQUEST');
+      expect(await codesOf(insurer.insurer.id)).toEqual([]);
     });
 
     it.each([
@@ -860,7 +895,7 @@ describe('insurer portal', () => {
         expect({ path, status: response.status, code: response.body.code }).toEqual({ path, status: 403, code: 'FORBIDDEN' });
       }
       for (const [path, body] of posts) {
-        const response = await testApp.http.post(`/api/v1/insurer/${path}`).set(headers).send(body);
+        const response = await testApp.http.post(`/api/v1/insurer/${path}`).set(headers).set('Idempotency-Key', randomUUID()).send(path.startsWith('ncd/applications/') ? { note: 'History reviewed.', ...(body.status === 'VERIFICATION_REQUIRED' || body.status === 'Verification Required' ? { verificationRevision: 0 } : {}), ...body } : body);
         expect({ path, status: response.status, code: response.body.code }).toEqual({ path, status: 403, code: 'FORBIDDEN' });
       }
       expect(await quotesFor(request.id)).toEqual([]);
@@ -1363,11 +1398,83 @@ describe('insurer portal', () => {
     });
   });
 
+  describe('explicit NCD on final quotes', () => {
+    async function boundRequest(product = false) {
+      const insurer = await buildInsurer(testApp.db);
+      const version = product ? await selectedVersion(insurer, unique('NCD')) : undefined;
+      const request = version ? await selectedProductRequest(insurer, [version]) : await openRequest(insurer);
+      const code = await buildNcdCode(testApp.db, { insurerId: insurer.insurer.id }, { percentage: 30 });
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id, customerId: request.customerId, approvedCode: code });
+      if (!application.sourceVehicleId) throw new Error('Expected source vehicle');
+      const identity = { chassisNumber: unique('CHASSIS'), plateNumber: unique('PLATE'), registrationCountry: 'Zambia' };
+      await testApp.db.update(vehicles).set(identity).where(eq(vehicles.id, application.sourceVehicleId));
+      await testApp.db.update(vehicles).set(identity).where(eq(vehicles.id, request.vehicleId));
+      // The displayed request snapshot must never decide the accepted quote's percentage.
+      await testApp.db.update(quoteRequests).set({ ncdCode: code.code, ncdPercentage: 45 }).where(eq(quoteRequests.id, request.id));
+      const dto = { premium: 500, documentId: (await upload(insurer, 'QUOTATION')).id, ...(version ? { productVersionId: version.id } : {}) };
+      return { insurer, request, code, application, version, dto };
+    }
+
+    it.each([undefined, false, true])('applies only an explicit marker (%s) without repricing the manual premium', async (applyNcd) => {
+      const { insurer, request, dto } = await boundRequest();
+      const response = await post(insurer, `quote-requests/${request.id}/quote`, { ...dto, ...(applyNcd === undefined ? {} : { applyNcd }) });
+      expect(response.status).toBe(201);
+      expect(response.body.premium).toBe(500);
+      const [quote] = await quotesFor(request.id);
+      expect(quote.premiumMinor).toBe(50000);
+      expect(quote.ncdPercentage).toBe(applyNcd ? 30 : null);
+      if (applyNcd) expect(response.body.ncdPercentage).toBe(30);
+      else expect(response.body).not.toHaveProperty('ncdPercentage');
+    });
+
+    it.each(['missing', 'expired', 'redeemed', 'revoked', 'customer', 'issuer', 'vehicle', 'source', 'renewal'] as const)(
+      'refuses an explicitly applied code with an invalid %s binding', async (invalid) => {
+        const { insurer, request, dto, code, application } = await boundRequest();
+        if (invalid === 'missing') await testApp.db.update(quoteRequests).set({ ncdCode: null }).where(eq(quoteRequests.id, request.id));
+        if (invalid === 'expired') await testApp.db.update(ncdCodes).set({ expiresAt: new Date(0) }).where(eq(ncdCodes.code, code.code));
+        if (invalid === 'redeemed') await testApp.db.update(ncdCodes).set({ redeemedAt: new Date() }).where(eq(ncdCodes.code, code.code));
+        if (invalid === 'revoked') await testApp.db.update(ncdCodes).set({ revokedAt: new Date() }).where(eq(ncdCodes.code, code.code));
+        if (invalid === 'customer') await testApp.db.update(ncdApplications).set({ customerId: (await buildCustomer(testApp.db)).id }).where(eq(ncdApplications.id, application.id));
+        if (invalid === 'issuer') await testApp.db.update(ncdCodes).set({ insurerId: (await buildInsurer(testApp.db)).insurer.id }).where(eq(ncdCodes.code, code.code));
+        if (invalid === 'vehicle') await testApp.db.update(vehicles).set({ chassisNumber: 'OTHER-CHASSIS' }).where(eq(vehicles.id, request.vehicleId));
+        if (invalid === 'source') await testApp.db.update(ncdApplications).set({ sourcePolicyNumber: null }).where(eq(ncdApplications.id, application.id));
+        if (invalid === 'renewal') {
+          const { policy } = await buildPurchasedPolicy(testApp.db, { insurer });
+          await testApp.db.update(quoteRequests).set({ renewalOfPolicyNumber: policy.policyNumber }).where(eq(quoteRequests.id, request.id));
+        }
+        const response = await post(insurer, `quote-requests/${request.id}/quote`, { ...dto, applyNcd: true });
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe('INVALID_NCD_CODE');
+        expect(await quotesFor(request.id)).toEqual([]);
+      },
+    );
+
+    it('revalidates NCD on replacement and does not carry the marker into an ordinary replacement', async () => {
+      const { insurer, request, dto, code, version } = await boundRequest(true);
+      if (!version) throw new Error('Expected selected product');
+      expect((await post(insurer, `quote-requests/${request.id}/quote`, { ...dto, applyNcd: true })).status).toBe(201);
+      const path = `quote-requests/${request.id}/products/${version.id}/quote/replace`;
+      const applied = await post(insurer, path, { ...dto, documentId: (await upload(insurer, 'QUOTATION')).id, premium: 550, applyNcd: true });
+      expect(applied.status).toBe(201);
+      expect(applied.body).toMatchObject({ premium: 550, ncdPercentage: 30 });
+      await testApp.db.update(ncdCodes).set({ revokedAt: new Date() }).where(eq(ncdCodes.code, code.code));
+      const refused = await post(insurer, path, { ...dto, documentId: (await upload(insurer, 'QUOTATION')).id, applyNcd: true });
+      expect(refused.status).toBe(409);
+      expect(refused.body.code).toBe('INVALID_NCD_CODE');
+      const ordinary = await post(insurer, path, { ...dto, documentId: (await upload(insurer, 'QUOTATION')).id });
+      expect(ordinary.status).toBe(201);
+      expect(ordinary.body).not.toHaveProperty('ncdPercentage');
+      expect((await quotesFor(request.id)).find((quote) => quote.status === 'ACTIVE')).toMatchObject({ premiumMinor: 50000, ncdPercentage: null });
+    });
+  });
+
   describe('NCD decisions', () => {
     it.each([
       ['readable', 'Approved', 'APPROVED', 'Approved'],
       ['readable', 'Under Review', 'UNDER_REVIEW', 'Under Review'],
       ['readable', 'Rejected', 'REJECTED', 'Rejected'],
+      ['readable', 'Verification Required', 'VERIFICATION_REQUIRED', 'Verification Required'],
+      ['stored', 'VERIFICATION_REQUIRED', 'VERIFICATION_REQUIRED', 'Verification Required'],
       ['stored', 'APPROVED', 'APPROVED', 'Approved'],
       ['stored', 'UNDER_REVIEW', 'UNDER_REVIEW', 'Under Review'],
       ['stored', 'REJECTED', 'REJECTED', 'Rejected'],
@@ -1380,6 +1487,85 @@ describe('insurer portal', () => {
       expect(response.status).toBe(200);
       expect(response.body.status).toBe(wire);
       expect((await applicationRow(application.id)).status).toBe(stored);
+    });
+
+    it('requires a note and preserves legacy applications while refusing their approval', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildLegacyNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+      const missing = await testApp.http.post(`/api/v1/insurer/ncd/applications/${application.id}/decision`)
+        .set(await asStaff(insurer.staff)).send({ status: 'REJECTED' });
+      expect(missing.status).toBe(400);
+      const approval = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED' });
+      expect(approval.status).toBe(409);
+      expect(approval.body.code).toBe('NCD_POLICY_UNVERIFIED');
+      const rejection = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'REJECTED', note: 'Source policy cannot be validated.' });
+      expect(rejection.status).toBe(200);
+      expect(await applicationRow(application.id)).toMatchObject({ status: 'REJECTED', decisionNote: 'Source policy cannot be validated.' });
+    });
+
+    it('requests evidence once and cannot approve or bypass it through review', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+      const requested = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'Verification Required', note: 'Provide previous cover history.' });
+      expect(requested.status).toBe(200);
+      expect(requested.body).toMatchObject({ status: 'Verification Required', decidedAt: null });
+      expect(await applicationRow(application.id)).toMatchObject({ verificationRevision: 1, decisionNote: 'Provide previous cover history.' });
+      for (const status of ['APPROVED', 'UNDER_REVIEW', 'VERIFICATION_REQUIRED']) {
+        const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status, verificationRevision: 1 });
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe('NCD_EVIDENCE_OUTSTANDING');
+      }
+      expect(await codesOf(insurer.insurer.id)).toEqual([]);
+    });
+
+    it('serializes concurrent verification requests behind the customer lifecycle guard', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+      const headers = await asStaff(insurer.staff);
+      const requestEvidence = () => postAs(headers, `ncd/applications/${application.id}/decision`, { status: 'VERIFICATION_REQUIRED' });
+      const responses = await race(
+        { sql: 'SELECT id FROM customers WHERE id = $1 FOR UPDATE', params: [application.customerId] },
+        'select % from "customers" % for key share%',
+        [requestEvidence, requestEvidence],
+      );
+      expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([200, 409]);
+      expect(responses.find((response) => response.status === 409)?.body.code).toBe('NCD_REVISION_CHANGED');
+      expect(await applicationRow(application.id)).toMatchObject({ status: 'VERIFICATION_REQUIRED', verificationRevision: 1 });
+    });
+
+    it('replays a verification command without reopening it after evidence, and rejects stale new commands', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+      const headers = await asStaff(insurer.staff);
+      const key = randomUUID();
+      const body = { status: 'VERIFICATION_REQUIRED', note: 'Please provide history.', verificationRevision: 0 };
+      const decide = (commandKey: string, command = body) => testApp.http.post(`/api/v1/insurer/ncd/applications/${application.id}/decision`)
+        .set(headers).set('Idempotency-Key', commandKey).send(command);
+      const first = await decide(key);
+      expect(first.status).toBe(200);
+      // Simulate the persisted state after the customer evidence command; its upload route has its own tests.
+      await testApp.db.update(ncdApplications).set({ status: 'UNDER_REVIEW' }).where(eq(ncdApplications.id, application.id));
+      const replay = await decide(key);
+      expect(replay.status).toBe(200);
+      expect(replay.body).toEqual(first.body);
+      expect(await applicationRow(application.id)).toMatchObject({ status: 'UNDER_REVIEW', verificationRevision: 1 });
+      const stale = await decide(randomUUID());
+      expect(stale.status).toBe(409);
+      expect(stale.body.code).toBe('NCD_REVISION_CHANGED');
+      const reused = await decide(key, { ...body, note: 'Changed reason.' });
+      expect(reused.status).toBe(409);
+      expect(reused.body.code).toBe('IDEMPOTENCY_KEY_REUSED');
+    });
+
+    it('does not request evidence from a closed account', async () => {
+      const insurer = await buildInsurer(testApp.db);
+      const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id });
+      if (!application.customerId) throw new Error('Expected modern application customer');
+      await testApp.db.update(schema.customers).set({ deletedAt: new Date() }).where(eq(schema.customers.id, application.customerId));
+      const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'VERIFICATION_REQUIRED' });
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('NCD_CUSTOMER_UNAVAILABLE');
+      expect(await applicationRow(application.id)).toMatchObject({ status: 'SUBMITTED', verificationRevision: 0 });
     });
 
     it('refuses to decide an approved application again with 409 ALREADY_DECIDED', async () => {
@@ -1447,17 +1633,17 @@ describe('insurer portal', () => {
       expect(await applicationRow(application.id)).toMatchObject({ status: 'SUBMITTED', approvedCodeId: null, decidedAt: null });
     });
 
-    it('lets a rejected application be approved later', async () => {
+    it('keeps rejection terminal', async () => {
       const insurer = await buildInsurer(testApp.db);
       const application = await buildNcdApplication(testApp.db, { insurerId: insurer.insurer.id }, { status: 'REJECTED' });
 
       const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status: 'APPROVED' });
 
-      expect(response.status).toBe(200);
-      expect(response.body.status).toBe('Approved');
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('ALREADY_DECIDED');
     });
 
-    it.each(['Submitted', 'SUBMITTED', 'Verification Required', 'not a decision'])(
+    it.each(['Submitted', 'SUBMITTED', 'not a decision'])(
       'refuses %s with the readable decision list',
       async (status) => {
         const insurer = await buildInsurer(testApp.db);
@@ -1466,7 +1652,7 @@ describe('insurer portal', () => {
         const response = await post(insurer, `ncd/applications/${application.id}/decision`, { status });
 
         expect(response.status).toBe(400);
-        expect(response.body.details.fields).toEqual(['Decision must be Under Review, Approved or Rejected.']);
+        expect(response.body.details.fields).toEqual(['Decision must be Under Review, Verification Required, Approved or Rejected.']);
         expect((await applicationRow(application.id)).status).toBe('SUBMITTED');
       },
     );
@@ -1488,10 +1674,10 @@ describe('insurer portal', () => {
   });
 
   describe('when a drawn NCD code is already taken', () => {
-    const TAKEN = 'NCD-AAAAA';
+    const TAKEN = 'NCD-AAAAAAAAAAAAAAAAAAAA';
     let coded: TestApp;
     let logger: RecordingLogger;
-    let forced = 5;
+    let forced = 20;
 
     beforeAll(async () => {
       logger = new RecordingLogger();
@@ -1515,10 +1701,10 @@ describe('insurer portal', () => {
       const response = await coded.http
         .post(`/api/v1/insurer/ncd/applications/${application.id}/decision`)
         .set(await asStaff(insurer.staff))
-        .send({ status: 'APPROVED' });
+        .send({ status: 'APPROVED', note: 'History reviewed.' });
 
       expect(response.status).toBe(200);
-      expect(response.body.approvedCode).toMatch(/^NCD-[0-9A-Z]{5}$/);
+      expect(response.body.approvedCode).toMatch(/^NCD-[0-9A-Z]{20}$/);
       expect(response.body.approvedCode).not.toBe(TAKEN);
       expect((await applicationRow(application.id)).approvedCodeId).toBe(response.body.approvedCode);
       expect((await codesOf(insurer.insurer.id)).map((code) => code.code)).toEqual([response.body.approvedCode]);
@@ -1545,7 +1731,7 @@ describe('insurer portal', () => {
     });
 
     const postSmall = (headers: Awaited<ReturnType<typeof asStaff>>, path: string, body: Record<string, unknown>) =>
-      small.http.post(`/api/v1/insurer/${path}`).set(headers).send(body);
+      small.http.post(`/api/v1/insurer/${path}`).set(headers).set('Idempotency-Key', randomUUID()).send(path.startsWith('ncd/applications/') ? { note: 'History reviewed.', ...(body.status === 'VERIFICATION_REQUIRED' || body.status === 'Verification Required' ? { verificationRevision: 0 } : {}), ...body } : body);
 
     it('lets one of two concurrent final quotes win and refuses the other with 409 ALREADY_QUOTED', async () => {
       const insurer = await buildInsurer(testApp.db);

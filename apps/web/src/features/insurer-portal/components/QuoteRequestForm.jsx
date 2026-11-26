@@ -10,6 +10,7 @@ import { coverTypeOf, days, portalPath, premiumCheck, quotableNow, quoteOpenUnti
 import ProductWorkflowPanel from './ProductWorkflowPanel';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/primitives/alert';
 import { Badge } from '@/components/ui/primitives/badge';
+import { Checkbox } from '@/components/ui/primitives/checkbox';
 import { Button } from '@/components/ui/primitives/button';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from '@/components/ui/primitives/field';
 import { Input } from '@/components/ui/primitives/input';
@@ -26,6 +27,9 @@ const indicativePremium = (request, insurer, piaRatePercentage) => {
   return calculatePremium({
     vehicleValueZMW: request.vehicleValue,
     insurer,
+    ncdCode: request.ncdPercentage == null ? undefined : 'verified',
+    ncdPercentage: request.ncdPercentage,
+    ncdIssuingInsurer: insurer.name,
     vehicleUsage: request.vehicleUsage,
     coverageDurationId: request.coverageDurationId,
     coverageDays: request.policyDates?.anchoredToAnniversary ? request.policyDates.daysTotal : null,
@@ -56,6 +60,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
   const quotationInput = useRef(null);
   const validityInput = useRef(null);
   const premiumInput = useRef(null);
+  const [applyNcd, setApplyNcd] = useState(false);
   const [premium, setPremium] = useState('');
   const [reference, setReference] = useState('');
   const [validityDays, setValidityDays] = useState('');
@@ -100,6 +105,7 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
     }
     void sending.run({
       premium: Number(premium),
+      ...(request.ncdPercentage != null ? { applyNcd } : {}),
       notes: notes.trim(),
       validityDays: openDays,
       insurerReference: reference.trim() || null,
@@ -163,6 +169,9 @@ export default function QuoteRequestForm({ request, insurer, coverGuides, piaRat
           <TaskPanel title="Your quotation" description="Record the quotation you prepared in your own system. The customer compares it with other insurers and pays the premium you enter.">
             <form onSubmit={handleSubmit}>
               <FieldGroup>
+                {request.ncdPercentage != null && (
+                  <Alert><AlertDescription><label className="flex items-start gap-3"><Checkbox checked={applyNcd} onCheckedChange={(checked) => setApplyNcd(checked === true)} disabled={sending.pending} /><span>My final quotation includes the verified {request.ncdPercentage}% No Claim Discount.</span></label><p className="mt-2">The final insurer price you enter remains the price paid. InsurShield does not deduct the discount again.</p></AlertDescription></Alert>
+                )}
                 {/* The one thing that blocks a quote comes before any typing. */}
                 {!guidePublished && (
                   <Alert variant="destructive" id="cover-guide-needed">

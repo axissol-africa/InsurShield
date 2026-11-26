@@ -69,7 +69,7 @@ const uploadProductRequirementDocuments = async (products, records) =>
  * call works against the backend or browser storage. The store is updated from
  * the response, which is the server's version of the record rather than ours.
  */
-export async function submitQuoteRequest({ customer, policyDates, selectedProductVersionIds }) {
+export async function submitQuoteRequest({ customer, policyDates, selectedProductVersionIds, ncdCode }) {
   const state = useStore.getState();
   const {
     vehicleDetails,
@@ -97,7 +97,7 @@ export async function submitQuoteRequest({ customer, policyDates, selectedProduc
       Object.entries(productRequirementDocuments).map(([key, value]) => [key, documentFingerprint(value)]),
     ),
     policyDates,
-    ncdCode: state.ncdCodeValidated ? state.ncdCode : undefined,
+    ncdCode,
   });
 
   try {
@@ -152,7 +152,7 @@ export async function submitQuoteRequest({ customer, policyDates, selectedProduc
           whiteBookDocumentId: whiteBook?.id,
           inspectionShots,
           photosCapturedAt: state.photosCapturedAt || undefined,
-          ncdCode: state.ncdCodeValidated ? state.ncdCode : undefined,
+          ncdCode,
         };
       },
       send: (payload, idempotencyKey) => api.quotes.submitRequest(payload, idempotencyKey),

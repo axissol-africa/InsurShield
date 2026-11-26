@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Principal } from '../common/auth/auth.types.js';
+import { holds } from '../common/auth/permissions.js';
 import { DATABASE, type Database, type Transaction } from '../db/database.module.js';
 import {
   claimAttachments,
@@ -12,6 +13,8 @@ import {
   inspections,
   inspectionShots,
   insurerQuotes,
+  ncdApplications,
+  ncdEvidence,
   policies,
   quoteRequestRecipients,
   quoteRequests,
@@ -113,6 +116,7 @@ export class DocumentsRepository {
             exists(tx.select(ONE).from(inspectionShots).where(eq(inspectionShots.documentId, documents.id))),
             exists(tx.select(ONE).from(quoteRequests).where(eq(quoteRequests.whiteBookDocumentId, documents.id))),
             exists(tx.select(ONE).from(inspectionPhotos).where(eq(inspectionPhotos.documentId, documents.id))),
+            exists(tx.select(ONE).from(ncdEvidence).where(eq(ncdEvidence.documentId, documents.id))),
             exists(tx.select(ONE).from(claimAttachments).where(eq(claimAttachments.documentId, documents.id))),
             exists(tx.select(ONE).from(serviceRequestUpdates).where(onServiceRequest())),
           ),
@@ -133,12 +137,17 @@ export class DocumentsRepository {
     }
     const uploaded = eq(documents.uploadedByStaffId, principal.id);
     if (!principal.insurerId) return or(...always, uploaded);
-    return or(...always, uploaded, ...this.sentToInsurer(principal.insurerId));
+    return or(...always, uploaded, ...this.sentToInsurer(principal.insurerId, holds(principal, 'portal:ncd:read')));
   }
 
   private ownedByCustomer(customerId: string): SQL[] {
     const db = this.db;
     return [
+      exists(
+        db.select(ONE).from(ncdEvidence)
+          .innerJoin(ncdApplications, eq(ncdApplications.id, ncdEvidence.applicationId))
+          .where(and(eq(ncdEvidence.documentId, documents.id), eq(ncdApplications.customerId, customerId))),
+      ),
       exists(
         db
           .select(ONE)
@@ -192,9 +201,14 @@ export class DocumentsRepository {
     ];
   }
 
-  private sentToInsurer(insurerId: string): SQL[] {
+  private sentToInsurer(insurerId: string, canReadNcd: boolean): SQL[] {
     const db = this.db;
     return [
+      ...(canReadNcd ? [exists(
+        db.select(ONE).from(ncdEvidence)
+          .innerJoin(ncdApplications, eq(ncdApplications.id, ncdEvidence.applicationId))
+          .where(and(eq(ncdEvidence.documentId, documents.id), eq(ncdApplications.insurerId, insurerId))),
+      )] : []),
       exists(
         db
           .select(ONE)

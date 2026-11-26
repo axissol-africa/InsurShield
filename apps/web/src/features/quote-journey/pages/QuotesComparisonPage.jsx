@@ -534,6 +534,9 @@ function PriceBlock({ quote }) {
             : 'Indicative estimate · awaiting insurer’s final quote'}
         </p>
       )}
+      {quote.isFinal && quote.reply?.ncdPercentage != null && (
+        <p className="mt-1.5 text-xs font-medium text-primary">Includes {quote.reply.ncdPercentage}% No Claim Discount</p>
+      )}
     </div>
   );
 }

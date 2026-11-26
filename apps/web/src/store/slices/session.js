@@ -1,3 +1,4 @@
+import { clearPendingCommands } from '@/api/idempotency';
 import { DEMO_CUSTOMER_ACCOUNT } from '../demoSeed';
 import { env } from '@/config/env';
 
@@ -61,7 +62,7 @@ export const createSessionSlice = (set, get) => ({
       registeredAccounts: state.registeredAccounts.map((account) => (matchesIdentifier(account, identifier) ? { ...account, password } : account)),
     })),
 
-  signOut: () => set(SIGNED_OUT),
+  signOut: () => { clearPendingCommands(); set(SIGNED_OUT); },
 
   /** Prototype only: remove the signed-in account so its details can be reused in a demo. */
   deleteCurrentAccount: () =>
@@ -86,10 +87,10 @@ export const createSessionSlice = (set, get) => ({
     }),
 
   /** Clears everything tied to the person, leaving prototype catalogue data. */
-  clearCustomerSession: () => set(SIGNED_OUT),
+  clearCustomerSession: () => { clearPendingCommands(); set(SIGNED_OUT); },
 
   /** HTTP boot has no session; mock mode continues using its local account. */
-  clearHttpSession: () => set(SIGNED_OUT),
+  clearHttpSession: () => { clearPendingCommands(); set(SIGNED_OUT); },
   setIdentityReady: (identityReady) => set({ identityReady, identityFailure: null }),
   setIdentityFailure: (identityFailure) => set({ identityFailure, identityReady: false }),
   beginIdentityTransition: () => set({ leaving: true, identityReady: false, identityFailure: null }),
@@ -98,7 +99,7 @@ export const createSessionSlice = (set, get) => ({
   staffSession: null, // { role: 'admin' | 'insurer', name }
   startStaffSession: (session) => set({ staffSession: session }),
   applyStaffSession: (staffSession) => set({ ...SIGNED_OUT, staffSession }),
-  endStaffSession: () => set({ staffSession: null }),
+  endStaffSession: () => { clearPendingCommands(); set({ staffSession: null }); },
 
   // ─── Data-protection consent ─────────────────────────────
   consentAccepted: false,

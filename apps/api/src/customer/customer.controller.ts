@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { CurrentUser } from '../common/auth/current-user.decorator.js';
-import { Needs, Public } from '../common/auth/auth.guard.js';
+import { Needs } from '../common/auth/auth.guard.js';
 import { ApiException } from '../common/errors/api.exception.js';
 import type { Principal } from '../common/auth/auth.types.js';
 import { AccountService } from './account.service.js';
@@ -12,6 +12,7 @@ import {
   SelectQuoteDto,
   NotifyClaimDto,
   SubmitQuoteRequestDto,
+  SubmitNcdEvidenceDto,
   ValidateNcdCodeDto,
 } from './dto/customer.dto.js';
 import { NcdService } from './ncd.service.js';
@@ -180,22 +181,40 @@ export class CustomerController {
   }
 
   @Needs('ncd-application:apply')
-  @Post('ncd/applications')
-  @HttpCode(HttpStatus.CREATED)
-  applyForNcd(@Body() dto: ApplyForNcdDto, @CurrentUser() principal: Principal) {
-    return this.ncd.apply(this.scope(principal), dto);
+  @Get('ncd/applications/rules')
+  ncdRules() {
+    return this.ncd.rules();
   }
 
-  /**
-   * Checks a discount code before it is applied to a quote. Public: the code
-   * is the secret, and a customer may check one before signing in.
-   */
-  @Public()
+  @Needs('ncd-application:apply')
+  @Post('ncd/applications')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  async applyForNcd(@Body() dto: ApplyForNcdDto, @CurrentUser() principal: Principal, @Headers('idempotency-key') key?: string) {
+    const customer = this.scope(principal);
+    const result = await this.idempotency.execute(`customer:${customer.id}`, 'POST /ncd/applications',
+      idempotencyKey(key), dto, (tx) => this.ncd.apply(customer, dto, tx));
+    return result.value;
+  }
+
+  @Needs('ncd-application:apply')
+  @Post('ncd/applications/:id/evidence')
+  @HttpCode(HttpStatus.OK)
+  @ApiRateLimit(API_LIMITS.customerWrite)
+  async submitNcdEvidence(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SubmitNcdEvidenceDto,
+    @CurrentUser() principal: Principal, @Headers('idempotency-key') key?: string) {
+    const customer = this.scope(principal);
+    const { value } = await this.idempotency.execute(`customer:${customer.id}`, 'POST /ncd/applications/:id/evidence',
+      idempotencyKey(key), { id, dto }, (tx) => this.ncd.submitEvidence(customer, id, dto, tx));
+    return this.ncd.get(customer.id, value.id);
+  }
+
+  @Needs('quote-request:submit')
   @Post('ncd/codes/validate')
   @HttpCode(HttpStatus.OK)
   @ApiRateLimit(API_LIMITS.ncdValidation)
-  validateNcdCode(@Body() dto: ValidateNcdCodeDto) {
-    return this.ncd.validateCode(dto);
+  validateNcdCode(@Body() dto: ValidateNcdCodeDto, @CurrentUser() principal: Principal) {
+    return this.ncd.validateCode(this.scope(principal).id, dto);
   }
 
   // ── Account ─────────────────────────────────────────────────────

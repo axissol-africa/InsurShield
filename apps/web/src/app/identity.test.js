@@ -30,3 +30,18 @@ describe('HTTP tab identity binding', () => {
     expect(safeApplicationPath('/\\outside.example')).toBe('/account');
   });
 });
+
+
+it('clears pending commands on sign-out or a different account, while preserving same-account retries', () => {
+  setIdentityBinding('owner-a');
+  sessionStorage.setItem('insurshield:pending-command:ncd', 'pending');
+  sessionStorage.setItem('unrelated', 'keep');
+  setIdentityBinding('owner-a');
+  expect(sessionStorage.getItem('insurshield:pending-command:ncd')).toBe('pending');
+  setIdentityBinding('owner-b');
+  expect(sessionStorage.getItem('insurshield:pending-command:ncd')).toBeNull();
+  sessionStorage.setItem('insurshield:pending-command:quote', 'pending');
+  clearIdentityBinding();
+  expect(sessionStorage.getItem('insurshield:pending-command:quote')).toBeNull();
+  expect(sessionStorage.getItem('unrelated')).toBe('keep');
+});

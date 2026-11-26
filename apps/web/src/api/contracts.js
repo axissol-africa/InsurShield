@@ -37,7 +37,7 @@
  *  claims      GET /claims/intake-rules · GET /claims/:number/timeline · GET /insurer/claims/:number/timeline
  *              POST /claims/:number/evidence {documentIds,expectedRevision} · POST /insurer/claims/:number/updates {action,message,evidenceRequest?,expectedRevision}
  *              POST /claims · GET /claims · GET /insurer/claims · POST /insurer/claims/:number/received
- *  ncd         POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
+ *  ncd         GET /ncd/applications/rules · POST /ncd/applications/:id/evidence · POST /ncd/applications · GET /ncd/applications · POST /ncd/codes/validate · GET /insurer/ncd/applications · POST /insurer/ncd/applications/:id/decision
  *  inspections POST /inspections · GET /inspections · PATCH /inspections/:id
  *  config      GET  /config/pia · PUT /config/pia
  *  integrations GET /integrations/deliveries · POST /integrations/deliveries/:id/manual-fallback
@@ -82,6 +82,7 @@
  * @property {string} id                immutable quote identity; required to pay
  * @property {string|null} productVersionId null only for a legacy broad request
  * @property {number} premium            ZMW, must equal the premium on `document`
+ * @property {number} [ncdPercentage]     Approved discount already included in this premium
  * @property {string} [notes]
  * @property {string|null} insurerReference
  * @property {DocumentRecord} document   the quotation prepared in the insurer's own system
@@ -226,8 +227,14 @@
  * @property {string} fullName
  * @property {string} phone
  * @property {number} yearsClaimFree
- * @property {'Submitted'|'Under Review'|'Approved'|'Rejected'} status
+ * @property {'Submitted'|'Under Review'|'Verification Required'|'Approved'|'Rejected'} status
  * @property {string|null} approvedCode
+ * @property {'Available'|'Expired'|'Used'|'Unavailable'|null} codeStatus
+ * @property {number|null} discountPercentage
+ * @property {string|null} expiresAt
+ * @property {string|null} decisionNote
+ * @property {number} verificationRevision
+ * @property {DocumentRecord[]} evidence
  * @property {string} submittedAt
  */
 
@@ -369,4 +376,18 @@ export {};
 /** Claim lifecycle/evidence commands send expectedRevision from the rendered timeline and an
  * Idempotency-Key stable for unchanged input. CLAIM_REVISION_CHANGED requires a refresh;
  * evidence uploads must never be reused for a different revision or file selection.
+ */
+
+/**
+ * @typedef {Object} NcdRules
+ * @property {Array<{yearsClaimFree: number, percentage: number}>} tiers
+ * @property {number} validityDays
+ * @property {boolean} provisional
+ * @property {string} declarationText
+ *
+ * NCD apply: {policyNumber, fullName, phone, yearsClaimFree, declaration: true}.
+ * Optional insurerId is checked against the policy; HTTP customer screens omit it.
+ * Apply and evidence accept an optional Idempotency-Key header, retained on retries.
+ * Evidence: {verificationRevision, documentIds}; upload with kind NCD_EVIDENCE first.
+ * Decision: {status: 'Under Review'|'Verification Required'|'Approved'|'Rejected', note: string}.
  */

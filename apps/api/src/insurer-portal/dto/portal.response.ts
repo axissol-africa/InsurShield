@@ -18,7 +18,6 @@ type PolicyRow = Rows<'listPolicies'>[number];
 type IssuedRow = NonNullable<Rows<'activatePolicy'>>;
 type ClaimRow = Rows<'listClaims'>[number];
 type AcknowledgementRow = NonNullable<Rows<'acknowledgeClaim'>>;
-type NcdApplicationRow = Rows<'listNcdApplications'>[number];
 type NcdDecisionRow = NonNullable<Rows<'decideNcdApplication'>>;
 
 const iso = (date: Date | null) => date?.toISOString() ?? null;
@@ -29,6 +28,7 @@ const vehicleLabel = (vehicle: { year: string; make: string; model: string }) =>
 export function toReply(reply: ReplyRow, document: DocumentRecord) {
   return {
     premium: ngweeToKwacha(reply.premiumMinor),
+    ...(reply.ncdPercentage == null ? {} : { ncdPercentage: reply.ncdPercentage }),
     notes: reply.notes,
     insurerReference: reply.insurerReference,
     validityDays: reply.validityDays,
@@ -80,6 +80,7 @@ export function toPortalRequest(
       chassisNumber: request.vehicle.chassisNumber,
     },
     vehicleValue: ngweeToKwacha(request.vehicleValueMinor),
+    ...(request.ncdPercentage == null ? {} : { ncdPercentage: request.ncdPercentage }),
     vehicleUsage: request.vehicleUsage,
     insuranceType: toContract.insuranceType(request.insuranceType),
     coverageDurationId: toContract.coverageDuration(request.coverageDuration),
@@ -252,21 +253,6 @@ export function toAcknowledgement(claim: AcknowledgementRow) {
     status: claim.status,
     receivedAt: iso(claim.receivedAt),
     insurerClaimReference: claim.insurerClaimReference,
-  };
-}
-
-export function toNcdApplication(application: NcdApplicationRow) {
-  return {
-    id: application.id,
-    applicationNumber: application.applicationNumber,
-    policyNumber: application.policyNumber,
-    fullName: application.fullName,
-    phone: application.phone,
-    yearsClaimFree: application.yearsClaimFree,
-    status: toContract.ncdStatus(application.status),
-    approvedCode: application.approvedCode,
-    submittedAt: application.submittedAt.toISOString(),
-    decidedAt: iso(application.decidedAt),
   };
 }
 

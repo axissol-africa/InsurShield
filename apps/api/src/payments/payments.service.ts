@@ -104,7 +104,8 @@ export class PaymentsService {
         if (!takesNewBusiness(standing, now)) throw ApiException.conflict(INSURER_UNAVAILABLE, insurerUnavailable(quote.insurerName));
         if (!(await this.payments.lockOpenCustomer(tx, customer.id))) throw ApiException.forbidden(ACCOUNT_CLOSED);
         // Locked for update, so two attempts on one request take turns here.
-        if (!(await this.payments.lockRequest(tx, request.id))) throw ApiException.notFound('Quote request', dto.quoteRequestId);
+        const lockedRequest = await this.payments.lockRequest(tx, request.id);
+        if (!lockedRequest) throw ApiException.notFound('Quote request', dto.quoteRequestId);
         const locked = await this.payments.lockQuote(tx, quote.id);
         if (!locked) throw ApiException.notFound('Quote', dto.insurerQuoteId);
         if (locked.status !== 'ACTIVE') {
@@ -149,7 +150,18 @@ export class PaymentsService {
             missing,
           });
         }
-        if (request.ncdCode) await this.assertNcdCodeUsable(tx, request.ncdCode, quote.insurerId, customer.id);
+        if (locked.ncdPercentage !== null && !lockedRequest.ncdCode) {
+          throw ApiException.conflict('NCD_CODE_UNAVAILABLE', 'The discounted quote has no no-claim discount code. Request fresh quotes to continue.');
+        }
+        if (lockedRequest.ncdCode && !(await this.payments.ncdUsable(
+          tx, lockedRequest.ncdCode, { insurerId: quote.insurerId, customerId: customer.id }, lockedRequest, now, locked.ncdPercentage,
+        ))) {
+          throw ApiException.conflict(
+            'NCD_CODE_UNAVAILABLE',
+            'The no-claim discount code is no longer valid for this request. Request fresh quotes to continue.',
+          );
+        }
+        const reservedNcdCode = locked.ncdPercentage !== null ? lockedRequest.ncdCode : null;
 
         const lines = paymentBreakdown({
           premiumMinor: locked.premiumMinor,
@@ -187,6 +199,7 @@ export class PaymentsService {
           quoteRequestId: request.id,
           insurerQuoteId: quote.id,
           selectionId: chosen?.id ?? null,
+          reservedNcdCode,
           initiatedAt: now,
           pendingUntil: new Date(now.getTime() + timeout.minutes * MINUTE_MS),
         });
@@ -223,6 +236,9 @@ export class PaymentsService {
       }
       if (isUniqueViolation(error, OPEN_PAYMENT_CONSTRAINT)) {
         throw ApiException.conflict('PAYMENT_IN_PROGRESS', 'A payment for this request is already under way.');
+      }
+      if (isUniqueViolation(error, 'payment_open_ncd_code_idx')) {
+        throw ApiException.conflict('NCD_CODE_UNAVAILABLE', 'A payment using this no-claim discount code is already under way.');
       }
       throw error;
     }
@@ -336,16 +352,6 @@ export class PaymentsService {
     if (version !== null) return value.charges;
     const fee = this.config.get('RTSA_ANNIVERSARY_FEE_NGWEE', { infer: true });
     return value.charges.map((charge) => (charge.code === 'RTSA_ANNIVERSARY_FEE' ? { ...charge, amountMinor: fee } : charge));
-  }
-
-  /** A code already spent on another request would make the quoted, discounted price wrong. */
-  private async assertNcdCodeUsable(tx: Transaction, code: string, insurerId: string, customerId: string) {
-    if (await this.payments.ncdRedeemable(tx, code, { insurerId, customerId })) return;
-    if (!(await this.payments.isNcdCodeIssuedBy(tx, code, insurerId))) return;
-    throw ApiException.conflict(
-      'NCD_CODE_UNAVAILABLE',
-      'The no-claim discount code on this request has already been used. Request fresh quotes to continue.',
-    );
   }
 
   /** Card checkout returns only to one of InsurShield's own web origins. */

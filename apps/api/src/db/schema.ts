@@ -1191,6 +1191,7 @@ export const insurerQuotes = pgTable(
     // insurer can be compared and paid independently.
     productVersionId: uuid('productVersionId'),
     premiumMinor: ngwee('premiumMinor').notNull(),
+    ncdPercentage: integer('ncdPercentage'),
     notes: text('notes'),
     insurerReference: text('insurerReference'),
     validityDays: integer('validityDays').notNull(),
@@ -1216,6 +1217,7 @@ export const insurerQuotes = pgTable(
     conditions: jsonb('conditions').$type<QuoteCondition[]>().notNull().default(sql`'[]'::jsonb`),
   },
   (t) => [
+    check('insurer_quotes_ncd_percentage_check', sql`${t.ncdPercentage} IS NULL OR ${t.ncdPercentage} BETWEEN 0 AND 100`),
     uniqueIndex('insurer_quotes_documentId_key').on(t.documentId),
     index('insurer_quotes_validUntil_idx').on(t.validUntil),
     index('insurer_quotes_insurerId_unpayableAt_idx').on(t.insurerId, t.unpayableAt),
@@ -1311,6 +1313,7 @@ export const payments = pgTable(
     customerId: uuid('customerId').notNull(),
     quoteRequestId: text('quoteRequestId').notNull(),
     insurerQuoteId: uuid('insurerQuoteId').notNull(),
+    reservedNcdCode: text('reservedNcdCode'),
     provider: paymentProviderName('provider').notNull().default('STAND_IN'),
     /** The provider's own id, known once it accepted the instruction. */
     providerPaymentId: varchar('providerPaymentId', { length: 200 }),
@@ -1332,6 +1335,8 @@ export const payments = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
+    uniqueIndex('payment_open_ncd_code_idx').on(t.reservedNcdCode).where(sql`${t.status} IN ('INITIATED', 'PENDING')`),
+    fk('payments_reservedNcdCode_fkey', [t.reservedNcdCode], [ncdCodes.code], 'restrict'),
     uniqueIndex('payments_transactionId_key').on(t.transactionId),
     uniqueIndex('payments_idempotencyKey_key').on(t.idempotencyKey),
     uniqueIndex('payments_provider_providerPaymentId_key').on(t.provider, t.providerPaymentId),
@@ -1884,6 +1889,12 @@ export const ncdApplications = pgTable(
     insurerId: uuid('insurerId').notNull(),
     customerId: uuid('customerId'),
     policyNumber: text('policyNumber').notNull(),
+    sourcePolicyNumber: text('sourcePolicyNumber'),
+    sourceVehicleId: uuid('sourceVehicleId'),
+    declarationAcceptedAt: timestamptz('declarationAcceptedAt'),
+    declarationVersion: text('declarationVersion'),
+    decisionNote: text('decisionNote'),
+    verificationRevision: integer('verificationRevision').notNull().default(0),
     fullName: text('fullName').notNull(),
     phone: text('phone').notNull(),
     yearsClaimFree: integer('yearsClaimFree').notNull(),
@@ -1896,6 +1907,8 @@ export const ncdApplications = pgTable(
     uniqueIndex('ncd_applications_applicationNumber_key').on(t.applicationNumber),
     uniqueIndex('ncd_applications_approvedCodeId_key').on(t.approvedCodeId),
     index('ncd_applications_insurerId_status_idx').on(t.insurerId, t.status),
+    fk('ncd_applications_sourcePolicyNumber_fkey', [t.sourcePolicyNumber], [policies.policyNumber], 'restrict'),
+    fk('ncd_applications_sourceVehicleId_fkey', [t.sourceVehicleId], [vehicles.id], 'restrict'),
     fk('ncd_applications_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict'),
     fk('ncd_applications_customerId_fkey', [t.customerId], [customers.id], 'set null'),
     fk('ncd_applications_approvedCodeId_fkey', [t.approvedCodeId], [ncdCodes.code], 'set null'),
@@ -1912,8 +1925,26 @@ export const ncdCodes = pgTable(
     issuedAt: createdAt('issuedAt'),
     expiresAt: timestamptz('expiresAt'),
     redeemedAt: timestamptz('redeemedAt'),
+    revokedAt: timestamptz('revokedAt'),
+    issuedRuleVersion: integer('issuedRuleVersion'),
   },
   (t) => [fk('ncd_codes_insurerId_fkey', [t.insurerId], [insurers.id], 'restrict')],
+);
+
+export const ncdEvidence = pgTable(
+  'ncd_evidence',
+  {
+    applicationId: uuid('applicationId').notNull(),
+    documentId: uuid('documentId').notNull(),
+    verificationRevision: integer('verificationRevision').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('ncd_evidence_documentId_key').on(t.documentId),
+    index('ncd_evidence_application_revision_created_idx').on(t.applicationId, t.verificationRevision, t.createdAt, t.documentId),
+    fk('ncd_evidence_applicationId_fkey', [t.applicationId], [ncdApplications.id], 'restrict'),
+    fk('ncd_evidence_documentId_fkey', [t.documentId], [documents.id], 'restrict'),
+  ],
 );
 
 export const inspections = pgTable(

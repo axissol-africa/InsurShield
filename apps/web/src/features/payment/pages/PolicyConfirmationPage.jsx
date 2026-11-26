@@ -1,3 +1,5 @@
+import PaymentHeld from '../components/PaymentHeld';
+import { isHeldPayment } from '../paymentStatus';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '@/store';
@@ -26,7 +28,7 @@ export default function PolicyConfirmationPage() {
   const [searchParams] = useSearchParams();
   const captureCode = searchParams.get('capture');
   const continuation = (path) => `${path}${captureCode ? `?capture=${encodeURIComponent(captureCode)}` : ''}`;
-  const { customer, quoteRequests, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, paymentReceipt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
+  const { customer, quoteRequests, vehicleDetails, vehicleValue, insuranceType, premiumBreakdown, policyDates, selectedQuote, paymentReceipt, paymentAttempt, addPolicy, markNcdCodeUsed, ncdCodeValidated, resetJourney, insurerReviews, submitInsurerReview } = useStore();
   const [issuing, setIssuing] = useState(true);
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
@@ -38,8 +40,11 @@ export default function PolicyConfirmationPage() {
   const selectedPolicyDates = selectedRequest?.policyDates ?? policyDates;
   const reference = (selectedQuote?.requestId || 'PENDING').slice(-6);
   // The payment service mints the policy number when it confirms the payment.
-  // The derived reference is only a stand-in for a receipt that carries none.
-  const policyNumber = paymentReceipt?.policyNumber || `POL-${reference}`;
+  // Only the prototype may derive a stand-in reference.
+  const receipt = env.apiMode === 'http' && (paymentAttempt?.payment?.status === 'Confirmed' || paymentAttempt?.payment?.confirmedAt) && !paymentAttempt.payment.policyNumber ? paymentAttempt.payment : paymentReceipt;
+  const heldReceipt = env.apiMode === 'http' && isHeldPayment(receipt) ? receipt : null;
+  const canConfirm = env.apiMode === 'mock' || (receipt?.status === 'Confirmed' && Boolean(receipt.policyNumber));
+  const policyNumber = receipt?.policyNumber || (env.apiMode === 'mock' ? `POL-${reference}` : null);
   // The confirmed receipt is authoritative: it records both what was paid and
   // the RTSA fee configured by the server at the time of payment.
   const rtsaFee = paymentReceipt?.rtsaAnniversaryFee ?? selectedRequest?.rtsaAnniversaryFee ?? 0;
@@ -51,7 +56,7 @@ export default function PolicyConfirmationPage() {
   const existingReview = insurerReviews.find((review) => review.policyNumber === policyNumber && review.customerEmail === customer?.email);
   const reviewsEnabled = env.apiMode === 'mock';
   useEffect(() => {
-    if (!selectedQuote) return undefined;
+    if (!selectedQuote || !canConfirm) return undefined;
     const timer = setTimeout(() => {
       addPolicy({
         policyNumber,
@@ -82,10 +87,12 @@ export default function PolicyConfirmationPage() {
       setIssuing(false);
     }, ISSUE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [addPolicy, customer, insurancePremium, markNcdCodeUsed, ncdCodeValidated, paymentReceipt, policyNumber, rtsaFee, selectedCoverType, selectedPolicyDates, selectedQuote, totalPaid, vehicleDetails, vehicleValue]);
+  }, [canConfirm, addPolicy, customer, insurancePremium, markNcdCodeUsed, ncdCodeValidated, paymentReceipt, policyNumber, rtsaFee, selectedCoverType, selectedPolicyDates, selectedQuote, totalPaid, vehicleDetails, vehicleValue]);
 
 
-  if (!selectedQuote) return (
+  if (heldReceipt) return <PaymentHeld receipt={heldReceipt} />;
+
+  if (!selectedQuote || !canConfirm) return (
     <JourneyLayout step={JOURNEY_COMPLETE} title="Nothing to confirm yet" description="Your issued policies are available in your account.">
       <Button asChild><Link to={continuation('/account')}>Go to my account</Link></Button>
     </JourneyLayout>

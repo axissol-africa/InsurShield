@@ -9,7 +9,6 @@ import {
   insurerProducts,
   insurerQuotes,
   insurers,
-  ncdCodes,
   payments,
   policies,
   productVersionRequirements,
@@ -36,7 +35,6 @@ import {
   type PolicyStatus,
   type QuoteProductStatus,
 } from '../common/domain/enums.js';
-import { ncdCodeIssuedTo } from './ncd-code-ownership.js';
 
 export type QuoteRequestRow = typeof quoteRequests.$inferSelect;
 export type NewQuoteRequest = typeof quoteRequests.$inferInsert;
@@ -64,6 +62,7 @@ export interface QuoteRow {
   productVersionId: string | null;
   insurerName: string;
   premiumMinor: number;
+  ncdPercentage: number | null;
   notes: string | null;
   insurerReference: string | null;
   validityDays: number;
@@ -125,13 +124,6 @@ export type AvailableProductVersion = Omit<
 export interface RequoteLink {
   requotedFromId: string;
   id: string;
-}
-
-export interface UsableNcdCode {
-  code: string;
-  percentage: number;
-  redeemedAt: Date | null;
-  expiresAt: Date | null;
 }
 
 export interface NewShot {
@@ -239,6 +231,7 @@ export class QuoteRequestsRepository {
         productVersionId: insurerQuotes.productVersionId,
         insurerName: insurers.name,
         premiumMinor: insurerQuotes.premiumMinor,
+        ncdPercentage: insurerQuotes.ncdPercentage,
         notes: insurerQuotes.notes,
         insurerReference: insurerQuotes.insurerReference,
         validityDays: insurerQuotes.validityDays,
@@ -467,19 +460,6 @@ export class QuoteRequestsRepository {
   }
 
   /** The code only when it was issued on this customer's own application. */
-  async findNcdCodeIssuedTo(tx: Transaction, code: string, customerId: string): Promise<UsableNcdCode | undefined> {
-    const [found] = await tx
-      .select({
-        code: ncdCodes.code,
-        percentage: ncdCodes.percentage,
-        redeemedAt: ncdCodes.redeemedAt,
-        expiresAt: ncdCodes.expiresAt,
-      })
-      .from(ncdCodes)
-      .where(and(eq(ncdCodes.code, code), ncdCodeIssuedTo(customerId)));
-    return found;
-  }
-
   async insertRequest(tx: Transaction, request: NewQuoteRequest): Promise<QuoteRequestRow> {
     const [created] = await tx.insert(quoteRequests).values(request).returning();
     return created;
