@@ -49,8 +49,17 @@ jobs:
       - name: Run unit tests
         run: npm run test
 
+      - name: Test release evidence checks
+        run: npm run test:release
+
       - name: Build all applications
         run: npm run build
+
+      - name: Build web with the release configuration
+        env:
+          VITE_API_MODE: http
+          VITE_API_BASE_URL: https://api.example.test/api/v1
+        run: npm run build:release -w @insurshield/web
 
   api-e2e:
     name: API end-to-end tests
@@ -154,6 +163,45 @@ jobs:
 
       - name: Run mock browser journey
         run: npm run test:e2e -w @insurshield/web -- --project=chromium
+
+      - name: Verify the service worker
+        run: npm run test:e2e -w @insurshield/web -- --project=service-worker --timeout=90000
+
+  web-launch-journeys:
+    name: Customer journeys across browser engines
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: quality
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Use the required npm version
+        run: npm install --global npm@${{ env.NPM_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the Playwright browsers
+        run: npm exec -w @insurshield/web -- playwright install --with-deps chromium firefox webkit
+
+      - name: Verify public and protected customer journeys
+        run: npm run test:e2e -w @insurshield/web -- --config=playwright.customer-journeys.config.js
+
+      - name: Retain failed browser journeys
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-journey-browser-results
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
 
   web-real-api:
     name: Real API browser journey

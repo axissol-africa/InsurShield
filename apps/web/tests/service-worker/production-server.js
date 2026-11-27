@@ -66,6 +66,18 @@ export async function startProductionServer() {
       }
 
       if (url.pathname === '/api/v1/probe') probeReads += 1;
+      if (url.pathname === '/api/v1/auth/me') {
+        setResponse(response, 401, '{"code":"UNAUTHORISED","message":"Sign in first"}', 'application/json; charset=utf-8');
+        return;
+      }
+      if (url.pathname === '/api/v1/customer-content/public') {
+        setResponse(response, 200, '{"items":[]}', 'application/json; charset=utf-8');
+        return;
+      }
+      if (url.pathname === '/api/v1/insurers/directory') {
+        setResponse(response, 200, '[]', 'application/json; charset=utf-8');
+        return;
+      }
       setResponse(response, 200, JSON.stringify({ request: probeReads }), 'application/json; charset=utf-8');
       return;
     }
@@ -79,7 +91,20 @@ export async function startProductionServer() {
     const headers = {
       'content-type': contentTypes.get(path.extname(file.filePath)) ?? 'application/octet-stream',
       'cache-control': url.pathname === '/sw.js' ? 'no-store' : 'public, max-age=0',
+      vary: 'Accept-Encoding',
     };
+    const preferred = String(request.headers['accept-encoding'] ?? '').split(',').map(item => item.trim());
+    for (const [encoding, extension] of [['br', 'br'], ['gzip', 'gz']]) {
+      if (!preferred.includes(encoding)) continue;
+      const compressed = await readFile(`${file.filePath}.${extension}`).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      });
+      if (!compressed) continue;
+      response.writeHead(200, { ...headers, 'content-encoding': encoding });
+      response.end(compressed);
+      return;
+    }
     response.writeHead(200, headers);
     response.end(file.body);
   });
@@ -95,14 +120,21 @@ export async function startProductionServer() {
   return {
     apiRequests,
     origin,
-    async build(label, apiBaseUrl = `${origin}/api/v1`) {
+    async build(label, apiBaseUrl = `${origin}/api/v1`, { versionChunks = false, mode = 'production' } = {}) {
       const previousMode = process.env.VITE_API_MODE;
       const previousApiBaseUrl = process.env.VITE_API_BASE_URL;
       process.env.VITE_API_MODE = 'http';
       process.env.VITE_API_BASE_URL = apiBaseUrl;
 
       try {
-        await build({ root: webRoot, mode: 'production', logLevel: 'error' });
+        await build({
+          root: webRoot,
+          mode,
+          logLevel: 'error',
+          ...(versionChunks && {
+            build: { rolldownOptions: { output: { chunkFileNames: `assets/[name]-${label}-[hash].js` } } },
+          }),
+        });
       } finally {
         if (previousMode === undefined) delete process.env.VITE_API_MODE;
         else process.env.VITE_API_MODE = previousMode;
@@ -112,10 +144,9 @@ export async function startProductionServer() {
 
       const indexPath = path.join(distRoot, 'index.html');
       const index = await readFile(indexPath, 'utf8');
-      await writeFile(
-        indexPath,
-        index.replace('</head>', `<meta name="service-worker-build" content="${label}"></head>`),
-      );
+      if (mode !== 'release') {
+        await writeFile(indexPath, index.replace('</head>', `<meta name="service-worker-build" content="${label}"></head>`));
+      }
 
       const serviceWorker = await readFile(path.join(distRoot, 'sw.js'), 'utf8');
       const buildId = serviceWorker.match(/const BUILD_ID = ['"]([^'"]+)['"];/)?.[1];

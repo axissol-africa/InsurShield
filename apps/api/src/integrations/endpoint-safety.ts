@@ -1,3 +1,4 @@
+import { observeOutboundHttp } from '../observability/outbound-http.js';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { request as httpRequest, type ClientRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -68,7 +69,7 @@ export function postJsonToEndpoint(
   endpoint: ResolvedIntegrationEndpoint,
   input: { headers: Record<string, string>; body: string; signal: AbortSignal },
 ): Promise<number> {
-  return new Promise((resolve, reject) => {
+  return observeOutboundHttp('insurer', input.signal, (traceContext) => new Promise<number>((resolve, reject) => {
     const request = endpoint.url.protocol === 'https:' ? httpsRequest : httpRequest;
     let clientRequest: ClientRequest | undefined;
     let settled = false;
@@ -87,7 +88,7 @@ export function postJsonToEndpoint(
       endpoint.url,
       {
         method: 'POST',
-        headers: input.headers,
+        headers: { ...input.headers, traceparent: traceContext },
         lookup: pinnedLookup(endpoint),
       },
       (response) => {
@@ -110,7 +111,7 @@ export function postJsonToEndpoint(
       return;
     }
     clientRequest.end(input.body);
-  });
+  }), (status) => status);
 }
 
 type LookupCallback = (

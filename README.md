@@ -135,7 +135,10 @@ intent before removing object bytes, preserves document tombstones, and anonymis
 | `S3_SSE` | no | Server-side encryption on upload: `AES256` or `aws:kms`; unset for MinIO |
 | `S3_SSE_KMS_KEY_ID` | no | The KMS key for `S3_SSE=aws:kms` |
 | `MAX_UPLOAD_BYTES` | no (`3145728`) | Largest accepted upload |
-| `MALWARE_SCANNER` | no (`stand-in`) | Malware-scan adapter for uploads; `stand-in` simulates one and is refused in production |
+| `MALWARE_SCANNER` | no (`stand-in`) | Upload malware scanner. Use `clamd` with an approved daemon in production |
+| `CLAMD_ADDRESS`, `CLAMD_PORT` | with `clamd` | Private or loopback IP literal and explicit TCP port |
+| `CLAMD_TIMEOUT_MS` | no (`10000`) | Total time allowed for one scan, including connection and response |
+| `CLAMD_MAX_RESPONSE_BYTES` | no (`4096`) | Maximum size of one scanner response |
 | `MAIL_SENDER` | no (`log`) | Mail adapter; `log` writes messages to the log and is refused in production, `http` posts to a provider's API |
 | `MAIL_ENDPOINT` | with `http` | The provider's send endpoint |
 | `MAIL_API_KEY` | with `http` | The provider's key, sent as a bearer token |

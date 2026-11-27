@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Controller, Get, Req } from '@nestjs/common';
 import { count, eq, sql } from 'drizzle-orm';
+import { Pool } from 'pg';
 import type { Request } from 'express';
 import { vi } from 'vitest';
 import { BASE_ERROR_CODES } from 'better-auth';
@@ -14,7 +15,10 @@ import { SIGN_IN_LOCKED } from '../src/auth/sign-in-limit.plugin.js';
 import { Needs, OptionalAuth, Public } from '../src/common/auth/auth.guard.js';
 import type { Principal } from '../src/common/auth/auth.types.js';
 import { errorBody } from '../src/common/errors/api.exception.js';
+import { testDatabase } from '../src/config/env.js';
+import { createDatabase, DATABASE } from '../src/db/database.module.js';
 import { DatabaseConnectionError } from '../src/db/errors.js';
+import * as databaseSchema from '../src/db/schema.js';
 import {
   authAccounts,
   authRateLimits,
@@ -26,6 +30,7 @@ import {
   insurers,
   staffUsers,
 } from '../src/db/schema.js';
+import { readApiFailureRecords } from './api-diagnostics.js';
 import { buildCustomer, buildInsurer, buildStaffUser, TEST_PASSWORD } from './builders.js';
 import { holdLocks, openTestDatabase, queueBehind, RecordingLogger, startApp, until, type TestApp } from './helpers.js';
 import {
@@ -49,6 +54,36 @@ const CONSENT = '/api/v1/auth/consent';
 const SESSION_COOKIE = 'insurshield.session_token';
 const OUR_NOT_FOUND = { code: 'NOT_FOUND', message: 'Not found.', details: null };
 const betterAuthBody = ({ code, message }: { code: string; message: string }) => ({ code, message });
+
+async function startIdentityConcurrencyApp(env: Record<string, string>): Promise<TestApp> {
+  // The lock fixture holds the row until all HTTP requests queue. Give that
+  // barrier time to collect every waiter on a shared runner.
+  const pool = new Pool({
+    connectionString: testDatabase().url,
+    max: 30,
+    connectionTimeoutMillis: 15_000,
+    options: '-c lock_timeout=30000 -c statement_timeout=30000',
+  });
+  try {
+    const app = await startApp({
+      env,
+      override: (builder) => builder.overrideProvider(DATABASE).useValue(createDatabase(pool, { schema: databaseSchema })),
+    });
+    return {
+      ...app,
+      async close() {
+        try {
+          await app.close();
+        } finally {
+          await pool.end();
+        }
+      },
+    };
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
+}
 
 @Controller('identity-probe')
 class ProbeController {
@@ -1385,7 +1420,7 @@ describe('the identity rate limits', () => {
     });
 
     it('admits one of 20 attempts queued behind a held row once nine are recorded, and verifies only its password', async () => {
-      const crowded = await startApp({ env: { ...LIMITED, DATABASE_POOL_SIZE: '30' } });
+      const crowded = await startIdentityConcurrencyApp(LIMITED);
       const verify = vi.spyOn((await crowded.app.get<Auth>(AUTH).$context).password, 'verify');
       try {
         const customer = await buildCustomer(crowded.db);
@@ -1470,7 +1505,7 @@ describe('the identity rate limits', () => {
       });
 
       it('admits one of 20 changes queued behind a held row once nine are recorded, and verifies only its password', async () => {
-        const crowded = await startApp({ env: { ...LIMITED, DATABASE_POOL_SIZE: '30' } });
+        const crowded = await startIdentityConcurrencyApp(LIMITED);
         const verify = vi.spyOn((await crowded.app.get<Auth>(AUTH).$context).password, 'verify');
         const keys = async () =>
           (await side.db.execute<{ emailKey: string }>(sql`SELECT "emailKey" FROM auth_sign_in_failures WHERE attempts = 9`))
@@ -1677,8 +1712,11 @@ describe('the identity routes when the session lookup fails', () => {
     }
   }
 
-  const linesFor = (level: string, outcome: string) =>
-    logger.lines.filter((line) => line.startsWith(`${level} `) && line.includes(`POST ${identityPath('/change-password')} -> ${outcome}`));
+  function expectIdentityFailure(level: 'warn' | 'error', correlationId: string, statusCode: number, code: string) {
+    const records = readApiFailureRecords(logger.lines.filter((line) => line.startsWith(`${level} `)), correlationId);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ method: 'POST', route: identityPath('/*splat'), statusCode, code });
+  }
 
   it('answers a retryable database failure with 503 TRY_AGAIN and Retry-After, as the API does, and logs it', async () => {
     const response = await changePasswordFailingWith(new DatabaseConnectionError(new Error('connect ECONNREFUSED SECRET')));
@@ -1686,7 +1724,7 @@ describe('the identity routes when the session lookup fails', () => {
     expect(response.status).toBe(503);
     expect(response.headers['retry-after']).toBe('1');
     expect(response.body).toEqual(errorBody('TRY_AGAIN', 'The service is busy right now. Please try again in a moment.'));
-    expect(linesFor('warn', '503 TRY_AGAIN')).toHaveLength(1);
+    expectIdentityFailure('warn', response.headers['x-correlation-id'], 503, 'TRY_AGAIN');
     expect(logger.text).not.toContain('SECRET');
   });
 
@@ -1696,7 +1734,8 @@ describe('the identity routes when the session lookup fails', () => {
     expect(response.status).toBe(500);
     expect(response.headers['retry-after']).toBeUndefined();
     expect(response.body).toEqual(errorBody('INTERNAL_ERROR', 'Something went wrong on our side. Please try again.'));
-    expect(linesFor('error', '500 INTERNAL_ERROR')).toHaveLength(1);
+    expectIdentityFailure('error', response.headers['x-correlation-id'], 500, 'INTERNAL_ERROR');
+    expect(logger.text).not.toContain('session store fell over');
   });
 });
 

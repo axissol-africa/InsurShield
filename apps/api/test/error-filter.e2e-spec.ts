@@ -8,6 +8,7 @@ import { createDatabase, DATABASE, type Database } from '../src/db/database.modu
 import { DatabaseConnectionError, isRetryableDatabaseError } from '../src/db/errors.js';
 import * as schema from '../src/db/schema.js';
 import { customers } from '../src/db/schema.js';
+import { readApiFailureRecords } from './api-diagnostics.js';
 import { buildCustomer, buildInsurer, unique } from './builders.js';
 import { openTestDatabase, productionPool, RecordingLogger, startApp, type TestApp } from './helpers.js';
 import { signIn } from './sessions.js';
@@ -22,6 +23,25 @@ function expectNoStatement(text: string, statement: string) {
   expect(text).not.toContain('Failed query');
   expect(text).not.toContain('params:');
   expect(text).not.toContain(statement);
+}
+
+interface FailureExpectation {
+  method: string;
+  route: string;
+  statusCode: number;
+  code: string;
+  databaseCode: string | null;
+}
+
+function expectStructuredFailure(messages: readonly unknown[], correlationId: string, expected: FailureExpectation) {
+  const records = readApiFailureRecords(messages, correlationId);
+  // Exact shape catches accidental addition of stack, message, constraint, URL, headers or payload fields.
+  expect(records).toEqual([{
+    event: 'http.request.failed', schemaVersion: 1, correlationId,
+    traceId: expect.stringMatching(/^[0-9a-f]{32}$/),
+    spanId: expect.stringMatching(/^[0-9a-f]{16}$/), traceFlags: '00',
+    ...expected,
+  }]);
 }
 
 @Public()
@@ -99,8 +119,10 @@ describe('the error filter', () => {
         details: null,
       });
       expectNoSecrets(JSON.stringify(response.body));
-      expect(logger.text).toContain('55P03');
-      expect(logger.text).toContain('TRY_AGAIN');
+      expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+        method: 'POST', route: '/api/v1/error-probe/rename/:id', statusCode: 503, code: 'TRY_AGAIN', databaseCode: '55P03',
+      });
+      expect(logger.text).not.toContain(customer.id);
       expectNoSecrets(logger.text);
       expectNoStatement(logger.text, 'update "customers"');
     } finally {
@@ -125,13 +147,16 @@ describe('the error filter', () => {
     expect(body).not.toContain('customers_email_key');
     expect(body).not.toContain('email');
     expectNoSecrets(body);
-    expect(logger.text).toContain('23505');
-    expect(logger.text).toContain('customers_email_key');
+    expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+      method: 'POST', route: '/api/v1/error-probe/copy-email-of/:id', statusCode: 409, code: 'CONFLICT', databaseCode: '23505',
+    });
+    expect(logger.text).not.toContain(existing.id);
+    expect(logger.text).not.toContain('customers_email_key');
     expectNoSecrets(logger.text);
     expectNoStatement(logger.text, 'insert into "customers"');
   });
 
-  it('answers any other database error with 500 INTERNAL_ERROR, logging its SQLSTATE and constraint, not its statement', async () => {
+  it('answers any other database error with 500 INTERNAL_ERROR, logging its SQLSTATE, not its constraint or statement', async () => {
     const response = await testApp.http.post('/api/v1/error-probe/negative-rate').expect(500);
 
     expect(response.body).toEqual({
@@ -140,13 +165,15 @@ describe('the error filter', () => {
       details: null,
     });
     expectNoSecrets(JSON.stringify(response.body));
-    expect(logger.text).toContain('23514');
-    expect(logger.text).toContain('insurers_rateBps_check');
+    expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+      method: 'POST', route: '/api/v1/error-probe/negative-rate', statusCode: 500, code: 'INTERNAL_ERROR', databaseCode: '23514',
+    });
+    expect(logger.text).not.toContain('insurers_rateBps_check');
     expectNoSecrets(logger.text);
     expectNoStatement(logger.text, 'insert into "insurers"');
   });
 
-  it('answers an unknown error with 500 INTERNAL_ERROR and logs its stack on the server only', async () => {
+  it('answers an unknown error with 500 INTERNAL_ERROR and logs only safe failure metadata', async () => {
     const response = await testApp.http.get('/api/v1/error-probe/unhandled').expect(500);
 
     expect(response.body).toEqual({
@@ -155,8 +182,11 @@ describe('the error filter', () => {
       details: null,
     });
     expect(JSON.stringify(response.body)).not.toContain(UNHANDLED_DETAIL);
-    expect(logger.text).toContain(UNHANDLED_DETAIL);
-    expect(logger.text).toContain('error-filter.e2e-spec.ts');
+    expect(logger.text).not.toContain(UNHANDLED_DETAIL);
+    expect(logger.text).not.toContain('error-filter.e2e-spec.ts');
+    expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+      method: 'GET', route: '/api/v1/error-probe/unhandled', statusCode: 500, code: 'INTERNAL_ERROR', databaseCode: null,
+    });
   });
 
   it('keeps the error body of an ApiException', async () => {
@@ -164,9 +194,11 @@ describe('the error filter', () => {
     expect(body).toEqual({ code: 'NOT_FOUND', message: expect.any(String), details: null });
   });
 
-  it('logs the path of a failed request without its query string', async () => {
-    await testApp.http.get('/api/v1/error-probe/unhandled').query({ email: `${SECRET_EMAIL_LOCAL}@example.invalid` }).expect(500);
-    expect(logger.text).toContain('GET /api/v1/error-probe/unhandled');
+  it('logs a failed request by route template without its query string', async () => {
+    const response = await testApp.http.get('/api/v1/error-probe/unhandled').query({ email: `${SECRET_EMAIL_LOCAL}@example.invalid` }).expect(500);
+    expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+      method: 'GET', route: '/api/v1/error-probe/unhandled', statusCode: 500, code: 'INTERNAL_ERROR', databaseCode: null,
+    });
     expectNoSecrets(logger.text);
   });
 });
@@ -269,7 +301,9 @@ describe.each([
     expect(response.headers['retry-after']).toBe('1');
     expect(response.body).toEqual({ code: 'TRY_AGAIN', message: expect.any(String), details: null });
     expect(JSON.stringify(response.body)).not.toContain(customer.userId ?? '');
-    expect(warningText()).toContain('GET /api/v1/auth/me -> 503 TRY_AGAIN');
+    expectStructuredFailure(warningLog.mock.calls.map((call: unknown[]) => call[0]), response.headers['x-correlation-id'], {
+      method: 'GET', route: '/api/v1/auth/me', statusCode: 503, code: 'TRY_AGAIN', databaseCode: null,
+    });
     expect(warningText()).not.toContain(customer.userId ?? '');
     expectNoStatement(warningText(), 'from "customers"');
     expectNothingOfTheConnectionLogged(warningText(), address);
@@ -282,8 +316,9 @@ describe.each([
 
     expect(response.headers['retry-after']).toBe('1');
     expect(response.body).toEqual({ code: 'TRY_AGAIN', message: expect.any(String), details: null });
-    expect(warningText()).toContain('POST /api/v1/error-probe/transaction -> 503 TRY_AGAIN');
-    expect(warningText()).toContain('503 TRY_AGAIN');
+    expectStructuredFailure(warningLog.mock.calls.map((call: unknown[]) => call[0]), response.headers['x-correlation-id'], {
+      method: 'POST', route: '/api/v1/error-probe/transaction', statusCode: 503, code: 'TRY_AGAIN', databaseCode: null,
+    });
     expect(warningText()).not.toContain(marker);
     expectNoStatement(warningText(), 'from "customers"');
     expectNothingOfTheConnectionLogged(warningText(), address);
@@ -311,14 +346,18 @@ describe('the error filter with a refused connection', () => {
   });
 
   it.each([
-    ['a query', (http: TestApp['http']) => http.post('/api/v1/error-probe/rename/00000000-0000-4000-8000-000000000000')],
-    ['a transaction', (http: TestApp['http']) => http.post('/api/v1/error-probe/transaction').set('x-probe-marker', 'refused')],
-  ])('logs ECONNREFUSED for %s', async (_case, send) => {
+    ['a query', '/api/v1/error-probe/rename/:id', (http: TestApp['http']) => http.post('/api/v1/error-probe/rename/00000000-0000-4000-8000-000000000000')],
+    ['a transaction', '/api/v1/error-probe/transaction', (http: TestApp['http']) => http.post('/api/v1/error-probe/transaction').set('x-probe-marker', 'refused')],
+  ])('logs safe unavailability metadata for %s', async (_case, route, send) => {
     logger.lines.length = 0;
 
-    await send(testApp.http).expect(503);
+    const response = await send(testApp.http).expect(503);
 
-    expect(logger.text).toContain('ECONNREFUSED');
+    expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+      method: 'POST', route, statusCode: 503, code: 'TRY_AGAIN', databaseCode: null,
+    });
+    expect(logger.text).not.toContain('ECONNREFUSED');
+    expect(logger.text).not.toContain('00000000-0000-4000-8000-000000000000');
   });
 });
 
@@ -349,7 +388,9 @@ describe('the error filter when the pool has no client to give', () => {
 
       expect(response.headers['retry-after']).toBe('1');
       expect(response.body).toEqual({ code: 'TRY_AGAIN', message: expect.any(String), details: null });
-      expect(logger.text).toContain('503 TRY_AGAIN');
+      expectStructuredFailure(logger.lines, response.headers['x-correlation-id'], {
+        method: 'POST', route: '/api/v1/error-probe/transaction', statusCode: 503, code: 'TRY_AGAIN', databaseCode: null,
+      });
       expect(logger.text).not.toContain('timeout exceeded');
       expect(logger.text).not.toContain('    at ');
     } finally {

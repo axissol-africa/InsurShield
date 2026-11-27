@@ -13,6 +13,8 @@ import {
   isRetryableDatabaseError,
   isUniqueViolation,
 } from '../../db/errors.js';
+import { currentRequestContext } from '../../observability/request-context.js';
+import { httpMethod, httpRoute } from '../../observability/http-labels.js';
 import { errorBody, type ErrorBody } from '../errors/api.exception.js';
 
 const RETRY_AFTER_SECONDS = 1;
@@ -27,14 +29,16 @@ const logger = new Logger('Api');
  */
 export function answerFailure(exception: unknown, request: Request, response: Response): void {
   const { status, body } = describe(exception);
-  // The query string can carry personal data, so only the path is logged.
-  const summary = `${request.method} ${request.path} -> ${status} ${body.code}`;
-
-  if (isDatabaseError(exception)) {
-    const unexpected = status >= HttpStatus.INTERNAL_SERVER_ERROR && status !== HttpStatus.SERVICE_UNAVAILABLE;
-    logger[unexpected ? 'error' : 'warn'](summary, describeDatabaseError(exception));
-  } else if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-    logger.error(summary, exception instanceof Error ? exception.stack : String(exception));
+  // Neither a path nor an arbitrary exception/stack is safe: both can contain protected records or credentials.
+  if (isDatabaseError(exception) || status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    const database = isDatabaseError(exception) ? describeDatabaseError(exception) : undefined;
+    const record = {
+      event: 'http.request.failed', schemaVersion: 1,
+      ...currentRequestContext(), method: httpMethod(request), route: httpRoute(request), statusCode: status,
+      code: status === 503 ? 'TRY_AGAIN' : status === 409 ? 'CONFLICT' : 'INTERNAL_ERROR',
+      databaseCode: database?.code && /^[0-9A-Z]{5}$/.test(database.code) ? database.code : null,
+    };
+    logger[status >= 500 && status !== 503 ? 'error' : 'warn'](JSON.stringify(record));
   }
 
   if (body.code === 'TRY_AGAIN' || body.code === 'RATE_LIMITED') {
@@ -86,7 +90,7 @@ function describe(exception: unknown): { status: number; body: ErrorBody } {
     };
   }
 
-  // A clash a service did not translate into its own error. The constraint names the data, so it stays in the log.
+  // A clash a service did not translate into its own error.
   if (isUniqueViolation(exception)) {
     return {
       status: HttpStatus.CONFLICT,

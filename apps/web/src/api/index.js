@@ -7,10 +7,6 @@
  * `VITE_API_MODE=http` selects the real backend (`api/http`); anything else
  * uses browser storage (`api/mock`). Both implement `api/contracts.js`.
  */
-import { env } from '@/config/env';
-import * as http from './http';
-import * as mock from './mock';
-
-export const api = env.apiMode === 'http' ? http : mock;
-export { ApiError } from '@/lib/apiClient';
+export { api } from '@/api/adapter';
+export { ApiError } from '@/lib/ApiError';
 export { captureApi } from './capture';

@@ -1,31 +1,43 @@
+import { lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { CustomerRoute, StaffRoute } from './guards';
 import IdentitySessionBoundary from './IdentitySessionBoundary';
-import LandingPage from '@/features/home/pages/LandingPage';
-import CreateAccountPage from '@/features/auth/pages/CreateAccountPage';
-import ResetPasswordPage from '@/features/auth/pages/ResetPasswordPage';
-import InsuranceTypePage from '@/features/quote-journey/pages/InsuranceTypePage';
-import VehicleIdentificationPage from '@/features/quote-journey/pages/VehicleIdentificationPage';
-import VehicleUsagePage from '@/features/quote-journey/pages/VehicleUsagePage';
-import QuoteRequestPage from '@/features/quote-journey/pages/QuoteRequestPage';
-import QuotesComparisonPage from '@/features/quote-journey/pages/QuotesComparisonPage';
-import PaymentPage from '@/features/payment/pages/PaymentPage';
-import PolicyConfirmationPage from '@/features/payment/pages/PolicyConfirmationPage';
-import CustomerAccountPage from '@/features/account/pages/CustomerAccountPage';
-import NotificationCentrePage from '@/features/notifications/pages/NotificationCentrePage';
-import RenewalPage from '@/features/policies/pages/RenewalPage';
-import ClaimsPage from '@/features/claims/pages/ClaimsPage';
-import SupportPage from '@/features/support/pages/SupportPage';
-import InsurerProfilePage from '@/features/reviews/pages/InsurerProfilePage';
-import ServiceRequestsPage from '@/features/service-requests/pages/ServiceRequestsPage';
-import NewServiceRequestPage from '@/features/service-requests/pages/NewServiceRequestPage';
-import ServiceRequestPage from '@/features/service-requests/pages/ServiceRequestPage';
-import InspectionWorkflowPage from '@/features/inspections/pages/InspectionWorkflowPage';
-import CapturePage from '@/features/quote-journey/pages/CapturePage';
-import AdminLogin from '@/features/auth/pages/StaffLoginPage';
-import AdminDashboard from '@/features/admin/pages/AdminDashboard';
-import InsurerDashboard from '@/features/insurer-portal/pages/InsurerDashboard';
+import RouteContent from './RouteContent';
+function publicEntry(path, load) {
+  if (!import.meta.env.PROD || (window.location.pathname.replace(/\/+$/, '') || '/') !== path) return lazy(load);
+  // The matching page can download while the session check runs. Keep any
+  // rejection for the route boundary when React attempts to render it.
+  const entry = load();
+  void entry.catch(() => undefined);
+  return lazy(() => entry);
+}
+
+const LandingPage = publicEntry('/', () => import('@/features/home/pages/LandingPage'));
+const InsuranceTypePage = publicEntry('/insurance-type', () => import('@/features/quote-journey/pages/InsuranceTypePage'));
+const SupportPage = publicEntry('/support', () => import('@/features/support/pages/SupportPage'));
+
+const CreateAccountPage = lazy(() => import('@/features/auth/pages/CreateAccountPage'));
+const ResetPasswordPage = lazy(() => import('@/features/auth/pages/ResetPasswordPage'));
+const VehicleIdentificationPage = lazy(() => import('@/features/quote-journey/pages/VehicleIdentificationPage'));
+const VehicleUsagePage = lazy(() => import('@/features/quote-journey/pages/VehicleUsagePage'));
+const QuoteRequestPage = lazy(() => import('@/features/quote-journey/pages/QuoteRequestPage'));
+const QuotesComparisonPage = lazy(() => import('@/features/quote-journey/pages/QuotesComparisonPage'));
+const PaymentPage = lazy(() => import('@/features/payment/pages/PaymentPage'));
+const PolicyConfirmationPage = lazy(() => import('@/features/payment/pages/PolicyConfirmationPage'));
+const CustomerAccountPage = lazy(() => import('@/features/account/pages/CustomerAccountPage'));
+const NotificationCentrePage = lazy(() => import('@/features/notifications/pages/NotificationCentrePage'));
+const RenewalPage = lazy(() => import('@/features/policies/pages/RenewalPage'));
+const ClaimsPage = lazy(() => import('@/features/claims/pages/ClaimsPage'));
+const InsurerProfilePage = lazy(() => import('@/features/reviews/pages/InsurerProfilePage'));
+const ServiceRequestsPage = lazy(() => import('@/features/service-requests/pages/ServiceRequestsPage'));
+const NewServiceRequestPage = lazy(() => import('@/features/service-requests/pages/NewServiceRequestPage'));
+const ServiceRequestPage = lazy(() => import('@/features/service-requests/pages/ServiceRequestPage'));
+const InspectionWorkflowPage = lazy(() => import('@/features/inspections/pages/InspectionWorkflowPage'));
+const CapturePage = lazy(() => import('@/features/quote-journey/pages/CapturePage'));
+const AdminLogin = lazy(() => import('@/features/auth/pages/StaffLoginPage'));
+const AdminDashboard = lazy(() => import('@/features/admin/pages/AdminDashboard'));
+const InsurerDashboard = lazy(() => import('@/features/insurer-portal/pages/InsurerDashboard'));
 
 const customerOnly = (page) => <CustomerRoute>{page}</CustomerRoute>;
 
@@ -67,7 +79,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
-        <Route path="/insurer" element={<StaffRoute roles={['insurer']}><InsurerDashboard /></StaffRoute>} />
+        <Route path="/insurer" element={<RouteContent><StaffRoute roles={['insurer']}><InsurerDashboard /></StaffRoute></RouteContent>} />
       </Routes>
       </IdentitySessionBoundary>
     </Router>

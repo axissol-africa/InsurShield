@@ -15,7 +15,7 @@ change of environment variables, not a change of code.
 
 ## Before going live
 
-Two decisions are still open and neither is a code change:
+The deployment examples below depend on two open decisions:
 
 1. **Where the API runs.** The Dockerfile runs anywhere that takes a container.
    ECS Fargate or App Runner keep it in the same VPC and region as RDS, which is
@@ -26,6 +26,10 @@ Two decisions are still open and neither is a code change:
    insurance documents, so confirm what PIA and Zambian data-protection law
    require of where that data lives **before** provisioning. This is a
    regulatory question, not a technical one.
+
+Follow the [operations runbooks](runbooks/README.md) for staging, production,
+alerts, data protection and recovery. Use the candidate release gate described
+below after the accountable owners approve the evidence.
 
 ## Building the images
 
@@ -86,8 +90,8 @@ BETTER_AUTH_URL=https://api.insurshield.zm
 TRUST_PROXY_HOPS=1
 AUTH_RATE_LIMIT=on
 
-# RDS requires TLS.
-DATABASE_URL=postgresql://USER:PASSWORD@db.xxxx.af-south-1.rds.amazonaws.com:5432/insurshield?sslmode=require
+# Use the approved trust roots and require database hostname verification.
+DATABASE_URL=postgresql://USER:PASSWORD@db.xxxx.af-south-1.rds.amazonaws.com:5432/insurshield?sslmode=verify-full
 
 # Real S3: drop the MinIO-only settings.
 # S3_ENDPOINT            — remove entirely
@@ -129,13 +133,29 @@ The reverse proxy or load balancer must:
 The identity session has a fixed seven-day lifetime; API reads do not silently renew it. Password-reset and
 email-verification delivery must stay disabled in production until a verified mail provider and sender are available.
 
-### The one deliberate local/production difference
+Production checks PostgreSQL's `sslmode=verify-full`, HTTPS identity and
+browser origins, and HTTPS for configured mail and object-storage endpoints.
+Supply the approved CA material where the platform trust store does not
+already trust the provider certificate. Record transport and encryption
+settings for the selected environment in the release evidence.
+
+### Object-storage encryption
 
 `S3_SSE` is the only setting that cannot be identical in both places. MinIO
 answers `501 NotImplemented` to the server-side-encryption header, while S3
 accepts it. It is therefore unset locally and set to `AES256` on AWS. S3 also
 encrypts new objects at the bucket level by default, so this is a second layer
 rather than the only protection.
+
+### Upload scanning
+
+Set `MALWARE_SCANNER=clamd` and supply the private or loopback IP in
+`CLAMD_ADDRESS` and the TCP port in `CLAMD_PORT`. Keep the daemon on the
+same host or protect a remote hop with approved encrypted transport. The
+native ClamAV TCP protocol sends file bytes without transport encryption.
+Configure the daemon's `StreamMaxLength` to cover `MAX_UPLOAD_BYTES`, and
+verify signature updates and alert delivery in staging. An unavailable
+daemon or an inconclusive response prevents the upload from being accepted.
 
 ## AWS resources to provision
 
@@ -159,15 +179,75 @@ unreachable, it returns `503` with `"status":"down"` and the state of each depen
 Both paths sit outside the `API_PREFIX`, so they are `/health`, not
 `/api/v1/health`.
 
+## API observability
+
+Collect the JSON event payloads from the API process logs. Use
+`http.request.completed` and `http.request.failed` for request diagnostics
+and `http.client.completed` for outbound mail and insurer HTTP calls.
+Use the response's `X-Correlation-Id` to look up a reported issue.
+Request and client span records include trace and span IDs for linking work
+across the handlers and adapters that emit them.
+
+Build traffic, error and latency dashboards from the `http.metrics`
+delta windows. Use each window's duration and combine the route, method
+and status-class series across instances. Treat `__overflow__` as a combined
+series and monitor reported dropped logs. The latency buckets include two
+and five seconds for the API and quote acknowledgement targets. Keep logs
+access-controlled.
+Operations must configure and exercise alerts with the on-call owner before
+release. See the [incident response runbook](runbooks/incident-response.md).
+
 ## Frontend
 
-The frontend is a static build (`npm run build -w @insurshield/web` → `apps/web/dist`).
-Set `VITE_API_MODE=http` and point `VITE_API_BASE_URL` at the deployed API. Serve it at a hostname on the same site
-as the API (for example `app.insurshield.zm` with `api.insurshield.zm`); S3 + CloudFront is one way to do that.
+Build the static release artifact with `npm run build:release -w @insurshield/web`
+and publish `apps/web/dist`. Set `VITE_API_MODE=http` and `VITE_API_BASE_URL`
+to the deployed HTTPS API base URL or an explicit same-origin path served
+through the gateway. When using separate hostnames, serve both from the same
+site for session cookies. The regular development build supports browser storage
+for demonstrations.
 
-Note that the frontend currently defaults to `VITE_API_MODE=mock`, which serves
-everything from browser storage. It must be switched to `http` for a real
-deployment.
+The release build provides Brotli and gzip variants for HTML, JavaScript
+and CSS. Configure the host or CDN to negotiate these encodings, set the
+original content type and return `Vary: Accept-Encoding`. The public URLs
+continue to use their original extensions. Keep the prior release's
+fingerprinted assets available during rollout, and serve HTML and `sw.js`
+with revalidation. The worker keeps one prior set of scripts and styles for
+open offline tabs and serves the current HTML on new navigations.
+
+## Release evidence
+
+Create a restricted evidence file from [the pending template](../scripts/release-gate.example.json).
+Record the full commit SHA of the candidate and include the exact API image,
+migrator and frontend artifact identifiers in the linked evidence.
+Give each criterion in [requirements section 12](requirements-spec.md#12-mvp-release-acceptance)
+a named accountable approval and traceable evidence. Keep the evidence file
+and the linked records in a release system writable only by authorised reviewers.
+
+An approved criterion has `status` set to `passed`, a named `approvedBy`,
+a UTC ISO timestamp `approvedAt`, and an `evidence` array of HTTPS links.
+Use links without embedded credentials, query strings or temporary access tokens.
+For criterion `12.11`, record any formally accepted high or critical defect in
+`acceptedDefects` with its `reference`, `severity`, `owner`, documented
+`workaround`, `approvedBy`, `approvedAt` and `evidence`. Link the defect
+register and use an empty `acceptedDefects` list when there are no exceptions.
+
+Pass the commit from the trusted build record when checking the candidate:
+
+```bash
+npm run release:check -- "$RELEASE_EVIDENCE_FILE" "$RELEASE_COMMIT_SHA"
+```
+
+The command blocks on incomplete, invalid or mismatched evidence. The release
+owner verifies that links resolve to authentic approvals and results, then uses
+the result to decide whether to promote the artifacts. The API also checks for
+stand-ins and verifies every active platform rule before opening its production
+port. A production request that depends on an expired approval cannot use a
+provisional rule. Configure and confirm new rule versions before older ones end.
+For a new production database, prepare and review the one-time rule
+provisioning migration with the accountable approvers before the first API
+start. Record the approved values, effective dates, responsible identities
+and audit references in the restricted release evidence. Verify on staging
+that it creates the confirmed versions the startup check expects.
 
 ## Dependency advisories
 

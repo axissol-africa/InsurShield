@@ -433,6 +433,7 @@ trail (US-ADM-013); reports and the manual risk review (US-ADM-014); insurer per
 (US-VEN-012).
 
 ### Batch 20: Production readiness and release gate
+Follow the [Batch 20 plan](batch-20-production-readiness.md) for delivery and verification.
 Logs, metrics, traces, correlation ids, alerts, backup and recovery against the agreed RPO and RTO (EN-006).
 Accessibility audit, performance, low-bandwidth and browser-compatibility testing (EN-007, EN-008 remaining kinds).
 Encryption at rest and the breach-response procedure (NFR-SEC-004, NFR-PRI-001; r1 R-M9). The real adapter for each

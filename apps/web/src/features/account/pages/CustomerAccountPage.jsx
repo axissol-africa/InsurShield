@@ -47,7 +47,7 @@ const ACCOUNT_SECTION_COPY = {
   overview: { title: 'Overview', description: 'Your insurance activity at a glance.' },
   certificates: { title: 'Certificates', description: 'Track paid quotes while insurers prepare the official policy certificate.' },
   policies: { title: 'Policies', description: 'View active cover, certificates and renewal details.' },
-  quotes: { title: 'Quote activity', description: 'Review cover guides, quotations and requests you have sent.' },
+  quotes: { title: 'Quote activity', description: 'Use the account you submitted with to find your saved requests. Open a request to review cover guides, quotations and its next step.' },
   preferences: { title: 'Notifications', description: 'Choose how InsurShield contacts you about what is optional.' },
 };
 

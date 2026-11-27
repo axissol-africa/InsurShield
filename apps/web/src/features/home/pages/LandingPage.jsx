@@ -1,5 +1,4 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { motion, useReducedMotion } from 'framer-motion';
 import { useStore, useActiveInsurers } from '@/store';
 import Meta from '@/components/ui/Meta';
 import { PIA_CONFIG } from '@/domain/insurers';
@@ -7,6 +6,7 @@ import DotBand from '../components/DotBand';
 import QuoteFanSchematic from '../components/QuoteFanSchematic';
 import ComparisonSplit from '../components/ComparisonSplit';
 import CtaBand from '../components/CtaBand';
+import CustomerJourneyLinks from '../components/CustomerJourneyLinks';
 
 const BENEFITS = [
   {
@@ -40,18 +40,9 @@ export default function LandingPage() {
   const navigate = useNavigate();
   const { isAuthenticated, resetJourney } = useStore();
   const activeInsurers = useActiveInsurers();
-  const reduceMotion = useReducedMotion();
 
   const partnerLogos = activeInsurers.filter((insurer) => insurer.logoUrl);
   const displayedPartners = partnerLogos.length ? partnerLogos : activeInsurers;
-
-  // One shared reveal, so sections enter with the same restrained motion.
-  const reveal = {
-    initial: reduceMotion ? {} : { opacity: 0, y: 14 },
-    whileInView: { opacity: 1, y: 0 },
-    viewport: { once: true, margin: '-80px' },
-    transition: { duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] },
-  };
 
   return (
     <>
@@ -130,6 +121,8 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <CustomerJourneyLinks />
+
       {/* ── Facts band ───────────────────────────────────────────── */}
       <section className="border-b border-line bg-canvas-2">
         <div className="mx-auto grid max-w-[1200px] grid-cols-2 px-6 lg:grid-cols-4 lg:px-10">
@@ -155,7 +148,7 @@ export default function LandingPage() {
 
       {/* ── Benefits ─────────────────────────────────────────────── */}
       <section className="border-b border-line">
-        <motion.div {...reveal} className="mx-auto max-w-[1200px] px-6 py-20 lg:px-10 lg:py-24">
+        <div className="landing-reveal mx-auto max-w-[1200px] px-6 py-20 lg:px-10 lg:py-24">
           <div className="flex items-center gap-4">
             <Meta className="text-primary">How it differs</Meta>
             <span className="h-px flex-1 bg-line" aria-hidden="true" />
@@ -183,12 +176,12 @@ export default function LandingPage() {
               </article>
             ))}
           </div>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── Steps ────────────────────────────────────────────────── */}
       <section className="border-b border-line bg-canvas-2">
-        <motion.div {...reveal} className="mx-auto grid max-w-[1200px] gap-14 px-6 py-20 lg:grid-cols-[.85fr_1.15fr] lg:px-10 lg:py-24">
+        <div className="landing-reveal mx-auto grid max-w-[1200px] gap-14 px-6 py-20 lg:grid-cols-[.85fr_1.15fr] lg:px-10 lg:py-24">
           <div>
             <div className="flex items-center gap-4">
               <Meta className="text-primary">Sequence</Meta>
@@ -235,7 +228,7 @@ export default function LandingPage() {
               </li>
             ))}
           </ol>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── Insurer network ──────────────────────────────────────── */}
@@ -256,7 +249,7 @@ export default function LandingPage() {
                   className="flex h-[104px] w-[220px] shrink-0 items-center justify-center border-r border-dashed border-line px-6"
                 >
                   {insurer.logoUrl ? (
-                    <img src={insurer.logoUrl} alt={`${insurer.name} logo`} className="max-h-12 max-w-[150px] object-contain" />
+                    <img src={insurer.logoUrl} alt={`${insurer.name} logo`} loading="lazy" decoding="async" className="max-h-12 max-w-[150px] object-contain" />
                   ) : (
                     <div className="flex items-center gap-3">
                       <span className="flex h-8 w-8 items-center justify-center rounded-[1px] bg-primary text-white">

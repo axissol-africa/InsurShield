@@ -1,5 +1,3 @@
-import { useEffect, useRef } from 'react';
-import { animate, motion, useInView, useMotionValue, useReducedMotion, useTransform } from 'framer-motion';
 import DitherChart from './DitherChart';
 
 /**
@@ -24,34 +22,9 @@ const ALERTS = [
   { label: 'RESEND', detail: 'Insurer 5 · again' },
 ];
 
-/**
- * Counts up once when the panel scrolls into view. Driven by a motion value
- * rather than component state, so the animation never re-renders the section.
- */
-function useCountUp(target, active, reduceMotion) {
-  const value = useMotionValue(reduceMotion ? target : 0);
-
-  useEffect(() => {
-    if (reduceMotion) {
-      value.set(target);
-      return undefined;
-    }
-    if (!active) return undefined;
-    const controls = animate(value, target, { duration: 0.9, ease: [0.22, 1, 0.36, 1] });
-    return () => controls.stop();
-  }, [target, active, reduceMotion, value]);
-
-  return useTransform(value, (current) => Math.round(current));
-}
-
 export default function ComparisonSplit({ insurerCount }) {
-  const reduceMotion = useReducedMotion();
-  const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: '-120px' });
-  const count = useCountUp(insurerCount, inView, reduceMotion);
-
   return (
-    <section ref={ref} className="border-b border-line bg-ink">
+    <section className="border-b border-line bg-ink">
       <div className="grid lg:grid-cols-2">
         {/* ── The old way ─────────────────────────────────────────── */}
         <div className="relative min-h-[520px] overflow-hidden px-6 py-14 lg:px-12 lg:py-20">
@@ -141,7 +114,7 @@ export default function ComparisonSplit({ insurerCount }) {
             <span className="inline-flex items-center gap-3 rounded-full border border-white/35 bg-white/10 px-6 py-4 backdrop-blur-sm">
               <span className="material-symbols-outlined text-[20px] text-white" aria-hidden="true">check</span>
               <span className="text-[17px] font-medium text-white sm:text-[19px]">
-                <motion.span className="tabular-nums">{count}</motion.span> cover guides, side by side
+                <span className="tabular-nums">{insurerCount}</span> cover guides, side by side
               </span>
             </span>
             <span className="hidden h-px flex-1 border-t border-dashed border-white/30 sm:block" aria-hidden="true" />

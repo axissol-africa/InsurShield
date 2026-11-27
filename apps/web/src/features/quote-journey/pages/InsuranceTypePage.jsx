@@ -48,7 +48,7 @@ export default function InsuranceTypePage() {
     <JourneyLayout
       step={1}
       title="Choose your cover"
-      description="Explore as a guest. An account is only needed when you send your request to insurers."
+      description="Have your vehicle registration, value and intended use ready. Compare cover guides, then choose insurers for final quotes. Explore as a guest; verify your account before sending a request."
     >
         <form onSubmit={continueJourney} className="space-y-6">
           <RadioGroup

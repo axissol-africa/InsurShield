@@ -42,3 +42,16 @@ describe('ClaimsPage — a no-claim discount application', () => {
     expect(screen.getByText('Potential Discount').parentElement).toHaveTextContent(discount);
   });
 });
+
+it('names claim inputs and lets keyboard users toggle the police report', async () => {
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={['/claims?action=claim']}><ClaimsPage /></MemoryRouter>);
+  for (const name of ['Full Name *', 'Mobile Number *', 'Vehicle Registration / Plate Number *', 'Coverage Type *', 'Insurance Company *', 'Claim Type *', 'Date of Incident *', 'Estimated Loss (ZMW)', 'Incident Location *', 'Describe What Happened *']) {
+    expect(screen.getByLabelText(name)).toBeInTheDocument();
+  }
+  const police = screen.getByRole('checkbox', { name: /Police Report Filed/ });
+  police.focus();
+  await user.keyboard(' ');
+  expect(police).toBeChecked();
+  expect(screen.getByLabelText('Police case or report number')).toBeInTheDocument();
+});

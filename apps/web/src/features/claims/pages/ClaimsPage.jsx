@@ -447,14 +447,14 @@ export default function ClaimsPage() {
         <ClaimsSubpageHeader
           eyebrow="Claim notification"
           title="Start a claim"
-          description="Tell us what happened. You get a claim number immediately, then call your insurer to continue."
+          description="Have your policy, incident date, vehicle details and supporting evidence ready. Submit the first notification to receive a claim number, then contact your insurer to continue."
           onBack={() => setClaimView('list')}
         />
 
         <form onSubmit={handleSubmitClaim} className="space-y-5">
-          <fieldset className="rounded-xl border bg-card p-5"><legend className="px-2 font-medium">Policy covering this incident</legend>
+          <fieldset className="min-w-0 rounded-xl border bg-card p-5"><legend className="px-2 font-medium">Policy covering this incident</legend>
             <div className="flex flex-wrap gap-2" role="group" aria-label="Your policies">
-              {policies.filter(mine).map((policy) => <Button key={policy.policyNumber} type="button" variant={claimForm.policyNumber === policy.policyNumber ? 'default' : 'outline'} onClick={() => {
+              {policies.filter(mine).map((policy) => <Button key={policy.policyNumber} className="h-auto min-h-11 max-w-full whitespace-normal break-words text-left" type="button" variant={claimForm.policyNumber === policy.policyNumber ? 'default' : 'outline'} onClick={() => {
                 setClaimForm((previous) => ({ ...previous, policyNumber: policy.policyNumber, insurer: policy.insurer, insurerId: policy.insurerId || insurers.find((entry) => entry.name === policy.insurer)?.id || '', plateNumber: policy.vehicleDetails?.plateNumber || policy.plate || '', vehicle: policy.vehicle || '', coverageType: /third/i.test(policy.coverage || policy.coverageType || '') ? 'Third Party' : 'Comprehensive' }));
                 setCoverageMismatch(null); setPlateLookupResult(null);
               }}>{policy.policyNumber} · {policy.insurer}</Button>)}
@@ -487,14 +487,14 @@ export default function ClaimsPage() {
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 sm:col-span-1">
-                <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Full Name *</label>
-                <input required value={claimForm.fullName} onChange={e => setClaimField('fullName', e.target.value)}
+                <label htmlFor="claim-fullName" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Full Name *</label>
+                <input id="claim-fullName" required value={claimForm.fullName} onChange={e => setClaimField('fullName', e.target.value)}
                   placeholder="e.g. Mwiza Banda"
                   className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Mobile Number *</label>
-                <input required type="tel" value={claimForm.phone} onChange={e => setClaimField('phone', e.target.value)}
+                <label htmlFor="claim-phone" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Mobile Number *</label>
+                <input id="claim-phone" required type="tel" value={claimForm.phone} onChange={e => setClaimField('phone', e.target.value)}
                   placeholder="e.g. 0970 123 456"
                   className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
                 <p className="text-[11px] text-ink-muted mt-1">Must match the number on your policy — the insurer will call you back on it.</p>
@@ -511,14 +511,14 @@ export default function ClaimsPage() {
 
             {/* Plate Number */}
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Vehicle Registration / Plate Number *</label>
-              <div className="flex gap-2">
+              <label htmlFor="claim-plate" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Vehicle Registration / Plate Number *</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <input
-                  required
+                  id="claim-plate" required
                   readOnly={!!claimForm.policyNumber} value={claimForm.plateNumber}
                   onChange={e => { setClaimField('plateNumber', e.target.value.toUpperCase()); setPlateLookupResult(null); setCoverageMismatch(null); }}
                   placeholder="e.g. BAA 1234"
-                  className="flex-1 bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] font-mono uppercase tracking-widest focus:ring-2 focus:ring-primary outline-none"
+                  className="min-w-0 flex-1 bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] font-mono uppercase tracking-widest focus:ring-2 focus:ring-primary outline-none"
                 />
                 <button
                   type="button"
@@ -550,9 +550,9 @@ export default function ClaimsPage() {
 
             {/* Coverage Type */}
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Coverage Type *</label>
+              <label htmlFor="claim-coverageType" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Coverage Type *</label>
               <div className="relative">
-                <select
+                <select id="claim-coverageType"
                   required
                   disabled={!!claimForm.policyNumber}
                   value={claimForm.coverageType}
@@ -593,9 +593,9 @@ export default function ClaimsPage() {
 
             {/* Insurance Company — auto-filled or manual */}
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
+              <label htmlFor="claim-insurerId" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
               <div className="relative">
-                <select disabled={!!claimForm.policyNumber} required value={claimForm.insurerId} onChange={e => setClaimForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
+                <select id="claim-insurerId" disabled={!!claimForm.policyNumber} required value={claimForm.insurerId} onChange={e => setClaimForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
                   className="w-full appearance-none bg-canvas-2 border-2 border-line-strong rounded-lg p-3.5 text-[15px] focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                   <option value="">Select the insurance company...</option>
                   {insurers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
@@ -620,9 +620,9 @@ export default function ClaimsPage() {
 
             {/* Claim Type */}
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Claim Type *</label>
+              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block" htmlFor="claim-type">Claim Type *</label>
               <div className="relative mb-2">
-                <select
+                <select id="claim-type"
                   required
                   value={CLAIM_TYPES.includes(claimForm.type) ? claimForm.type : claimForm.type ? 'Other' : ''}
                   onChange={e => {
@@ -642,7 +642,7 @@ export default function ClaimsPage() {
                     required
                     value={claimForm.type === 'Other' ? '' : claimForm.type}
                     onChange={e => setClaimField('type', e.target.value || 'Other')}
-                    placeholder="Please describe the type of claim..."
+                    aria-label="Other claim type" placeholder="Please describe the type of claim..."
                     className="w-full bg-canvas-2 border-2 border-primary/40 rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none"
                     autoFocus
                   />
@@ -655,8 +655,8 @@ export default function ClaimsPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Date of Incident *</label>
-                <input required type="date" value={claimForm.incidentDate} max={lusakaToday()}
+                <label htmlFor="claim-incidentDate" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Date of Incident *</label>
+                <input id="claim-incidentDate" required type="date" value={claimForm.incidentDate} max={lusakaToday()}
                   onChange={e => setClaimField('incidentDate', e.target.value)}
                   className={`w-full border rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none ${
  isLate ? 'bg-primary/[0.06] border-primary/30 text-primary focus:ring-red-400'
@@ -675,23 +675,23 @@ export default function ClaimsPage() {
                 )}
               </div>
               <div>
-                <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Estimated Loss (ZMW)</label>
-                <input type="number" min="0" value={claimForm.estimatedLoss} onChange={e => setClaimField('estimatedLoss', e.target.value)}
+                <label htmlFor="claim-estimatedLoss" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Estimated Loss (ZMW)</label>
+                <input id="claim-estimatedLoss" type="number" min="0" value={claimForm.estimatedLoss} onChange={e => setClaimField('estimatedLoss', e.target.value)}
                   placeholder="e.g. 15000"
                   className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
               </div>
             </div>
 
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Incident Location *</label>
-              <input required value={claimForm.location} onChange={e => setClaimField('location', e.target.value)}
+              <label htmlFor="claim-location" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Incident Location *</label>
+              <input id="claim-location" required value={claimForm.location} onChange={e => setClaimField('location', e.target.value)}
                 placeholder="e.g. Great East Road, near Arcades, Lusaka"
                 className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
             </div>
 
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Describe What Happened *</label>
-              <textarea required rows={4} value={claimForm.description} onChange={e => setClaimField('description', e.target.value)}
+              <label htmlFor="claim-description" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Describe What Happened *</label>
+              <textarea id="claim-description" required rows={4} value={claimForm.description} onChange={e => setClaimField('description', e.target.value)}
                 placeholder="Provide a clear and detailed description of the incident..."
                 className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none resize-none" />
             </div>
@@ -703,16 +703,15 @@ export default function ClaimsPage() {
               <span className="w-6 h-6 bg-primary text-white text-[11px] rounded-full flex items-center justify-center font-medium">4</span>
               Police Report
             </h3>
-            <div className="flex items-center gap-3 p-3 bg-canvas-2 rounded-lg border border-line-strong cursor-pointer"
-              onClick={() => setClaimField('policeReport', !claimForm.policeReport)}>
-              <input type="checkbox" checked={claimForm.policeReport} readOnly className="w-5 h-5 rounded text-primary focus:ring-primary" />
+            <label className="flex items-center gap-3 p-3 bg-canvas-2 rounded-lg border border-line-strong cursor-pointer">
+              <input type="checkbox" checked={claimForm.policeReport} onChange={event => setClaimField('policeReport', event.target.checked)} className="w-5 h-5 rounded text-primary focus:ring-primary" />
               <div>
                 <p className="font-semibold text-[14px]">Police Report Filed</p>
                 <p className="text-[12px] text-ink-muted">Strongly recommended — speeds up claim processing significantly</p>
               </div>
-            </div>
+            </label>
             {claimForm.policeReport && (
-              <input value={claimForm.policeReportNumber} onChange={e => setClaimField('policeReportNumber', e.target.value)}
+              <input aria-label="Police case or report number" value={claimForm.policeReportNumber} onChange={e => setClaimField('policeReportNumber', e.target.value)}
                 placeholder="Police Case / Report Number e.g. ZP/2025/4421"
                 className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 text-[15px] focus:ring-2 focus:ring-primary outline-none" />
             )}
@@ -968,9 +967,9 @@ export default function ClaimsPage() {
               {!ncdPolicies.length && <p className="mt-2 text-sm text-muted-foreground">You need an issued policy to apply. Your policies will appear here when available.</p>}
             </div> : <>
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
+              <label htmlFor="ncd-insurerId" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Insurance Company *</label>
               <div className="relative">
-                <select required value={ncdForm.insurerId} onChange={e => setNcdForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
+                <select id="ncd-insurerId" required value={ncdForm.insurerId} onChange={e => setNcdForm(prev => ({ ...prev, insurerId: e.target.value, insurer: insurerName(e.target.value) }))}
                   className="w-full appearance-none bg-canvas-2 border border-line-strong rounded-lg p-3.5 text-[15px] focus:ring-2 focus:ring-primary outline-none">
                   <option value="">Select insurer you have been using...</option>
                   {insurers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
@@ -981,8 +980,8 @@ export default function ClaimsPage() {
             </div>
 
             <div>
-              <label className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Existing Policy Number *</label>
-              <input required value={ncdForm.policyNumber} onChange={e => setNcdField('policyNumber', e.target.value.toUpperCase())} placeholder="e.g. PA-2023-0045"
+              <label htmlFor="ncd-policyNumber" className="text-[12px] font-medium uppercase tracking-wider text-ink-muted mb-1.5 block">Existing Policy Number *</label>
+              <input id="ncd-policyNumber" required value={ncdForm.policyNumber} onChange={e => setNcdField('policyNumber', e.target.value.toUpperCase())} placeholder="e.g. PA-2023-0045"
                 className="w-full bg-canvas-2 border border-line-strong rounded-lg p-3 font-mono text-[15px] uppercase focus:ring-2 focus:ring-primary outline-none" />
             </div>
 
