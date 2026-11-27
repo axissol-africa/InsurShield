@@ -262,7 +262,7 @@ export default function CreateAccountPage() {
         <section className="hidden flex-col justify-between rounded-2xl border border-border bg-card p-8 lg:flex">
           <div>
             <Badge variant="outline" className="border-primary/20 bg-primary/10 text-primary">Customer access</Badge>
-            <h1 className="mt-6 text-3xl font-semibold tracking-tight">Insurance, kept simple.</h1>
+            <h2 className="mt-6 text-3xl font-semibold tracking-tight">Insurance, kept simple.</h2>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-muted-foreground">Sign in to compare insurer quotations, manage cover and return to important documents whenever you need them.</p>
           </div>
           <div className="space-y-4 border-t border-border pt-6 text-sm">
@@ -279,7 +279,7 @@ export default function CreateAccountPage() {
         <Card className="gap-0 border-border shadow-none">
           <CardHeader className="border-b">
             <Badge variant="outline" className="w-fit border-primary/20 bg-primary/10 text-primary">Your account</Badge>
-            <CardTitle className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{heading}</CardTitle>
+            <CardTitle className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl"><h1>{heading}</h1></CardTitle>
             <CardDescription className="mt-2 max-w-lg leading-relaxed">Access your policies, quote requests and claims securely.</CardDescription>
           </CardHeader>
           <CardContent className="pt-6">

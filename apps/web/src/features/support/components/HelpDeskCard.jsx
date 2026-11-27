@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, Copy } from 'lucide-react';
-import { api } from '@/api';
 import { Button } from '@/components/ui/primitives/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { statusLabel as serviceRequestStatus } from '@/domain/serviceRequests';
@@ -42,7 +41,7 @@ export default function HelpDeskCard({ signedIn }) {
   useEffect(() => {
     if (!signedIn) return undefined;
     let current = true;
-    api.support.contact()
+    import('@/api').then(({ api }) => api.support.contact())
       .then((loaded) => { if (current) setContact(loaded); })
       .catch(() => { if (current) setFailed(true); });
     return () => { current = false; };

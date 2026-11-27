@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/primitives/skeleton"
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/primitives/tooltip"
 import { PanelLeftIcon } from "lucide-react"
@@ -123,7 +124,7 @@ function SidebarProvider({
         )}
         {...props}
       >
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
       </div>
     </SidebarContext.Provider>
   );

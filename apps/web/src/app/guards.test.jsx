@@ -63,3 +63,27 @@ describe('StaffRoute', () => {
     expect(screen.getByText('portal')).toBeInTheDocument();
   });
 });
+
+describe('capture continuation boundary', () => {
+  it.each(['/account', '/claims', '/renewal', '/inspections', '/notifications', '/service-requests'])('does not unlock %s using a capture query', (path) => {
+    renderAt(`${path}?capture=untrusted`, <CustomerRoute><p>private record</p></CustomerRoute>);
+    expect(screen.queryByText('private record')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/create-account?next=');
+  });
+
+  it('does not accept an empty capture credential', () => {
+    renderAt('/quote-request?capture=', <CustomerRoute><p>private record</p></CustomerRoute>);
+    expect(screen.queryByText('private record')).not.toBeInTheDocument();
+  });
+
+  it('preserves the local mock phone continuation', () => {
+    renderAt('/quote-request?capture=demo-phone', <CustomerRoute><p>phone continuation</p></CustomerRoute>);
+    expect(screen.getByText('phone continuation')).toBeInTheDocument();
+  });
+
+  it('requires consent even when authenticated', () => {
+    useStore.setState({ isAuthenticated: true, consentAccepted: false });
+    renderAt('/account', <CustomerRoute><p>private record</p></CustomerRoute>);
+    expect(screen.queryByText('private record')).not.toBeInTheDocument();
+  });
+});

@@ -28,3 +28,17 @@ it('sends a staff session that reaches a customer route to its portal', () => {
   expect(screen.getByTestId('location')).toHaveTextContent('/admin');
   expect(screen.queryByText('customer data')).not.toBeInTheDocument();
 });
+
+it('never treats a capture query as authentication in HTTP mode', () => {
+  useStore.setState({ staffSession: null, isAuthenticated: false, consentAccepted: false });
+  render(
+    <MemoryRouter initialEntries={['/quote-request?capture=untrusted']}>
+      <Routes>
+        <Route path="/quote-request" element={<CustomerRoute><p>customer data</p></CustomerRoute>} />
+        <Route path="/create-account" element={<Location />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByText('customer data')).not.toBeInTheDocument();
+  expect(screen.getByTestId('location')).toHaveTextContent('/create-account');
+});

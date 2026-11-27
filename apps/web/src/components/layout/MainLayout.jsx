@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { lazy, useEffect, useRef, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '@/store';
-import { api } from '@/api';
 import { env } from '@/config/env';
 import { requestIdentityTransition } from '@/app/identity';
-import { toast } from 'sonner';
-import { Toaster } from '@/components/ui/primitives/sonner';
+import RouteContent from '@/app/RouteContent';
+
+const Toaster = lazy(() => import('@/components/ui/primitives/sonner').then(module => ({ default: module.Toaster })));
 
 const CUSTOMER_LINKS = [
   { to: '/', label: 'Home' },
@@ -16,6 +16,7 @@ const CUSTOMER_LINKS = [
 ];
 
 const PORTAL_ROUTES = ['/admin', '/insurer', '/admin-login'];
+const PUBLIC_ENTRY_ROUTES = new Set(['/', '/insurance-type', '/support']);
 
 const navClass = ({ isActive }) =>
   `px-3 py-2 text-[15px] transition-colors ${isActive ? 'font-bold text-primary' : 'font-medium text-gray-600 hover:text-primary'}`;
@@ -25,6 +26,19 @@ export default function MainLayout() {
   const navigate = useNavigate();
   const { isAuthenticated, customer, staffSession, endStaffSession, signOut } = useStore();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const menuTrigger = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      setMenuOpen(false);
+      menuTrigger.current?.focus();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [menuOpen]);
 
   // Each journey step is a new page; start it at the top.
   useEffect(() => { window.scrollTo({ top: 0 }); }, [location.pathname]);
@@ -42,12 +56,14 @@ export default function MainLayout() {
 
   const handleSignOut = async () => {
     setMenuOpen(false);
+    setSignOutError('');
     if (env.apiMode === 'http') {
       try {
+        const { api } = await import('@/api');
         await api.auth.signOut();
         requestIdentityTransition({ landing: '/', userId: null, announce: true });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
+        setSignOutError(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
       }
       return;
     }
@@ -55,12 +71,14 @@ export default function MainLayout() {
     navigate('/');
   };
   const handleStaffSignOut = async () => {
+    setSignOutError('');
     if (env.apiMode === 'http') {
       try {
+        const { api } = await import('@/api');
         await api.auth.signOut();
         requestIdentityTransition({ landing: '/admin-login', userId: null, announce: true });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
+        setSignOutError(error instanceof Error ? error.message : 'We could not sign you out. Please try again.');
       }
       return;
     }
@@ -72,6 +90,7 @@ export default function MainLayout() {
 
   return (
     <div className={`flex min-h-screen flex-col text-on-background selection:bg-primary/20 ${isHome ? 'bg-background' : 'bg-canvas-2'}`}>
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-2 focus:z-[60] focus:rounded-lg focus:bg-white focus:p-3 focus:text-primary focus:outline focus:outline-2 focus:outline-primary">Skip to content</a>
       <header className={`fixed top-0 z-50 flex w-full items-center border-b border-slate-200 bg-white ${isHome ? 'h-20 px-5 lg:px-[5.5vw]' : 'h-16 bg-white/95 px-4 shadow-[0_1px_0_rgba(10,10,10,0.03)] backdrop-blur-sm sm:h-20 sm:px-6 lg:px-[5.5vw]'}`}>
         <div className="flex min-w-0 items-center gap-4">
           {/* The staff portal has no customer navigation, so no hamburger. */}
@@ -79,6 +98,8 @@ export default function MainLayout() {
             <button
               type="button"
               onClick={() => setMenuOpen((open) => !open)}
+              ref={menuTrigger}
+              aria-controls="mobile-navigation"
               aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
               aria-expanded={menuOpen}
               className="-ml-2 inline-flex h-10 w-10 items-center justify-center text-primary md:hidden"
@@ -145,7 +166,7 @@ export default function MainLayout() {
           <div className="absolute inset-0 bg-black/30" onClick={() => setMenuOpen(false)} aria-hidden="true" />
           {/* Sized to its own contents and scrollable if a phone is short, so
               the sheet never runs under the home indicator. */}
-          <nav aria-label="Mobile" className="sheet-drop relative grid max-h-[calc(100dvh-4rem)] gap-1 overflow-y-auto overscroll-contain border-b border-slate-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg">
+          <nav id="mobile-navigation" aria-label="Mobile" className="sheet-drop relative grid max-h-[calc(100dvh-4rem)] gap-1 overflow-y-auto overscroll-contain border-b border-slate-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg">
             {isAuthenticated && <p className="px-4 pb-2 pt-1 text-[12px] font-bold uppercase tracking-wider text-secondary">Signed in as {customer?.fullName}</p>}
             {links.map((link) => (
               <NavLink key={link.to} to={link.to} end={link.to === '/'} onClick={() => setMenuOpen(false)} className={({ isActive }) => `flex min-h-12 items-center rounded-lg px-4 text-[15px] font-semibold ${isActive ? 'bg-primary/10 text-primary' : 'text-secondary'}`}>
@@ -157,19 +178,22 @@ export default function MainLayout() {
         </div>
       )}
 
-      <main className={`flex-1 ${isHome ? 'pt-20' : 'pwa-main pt-16 sm:pt-20'}`}>
+      <main id="main-content" tabIndex={-1} className={`flex-1 ${isHome ? 'pt-20' : 'pwa-main pt-16 sm:pt-20'}`}>
+        {signOutError && <p role="alert" className="mx-auto max-w-lg px-6 py-3 text-sm text-primary">{signOutError}</p>}
         {isPortal ? (
           <div className="relative min-h-[calc(100vh-80px)] bg-canvas">
             <div className="blueprint pointer-events-none absolute inset-0 opacity-[0.35]" aria-hidden="true" />
             {/* Staff surfaces are data-dense tables and queues, so they use the
                 full width of a desktop rather than a reading-width column. */}
-            <div className="relative w-full px-4 py-8 sm:px-6 lg:px-10 2xl:px-16"><Outlet /></div>
+            <div className="relative w-full px-4 py-8 sm:px-6 lg:px-10 2xl:px-16"><RouteContent><Outlet /></RouteContent></div>
           </div>
         ) : (
-          <Outlet />
+          <RouteContent><Outlet /></RouteContent>
         )}
       </main>
-      <Toaster theme="light" position="top-center" />
+      {!PUBLIC_ENTRY_ROUTES.has(location.pathname) && <RouteContent loading={null} unavailableMessage="Notifications could not load.">
+        <Toaster theme="light" position="top-center" />
+      </RouteContent>}
     </div>
   );
 }

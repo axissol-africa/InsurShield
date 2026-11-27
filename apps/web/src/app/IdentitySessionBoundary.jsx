@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/Button';
-import { api, ApiError } from '@/api';
+import { readSession } from '@/api/http/session';
+import { ApiError } from '@/lib/ApiError';
 import { env } from '@/config/env';
 import { useStore } from '@/store';
 import {
@@ -67,7 +68,7 @@ export default function IdentitySessionBoundary({ children }) {
       while (true) {
         const binding = getIdentityBinding();
         try {
-          const profile = await api.auth.me({ boot: !binding });
+          const profile = await readSession({ boot: !binding });
           if (staleBoot.current && !bootRetry.current) {
             staleBoot.current = false;
             bootRetry.current = true;

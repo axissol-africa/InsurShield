@@ -136,7 +136,7 @@ export default function InspectionWorkflowPage() {
           <Meta className="text-primary">Physical inspection</Meta>
           <h1 className="mt-4 text-[30px] font-semibold leading-[1.1] tracking-[-0.035em] text-ink sm:text-[36px]">Request an inspection</h1>
           <p className="mt-4 max-w-xl text-[15px] leading-[1.6] text-ink-muted">
-            A certified assessor looks at the vehicle where it suits you, and the report goes to the insurer with your quote request.
+            Have your vehicle registration, preferred date, location and contact number ready. Request an assessment and track the appointment, evidence and report for your insurer.
           </p>
         </header>
 
@@ -302,7 +302,7 @@ export default function InspectionWorkflowPage() {
           </span>
           <h1 className="mt-5 text-[34px] font-semibold leading-[1.05] tracking-[-0.04em] text-ink sm:text-[44px]">Vehicle inspections</h1>
           <p className="mt-3 max-w-xl text-[15px] leading-[1.6] text-ink-muted">
-            Track inspections for your quotations, paid policies and claims. Open an inspection to see its next step, evidence and report.
+            Have your vehicle registration, preferred date, location and contact number ready to request an inspection. Track the appointment, evidence and report for your insurer.
           </p>
         </div>
         <button type="button" onClick={() => setView('request')} className="inline-flex min-h-12 items-center gap-2 rounded-[1px] bg-primary px-5 text-[15px] font-medium text-white transition-colors duration-200 ease-out hover:bg-[#b91c1c]">

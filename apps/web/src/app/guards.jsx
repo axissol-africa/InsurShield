@@ -19,7 +19,9 @@ export function CustomerRoute({ children }) {
   // relay. It lets a customer finish the same journey on their phone without
   // requiring a second local browser account. This is intentionally disabled
   // for production, where the backend must validate a signed resume token.
-  const captureContinuation = !env.isProduction && new URLSearchParams(location.search).has('capture');
+  const captureContinuation = env.apiMode === 'mock' && !env.isProduction
+    && ['/quote-request', '/quotes-comparison', '/payment', '/confirmation'].includes(location.pathname)
+    && Boolean(new URLSearchParams(location.search).get('capture')?.trim());
   const allowed = (isAuthenticated && consentAccepted) || captureContinuation;
   const [hadAccessOnMount] = useState(allowed);
 

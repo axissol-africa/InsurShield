@@ -24,6 +24,9 @@ export default defineConfig({
   testDir: './tests',
   /* Run tests in files in parallel */
   fullyParallel: true,
+  // A route can load its own bundle before a Playwright assertion can see it.
+  timeout: 60_000,
+  expect: { timeout: 15_000 },
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
@@ -50,7 +53,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       // The real-api project owns its HTTP-adapter test. Keeping it out of
       // mock mode makes both environments independently meaningful.
-      testIgnore: ['service-worker.spec.js', 'real-api.spec.js'],
+      testIgnore: ['service-worker.spec.js', 'real-api.spec.js', 'customer-journey-verification.spec.js'],
     },
     {
       // Service-worker checks need a production build and their own same-origin

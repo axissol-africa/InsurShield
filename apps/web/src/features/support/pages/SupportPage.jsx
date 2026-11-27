@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/primitives/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives/card';
 import { useStore } from '@/store';
-import { hydrateDirectory } from '@/api/sync';
+import { env } from '@/config/env';
 import HelpDeskCard from '../components/HelpDeskCard';
 import PublishedContent from '../components/PublishedContent';
 
@@ -54,13 +53,10 @@ function FAQItem({ q, a }) {
         </span>
       </button>
       {open && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          className="px-4 pb-4"
+        <div className="px-4 pb-4 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
         >
           <p className="text-sm leading-6 text-muted-foreground">{a}</p>
-        </motion.div>
+        </div>
       )}
     </div>
   );
@@ -70,8 +66,7 @@ function InsurerCard({ insurer }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <motion.div
-      layout
+    <div
       className="overflow-hidden rounded-2xl border border-border bg-card shadow-none transition-colors duration-200 ease-out"
     >
       <div className="flex items-center gap-4 border-b border-border p-5">
@@ -140,19 +135,16 @@ function InsurerCard({ insurer }) {
       </button>
 
       {expanded && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="space-y-3 border-t border-border bg-muted/40 px-5 pb-5 pt-4"
+        <div className="space-y-3 border-t border-border bg-muted/40 px-5 pb-5 pt-4 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
         >
           <DetailRow icon="phone" label="Office Line" value={insurer.phone} href={`tel:${insurer.phone}`} />
           <DetailRow icon="smartphone" label="Mobile / WhatsApp" value={insurer.mobile} href={`tel:${insurer.mobile}`} />
           <DetailRow icon="email" label="Email" value={insurer.email} href={`mailto:${insurer.email}`} />
           <DetailRow icon="location_on" label="Address" value={insurer.address} />
           <DetailRow icon="schedule" label="Operating Hours" value={insurer.hours} />
-        </motion.div>
+        </div>
       )}
-    </motion.div>
+    </div>
   );
 }
 
@@ -182,11 +174,20 @@ function DetailRow({ icon, label, value, href }) {
 export default function SupportPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [directoryUnavailable, setDirectoryUnavailable] = useState(false);
   const insurersList = useStore((state) => state.insurersList);
   const signedIn = useStore((state) => state.isAuthenticated && Boolean(state.customer));
 
   // The directory is the public insurer list; load it when the page opens.
-  useEffect(() => { void hydrateDirectory(); }, []);
+  useEffect(() => {
+    if (env.apiMode !== 'http') return undefined;
+    let active = true;
+    void import('@/api/sync')
+      .then(({ hydrateDirectory }) => hydrateDirectory())
+      .then(loaded => { if (active && !loaded) setDirectoryUnavailable(true); })
+      .catch(() => { if (active) setDirectoryUnavailable(true); });
+    return () => { active = false; };
+  }, []);
   const directory = insurersList.filter((insurer) => insurer.status !== 'Deleted').map(toContact);
 
   const filtered = directory.filter(ins =>
@@ -196,7 +197,7 @@ export default function SupportPage() {
 
   return (
     <main className="pwa-main min-h-full bg-muted/60">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
+      <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
       <header className="border-b border-border pb-7">
         <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
           <span className="material-symbols-outlined text-[15px]" aria-hidden="true">support_agent</span>
@@ -204,7 +205,7 @@ export default function SupportPage() {
         </span>
         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">Contact your insurer</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-          Find the right claims desk, contact your insurer directly, or get quick answers about InsurShield.
+          Choose your insurer and have your policy or claim reference ready if you have one. Find its contact details, then call or email the insurer directly for help.
         </p>
       </header>
 
@@ -215,8 +216,8 @@ export default function SupportPage() {
             <div><p className="text-sm font-medium text-foreground">Need to file a claim or apply for NCD?</p><p className="mt-1 text-sm leading-5 text-muted-foreground">Start the process in InsurShield, then use this directory for insurer-specific help.</p></div>
           </div>
           <div className="flex shrink-0 gap-2">
-            <Button type="button" size="sm" onClick={() => navigate('/claims')}><span className="material-symbols-outlined" aria-hidden="true">report_problem</span>File claim</Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => navigate('/claims')}><span className="material-symbols-outlined" aria-hidden="true">sell</span>Apply NCD</Button>
+            <Button type="button" size="sm" onClick={() => navigate('/claims?action=claim')}><span className="material-symbols-outlined" aria-hidden="true">report_problem</span>File claim</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => navigate('/claims?action=ncd')}><span className="material-symbols-outlined" aria-hidden="true">sell</span>Apply NCD</Button>
           </div>
         </CardContent>
       </Card>
@@ -234,6 +235,7 @@ export default function SupportPage() {
             </label>
           </CardHeader>
           <CardContent className="pt-5">
+        {directoryUnavailable && <p role="status" className="mb-4 text-sm text-muted-foreground">The insurer directory is temporarily unavailable. Refresh to try again.</p>}
         {filtered.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border py-12 text-center text-muted-foreground">
             <span className="material-symbols-outlined mb-2 block text-4xl opacity-40">search_off</span>
@@ -242,16 +244,7 @@ export default function SupportPage() {
           </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
-          {filtered.map((insurer, i) => (
-            <motion.div
-              key={insurer.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
-            >
-              <InsurerCard insurer={insurer} />
-            </motion.div>
-          ))}
+          {filtered.map((insurer) => <InsurerCard key={insurer.id} insurer={insurer} />)}
           </div>
         )}
           </CardContent>
@@ -281,7 +274,7 @@ export default function SupportPage() {
         </Card>
       </section>
       <PublishedContent />
-      </motion.div>
+      </div>
     </main>
   );
 }

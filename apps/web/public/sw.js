@@ -18,6 +18,20 @@ function isShellAsset(url) {
   return url.search === '' && SHELL_PATHS.has(url.pathname);
 }
 
+function isVersionedChunk(url) {
+  return url.origin === self.location.origin && url.search === '' &&
+    /^\/assets\/[\w.-]+-[\w-]{8}\.(?:js|css)$/.test(url.pathname) && !isSameOriginApiRequest(url);
+}
+
+function previousShellCache(names) {
+  return names.filter(name => name !== CACHE_NAME && /^insurshield-shell-[\da-f-]{36}$/.test(name)).at(-1);
+}
+
+async function retainedChunk(request) {
+  const previous = previousShellCache(await caches.keys());
+  return previous ? (await caches.open(previous)).match(request) : undefined;
+}
+
 async function offlineShell() {
   const cache = await caches.open(CACHE_NAME);
   return cache.match('/index.html');
@@ -34,8 +48,16 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const cacheNames = await caches.keys();
+    const previous = previousShellCache(cacheNames);
+    if (previous) {
+      // Tabs still running the previous entry may need a lazy chunk offline.
+      // Keep only its immutable scripts and styles, never its HTML or API data.
+      const cache = await caches.open(previous);
+      const outdated = (await cache.keys()).filter(request => !isVersionedChunk(new URL(request.url)));
+      await Promise.all(outdated.map(request => cache.delete(request)));
+    }
     await Promise.all(cacheNames
-      .filter(name => name.startsWith('insurshield-') && name !== CACHE_NAME)
+      .filter(name => name.startsWith('insurshield-') && name !== CACHE_NAME && name !== previous)
       .map(name => caches.delete(name)));
     await self.clients.claim();
   })());
@@ -53,7 +75,12 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  if (!isShellAsset(url)) return;
+  if (!isShellAsset(url)) {
+    if (isVersionedChunk(url)) {
+      event.respondWith(retainedChunk(request).then(cached => cached ?? fetch(request)));
+    }
+    return;
+  }
 
   event.respondWith(caches.open(CACHE_NAME).then(async cache => (
     await cache.match(request) ?? fetch(request)
