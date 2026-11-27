@@ -1,6 +1,8 @@
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { Express } from 'express';
+import type { Server } from 'node:http';
+import { installHttpObservability } from './observability/http-observability.js';
 import { AUTH, AUTH_SETTINGS } from './auth/auth.constants.js';
 import type { Auth, AuthSettings } from './auth/auth.instance.js';
 import { mountIdentity } from './auth/identity-routes.js';
@@ -25,11 +27,12 @@ export function appSettings(config: ConfigService<Env, true>): AppSettings {
 /** Everything the running API and the e2e apps share: the HTTP surface the web client sees. */
 export function configureApp(app: INestApplication, settings: AppSettings) {
   const express = app.getHttpAdapter().getInstance() as Express;
+  installHttpObservability(express, app.getHttpServer() as Server);
   // `req.ip` is then the address the outermost trusted proxy saw, for rate limits and consent records.
   express.set('trust proxy', settings.TRUST_PROXY_HOPS);
   // Routes are served under this prefix so they line up with `apps/web/src/api/contracts.js`.
   app.setGlobalPrefix(settings.API_PREFIX, { exclude: ['health', 'health/ready'] });
-  app.enableCors({ origin: settings.CORS_ORIGINS, credentials: true });
+  app.enableCors({ origin: settings.CORS_ORIGINS, credentials: true, exposedHeaders: ['X-Correlation-Id', 'traceparent'] });
   mountIdentity(
     express,
     app.get<Auth>(AUTH),

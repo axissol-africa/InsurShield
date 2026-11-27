@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common';
+import { createRequestContext, withRequestContext } from '../observability/request-context.js';
 import { HttpMailSender } from './http.sender.js';
 import type { MailMessage } from './mail.port.js';
 
@@ -91,5 +93,25 @@ describe('HttpMailSender', () => {
     const reason = result.result === 'failed' ? result.reason : '';
     expect(reason).not.toContain(message.to);
     expect(reason).not.toContain(SETTINGS.apiKey);
+  });
+});
+
+
+describe('mail HTTP observability', () => {
+  it('propagates a child trace and logs no recipient, key, destination, body or provider response', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    const parent = createRequestContext();
+    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => ok({ id: 'private-provider-reference' }));
+    const sender = senderWith(fetchMock as typeof fetch);
+    try {
+      await withRequestContext(parent, () => sender.send(message));
+      const init = fetchMock.mock.calls[0][1];
+      expect(new Headers(init?.headers).get('traceparent')).toMatch(new RegExp(`^00-${parent.traceId}-[0-9a-f]{16}-00$`));
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      const record = JSON.parse(String(log.mock.calls[0][0]));
+      expect(record).toMatchObject({ target: 'mail', parentSpanId: parent.spanId, outcome: 'success', statusCode: 202 });
+      const text = JSON.stringify(log.mock.calls);
+      for (const secret of [message.to, message.body, message.subject, message.idempotencyKey, SETTINGS.endpoint, SETTINGS.apiKey, 'private-provider-reference']) expect(text).not.toContain(secret);
+    } finally { log.mockRestore(); }
   });
 });

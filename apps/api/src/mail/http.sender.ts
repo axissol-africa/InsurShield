@@ -1,3 +1,4 @@
+import { observeOutboundHttp } from '../observability/outbound-http.js';
 import { Injectable, Logger } from '@nestjs/common';
 import type { MailMessage, MailResult, MailSender } from './mail.port.js';
 
@@ -34,7 +35,10 @@ export class HttpMailSender implements MailSender {
     const timeout = AbortSignal.timeout(this.settings.timeoutMs);
     let response: Response;
     try {
-      response = await fetch(this.settings.endpoint, { ...this.request(message), signal: timeout });
+      response = await observeOutboundHttp('mail', timeout,
+        (traceContext) => fetch(this.settings.endpoint, { ...this.request(message, traceContext), signal: timeout }),
+        (result) => result.status,
+      );
     } catch (error: unknown) {
       // Unreachable, refused, or timed out: the provider never answered, so
       // whether it sent is unknown. Retrying is safe because of the key above.
@@ -52,12 +56,13 @@ export class HttpMailSender implements MailSender {
   }
 
   /** The provider's request shape. Changing provider changes this and `reference`. */
-  private request(message: MailMessage): RequestInit {
+  private request(message: MailMessage, traceContext: string): RequestInit {
     return {
       method: 'POST',
       headers: {
         authorization: `Bearer ${this.settings.apiKey}`,
         'content-type': 'application/json',
+        traceparent: traceContext,
         'idempotency-key': message.idempotencyKey,
       },
       body: JSON.stringify({

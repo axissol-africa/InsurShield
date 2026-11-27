@@ -1,6 +1,7 @@
 import { HttpStatus, Logger, type ArgumentsHost } from '@nestjs/common';
 import { DrizzleQueryError } from 'drizzle-orm';
 import { DatabaseError } from 'pg';
+import { createRequestContext, withRequestContext, type RequestContext } from '../../observability/request-context.js';
 import { DatabaseConnectionError } from '../../db/errors.js';
 import { ApiException, errorBody } from '../errors/api.exception.js';
 import { ApiExceptionFilter } from './api-exception.filter.js';
@@ -25,11 +26,17 @@ function respond(exception: unknown) {
   const host = {
     switchToHttp: () => ({
       getResponse: () => response,
-      getRequest: () => ({ method: 'POST', path: '/api/v1/payments' }),
+      getRequest: () => ({
+        method: 'POST', path: '/api/v1/payments/SECRET_RECORD',
+        originalUrl: '/api/v1/payments/SECRET_RECORD?token=SECRET_QUERY',
+        route: { path: '/api/v1/payments/:id' },
+        headers: { authorization: 'Bearer SECRET_TOKEN' },
+      }),
     }),
   } as unknown as ArgumentsHost;
-  new ApiExceptionFilter().catch(exception, host);
-  return response;
+  const context = createRequestContext();
+  withRequestContext(context, () => new ApiExceptionFilter().catch(exception, host));
+  return { ...response, context };
 }
 
 function wrapped(cause?: Error): Error {
@@ -57,69 +64,81 @@ describe('ApiExceptionFilter', () => {
     vi.restoreAllMocks();
   });
 
+  function expectFailure(log: ReturnType<typeof vi.spyOn>, context: RequestContext, statusCode: number, code: string, databaseCode: string | null) {
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0]).toHaveLength(1);
+    const record: unknown = JSON.parse(String(log.mock.calls[0][0]));
+    expect(record).toEqual({
+      event: 'http.request.failed', schemaVersion: 1, ...context,
+      method: 'POST', route: '/api/v1/payments/:id', statusCode, code, databaseCode,
+    });
+  }
+
   function expectNothingOfTheQueryLogged() {
     const logged = JSON.stringify([warn.mock.calls, error.mock.calls]);
     expect(logged).not.toContain('SECRET');
     expect(logged).not.toContain('Failed query');
     expect(logged).not.toContain('params:');
     expect(logged).not.toContain('update');
+    expect(logged).not.toContain('    at ');
   }
 
   it.each([
-    ['a deadlock wrapped by the query builder', wrapped(fromServer('40P01')), { code: '40P01' }],
-    ['a statement timeout', fromServer('57014'), { code: '57014' }],
+    ['a deadlock wrapped by the query builder', wrapped(fromServer('40P01')), '40P01'],
+    ['a statement timeout', fromServer('57014'), '57014'],
     [
       'a pool that gave no client in time for a query',
       wrapped(notConnected(new Error('timeout exceeded when trying to connect'))),
-      {},
+      null,
     ],
     [
       'a refused connection while getting a client for a query',
       wrapped(notConnected(withCode('ECONNREFUSED'))),
-      { code: 'ECONNREFUSED' },
+      null,
     ],
-    ['a refused connection while getting a client for a transaction', notConnected(withCode('ECONNREFUSED')), { code: 'ECONNREFUSED' }],
+    ['a refused connection while getting a client for a transaction', notConnected(withCode('ECONNREFUSED')), null],
     [
       'a connection that timed out while connecting',
       notConnected(
         new Error('Connection terminated due to connection timeout', { cause: new Error('Connection terminated unexpectedly') }),
       ),
-      {},
+      null,
     ],
-    ['a server not yet accepting connections', notConnected(fromServer('57P03')), { code: '57P03' }],
-  ])('answers %s with 503 TRY_AGAIN and Retry-After: 1', (_case, exception, logged) => {
+    ['a server not yet accepting connections', notConnected(fromServer('57P03')), '57P03'],
+  ])('answers %s with 503 TRY_AGAIN and Retry-After: 1', (_case, exception, databaseCode) => {
     const response = respond(exception);
 
     expect(response.statusCode).toBe(HttpStatus.SERVICE_UNAVAILABLE);
     expect(response.headers).toEqual({ 'Retry-After': '1' });
     expect(response.body).toEqual({ code: 'TRY_AGAIN', message: expect.any(String), details: null });
-    expect(warn).toHaveBeenCalledWith('POST /api/v1/payments -> 503 TRY_AGAIN', logged);
+    expectFailure(warn, response.context, 503, 'TRY_AGAIN', databaseCode);
     expect(error).not.toHaveBeenCalled();
     expectNothingOfTheQueryLogged();
   });
 
   it.each([
-    ['a failed query with no SQLSTATE or code', wrapped(new TypeError('SECRET')), {}],
-    ['a failed query with no cause', wrapped(), {}],
-    ['a failed query with a code that is not a lost connection', wrapped(withCode('ENOENT')), { code: 'ENOENT' }],
-    ['a statement the server refused', wrapped(fromServer('42501')), { code: '42501' }],
-    ['a reset connection during the query', wrapped(withCode('ECONNRESET')), { code: 'ECONNRESET' }],
-    ['a connection that timed out during the query', wrapped(withCode('ETIMEDOUT')), { code: 'ETIMEDOUT' }],
-    ['a broken pipe during the query', wrapped(withCode('EPIPE')), { code: 'EPIPE' }],
-    ['a connection lost during the query', wrapped(new Error('Connection terminated unexpectedly')), {}],
-    ['a server shutting down during the query', wrapped(fromServer('57P01')), { code: '57P01' }],
-    ['a connection failure the server reported', wrapped(fromServer('08006')), { code: '08006' }],
-  ])('answers %s with 500 INTERNAL_ERROR, logging neither the statement nor its parameters', (_case, exception, logged) => {
+    ['a failed query with no SQLSTATE or code', wrapped(new TypeError('SECRET')), null],
+    ['a failed query with no cause', wrapped(), null],
+    ['a failed query with a code that is not a lost connection', wrapped(withCode('ENOENT')), null],
+    ['a statement the server refused', wrapped(fromServer('42501')), '42501'],
+    ['a reset connection during the query', wrapped(withCode('ECONNRESET')), null],
+    ['a connection that timed out during the query', wrapped(withCode('ETIMEDOUT')), null],
+    ['a broken pipe during the query', wrapped(withCode('EPIPE')), 'EPIPE'],
+    ['a connection lost during the query', wrapped(new Error('Connection terminated unexpectedly')), null],
+    ['a server shutting down during the query', wrapped(fromServer('57P01')), '57P01'],
+    ['a connection failure the server reported', wrapped(fromServer('08006')), '08006'],
+  ])('answers %s with 500 INTERNAL_ERROR, logging neither the statement nor its parameters', (_case, exception, databaseCode) => {
     const response = respond(exception);
 
     expect(response.statusCode).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(response.headers).toEqual({});
     expect(response.body).toEqual({ code: 'INTERNAL_ERROR', message: expect.any(String), details: null });
-    expect(error).toHaveBeenCalledWith('POST /api/v1/payments -> 500 INTERNAL_ERROR', logged);
+    expectFailure(error, response.context, 500, 'INTERNAL_ERROR', databaseCode);
+    expect(warn).not.toHaveBeenCalled();
     expectNothingOfTheQueryLogged();
   });
 
-  it('answers a unique violation with 409 CONFLICT, logging only its SQLSTATE and constraint', () => {
+  it('answers a unique violation with 409 CONFLICT, logging its SQLSTATE without its constraint', () => {
     const violation = fromServer('23505', {
       constraint: 'payments_idempotencyKey_key',
       detail: 'Key ("idempotencyKey")=(SECRET) already exists.',
@@ -131,23 +150,24 @@ describe('ApiExceptionFilter', () => {
     expect(response.headers).toEqual({});
     expect(response.body).toEqual({ code: 'CONFLICT', message: expect.any(String), details: null });
     expect(JSON.stringify(response.body)).not.toContain('payments_idempotencyKey_key');
-    expect(warn).toHaveBeenCalledWith('POST /api/v1/payments -> 409 CONFLICT', {
-      code: '23505',
-      constraint: 'payments_idempotencyKey_key',
-    });
+    expectFailure(warn, response.context, 409, 'CONFLICT', '23505');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('payments_idempotencyKey_key');
+    expect(error).not.toHaveBeenCalled();
     expectNothingOfTheQueryLogged();
   });
 
   it.each([
     ['an unknown error', new Error('boom')],
     ['a reset connection to storage', withCode('ECONNRESET')],
-  ])('answers %s with 500 INTERNAL_ERROR and logs its stack, as it did not come from the database', (_case, unknown) => {
+  ])('answers %s with 500 INTERNAL_ERROR and logs safe metadata without its stack', (_case, unknown) => {
     const response = respond(unknown);
 
     expect(response.statusCode).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
     expect(response.headers).toEqual({});
     expect(response.body).toEqual({ code: 'INTERNAL_ERROR', message: expect.any(String), details: null });
-    expect(error).toHaveBeenCalledWith('POST /api/v1/payments -> 500 INTERNAL_ERROR', unknown.stack);
+    expectFailure(error, response.context, 500, 'INTERNAL_ERROR', null);
+    expect(JSON.stringify(error.mock.calls)).not.toContain(unknown.message);
+    expectNothingOfTheQueryLogged();
     expect(warn).not.toHaveBeenCalled();
   });
 

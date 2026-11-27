@@ -8,6 +8,7 @@ import { testDatabase } from '../src/config/env.js';
 import { createDatabase, DATABASE, type Database } from '../src/db/database.module.js';
 import * as schema from '../src/db/schema.js';
 import { customers } from '../src/db/schema.js';
+import { readApiFailureRecords } from './api-diagnostics.js';
 import { buildCustomer, unique } from './builders.js';
 import { openTestDatabase, productionPool, RecordingLogger, startApp, until, type TestApp } from './helpers.js';
 
@@ -105,6 +106,17 @@ function expectSanitised(text: string) {
   expect(text).not.toContain('    at ');
 }
 
+function expectTransactionFailure(lines: string[], correlationId: string, probe: string) {
+  const failures = readApiFailureRecords(lines, correlationId);
+  expect(failures).toHaveLength(1);
+  expect(failures[0]).toMatchObject({
+    method: 'POST',
+    route: `/api/v1/transaction-probe/${probe}`,
+    statusCode: 500,
+    code: 'INTERNAL_ERROR',
+  });
+}
+
 describe('a transaction whose backend is terminated mid-statement', () => {
   let testApp: TestApp;
   let logger: RecordingLogger;
@@ -156,7 +168,7 @@ describe('a transaction whose backend is terminated mid-statement', () => {
     expect(response.body).toEqual({ code: 'INTERNAL_ERROR', message: expect.any(String), details: null });
     await testApp.http.post('/api/v1/transaction-probe/quick').expect(201);
     expect(counts(pool)).toEqual(start);
-    expect(logger.text).toContain('POST /api/v1/transaction-probe/sleep -> 500 INTERNAL_ERROR');
+    expectTransactionFailure(logger.lines, response.headers['x-correlation-id'], 'sleep');
     expect(logger.text).toContain('connectionLost');
     expect(logger.text).not.toContain(marker);
     expect(logger.text).not.toContain('pg_sleep');
@@ -194,23 +206,22 @@ describe('the production pool when the database stops answering mid-statement', 
     const start = counts(pool);
     const began = Date.now();
 
-    const responses = await Promise.all(
-      ['marked-query', 'marked-transaction'].map((route) =>
-        testApp.http.post(`/api/v1/transaction-probe/${route}`).set('x-probe-marker', marker).then((response) => response),
+    const results = await Promise.all(
+      ['marked-query', 'marked-transaction'].map(async (route) =>
+        ({ route, response: await testApp.http.post(`/api/v1/transaction-probe/${route}`).set('x-probe-marker', marker) }),
       ),
     );
 
     expect(Date.now() - began).toBeGreaterThan(10_000);
-    for (const response of responses) {
+    for (const { route, response } of results) {
       expect(response.status).toBe(500);
       expect(response.body).toEqual({ code: 'INTERNAL_ERROR', message: expect.any(String), details: null });
       expect(response.headers['retry-after']).toBeUndefined();
+      expectTransactionFailure(logger.lines, response.headers['x-correlation-id'], route);
     }
     expect(counts(pool)).toEqual(start);
     await pool.end();
     poolEnded = true;
-    expect(logger.text).toContain('POST /api/v1/transaction-probe/marked-query -> 500 INTERNAL_ERROR');
-    expect(logger.text).toContain('POST /api/v1/transaction-probe/marked-transaction -> 500 INTERNAL_ERROR');
     expect(logger.text).not.toContain(marker);
     expectSanitised(logger.text);
   });

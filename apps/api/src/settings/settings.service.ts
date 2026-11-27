@@ -1,14 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Principal } from '../common/auth/auth.types.js';
 import { holds, type Permission } from '../common/auth/permissions.js';
 import { auditActor } from '../common/audit/audit.types.js';
 import { AuditService } from '../common/audit/audit.service.js';
 import { ApiException } from '../common/errors/api.exception.js';
+import type { Env } from '../config/env.js';
 import { isUniqueViolation } from '../db/errors.js';
 import type { Transaction } from '../db/database.module.js';
 import { lusakaDay } from '../common/domain/lusaka.js';
 import type { ComparisonDisplayRule, ComparisonTaxonomyCategory, ComparisonTaxonomyStatus, ComparisonValueType, RuleSettingKey } from '../common/domain/enums.js';
-import { COMPARISON_DISPLAY_RULES, COMPARISON_TAXONOMY_CATEGORIES, COMPARISON_TAXONOMY_STATUSES, COMPARISON_VALUE_TYPES } from '../common/domain/enums.js';
+import { COMPARISON_DISPLAY_RULES, COMPARISON_TAXONOMY_CATEGORIES, COMPARISON_TAXONOMY_STATUSES, COMPARISON_VALUE_TYPES, RULE_SETTING_KEYS } from '../common/domain/enums.js';
 import { calendarDay, defaultRuleValue, isRuleSettingKey, parseRuleValue, type RuleValueFor } from './domain/rules.js';
 import { SettingsRepository, type RuleVersionRow } from './settings.repository.js';
 import type { CreateRuleVersionDto, CreateTaxonomyItemDto, UpdateTaxonomyItemDto } from './dto/settings.dto.js';
@@ -17,7 +19,11 @@ type StaffPrincipal = Extract<Principal, { kind: 'staff' }>;
 
 @Injectable()
 export class SettingsService {
-  constructor(private readonly settings: SettingsRepository, private readonly audit: AuditService) {}
+  constructor(
+    private readonly settings: SettingsRepository,
+    private readonly audit: AuditService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   async listRules(principal: Principal) {
     this.require(principal, 'admin:rule:read');
@@ -113,9 +119,24 @@ export class SettingsService {
     const day = this.date(lusakaDay(now), 'today');
     const confirmed = await this.settings.effectiveRule(key, day, 'CONFIRMED', tx);
     if (confirmed) return { value: this.value(key, confirmed.value), provisional: false, version: confirmed.versionNumber };
+    if (this.config.get('NODE_ENV', { infer: true }) === 'production') {
+      // A time-limited approval may expire while a container is still serving.
+      throw new ApiException('RULE_NOT_APPROVED', 'This action is temporarily unavailable. Please contact support.', HttpStatus.SERVICE_UNAVAILABLE);
+    }
     const provisional = await this.settings.effectiveRule(key, day, 'PROVISIONAL', tx);
     if (provisional) return { value: this.value(key, provisional.value), provisional: true, version: provisional.versionNumber };
     return { value: defaultRuleValue(key) as RuleValueFor<Key>, provisional: true, version: null };
+  }
+
+  async assertProductionRules(now = new Date()) {
+    if (this.config.get('NODE_ENV', { infer: true }) !== 'production') return;
+    const day = this.date(lusakaDay(now), 'today');
+    const checks = await Promise.all(RULE_SETTING_KEYS.map(async (key) => {
+      const rule = await this.settings.effectiveRule(key, day, 'CONFIRMED');
+      return { key, approved: Boolean(rule && !('errors' in parseRuleValue(key, rule.value))) };
+    })).catch(() => { throw new Error('Production rule approvals could not be verified.'); });
+    const blocked = checks.filter(({ approved }) => !approved).map(({ key }) => key);
+    if (blocked.length) throw new Error(`Production requires active, valid approval for platform rules: ${blocked.join(', ')}.`);
   }
 
   async listTaxonomy(principal: Principal, includeDisabled = true) {

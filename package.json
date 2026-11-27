@@ -34,14 +34,14 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
+    "test:release": "node --test scripts/release-gate.test.mjs",
+    "release:check": "node scripts/release-gate.mjs",
     "format": "turbo run format",
     "clean": "turbo run clean && rm -rf node_modules .turbo",
     "test:cov": "turbo run test:cov"
   },
   "devDependencies": {
     "turbo": "^2.11.3"
-  }
-}
   },
   "overrides": {
     "@nestjs/platform-express@12.2.0": {
@@ -54,3 +54,5 @@
     "jsdom@30.1.1": {
       "undici": "8.12.2"
     }
+  }
+}

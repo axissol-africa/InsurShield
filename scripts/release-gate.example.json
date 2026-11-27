@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "commit": "CHANGE_ME",
+  "checks": {
+    "12.1": { "status": "pending" },
+    "12.2": { "status": "pending" },
+    "12.3": { "status": "pending" },
+    "12.4": { "status": "pending" },
+    "12.5": { "status": "pending" },
+    "12.6": { "status": "pending" },
+    "12.7": { "status": "pending" },
+    "12.8": { "status": "pending" },
+    "12.9": { "status": "pending" },
+    "12.10": { "status": "pending" },
+    "12.11": { "status": "pending", "acceptedDefects": [] },
+    "12.12": { "status": "pending" },
+    "12.13": { "status": "pending" },
+    "12.14": { "status": "pending" }
+  }
+}

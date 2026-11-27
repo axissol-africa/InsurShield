@@ -1,6 +1,8 @@
+import { Logger } from '@nestjs/common';
+import { createRequestContext, withRequestContext } from '../observability/request-context.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertConfiguredEndpointIsPublic,
   IntegrationEndpointRedirectError,
@@ -81,18 +83,20 @@ describe('posting to a pinned endpoint', () => {
 
   async function listen(status: number, headers: Record<string, string> = {}) {
     const received: string[] = [];
+    const traces: Array<string | undefined> = [];
     server = createServer((request, response) => {
       let body = '';
       request.on('data', (chunk) => (body += chunk));
       request.on('end', () => {
         received.push(`${request.headers.host} ${body}`);
+        traces.push(typeof request.headers.traceparent === 'string' ? request.headers.traceparent : undefined);
         response.writeHead(status, headers);
         response.end();
       });
     });
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
-    return { port, received };
+    return { port, received, traces };
   }
 
   // The address checks run in resolvePublicIntegrationEndpoint, so a loopback
@@ -105,6 +109,23 @@ describe('posting to a pinned endpoint', () => {
     );
     expect(status).toBe(202);
     expect(received).toEqual([`insurer.example:${port} {"a":1}`]);
+  });
+
+  it('propagates a child trace without logging insurer hosts, credentials, payloads or responses', async () => {
+    const { port, traces } = await listen(503);
+    const parent = createRequestContext();
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    try {
+      const status = await withRequestContext(parent, () => postJsonToEndpoint(
+        { url: new URL(`http://insurer.example:${port}/private-policy`), hostname: 'insurer.example', address: '127.0.0.1', family: 4 },
+        { headers: { authorization: 'private-secret', 'x-correlation-id': 'private-business-reference' }, body: '{"protected":"private-record"}', signal: new AbortController().signal },
+      ));
+      expect(status).toBe(503);
+      const record = JSON.parse(String(log.mock.calls[0][0]));
+      expect(record).toMatchObject({ target: 'insurer', parentSpanId: parent.spanId, correlationId: parent.correlationId, statusCode: 503, outcome: 'http_error' });
+      expect(traces).toEqual([`00-${parent.traceId}-${record.spanId}-00`]);
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/insurer.example|private-|127.0.0.1/);
+    } finally { log.mockRestore(); }
   });
 
   it('does not follow a redirect', async () => {

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { parse } from 'pg-connection-string';
 import { z } from 'zod';
 import { MAX_NGWEE } from '../common/domain/money-limits.js';
+import { isPrivateScannerAddress } from '../scanning/clamd-address.js';
 
 /**
  * Every environment variable the API needs, validated once at boot. A missing or
@@ -177,7 +178,11 @@ export const envSchema = z.object({
    * Which malware-scan adapter uploads go through. 'stand-in' simulates one and
    * is refused in production by the provider gate.
    */
-  MALWARE_SCANNER: z.enum(['stand-in']).default('stand-in'),
+  MALWARE_SCANNER: z.enum(['stand-in', 'clamd']).default('stand-in'),
+  CLAMD_ADDRESS: z.string().refine(isPrivateScannerAddress, 'must be a private or loopback IP literal').optional(),
+  CLAMD_PORT: wholeNumber(1, 65535).optional(),
+  CLAMD_TIMEOUT_MS: wholeNumber(100, 60_000).default(10_000),
+  CLAMD_MAX_RESPONSE_BYTES: wholeNumber(256, 16_384).default(4096),
 
   /**
    * Which mail adapter messages go through. 'log' writes them to the log and is
@@ -199,6 +204,11 @@ export const envSchema = z.object({
   HELP_DESK_PHONE: z.string().min(5).max(40).optional(),
   HELP_DESK_HOURS: z.string().min(3).max(120).optional(),
 }).superRefine((env, context) => {
+  if (env.MALWARE_SCANNER === 'clamd') {
+    for (const key of ['CLAMD_ADDRESS', 'CLAMD_PORT'] as const) {
+      if (env[key] === undefined) context.addIssue({ code: 'custom', path: [key], message: 'is required when MALWARE_SCANNER is clamd' });
+    }
+  }
   if (env.MAIL_SENDER === 'http') {
     // Named one by one: a message saying only "mail is misconfigured" makes a
     // deployment guess which of the three it forgot.
